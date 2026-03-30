@@ -52,7 +52,16 @@ export type AgentEventType =
   | "agent:tool-update"
   | "agent:tool-progress"
   | "agent:input-rejected"
-  | "agent:error";
+  | "agent:error"
+  | "agent:phase-start"
+  | "agent:phase-end";
+
+export type AgentPhase =
+  | "skill-selection"
+  | "planning"
+  | "execution"
+  | "generation"
+  | "evaluation";
 
 // ---------------------------------------------------------------------------
 // Per-event prop interfaces
@@ -136,6 +145,18 @@ export interface AgentErrorProps extends AgentEventProps {
   role: "system";
 }
 
+export interface AgentPhaseStartProps extends AgentEventProps {
+  type: "agent:phase-start";
+  role: "system";
+  phase: AgentPhase;
+}
+
+export interface AgentPhaseEndProps extends AgentEventProps {
+  type: "agent:phase-end";
+  role: "system";
+  phase: AgentPhase;
+}
+
 // ---------------------------------------------------------------------------
 // Per-event message types (structurally compatible with ContentMessage)
 // ---------------------------------------------------------------------------
@@ -205,6 +226,16 @@ export interface AgentErrorEvent {
   blocks: EventBlock[];
 }
 
+export interface AgentPhaseStartEvent {
+  props: AgentPhaseStartProps;
+  blocks: EventBlock[];
+}
+
+export interface AgentPhaseEndEvent {
+  props: AgentPhaseEndProps;
+  blocks: EventBlock[];
+}
+
 // ---------------------------------------------------------------------------
 // Discriminated union
 // ---------------------------------------------------------------------------
@@ -222,7 +253,9 @@ export type AgentEvent =
   | AgentToolUpdateEvent
   | AgentToolProgressEvent
   | AgentInputRejectedEvent
-  | AgentErrorEvent;
+  | AgentErrorEvent
+  | AgentPhaseStartEvent
+  | AgentPhaseEndEvent;
 
 // ---------------------------------------------------------------------------
 // Constructors
@@ -372,6 +405,20 @@ export function agentInputRejected(reason: string): AgentInputRejectedEvent {
 
 export function agentError(error: string): AgentErrorEvent {
   return msg({ type: "agent:error", role: "system", time: now() }, error);
+}
+
+export function agentPhaseStart(phase: AgentPhase): AgentPhaseStartEvent {
+  return msg({ type: "agent:phase-start", role: "system", time: now(), phase });
+}
+
+export function agentPhaseEnd(
+  phase: AgentPhase,
+  data?: unknown,
+): AgentPhaseEndEvent {
+  return msg(
+    { type: "agent:phase-end", role: "system", time: now(), phase },
+    data ? JSON.stringify(data) : "",
+  );
 }
 
 // ---------------------------------------------------------------------------

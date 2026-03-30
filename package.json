@@ -23,7 +23,8 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@statewalker/ai": "workspace:*"
+    "@statewalker/ai": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "tsdown": "catalog:",

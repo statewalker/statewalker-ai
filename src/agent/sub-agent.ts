@@ -31,7 +31,7 @@ export class SubAgentTool implements AgentTool {
   private llm: LlmApi;
   private tools: AgentTool[] = [];
   private maxTurns = DEFAULT_MAX_TURNS;
-  private maxSteps = 15;
+  private maxSteps = 1;
   private toolExecution: ToolExecutionStrategy = { type: "parallel" };
 
   constructor(name: string, llm: LlmApi) {

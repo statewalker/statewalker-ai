@@ -5,6 +5,7 @@ export type {
   ToolOutput,
 } from "./agent-tool.js";
 export { defaultToolStrategy, ToolError } from "./agent-tool.js";
+export { sdkToolSetToAgentTools } from "./sdk-tool-adapter.js";
 export type { ToolCall, ToolExecutionResult } from "./tool-executor.js";
 export {
   executeToolCalls,

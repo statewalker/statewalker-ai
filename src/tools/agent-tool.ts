@@ -61,8 +61,13 @@ export interface AgentTool {
   label: string;
   /** Description for the LLM. */
   description: string;
-  /** JSON Schema for parameters. */
+  /** JSON Schema for parameters (used for display/planning prompts). */
   parametersSchema: Record<string, unknown>;
+  /** Original SDK input schema (Zod or jsonSchema wrapper). When present,
+   *  this is passed directly to `tool({ inputSchema })` for SDK calls,
+   *  preserving full validation. Falls back to `parametersSchema` via
+   *  `jsonSchema()` if not set. */
+  sdkInputSchema?: unknown;
   /** Execute the tool with the given parameters. */
   execute(params: unknown, ctx: ToolContext): Promise<ToolOutput>;
 }

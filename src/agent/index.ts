@@ -6,4 +6,11 @@ export type {
   InputFilter,
 } from "./agent-loop.js";
 export { agentLoop, agentLoopContinue } from "./agent-loop.js";
+export type {
+  PlanningResult,
+  SkillSelectionResult,
+  StructuredLoopConfig,
+  ValidationResult,
+} from "./structured-loop.js";
+export { structuredAgentLoop } from "./structured-loop.js";
 export { SubAgentTool } from "./sub-agent.js";

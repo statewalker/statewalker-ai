@@ -29,10 +29,11 @@ import type {
   Usage,
 } from "../events/agent-events.js";
 import { userMessage } from "../events/agent-events.js";
-import type { SkillSet } from "../skills/skill-types.js";
+import type { SkillInfo, SkillSet } from "../skills/skill-types.js";
 import type { AgentTool, ToolExecutionStrategy } from "../tools/agent-tool.js";
 import type { AgentContext, InputFilter } from "./agent-loop.js";
 import { agentLoop, agentLoopContinue } from "./agent-loop.js";
+import { structuredAgentLoop } from "./structured-loop.js";
 
 export class Agent {
   systemPrompt = "";
@@ -48,7 +49,12 @@ export class Agent {
   private executionLimits: ExecutionLimits | undefined = {
     ...defaultExecutionLimits,
   };
-  private maxSteps = 15;
+  private maxSteps = 1;
+  private loopType: "standard" | "structured" = "structured";
+  private maxIterations = 3;
+  private planningPrompt?: string;
+  private validationPrompt?: string;
+  private skillInfos: SkillInfo[] = [];
 
   // Queues
   private steeringQueue: AgentMessage[] = [];
@@ -110,6 +116,9 @@ export class Agent {
   }
 
   withSkills(skills: SkillSet): this {
+    // Store raw skill infos for the structured loop's skill-selection phase
+    this.skillInfos = skills.skills;
+    // For the standard loop, append the skill index to the system prompt
     const fragment = skills.formatForPrompt();
     if (fragment) {
       this.systemPrompt = this.systemPrompt
@@ -147,6 +156,26 @@ export class Agent {
   withoutContextManagement(): this {
     this.contextConfig = undefined;
     this.executionLimits = undefined;
+    return this;
+  }
+
+  withLoopType(type: "standard" | "structured"): this {
+    this.loopType = type;
+    return this;
+  }
+
+  withMaxIterations(n: number): this {
+    this.maxIterations = n;
+    return this;
+  }
+
+  withPlanningPrompt(prompt: string): this {
+    this.planningPrompt = prompt;
+    return this;
+  }
+
+  withValidationPrompt(prompt: string): this {
+    this.validationPrompt = prompt;
     return this;
   }
 
@@ -230,7 +259,22 @@ export class Agent {
     };
 
     try {
-      yield* agentLoop(prompts, context, this.buildConfig());
+      if (this.loopType === "structured") {
+        yield* structuredAgentLoop(prompts, context, {
+          llm: this.llm,
+          model: this.model,
+          systemPrompt: this.systemPrompt,
+          tools: this.tools,
+          skills: this.skillInfos.length > 0 ? this.skillInfos : undefined,
+          maxIterations: this.maxIterations,
+          planningPrompt: this.planningPrompt,
+          validationPrompt: this.validationPrompt,
+          executionLimits: this.executionLimits,
+          onError: this.onErrorFn,
+        });
+      } else {
+        yield* agentLoop(prompts, context, this.buildConfig());
+      }
     } finally {
       this.messages = context.messages;
       this.running = false;

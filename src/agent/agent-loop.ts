@@ -210,6 +210,36 @@ async function* runLoop(
         config,
         signal,
       );
+
+      // Guard: if the LLM produced empty text with no tool calls after a
+      // turn that had tool results, nudge it to respond instead of silently
+      // ending the conversation.
+      const hasEmptyText =
+        typeof assistantMsg.content === "string"
+          ? assistantMsg.content.trim() === ""
+          : !assistantMsg.content.some(
+              (p) => p.type === "text" && p.text?.trim(),
+            );
+      const lastMsg = context.messages[context.messages.length - 1];
+      const prevWasToolResult = lastMsg?.role === "tool-result";
+      if (
+        hasEmptyText &&
+        prevWasToolResult &&
+        assistantMsg.stopReason !== "error" &&
+        assistantMsg.stopReason !== "aborted" &&
+        !extractToolCalls(assistantMsg).length
+      ) {
+        // Replace the empty message with a nudge and retry this turn
+        context.messages.push({
+          role: "user",
+          content:
+            "Please summarize the tool results above for the user. " +
+            "If the results are empty or unhelpful, suggest what the user could try instead.",
+          timestamp: nowMs(),
+        });
+        continue;
+      }
+
       context.messages.push(assistantMsg);
 
       // Check for error/abort
@@ -325,7 +355,7 @@ async function* streamAssistantResponse(
       system: context.systemPrompt,
       messages: llmMessages,
       signal,
-      maxSteps: config.maxSteps ?? 15,
+      maxSteps: config.maxSteps ?? 1,
     });
 
     for await (const part of stream) {
