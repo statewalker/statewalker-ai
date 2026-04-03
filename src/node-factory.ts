@@ -2,33 +2,15 @@ import { SnowflakeId } from "@repo/ids";
 import { TreeNode } from "./tree-node.js";
 import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
 
-const defaultIdGen = new SnowflakeId();
-
-/**
- * Ensure data has an `id`. If it's `NewEntryOptions` (no id), generate a Snowflake ID
- * and build a proper `TreeEntry`.
- */
-function ensureEntry(data: TreeEntry | NewEntryOptions): TreeEntry {
-  if ("id" in data && typeof data.id === "string") {
-    return data as TreeEntry;
-  }
-  const opts = data as NewEntryOptions;
-  const id = opts.id ?? defaultIdGen.generate();
-  const props: Record<string, unknown> = { ...opts.props };
-  if (opts.type !== undefined) {
-    props.type = opts.type;
-  }
-  const entry: TreeEntry = { id, props };
-  if (opts.content !== undefined) {
-    entry.content = opts.content;
-  }
-  return entry;
-}
-
 /**
  * Create a node factory from a type → constructor index.
- * Handles ID generation for new nodes (no id in data).
- * Unknown types fall back to plain TreeNode.
+ *
+ * - Generates a Snowflake ID when `data.id` is not provided.
+ * - Moves `data.type` into `props.type` (for `NewEntryOptions` input).
+ * - Looks up the constructor by `props.type`; falls back to plain `TreeNode`.
+ *
+ * @param index  Map of `props.type` → constructor
+ * @param idGen  Snowflake ID generator (default: shared instance)
  */
 export function newNodeFactory(
   index: Record<
@@ -38,12 +20,25 @@ export function newNodeFactory(
       factory: NodeFactory,
     ) => TreeNode
   >,
+  idGen: SnowflakeId = new SnowflakeId(),
 ): NodeFactory {
   const factory: NodeFactory = (
     data: TreeEntry | NewEntryOptions,
   ): TreeNode => {
-    const entry = ensureEntry(data);
-    const type = (entry.props.type as string) ?? "message";
+    const id = data.id ?? idGen.generate();
+    const props: Record<string, unknown> = { ...data.props };
+    if ("type" in data && data.type !== undefined) {
+      props.type = data.type;
+    }
+    const entry: TreeEntry = { id, props };
+    if (data.content !== undefined) {
+      entry.content = data.content;
+    }
+    if ("children" in data && data.children) {
+      entry.children = data.children as TreeEntry[];
+    }
+
+    const type = (props.type as string) ?? "message";
     const Ctor = index[type] ?? TreeNode;
     return new Ctor(entry, factory);
   };
