@@ -1,12 +1,12 @@
+import {
+  createAgentNodeFactory,
+  NodeType,
+  type Session,
+  type Turn,
+} from "@statewalker/ai-agent";
 import { describe, expect, it } from "vitest";
 import { markdownToTree } from "../../src/serialization/markdown-to-tree.js";
 import { treeToMarkdown } from "../../src/serialization/tree-to-markdown.js";
-import {
-  createAgentNodeFactory,
-  type Session,
-  type Turn,
-} from "../../src/wrappers/index.js";
-import { NodeType } from "../../src/wrappers/node-types.js";
 
 const factory = createAgentNodeFactory();
 

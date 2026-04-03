@@ -1,10 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { treeToMarkdown } from "../../src/serialization/tree-to-markdown.js";
 import {
   createAgentNodeFactory,
+  NodeType,
   type Session,
-} from "../../src/wrappers/index.js";
-import { NodeType } from "../../src/wrappers/node-types.js";
+} from "@statewalker/ai-agent";
+import { describe, expect, it } from "vitest";
+import { treeToMarkdown } from "../../src/serialization/tree-to-markdown.js";
 
 const factory = createAgentNodeFactory();
 
