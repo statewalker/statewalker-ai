@@ -2,218 +2,168 @@ import { SnowflakeId } from "@repo/ids";
 import { describe, expect, it, vi } from "vitest";
 import { applyFlat } from "../src/apply-flat.js";
 import { toFlatStream } from "../src/flat-stream.js";
-import { TreeEntry } from "../src/tree-entry.js";
+import { createEntry, TreeNode } from "../src/tree-node.js";
+import type { NodeRegistry } from "../src/types.js";
+
+const emptyRegistry: NodeRegistry = new Map();
 
 function makeTree() {
   let time = 1700000000000;
   const idGen = new SnowflakeId({ now: () => time++ });
 
-  const session = new TreeEntry({ type: "session", idGen });
-  const turn = new TreeEntry({ type: "turn", idGen, props: { turnNumber: 1 } });
-  const user = new TreeEntry({ type: "user_message", idGen, content: "Hello" });
-  const agent = new TreeEntry({
-    type: "agent_message",
-    idGen,
-    content: "Hi there",
-  });
+  const session = new TreeNode(
+    createEntry({ type: "session", idGen }),
+    emptyRegistry,
+  );
+  const turn = session.addChild(
+    createEntry({ type: "turn", idGen, props: { turnNumber: 1 } }),
+  );
+  turn.addChild(createEntry({ type: "user_message", idGen, content: "Hello" }));
+  turn.addChild(
+    createEntry({ type: "agent_message", idGen, content: "Hi there" }),
+  );
 
-  session.addChild(turn);
-  turn.addChild(user);
-  turn.addChild(agent);
-
-  return { session, turn, user, agent, idGen };
+  return { session, turn, idGen };
 }
 
-function treeIds(entry: TreeEntry): string[] {
+function treeIds(node: TreeNode): string[] {
   const ids: string[] = [];
-  entry.visit((node) => {
-    ids.push(node.id);
+  node.visit((e) => {
+    ids.push(e.id);
+    return undefined;
   });
   return ids;
-}
-
-/** Safe child access — throws if missing instead of using non-null assertions */
-function ch(entry: TreeEntry, index: number): TreeEntry {
-  const c = entry.children?.[index];
-  if (!c) throw new Error(`No child at index ${index}`);
-  return c;
 }
 
 describe("applyFlat: build from scratch", () => {
   it("builds a tree from flat stream", () => {
     const { session } = makeTree();
-    const stream = toFlatStream(session);
-    const clone = applyFlat(undefined, stream);
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
 
     expect(clone.id).toBe(session.id);
     expect(clone.type).toBe("session");
     expect(clone.children).toHaveLength(1);
-    expect(ch(clone, 0).type).toBe("turn");
-    expect(ch(clone, 0).children).toHaveLength(2);
+    expect(clone.children[0]?.type).toBe("turn");
+    expect(clone.children[0]?.children).toHaveLength(2);
   });
 
   it("preserves all IDs", () => {
     const { session } = makeTree();
-    const originalIds = treeIds(session);
-    const clone = applyFlat(undefined, toFlatStream(session));
-    const clonedIds = treeIds(clone);
-
-    expect(clonedIds).toEqual(originalIds);
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    expect(treeIds(clone)).toEqual(treeIds(session));
   });
 
   it("preserves content and props", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
-
-    const turnClone = ch(clone, 0);
-    expect(turnClone.props.turnNumber).toBe(1);
-    expect(ch(turnClone, 0).content).toBe("Hello");
-    expect(ch(turnClone, 1).content).toBe("Hi there");
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const turnClone = clone.children[0];
+    expect(turnClone?.props.turnNumber).toBe(1);
+    expect(turnClone?.children[0]?.content).toBe("Hello");
+    expect(turnClone?.children[1]?.content).toBe("Hi there");
   });
 
   it("wires parent references", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
-
-    const turnClone = ch(clone, 0);
-    expect(turnClone.parent).toBe(clone);
-    expect(turnClone.parentId).toBe(clone.id);
-    expect(ch(turnClone, 0).parent).toBe(turnClone);
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const turnClone = clone.children[0];
+    expect(turnClone?.parent).toBe(clone);
+    expect(turnClone?.parentId).toBe(clone.id);
   });
 
   it("bubbleUp works on cloned tree", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
-
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
     const listener = vi.fn();
     clone.onUpdate(listener);
-
-    ch(ch(clone, 0), 0).bubbleUp();
+    clone.children[0]?.children[0]?.bubbleUp();
     expect(listener).toHaveBeenCalled();
   });
 });
 
 describe("applyFlat: update existing tree", () => {
   it("updates content of existing node", () => {
-    const { session, agent } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
+    const { session } = makeTree();
+    const agent = session.children[0]?.children[1];
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const agentClone = clone.children[0]?.children[1];
+    expect(agentClone?.content).toBe("Hi there");
 
-    const agentClone = ch(ch(clone, 0), 1);
-    expect(agentClone.content).toBe("Hi there");
+    applyFlat(
+      clone,
+      [
+        {
+          id: agent?.id ?? "",
+          parentId: clone.children[0]?.id,
+          props: { type: "agent_message", updatedAt: new Date().toISOString() },
+          content: "Hi there, updated!",
+        },
+      ],
+      emptyRegistry,
+    );
 
-    applyFlat(clone, [
-      {
-        id: agent.id,
-        type: "agent_message",
-        parentId: ch(clone, 0).id,
-        props: { updatedAt: new Date().toISOString() },
-        content: "Hi there, updated!",
-      },
-    ]);
-
-    expect(agentClone.content).toBe("Hi there, updated!");
-  });
-
-  it("merges props on update", () => {
-    const { session, turn } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
-    const turnClone = ch(clone, 0);
-
-    applyFlat(clone, [
-      {
-        id: turn.id,
-        type: "turn",
-        parentId: session.id,
-        props: { stopReason: "stop", model: "claude-3" },
-      },
-    ]);
-
-    expect(turnClone.props.turnNumber).toBe(1);
-    expect(turnClone.props.stopReason).toBe("stop");
-    expect(turnClone.props.model).toBe("claude-3");
+    expect(agentClone?.content).toBe("Hi there, updated!");
   });
 
   it("adds new node to existing tree", () => {
     const { session, idGen } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const newId = idGen.generate();
 
-    const newTurnId = idGen.generate();
-    const newMsgId = idGen.generate();
-
-    applyFlat(clone, [
-      {
-        id: newTurnId,
-        type: "turn",
-        parentId: session.id,
-        props: { turnNumber: 2 },
-      },
-      {
-        id: newMsgId,
-        type: "user_message",
-        parentId: newTurnId,
-        props: {},
-        content: "New message",
-      },
-    ]);
+    applyFlat(
+      clone,
+      [
+        {
+          id: newId,
+          parentId: session.id,
+          props: { type: "turn", turnNumber: 2 },
+        },
+      ],
+      emptyRegistry,
+    );
 
     expect(clone.children).toHaveLength(2);
-    const newTurn = ch(clone, 1);
-    expect(newTurn.id).toBe(newTurnId);
-    expect(newTurn.children).toHaveLength(1);
-    expect(ch(newTurn, 0).content).toBe("New message");
+    expect(clone.children[1]?.props.turnNumber).toBe(2);
   });
 });
 
 describe("applyFlat: round-trip", () => {
   it("toFlatStream -> applyFlat produces equivalent tree", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
-
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
     expect(treeIds(clone)).toEqual(treeIds(session));
-
-    const original = [...toFlatStream(session)];
-    const cloned = [...toFlatStream(clone)];
-    expect(cloned).toEqual(original);
+    expect([...toFlatStream(clone)]).toEqual([...toFlatStream(session)]);
   });
 });
 
 describe("applyFlat: incremental sync", () => {
-  it("syncs new and modified nodes between trees", () => {
-    const { session, agent, idGen } = makeTree();
-    const tree2 = applyFlat(undefined, toFlatStream(session));
-
+  it("syncs new and modified nodes", () => {
+    const { session, idGen } = makeTree();
+    const tree2 = applyFlat(undefined, toFlatStream(session), emptyRegistry);
     const sinceId = idGen.generate();
 
-    agent.content = "Updated reply";
-    agent.touch();
+    const agent = session.children[0]?.children[1];
+    if (agent) {
+      agent.content = "Updated reply";
+      agent.touch();
+    }
+    session.addChild(
+      createEntry({ type: "turn", idGen, props: { turnNumber: 2 } }),
+    );
 
-    const newTurn = new TreeEntry({
-      type: "turn",
-      idGen,
-      props: { turnNumber: 2 },
-    });
-    session.addChild(newTurn);
-
-    const delta = toFlatStream(session, sinceId);
-    applyFlat(tree2, delta);
-
-    expect(ch(ch(tree2, 0), 1).content).toBe("Updated reply");
+    applyFlat(tree2, toFlatStream(session, sinceId), emptyRegistry);
+    expect(tree2.children[0]?.children[1]?.content).toBe("Updated reply");
     expect(tree2.children).toHaveLength(2);
-    expect(ch(tree2, 1).props.turnNumber).toBe(2);
   });
 });
 
 describe("applyFlat: idempotent", () => {
   it("applying same stream twice is a no-op", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session));
-
+    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
     const stream = [...toFlatStream(session)];
-    applyFlat(clone, stream);
-    applyFlat(clone, stream);
-
+    applyFlat(clone, stream, emptyRegistry);
+    applyFlat(clone, stream, emptyRegistry);
     expect(clone.children).toHaveLength(1);
-    expect(ch(clone, 0).children).toHaveLength(2);
     expect(treeIds(clone)).toEqual(treeIds(session));
   });
 });

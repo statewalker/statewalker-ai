@@ -1,29 +1,18 @@
-/**
- * Markdown serialization: every tree node becomes a content-blocks section.
- * Uses the flat format — parentId in props, ordered by Snowflake ID.
- *
- * Requires @repo/content-blocks (optional dependency).
- */
-
 import type { ContentDocument, ContentSection } from "@repo/content-blocks";
 import { parseDocument, serializeDocument } from "@repo/content-blocks/parser";
 import { applyFlat } from "./apply-flat.js";
 import { toFlatStream } from "./flat-stream.js";
-import type { TreeEntry } from "./tree-entry.js";
-import type { FlatTreeNode } from "./types.js";
+import type { TreeNode } from "./tree-node.js";
+import type { FlatTreeEntry, NodeRegistry } from "./types.js";
 
 /**
- * Serialize a tree to markdown. Each node becomes a content-blocks section
- * with id, type, parentId in props. Content goes to section block content.
+ * Serialize a tree to markdown. Each node becomes a content-blocks section.
  */
-export function treeToMarkdown(root: TreeEntry): string {
+export function treeToMarkdown(root: TreeNode): string {
   const sections: ContentSection[] = [];
 
   for (const flat of toFlatStream(root)) {
-    const props: Record<string, string> = {
-      id: flat.id,
-      type: flat.type,
-    };
+    const props: Record<string, string> = { id: flat.id };
     if (flat.parentId) {
       props.parentId = flat.parentId;
     }
@@ -44,22 +33,22 @@ export function treeToMarkdown(root: TreeEntry): string {
 }
 
 /**
- * Deserialize a tree from markdown. Parses sections into FlatTreeNode items,
- * then reconstructs the tree via applyFlat.
+ * Deserialize a tree from markdown. Uses the registry for typed wrappers.
  */
-export function markdownToTree(markdown: string): TreeEntry {
+export function markdownToTree(
+  markdown: string,
+  registry: NodeRegistry,
+): TreeNode {
   const doc = parseDocument(markdown);
-  const nodes: FlatTreeNode[] = [];
+  const nodes: FlatTreeEntry[] = [];
 
-  // Document frontmatter becomes the root node
-  if (doc.props?.id && doc.props?.type) {
+  if (doc.props?.id) {
     nodes.push(sectionPropsToFlat(doc.props));
   }
 
-  // Each section becomes a child node
   for (const section of doc.content) {
     const rawProps = section.props ?? {};
-    if (!rawProps.id || !rawProps.type) continue;
+    if (!rawProps.id) continue;
 
     const flat = sectionPropsToFlat(rawProps);
     const content =
@@ -68,24 +57,23 @@ export function markdownToTree(markdown: string): TreeEntry {
     nodes.push(flat);
   }
 
-  return applyFlat(undefined, nodes);
+  return applyFlat(undefined, nodes, registry);
 }
 
 function sectionPropsToFlat(
   rawProps: Record<string, string | undefined>,
-): FlatTreeNode {
+): FlatTreeEntry {
   const id = rawProps.id as string;
-  const type = rawProps.type as string;
   const parentId = rawProps.parentId;
   const props: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(rawProps)) {
-    if (key === "id" || key === "type" || key === "parentId") continue;
+    if (key === "id" || key === "parentId") continue;
     if (value === undefined) continue;
     props[key] = tryParseJson(value);
   }
 
-  const flat: FlatTreeNode = { id, type, props };
+  const flat: FlatTreeEntry = { id, props };
   if (parentId) flat.parentId = parentId;
   return flat;
 }

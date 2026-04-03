@@ -1,54 +1,57 @@
-import { TreeEntry } from "./tree-entry.js";
-import type { FlatTreeNode } from "./types.js";
+import { type TreeNode, wrapTree } from "./tree-node.js";
+import type { FlatTreeEntry, NodeRegistry, TreeEntry } from "./types.js";
 
 /**
- * Build or update a `TreeEntry` tree from a `FlatTreeNode` stream.
+ * Build or update a `TreeNode` tree from a `FlatTreeEntry` stream.
  *
  * - If `root` is undefined, the first node creates the root.
- * - If a node's `id` exists in the tree, it is updated (merge props, replace content).
- * - If a node's `id` is new, a new `TreeEntry` is created and wired to its parent via `parentId`.
+ * - If a node's `id` exists, it is updated (merge props, replace content).
+ * - If a node's `id` is new, a new node is created and wired via `parentId`.
  *
- * Returns the root `TreeEntry`.
+ * Uses the registry to create typed wrappers.
  */
 export function applyFlat(
-  root: TreeEntry | undefined,
-  nodes: Iterable<FlatTreeNode>,
-): TreeEntry {
-  const index = new Map<string, TreeEntry>();
+  root: TreeNode | undefined,
+  nodes: Iterable<FlatTreeEntry>,
+  registry: NodeRegistry,
+): TreeNode {
+  const dataIndex = new Map<string, TreeEntry>();
+  const nodeIndex = new Map<string, TreeNode>();
 
-  // Index existing tree nodes if root provided
   if (root) {
-    indexTree(root, index);
+    indexTree(root, dataIndex, nodeIndex);
   }
 
   for (const flat of nodes) {
-    const existing = index.get(flat.id);
-    if (existing) {
-      // Update existing node
-      Object.assign(existing.props, flat.props);
+    const existingNode = nodeIndex.get(flat.id);
+    if (existingNode) {
+      Object.assign(existingNode.data.props, flat.props);
       if (flat.content !== undefined) {
-        existing.content = flat.content;
+        existingNode.data.content = flat.content;
       }
-      existing.notify();
+      existingNode.notify();
     } else {
-      // Create new node
-      const entry = new TreeEntry({
-        type: flat.type,
+      const entry: TreeEntry = {
         id: flat.id,
         props: { ...flat.props },
-        content: flat.content,
-      });
-      index.set(flat.id, entry);
+      };
+      if (flat.content !== undefined) {
+        entry.content = flat.content;
+      }
+      dataIndex.set(flat.id, entry);
 
       if (flat.parentId) {
-        const parent = index.get(flat.parentId);
-        if (parent) {
-          parent.addChild(entry);
+        const parentNode = nodeIndex.get(flat.parentId);
+        if (parentNode) {
+          const child = parentNode.addChild(entry);
+          nodeIndex.set(flat.id, child);
+          continue;
         }
       }
 
       if (!root) {
-        root = entry;
+        root = wrapTree(entry, registry);
+        nodeIndex.set(flat.id, root);
       }
     }
   }
@@ -59,11 +62,14 @@ export function applyFlat(
   return root;
 }
 
-function indexTree(entry: TreeEntry, map: Map<string, TreeEntry>): void {
-  map.set(entry.id, entry);
-  if (entry.children) {
-    for (const child of entry.children) {
-      indexTree(child, map);
-    }
+function indexTree(
+  node: TreeNode,
+  dataIndex: Map<string, TreeEntry>,
+  nodeIndex: Map<string, TreeNode>,
+): void {
+  dataIndex.set(node.id, node.data);
+  nodeIndex.set(node.id, node);
+  for (const child of node.children) {
+    indexTree(child, dataIndex, nodeIndex);
   }
 }

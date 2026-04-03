@@ -1,24 +1,36 @@
 /**
- * Structural tree shape — for in-memory trees and compact JSON.
- * Parent-child relationships expressed via nested `children` arrays.
+ * Pure data shape for tree nodes.
+ * This is what gets serialized/deserialized.
+ * `type` lives in `props` (e.g., props.type = "session").
  */
-export interface TreeNode {
+export interface TreeEntry {
   id: string;
-  type: string;
   props: Record<string, unknown>;
   content?: string;
-  children?: TreeNode[];
+  children?: TreeEntry[];
 }
 
 /**
  * Flat streamable shape — for serialization, events, sync.
  * Parent-child relationships expressed via `parentId` references.
- * Ordered by Snowflake ID (Crockford base32, lexicographic = chronological).
  */
-export interface FlatTreeNode {
+export interface FlatTreeEntry {
   id: string;
-  type: string;
   parentId?: string;
   props: Record<string, unknown>;
   content?: string;
 }
+
+/**
+ * Factory function that creates a TreeNode wrapper for a given TreeEntry.
+ */
+export type NodeFactory = (
+  data: TreeEntry,
+  registry: NodeRegistry,
+) => import("./tree-node.js").TreeNode;
+
+/**
+ * Maps props.type → factory. Used to create typed wrappers during
+ * child access, deserialization, and tree construction.
+ */
+export type NodeRegistry = Map<string, NodeFactory>;

@@ -1,0 +1,211 @@
+import { extractTime, SnowflakeId } from "@repo/ids";
+import { BaseClass } from "@repo/shared/models";
+import type { NodeRegistry, TreeEntry } from "./types.js";
+
+const defaultIdGen = new SnowflakeId();
+
+/**
+ * Reactive wrapper over `TreeEntry` data.
+ * Provides utility methods (addChild, bubbleUp, visit, touch)
+ * and caches child wrappers via the registry.
+ *
+ * Subclasses (Session, Turn, Message, ToolCall) add typed accessors.
+ */
+export class TreeNode extends BaseClass {
+  readonly data: TreeEntry;
+  readonly registry: NodeRegistry;
+  parent?: TreeNode;
+
+  private _childCleanups = new Map<TreeNode, () => void>();
+  private _childCache = new Map<string, TreeNode>();
+  private _cachedUpdatedAt?: Date;
+
+  constructor(data: TreeEntry, registry: NodeRegistry) {
+    super();
+    this.data = data;
+    this.registry = registry;
+  }
+
+  // ── Data delegates ──────────────────────────────────────────
+
+  get id(): string {
+    return this.data.id;
+  }
+
+  get props(): Record<string, unknown> {
+    return this.data.props;
+  }
+
+  get type(): string {
+    return (this.data.props.type as string) ?? "message";
+  }
+
+  get content(): string | undefined {
+    return this.data.content;
+  }
+
+  set content(value: string | undefined) {
+    this.data.content = value;
+  }
+
+  get parentId(): string | undefined {
+    return this.parent?.id;
+  }
+
+  // ── Timestamps ──────────────────────────────────────────────
+
+  get createdAt(): Date {
+    return new Date(extractTime(this.id));
+  }
+
+  get updatedAt(): Date {
+    if (this._cachedUpdatedAt) return this._cachedUpdatedAt;
+    const raw = this.data.props.updatedAt;
+    if (typeof raw === "string") {
+      this._cachedUpdatedAt = new Date(raw);
+    } else if (typeof raw === "number") {
+      this._cachedUpdatedAt = new Date(raw);
+    } else {
+      return this.createdAt;
+    }
+    return this._cachedUpdatedAt;
+  }
+
+  touch(): void {
+    const now = new Date();
+    this.data.props.updatedAt = now.toISOString();
+    this._cachedUpdatedAt = now;
+    this.bubbleUp();
+  }
+
+  // ── Children (cached wrappers via registry) ─────────────────
+
+  get children(): TreeNode[] {
+    const dataChildren = this.data.children;
+    if (!dataChildren || dataChildren.length === 0) return [];
+
+    // Sync cache with data: wrap new entries, keep existing ones
+    const result: TreeNode[] = [];
+    for (const entry of dataChildren) {
+      let cached = this._childCache.get(entry.id);
+      if (!cached) {
+        cached = this._wrapChild(entry);
+      }
+      result.push(cached);
+    }
+    return result;
+  }
+
+  addChild(data: TreeEntry): TreeNode {
+    this.data.children ??= [];
+    this.data.children = [...this.data.children, data];
+
+    const node = this._wrapChild(data);
+    this.notify();
+    return node;
+  }
+
+  removeChild(child: TreeNode): void {
+    const unsub = this._childCleanups.get(child);
+    if (unsub) {
+      unsub();
+      this._childCleanups.delete(child);
+    }
+    this._childCache.delete(child.id);
+    child.parent = undefined;
+    this.data.children = (this.data.children ?? []).filter(
+      (c) => c.id !== child.id,
+    );
+    this.notify();
+  }
+
+  childrenOfType(type: string): TreeNode[] {
+    return this.children.filter((c) => c.type === type);
+  }
+
+  // ── Propagation ─────────────────────────────────────────────
+
+  bubbleUp(): void {
+    this.notify();
+    this.parent?.bubbleUp();
+  }
+
+  // ── Traversal ───────────────────────────────────────────────
+
+  visit(
+    begin: (entry: TreeEntry) => undefined | boolean,
+    end?: () => void,
+  ): void {
+    const entry: TreeEntry = {
+      id: this.data.id,
+      props: this.data.props,
+    };
+    if (this.data.content !== undefined) {
+      entry.content = this.data.content;
+    }
+    if (this.data.children && this.data.children.length > 0) {
+      entry.children = this.data.children;
+    }
+
+    const result = begin(entry);
+
+    if (result !== false && this.data.children) {
+      for (const child of this.children) {
+        child.visit(begin, end);
+      }
+    }
+
+    end?.();
+  }
+
+  // ── Internal ────────────────────────────────────────────────
+
+  private _wrapChild(entry: TreeEntry): TreeNode {
+    const type = (entry.props.type as string) ?? "message";
+    const factory = this.registry.get(type);
+    const node = factory
+      ? factory(entry, this.registry)
+      : new TreeNode(entry, this.registry);
+    node.parent = this;
+    this._childCache.set(entry.id, node);
+
+    const unsub = node.onUpdate(() => this.bubbleUp());
+    this._childCleanups.set(node, unsub);
+
+    return node;
+  }
+}
+
+/**
+ * Create a new `TreeEntry` data object with a Snowflake ID.
+ */
+export function createEntry(
+  options: {
+    id?: string;
+    type?: string;
+    props?: Record<string, unknown>;
+    content?: string;
+    idGen?: SnowflakeId;
+  } = {},
+): TreeEntry {
+  const id = options.id ?? (options.idGen ?? defaultIdGen).generate();
+  const props: Record<string, unknown> = { ...options.props };
+  if (options.type !== undefined) {
+    props.type = options.type;
+  }
+  const entry: TreeEntry = { id, props };
+  if (options.content !== undefined) {
+    entry.content = options.content;
+  }
+  return entry;
+}
+
+/**
+ * Wrap a `TreeEntry` data tree with `TreeNode` wrappers using the registry.
+ * The root gets the appropriate wrapper based on its type.
+ */
+export function wrapTree(data: TreeEntry, registry: NodeRegistry): TreeNode {
+  const type = (data.props.type as string) ?? "message";
+  const factory = registry.get(type);
+  return factory ? factory(data, registry) : new TreeNode(data, registry);
+}

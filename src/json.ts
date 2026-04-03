@@ -1,23 +1,21 @@
-import { TreeEntry } from "./tree-entry.js";
-import type { TreeNode } from "./types.js";
+import { type TreeNode, wrapTree } from "./tree-node.js";
+import type { NodeRegistry, TreeEntry } from "./types.js";
 
 /**
- * Serialize a `TreeEntry` tree to a structural `TreeNode` JSON object
- * with nested `children` arrays.
+ * Serialize a `TreeNode` tree to a structural `TreeEntry` JSON object.
  */
-export function treeToJson(root: TreeEntry): TreeNode {
-  const stack: TreeNode[] = [];
-  let result: TreeNode | undefined;
+export function treeToJson(root: TreeNode): TreeEntry {
+  const stack: TreeEntry[] = [];
+  let result: TreeEntry | undefined;
 
   root.visit(
-    (node): undefined => {
-      const json: TreeNode = {
-        id: node.id,
-        type: node.type,
-        props: { ...node.props },
+    (entry): undefined => {
+      const json: TreeEntry = {
+        id: entry.id,
+        props: { ...entry.props },
       };
-      if (node.content !== undefined) {
-        json.content = node.content;
+      if (entry.content !== undefined) {
+        json.content = entry.content;
       }
 
       const parent = stack[stack.length - 1];
@@ -41,22 +39,24 @@ export function treeToJson(root: TreeEntry): TreeNode {
 }
 
 /**
- * Reconstruct a `TreeEntry` tree from a structural `TreeNode` JSON object.
- * Preserves original IDs. Wires `parent` references via `addChild`.
+ * Reconstruct a `TreeNode` tree from a structural `TreeEntry` JSON object.
+ * Uses the registry to create typed wrappers. Wires parent references.
  */
-export function jsonToTree(json: TreeNode): TreeEntry {
-  const entry = new TreeEntry({
-    type: json.type,
+export function jsonToTree(json: TreeEntry, registry: NodeRegistry): TreeNode {
+  return wrapTree(buildData(json), registry);
+}
+
+/** Deep-clone TreeEntry data, preserving children structure. */
+function buildData(json: TreeEntry): TreeEntry {
+  const entry: TreeEntry = {
     id: json.id,
     props: { ...json.props },
-    content: json.content,
-  });
-
-  if (json.children) {
-    for (const child of json.children) {
-      entry.addChild(jsonToTree(child));
-    }
+  };
+  if (json.content !== undefined) {
+    entry.content = json.content;
   }
-
+  if (json.children) {
+    entry.children = json.children.map(buildData);
+  }
   return entry;
 }
