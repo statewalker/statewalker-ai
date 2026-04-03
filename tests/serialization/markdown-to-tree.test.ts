@@ -3,7 +3,7 @@ import {
   NodeType,
   type Session,
   type Turn,
-} from "@statewalker/ai-agent";
+} from "@statewalker/ai";
 import { describe, expect, it } from "vitest";
 import { markdownToTree } from "../../src/serialization/markdown-to-tree.js";
 import { treeToMarkdown } from "../../src/serialization/tree-to-markdown.js";
