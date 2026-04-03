@@ -1,6 +1,6 @@
-import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
 import type { Message } from "./message.js";
+import { NodeType } from "./node-types.js";
 import type { ToolCall } from "./tool-call.js";
 
 export interface Usage {

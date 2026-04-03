@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { applyFlat } from "../src/apply-flat.js";
 import { toFlatStream } from "../src/flat-stream.js";
 import { treeToJson } from "../src/json.js";
-import { NodeType } from "../src/node-types.js";
 import {
   createAgentNodeFactory,
   Message,
@@ -10,6 +9,7 @@ import {
   ToolCall,
   Turn,
 } from "../src/wrappers/index.js";
+import { NodeType } from "../src/wrappers/node-types.js";
 
 const factory = createAgentNodeFactory();
 

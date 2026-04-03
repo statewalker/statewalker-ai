@@ -1,5 +1,5 @@
-import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
+import { NodeType } from "./node-types.js";
 
 export class Message extends TreeNode {
   get role(): string {

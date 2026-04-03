@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { markdownToTree, treeToMarkdown } from "../src/markdown.js";
-import { NodeType } from "../src/node-types.js";
 import {
   createAgentNodeFactory,
   type Session,
   type Turn,
 } from "../src/wrappers/index.js";
+import { NodeType } from "../src/wrappers/node-types.js";
 
 const factory = createAgentNodeFactory();
 

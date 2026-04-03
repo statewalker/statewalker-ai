@@ -1,8 +1,8 @@
 import { newNodeFactory } from "../node-factory.js";
-import { NodeType } from "../node-types.js";
 import type { TreeNode } from "../tree-node.js";
 import type { NodeFactory, TreeEntry } from "../types.js";
 import { Message } from "./message.js";
+import { NodeType } from "./node-types.js";
 import { Session } from "./session.js";
 import { ToolCall } from "./tool-call.js";
 import { Turn } from "./turn.js";

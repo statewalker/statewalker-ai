@@ -1,5 +1,5 @@
-import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
+import { NodeType } from "./node-types.js";
 import type { Turn } from "./turn.js";
 
 export class Session extends TreeNode {
