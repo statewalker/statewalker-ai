@@ -3,7 +3,11 @@ import { describe, expect, it } from "vitest";
 import { createEntry } from "../src/create-entry.js";
 import { markdownToTree, treeToMarkdown } from "../src/markdown.js";
 import { NodeType } from "../src/node-types.js";
-import { createAgentNodeFactory, Session, type Turn } from "../src/wrappers.js";
+import {
+  createAgentNodeFactory,
+  Session,
+  type Turn,
+} from "../src/wrappers/index.js";
 
 const factory = createAgentNodeFactory();
 

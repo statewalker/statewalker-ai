@@ -11,7 +11,7 @@ import {
   Session,
   ToolCall,
   Turn,
-} from "../src/wrappers.js";
+} from "../src/wrappers/index.js";
 
 const factory = createAgentNodeFactory();
 

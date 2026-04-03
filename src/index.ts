@@ -5,4 +5,4 @@ export * from "./json.js";
 export * from "./node-types.js";
 export * from "./tree-node.js";
 export * from "./types.js";
-export * from "./wrappers.js";
+export * from "./wrappers/index.js";

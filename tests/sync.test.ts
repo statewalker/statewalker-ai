@@ -11,7 +11,7 @@ import {
   Session,
   ToolCall,
   Turn,
-} from "../src/wrappers.js";
+} from "../src/wrappers/index.js";
 
 const factory = createAgentNodeFactory();
 
@@ -170,6 +170,7 @@ describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
     expect(synced_tc1.args).toEqual({ path: "/tmp" });
     expect(synced_tc1.result).toBe("data.json\nconfig.yaml\nREADME.md");
     expect(synced_tc1.isError).toBe(false);
+    console.log(session2);
 
     // 4. Turn 2 structure (interleaved user + agent + tool)
     const t2 = session2.turns[1] as Turn;
