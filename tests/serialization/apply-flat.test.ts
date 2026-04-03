@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyFlat } from "../src/apply-flat.js";
-import { toFlatStream } from "../src/flat-stream.js";
-import { newNodeFactory } from "../src/node-factory.js";
-import type { TreeNode } from "../src/tree-node.js";
+import { newNodeFactory } from "../../src/node-factory.js";
+import { applyFlat } from "../../src/serialization/apply-flat.js";
+import { toFlatStream } from "../../src/serialization/to-flat-stream.js";
+import type { TreeNode } from "../../src/tree-node.js";
 
 const factory = newNodeFactory({});
 

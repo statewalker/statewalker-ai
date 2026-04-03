@@ -1,6 +1,6 @@
 import { extractTime } from "@repo/ids";
-import type { TreeNode } from "./tree-node.js";
-import type { FlatTreeEntry } from "./types.js";
+import type { TreeNode } from "../tree-node.js";
+import type { FlatTreeEntry } from "../types.js";
 
 /**
  * Emit a `FlatTreeEntry` stream from a tree, ordered by id ascending.

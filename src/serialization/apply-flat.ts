@@ -1,6 +1,6 @@
-import type { TreeNode } from "./tree-node.js";
-import { wrapTree } from "./tree-node.js";
-import type { FlatTreeEntry, NodeFactory, TreeEntry } from "./types.js";
+import type { TreeNode } from "../tree-node.js";
+import { wrapTree } from "../tree-node.js";
+import type { FlatTreeEntry, NodeFactory, TreeEntry } from "../types.js";
 
 /**
  * Build or update a `TreeNode` tree from a `FlatTreeEntry` stream.

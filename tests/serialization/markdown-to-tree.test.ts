@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { markdownToTree, treeToMarkdown } from "../src/markdown.js";
+import { markdownToTree } from "../../src/serialization/markdown-to-tree.js";
+import { treeToMarkdown } from "../../src/serialization/tree-to-markdown.js";
 import {
   createAgentNodeFactory,
   type Session,
   type Turn,
-} from "../src/wrappers/index.js";
-import { NodeType } from "../src/wrappers/node-types.js";
+} from "../../src/wrappers/index.js";
+import { NodeType } from "../../src/wrappers/node-types.js";
 
 const factory = createAgentNodeFactory();
 
@@ -30,40 +31,19 @@ function buildConversation() {
   return { session };
 }
 
-describe("treeToMarkdown", () => {
-  it("produces markdown with sections", () => {
+describe("markdownToTree", () => {
+  it("reconstructs tree from markdown", () => {
     const { session } = buildConversation();
     const md = treeToMarkdown(session);
-    expect(md.length).toBeGreaterThan(0);
-    expect(md).toContain("parentId:");
+    const restored = markdownToTree(md, factory) as Session;
+    expect(restored.id).toBe(session.id);
+    expect(restored.turns).toHaveLength(2);
   });
 
-  it("root has no parentId", () => {
-    const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    const lines = md.split("\n");
-    const firstSection: string[] = [];
-    let inFirst = false;
-    for (const line of lines) {
-      if (/^-{3,}/.test(line)) {
-        if (inFirst) break;
-        inFirst = true;
-        continue;
-      }
-      if (inFirst) firstSection.push(line);
-    }
-    expect(firstSection.join("\n")).toContain("type: session");
-    expect(firstSection.join("\n")).not.toContain("parentId:");
-  });
-});
-
-describe("markdown round-trip", () => {
   it("preserves full conversation structure", () => {
     const { session } = buildConversation();
     const md = treeToMarkdown(session);
     const restored = markdownToTree(md, factory) as Session;
-
-    expect(restored.turns).toHaveLength(2);
 
     const t1 = restored.turns[0] as Turn;
     expect(t1.turnNumber).toBe(1);
@@ -85,5 +65,26 @@ describe("markdown round-trip", () => {
     const restored = markdownToTree(md, factory);
     expect(restored.id).toBe(session.id);
     expect(restored.children[0]?.parent).toBe(restored);
+  });
+});
+
+describe("markdown round-trip", () => {
+  it("round-trip preserves props", () => {
+    const { session } = buildConversation();
+    const md = treeToMarkdown(session);
+    const restored = markdownToTree(md, factory) as Session;
+
+    const t1 = restored.turns[0] as Turn;
+    expect(t1.props.turnNumber).toBe(1);
+    expect(t1.props.stopReason).toBe("tool-use");
+    expect(t1.props.model).toBe("claude-sonnet-4-20250514");
+  });
+
+  it("double round-trip produces same markdown", () => {
+    const { session } = buildConversation();
+    const md1 = treeToMarkdown(session);
+    const restored = markdownToTree(md1, factory);
+    const md2 = treeToMarkdown(restored);
+    expect(md2).toBe(md1);
   });
 });

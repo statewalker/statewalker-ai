@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { applyFlat } from "../src/apply-flat.js";
-import { toFlatStream } from "../src/flat-stream.js";
-import { treeToJson } from "../src/json.js";
+import { applyFlat } from "../src/serialization/apply-flat.js";
+import { toFlatStream } from "../src/serialization/to-flat-stream.js";
+import { treeToJson } from "../src/serialization/tree-to-json.js";
 import {
   createAgentNodeFactory,
   Message,

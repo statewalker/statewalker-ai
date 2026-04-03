@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { jsonToTree, treeToJson } from "../src/json.js";
-import { newNodeFactory } from "../src/node-factory.js";
+import { describe, expect, it } from "vitest";
+import { newNodeFactory } from "../../src/node-factory.js";
+import { treeToJson } from "../../src/serialization/tree-to-json.js";
 
 const factory = newNodeFactory({});
 
@@ -44,34 +44,5 @@ describe("treeToJson", () => {
     const { session } = makeTree();
     const json = treeToJson(session);
     expect(json.children?.[0]?.children?.[0]?.children).toBeUndefined();
-  });
-});
-
-describe("jsonToTree", () => {
-  it("reconstructs tree with parent refs", () => {
-    const { session } = makeTree();
-    const json = treeToJson(session);
-    const restored = jsonToTree(json, factory);
-    expect(restored.id).toBe(session.id);
-    expect(restored.children).toHaveLength(1);
-    expect(restored.children[0]?.parent).toBe(restored);
-  });
-
-  it("bubbleUp works on restored tree", () => {
-    const { session } = makeTree();
-    const restored = jsonToTree(treeToJson(session), factory);
-    const listener = vi.fn();
-    restored.onUpdate(listener);
-    restored.children[0]?.children[0]?.bubbleUp();
-    expect(listener).toHaveBeenCalled();
-  });
-});
-
-describe("JSON round-trip", () => {
-  it("treeToJson -> jsonToTree preserves structure", () => {
-    const { session } = makeTree();
-    const json = treeToJson(session);
-    const restored = jsonToTree(json, factory);
-    expect(treeToJson(restored)).toEqual(json);
   });
 });

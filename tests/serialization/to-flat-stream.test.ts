@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { toFlatStream } from "../src/flat-stream.js";
-import { newNodeFactory } from "../src/node-factory.js";
+import { newNodeFactory } from "../../src/node-factory.js";
+import { toFlatStream } from "../../src/serialization/to-flat-stream.js";
 
 const factory = newNodeFactory({});
 
