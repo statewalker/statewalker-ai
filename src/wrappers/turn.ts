@@ -1,4 +1,3 @@
-import { createEntry } from "../create-entry.js";
 import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
 import type { Message } from "./message.js";
@@ -39,6 +38,7 @@ export class Turn extends TreeNode {
 
   set model(value: string | undefined) {
     this.props.model = value;
+    this.touch();
   }
 
   get usage(): Usage | undefined {
@@ -47,6 +47,7 @@ export class Turn extends TreeNode {
 
   set usage(value: Usage | undefined) {
     this.props.usage = value;
+    this.touch();
   }
 
   get messages(): Message[] {
@@ -62,27 +63,29 @@ export class Turn extends TreeNode {
   }
 
   addUserMessage(text: string): Message {
-    const entry = createEntry({ type: NodeType.userMessage, content: text });
-    return this.addChild(entry) as Message;
+    return this.addChild({
+      type: NodeType.userMessage,
+      content: text,
+    }) as Message;
   }
 
   addAgentMessage(): Message {
-    const entry = createEntry({ type: NodeType.agentMessage, content: "" });
-    return this.addChild(entry) as Message;
+    return this.addChild({
+      type: NodeType.agentMessage,
+      content: "",
+    }) as Message;
   }
 
   addToolCall(callId: string, toolName: string, args?: unknown): ToolCall {
-    const tcEntry = createEntry({
+    const tc = this.addChild({
       type: NodeType.toolCall,
       props: { callId, toolName },
-    });
-    const tc = this.addChild(tcEntry) as ToolCall;
+    }) as ToolCall;
 
-    const reqEntry = createEntry({
+    tc.addChild({
       type: NodeType.toolRequest,
       props: { callId, toolName, args },
     });
-    tc.addChild(reqEntry);
 
     return tc;
   }

@@ -1,34 +1,20 @@
-import { SnowflakeId } from "@repo/ids";
 import { describe, expect, it } from "vitest";
-import { createEntry } from "../src/create-entry.js";
 import { toFlatStream } from "../src/flat-stream.js";
-import { TreeNode } from "../src/tree-node.js";
-import type { NodeFactory } from "../src/types.js";
+import { newNodeFactory } from "../src/node-factory.js";
 
-const defaultFactory: NodeFactory = (data) => new TreeNode(data);
+const factory = newNodeFactory({});
 
 function makeTree() {
-  let time = 1700000000000;
-  const idGen = new SnowflakeId({ now: () => time++ });
+  const session = factory({ type: "session" });
+  const turn = session.addChild({ type: "turn", props: { turnNumber: 1 } });
+  const user = turn.addChild({ type: "user_message", content: "Hello" });
+  const agent = turn.addChild({ type: "agent_message", content: "Hi there" });
+  const thinking = agent.addChild({
+    type: "thinking",
+    content: "Let me think...",
+  });
 
-  const session = new TreeNode(
-    createEntry({ type: "session", idGen }),
-    defaultFactory,
-  );
-  const turn = session.addChild(
-    createEntry({ type: "turn", idGen, props: { turnNumber: 1 } }),
-  );
-  const user = turn.addChild(
-    createEntry({ type: "user_message", idGen, content: "Hello" }),
-  );
-  const agent = turn.addChild(
-    createEntry({ type: "agent_message", idGen, content: "Hi there" }),
-  );
-  const thinking = agent.addChild(
-    createEntry({ type: "thinking", idGen, content: "Let me think..." }),
-  );
-
-  return { session, turn, user, agent, thinking, idGen };
+  return { session, turn, user, agent, thinking };
 }
 
 describe("toFlatStream (full)", () => {
@@ -69,23 +55,24 @@ describe("toFlatStream (full)", () => {
 
 describe("toFlatStream (since filter)", () => {
   it("emits new nodes", () => {
-    const { session, idGen } = makeTree();
-    const sinceId = idGen.generate();
+    const { session } = makeTree();
+    const cursor = factory({ type: "_cursor" });
+    const sinceId = cursor.id;
 
-    const newTurn = session.addChild(
-      createEntry({ type: "turn", idGen, props: { turnNumber: 2 } }),
-    );
-    newTurn.addChild(
-      createEntry({ type: "user_message", idGen, content: "new" }),
-    );
+    const newTurn = session.addChild({
+      type: "turn",
+      props: { turnNumber: 2 },
+    });
+    newTurn.addChild({ type: "user_message", content: "new" });
 
     const nodes = [...toFlatStream(session, sinceId)];
     expect(nodes).toHaveLength(2);
   });
 
   it("emits modified old nodes", () => {
-    const { session, agent, idGen } = makeTree();
-    const sinceId = idGen.generate();
+    const { session, agent } = makeTree();
+    const cursor = factory({ type: "_cursor" });
+    const sinceId = cursor.id;
 
     agent.content = "Hi there, updated!";
     agent.touch();
@@ -97,10 +84,12 @@ describe("toFlatStream (since filter)", () => {
   });
 
   it("emits both new and modified", () => {
-    const { session, agent, idGen } = makeTree();
-    const sinceId = idGen.generate();
+    const { session, agent } = makeTree();
+    const cursor = factory({ type: "_cursor" });
+    const sinceId = cursor.id;
+
     agent.touch();
-    session.addChild(createEntry({ type: "turn", idGen }));
+    session.addChild({ type: "turn" });
 
     const nodes = [...toFlatStream(session, sinceId)];
     expect(nodes.map((n) => n.id)).toContain(agent.id);

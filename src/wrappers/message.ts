@@ -1,4 +1,3 @@
-import { createEntry } from "../create-entry.js";
 import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
 
@@ -30,7 +29,9 @@ export class Message extends TreeNode {
   }
 
   addThinkingBlock(): Message {
-    const entry = createEntry({ type: NodeType.thinking, content: "" });
-    return this.addChild(entry) as Message;
+    return this.addChild({
+      type: NodeType.thinking,
+      content: "",
+    }) as Message;
   }
 }

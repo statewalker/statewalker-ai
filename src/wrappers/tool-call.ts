@@ -1,4 +1,3 @@
-import { createEntry } from "../create-entry.js";
 import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
 
@@ -37,16 +36,15 @@ export class ToolCall extends TreeNode {
 
   set progressText(text: string | undefined) {
     this.props.progressText = text;
-    this.notify();
+    this.touch();
   }
 
   addResponse(text: string, isError = false): TreeNode {
-    const entry = createEntry({
+    return this.addChild({
       type: NodeType.toolResponse,
       content: text,
       props: { callId: this.callId, toolName: this.toolName, isError },
     });
-    return this.addChild(entry);
   }
 
   appendUpdate(text: string): void {

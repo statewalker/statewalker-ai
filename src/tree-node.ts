@@ -1,10 +1,10 @@
 import { extractTime } from "@repo/ids";
 import { BaseClass } from "@repo/shared/models";
-import type { NodeFactory, TreeEntry } from "./types.js";
+import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
 
 /** Default factory — creates plain TreeNode for any data. */
 const defaultFactory: NodeFactory = (data) =>
-  new TreeNode(data, defaultFactory);
+  new TreeNode(data as TreeEntry, defaultFactory);
 
 /**
  * Reactive wrapper over `TreeEntry` data.
@@ -96,11 +96,26 @@ export class TreeNode extends BaseClass {
     return result;
   }
 
-  addChild(data: TreeEntry): TreeNode {
-    this.data.children ??= [];
-    this.data.children = [...this.data.children, data];
+  /**
+   * Add a child node. Accepts either:
+   * - `TreeEntry` (existing data with id) — for deserialization/sync
+   * - `NewEntryOptions` (no id required) — for creating new nodes
+   *
+   * The factory generates an id if not provided and creates the typed wrapper.
+   */
+  addChild(data: TreeEntry | NewEntryOptions): TreeNode {
+    // Factory handles id generation and type dispatch
+    const node = this.factory(data);
+    const entry = node.data;
 
-    const node = this._wrapChild(data);
+    this.data.children ??= [];
+    this.data.children = [...this.data.children, entry];
+
+    node.parent = this;
+    this._childCache.set(entry.id, node);
+    const unsub = node.onUpdate(() => this.bubbleUp());
+    this._childCleanups.set(node, unsub);
+
     this.notify();
     return node;
   }
@@ -160,6 +175,7 @@ export class TreeNode extends BaseClass {
 
   // ── Internal ────────────────────────────────────────────────
 
+  /** Wrap an existing TreeEntry child (from data.children) without going through factory addChild path. */
   private _wrapChild(entry: TreeEntry): TreeNode {
     const node = this.factory(entry);
     node.parent = this;
@@ -170,4 +186,14 @@ export class TreeNode extends BaseClass {
 
     return node;
   }
+}
+
+/**
+ * Wrap a `TreeEntry` data tree using a factory.
+ */
+export function wrapTree(
+  data: TreeEntry | NewEntryOptions,
+  factory: NodeFactory,
+): TreeNode {
+  return factory(data);
 }

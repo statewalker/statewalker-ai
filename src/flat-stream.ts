@@ -27,8 +27,13 @@ export function* toFlatStream(
   const sinceTime = extractTime(since);
   for (const node of nodes) {
     if (node.id >= since) {
+      // New node (created at or after the checkpoint)
       yield nodeToFlat(node);
-    } else if (node.updatedAt.getTime() >= sinceTime) {
+    } else if (
+      node.props.updatedAt !== undefined &&
+      node.updatedAt.getTime() >= sinceTime
+    ) {
+      // Old node explicitly modified since the checkpoint
       yield nodeToFlat(node);
     }
   }

@@ -1,4 +1,3 @@
-import { createEntry } from "../create-entry.js";
 import { NodeType } from "../node-types.js";
 import { TreeNode } from "../tree-node.js";
 import type { Turn } from "./turn.js";
@@ -14,7 +13,6 @@ export class Session extends TreeNode {
   }
 
   addTurn(props?: Record<string, unknown>): Turn {
-    const entry = createEntry({ type: NodeType.turn, props });
-    return this.addChild(entry) as Turn;
+    return this.addChild({ type: NodeType.turn, props }) as Turn;
   }
 }

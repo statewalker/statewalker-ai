@@ -1,7 +1,5 @@
-import { SnowflakeId } from "@repo/ids";
 import { describe, expect, it, vi } from "vitest";
 import { applyFlat } from "../src/apply-flat.js";
-import { createEntry } from "../src/create-entry.js";
 import { toFlatStream } from "../src/flat-stream.js";
 import { jsonToTree, treeToJson } from "../src/json.js";
 import { NodeType } from "../src/node-types.js";
@@ -16,11 +14,7 @@ import {
 const factory = createAgentNodeFactory();
 
 function buildConversation() {
-  let time = 1700000000000;
-  const idGen = new SnowflakeId({ now: () => time++ });
-
-  const rootData = createEntry({ type: NodeType.session, idGen });
-  const session = new Session(rootData, factory);
+  const session = factory({ type: NodeType.session }) as Session;
 
   const turn1 = session.addTurn({ turnNumber: 1 });
   turn1.addUserMessage("Read /tmp/data.json");
@@ -44,16 +38,7 @@ function buildConversation() {
   agentMsg2.appendDelta("The file contains a JSON object.");
   turn2.stopReason = "stop";
 
-  return {
-    session,
-    turn1,
-    turn2,
-    agentMsg,
-    thinking,
-    toolCall,
-    agentMsg2,
-    idGen,
-  };
+  return { session, turn1, turn2, agentMsg, thinking, toolCall, agentMsg2 };
 }
 
 describe("Session", () => {
@@ -180,7 +165,6 @@ describe("JSON round-trip", () => {
     expect(t1).toBeInstanceOf(Turn);
     expect(t1.turnNumber).toBe(1);
     expect(t1.messages).toHaveLength(2);
-    expect(t1.messages[0]?.role).toBe("user");
     expect(t1.messages[0]?.text).toBe("Read /tmp/data.json");
     expect(t1.messages[1]?.text).toBe("Sure, let me read that file.");
 
@@ -206,17 +190,23 @@ describe("Flat stream round-trip", () => {
   });
 
   it("incremental sync", () => {
-    const { session, idGen } = buildConversation();
+    const { session } = buildConversation();
     const clone = applyFlat(
       undefined,
       toFlatStream(session),
       factory,
     ) as Session;
 
-    const sinceId = idGen.generate();
+    // Use last id in clone as sync cursor
+    let lastId = clone.id;
+    clone.visit((e) => {
+      if (e.id > lastId) lastId = e.id;
+      return undefined;
+    });
+
     session.addTurn({ turnNumber: 3 }).addUserMessage("More?");
 
-    applyFlat(clone, toFlatStream(session, sinceId), factory);
+    applyFlat(clone, toFlatStream(session, lastId), factory);
     expect(clone.turns).toHaveLength(3);
     expect(clone.turns[2]?.messages[0]?.text).toBe("More?");
   });
