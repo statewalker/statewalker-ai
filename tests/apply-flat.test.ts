@@ -106,7 +106,7 @@ describe("applyFlat: update existing tree", () => {
         id: agent.id,
         type: "agent_message",
         parentId: ch(clone, 0).id,
-        props: { updatedAt: Date.now() },
+        props: { updatedAt: new Date().toISOString() },
         content: "Hi there, updated!",
       },
     ]);
@@ -151,6 +151,7 @@ describe("applyFlat: update existing tree", () => {
         id: newMsgId,
         type: "user_message",
         parentId: newTurnId,
+        props: {},
         content: "New message",
       },
     ]);
@@ -184,7 +185,7 @@ describe("applyFlat: incremental sync", () => {
     const sinceId = idGen.generate();
 
     agent.content = "Updated reply";
-    agent.props.updatedAt = Date.now();
+    agent.touch();
 
     const newTurn = new TreeEntry({
       type: "turn",

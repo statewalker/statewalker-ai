@@ -110,9 +110,10 @@ describe("touch()", () => {
 
     entry.touch();
 
-    expect(entry.props.updatedAt).toBeTypeOf("number");
-    expect(entry.props.updatedAt as number).toBeGreaterThanOrEqual(time);
-    expect(entry.updatedAt.getTime()).toBe(entry.props.updatedAt);
+    expect(entry.props.updatedAt).toBeTypeOf("string");
+    const parsed = new Date(entry.props.updatedAt as string);
+    expect(parsed.getTime()).toBeGreaterThanOrEqual(time);
+    expect(entry.updatedAt.getTime()).toBe(parsed.getTime());
   });
 
   it("calls notify and bubbleUp", () => {

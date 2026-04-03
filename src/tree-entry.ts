@@ -64,9 +64,9 @@ export class TreeEntry extends BaseClass implements TreeNode {
    * clears the cache, and calls `notify()` + `bubbleUp()`.
    */
   touch(): void {
-    const now = Date.now();
-    this.props.updatedAt = now;
-    this._cachedUpdatedAt = new Date(now);
+    const now = new Date();
+    this.props.updatedAt = now.toISOString();
+    this._cachedUpdatedAt = now;
     this.bubbleUp();
   }
 
