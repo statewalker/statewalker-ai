@@ -8,22 +8,26 @@ function makeTree() {
   let time = 1700000000000;
   const idGen = new SnowflakeId({ now: () => time++ });
 
-  const session = new TreeEntry("session", { idGen });
-  const turn = new TreeEntry("turn", { idGen, props: { turnNumber: 1 } });
-  const user = new TreeEntry("user_message", { idGen, content: "Hello" });
-  const agent = new TreeEntry("agent_message", {
+  const session = new TreeEntry({ type: "session", idGen });
+  const turn = new TreeEntry({ type: "turn", idGen, props: { turnNumber: 1 } });
+  const user = new TreeEntry({ type: "user_message", idGen, content: "Hello" });
+  const agent = new TreeEntry({
+    type: "agent_message",
     idGen,
     content: "Hi there",
   });
-  const toolCall = new TreeEntry("tool_call", {
+  const toolCall = new TreeEntry({
+    type: "tool_call",
     idGen,
     props: { toolName: "read", callId: "c1" },
   });
-  const toolReq = new TreeEntry("tool_request", {
+  const toolReq = new TreeEntry({
+    type: "tool_request",
     idGen,
     props: { args: { path: "/tmp" } },
   });
-  const toolResp = new TreeEntry("tool_response", {
+  const toolResp = new TreeEntry({
+    type: "tool_response",
     idGen,
     content: "file contents",
     props: { isError: false },

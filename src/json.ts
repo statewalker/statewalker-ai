@@ -45,7 +45,8 @@ export function treeToJson(root: TreeEntry): TreeNode {
  * Preserves original IDs. Wires `parent` references via `addChild`.
  */
 export function jsonToTree(json: TreeNode): TreeEntry {
-  const entry = new TreeEntry(json.type, {
+  const entry = new TreeEntry({
+    type: json.type,
     id: json.id,
     props: { ...json.props },
     content: json.content,

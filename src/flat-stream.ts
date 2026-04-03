@@ -8,55 +8,53 @@ import type { FlatTreeNode } from "./types.js";
  *
  * If `since` is provided (a Snowflake ID string), only emits:
  * - Nodes where `id >= since` (created at or after that point)
- * - Nodes where `props.updatedAt >= extractTime(since)` (modified since)
+ * - Nodes where `updatedAt >= since time` (modified since that point)
  */
 export function* toFlatStream(
   root: TreeEntry,
   since?: string,
 ): Generator<FlatTreeNode> {
-  const nodes: FlatTreeNode[] = [];
-  collectFlat(root, undefined, nodes);
-  nodes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const entries: TreeEntry[] = [];
+  collectEntries(root, entries);
+  entries.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   if (!since) {
-    yield* nodes;
+    for (const entry of entries) {
+      yield entryToFlat(entry);
+    }
     return;
   }
 
   const sinceTime = extractTime(since);
-  for (const node of nodes) {
-    if (node.id >= since) {
-      yield node;
-    } else {
-      const updatedAt = node.props.updatedAt;
-      if (typeof updatedAt === "number" && updatedAt >= sinceTime) {
-        yield node;
-      }
+  for (const entry of entries) {
+    if (entry.id >= since) {
+      yield entryToFlat(entry);
+    } else if (entry.updatedAt.getTime() >= sinceTime) {
+      yield entryToFlat(entry);
     }
   }
 }
 
-function collectFlat(
-  entry: TreeEntry,
-  parentId: string | undefined,
-  out: FlatTreeNode[],
-): void {
+function collectEntries(entry: TreeEntry, out: TreeEntry[]): void {
+  out.push(entry);
+  if (entry.children) {
+    for (const child of entry.children) {
+      collectEntries(child, out);
+    }
+  }
+}
+
+function entryToFlat(entry: TreeEntry): FlatTreeNode {
   const node: FlatTreeNode = {
     id: entry.id,
     type: entry.type,
     props: { ...entry.props },
   };
-  if (parentId !== undefined) {
-    node.parentId = parentId;
+  if (entry.parentId !== undefined) {
+    node.parentId = entry.parentId;
   }
   if (entry.content !== undefined) {
     node.content = entry.content;
   }
-  out.push(node);
-
-  if (entry.children) {
-    for (const child of entry.children) {
-      collectFlat(child, entry.id, out);
-    }
-  }
+  return node;
 }

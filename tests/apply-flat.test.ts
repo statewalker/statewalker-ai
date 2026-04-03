@@ -8,13 +8,11 @@ function makeTree() {
   let time = 1700000000000;
   const idGen = new SnowflakeId({ now: () => time++ });
 
-  const session = new TreeEntry("session", { idGen });
-  const turn = new TreeEntry("turn", { idGen, props: { turnNumber: 1 } });
-  const user = new TreeEntry("user_message", {
-    idGen,
-    content: "Hello",
-  });
-  const agent = new TreeEntry("agent_message", {
+  const session = new TreeEntry({ type: "session", idGen });
+  const turn = new TreeEntry({ type: "turn", idGen, props: { turnNumber: 1 } });
+  const user = new TreeEntry({ type: "user_message", idGen, content: "Hello" });
+  const agent = new TreeEntry({
+    type: "agent_message",
     idGen,
     content: "Hi there",
   });
@@ -188,7 +186,8 @@ describe("applyFlat: incremental sync", () => {
     agent.content = "Updated reply";
     agent.props.updatedAt = Date.now();
 
-    const newTurn = new TreeEntry("turn", {
+    const newTurn = new TreeEntry({
+      type: "turn",
       idGen,
       props: { turnNumber: 2 },
     });

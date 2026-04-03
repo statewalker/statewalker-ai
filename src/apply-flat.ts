@@ -32,7 +32,8 @@ export function applyFlat(
       existing.notify();
     } else {
       // Create new node
-      const entry = new TreeEntry(flat.type, {
+      const entry = new TreeEntry({
+        type: flat.type,
         id: flat.id,
         props: { ...flat.props },
         content: flat.content,
