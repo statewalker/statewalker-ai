@@ -79,6 +79,20 @@ export class TreeNode extends BaseClass {
     this.bubbleUp();
   }
 
+  /**
+   * Merge props and optionally replace content. Calls `bubbleUp()`.
+   */
+  update(props?: Record<string, unknown>, content?: string): void {
+    if (props) {
+      Object.assign(this.data.props, props);
+    }
+    if (content !== undefined) {
+      this.data.content = content;
+    }
+    this._cachedUpdatedAt = undefined;
+    this.bubbleUp();
+  }
+
   // ── Children (cached wrappers via factory) ──────────────────
 
   get children(): TreeNode[] {

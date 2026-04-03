@@ -24,11 +24,7 @@ export function applyFlat(
   for (const flat of nodes) {
     const existingNode = nodeIndex.get(flat.id);
     if (existingNode) {
-      Object.assign(existingNode.data.props, flat.props);
-      if (flat.content !== undefined) {
-        existingNode.data.content = flat.content;
-      }
-      existingNode.notify();
+      existingNode.update(flat.props, flat.content);
     } else {
       const entry: TreeEntry = {
         id: flat.id,
