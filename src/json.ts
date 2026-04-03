@@ -1,5 +1,5 @@
 import { type TreeNode, wrapTree } from "./tree-node.js";
-import type { NodeRegistry, TreeEntry } from "./types.js";
+import type { NodeFactory, TreeEntry } from "./types.js";
 
 /**
  * Serialize a `TreeNode` tree to a structural `TreeEntry` JSON object.
@@ -40,13 +40,11 @@ export function treeToJson(root: TreeNode): TreeEntry {
 
 /**
  * Reconstruct a `TreeNode` tree from a structural `TreeEntry` JSON object.
- * Uses the registry to create typed wrappers. Wires parent references.
  */
-export function jsonToTree(json: TreeEntry, registry: NodeRegistry): TreeNode {
-  return wrapTree(buildData(json), registry);
+export function jsonToTree(json: TreeEntry, factory: NodeFactory): TreeNode {
+  return wrapTree(buildData(json), factory);
 }
 
-/** Deep-clone TreeEntry data, preserving children structure. */
 function buildData(json: TreeEntry): TreeEntry {
   const entry: TreeEntry = {
     id: json.id,

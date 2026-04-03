@@ -1,5 +1,5 @@
 import { createEntry, TreeNode } from "./tree-node.js";
-import type { NodeRegistry, TreeEntry } from "./types.js";
+import type { NodeFactory, TreeEntry } from "./types.js";
 
 // ─── Node types ─────────────────────────────────────────────────
 
@@ -95,18 +95,12 @@ export class Turn extends TreeNode {
   }
 
   addUserMessage(text: string): Message {
-    const entry = createEntry({
-      type: NodeType.userMessage,
-      content: text,
-    });
+    const entry = createEntry({ type: NodeType.userMessage, content: text });
     return this.addChild(entry) as Message;
   }
 
   addAgentMessage(): Message {
-    const entry = createEntry({
-      type: NodeType.agentMessage,
-      content: "",
-    });
+    const entry = createEntry({ type: NodeType.agentMessage, content: "" });
     return this.addChild(entry) as Message;
   }
 
@@ -157,10 +151,7 @@ export class Message extends TreeNode {
   }
 
   addThinkingBlock(): Message {
-    const entry = createEntry({
-      type: NodeType.thinking,
-      content: "",
-    });
+    const entry = createEntry({ type: NodeType.thinking, content: "" });
     return this.addChild(entry) as Message;
   }
 }
@@ -223,26 +214,41 @@ export class ToolCall extends TreeNode {
   }
 }
 
-// ─── Default registry ───────────────────────────────────────────
+// ─── Default agent factory ──────────────────────────────────────
 
 /**
- * Create the default registry mapping agent node types to wrapper classes.
+ * Create a node factory from a type → constructor index.
+ * Unknown types fall back to plain TreeNode.
  */
-export function createAgentRegistry(): NodeRegistry {
-  const registry: NodeRegistry = new Map();
+export function newNodeFactory(
+  index: Record<
+    string,
+    new (
+      data: TreeEntry,
+      factory: NodeFactory,
+    ) => TreeNode
+  >,
+): NodeFactory {
+  const factory: NodeFactory = (data: TreeEntry) => {
+    const type = (data.props.type as string) ?? "message";
+    const Ctor = index[type] ?? TreeNode;
+    return new Ctor(data, factory);
+  };
+  return factory;
+}
 
-  const wrap =
-    (Ctor: new (data: TreeEntry, reg: NodeRegistry) => TreeNode) =>
-    (data: TreeEntry, reg: NodeRegistry) =>
-      new Ctor(data, reg);
-
-  registry.set(NodeType.session, wrap(Session));
-  registry.set(NodeType.turn, wrap(Turn));
-  registry.set(NodeType.userMessage, wrap(Message));
-  registry.set(NodeType.agentMessage, wrap(Message));
-  registry.set(NodeType.thinking, wrap(Message));
-  registry.set(NodeType.text, wrap(Message));
-  registry.set(NodeType.toolCall, wrap(ToolCall));
-
-  return registry;
+/**
+ * Create the default agent node factory.
+ * Maps known types to typed wrappers (Session, Turn, Message, ToolCall).
+ */
+export function createAgentNodeFactory(): NodeFactory {
+  return newNodeFactory({
+    [NodeType.session]: Session,
+    [NodeType.turn]: Turn,
+    [NodeType.userMessage]: Message,
+    [NodeType.agentMessage]: Message,
+    [NodeType.thinking]: Message,
+    [NodeType.text]: Message,
+    [NodeType.toolCall]: ToolCall,
+  });
 }

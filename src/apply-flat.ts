@@ -1,5 +1,5 @@
 import { type TreeNode, wrapTree } from "./tree-node.js";
-import type { FlatTreeEntry, NodeRegistry, TreeEntry } from "./types.js";
+import type { FlatTreeEntry, NodeFactory, TreeEntry } from "./types.js";
 
 /**
  * Build or update a `TreeNode` tree from a `FlatTreeEntry` stream.
@@ -7,13 +7,11 @@ import type { FlatTreeEntry, NodeRegistry, TreeEntry } from "./types.js";
  * - If `root` is undefined, the first node creates the root.
  * - If a node's `id` exists, it is updated (merge props, replace content).
  * - If a node's `id` is new, a new node is created and wired via `parentId`.
- *
- * Uses the registry to create typed wrappers.
  */
 export function applyFlat(
   root: TreeNode | undefined,
   nodes: Iterable<FlatTreeEntry>,
-  registry: NodeRegistry,
+  factory: NodeFactory,
 ): TreeNode {
   const dataIndex = new Map<string, TreeEntry>();
   const nodeIndex = new Map<string, TreeNode>();
@@ -50,7 +48,7 @@ export function applyFlat(
       }
 
       if (!root) {
-        root = wrapTree(entry, registry);
+        root = wrapTree(entry, factory);
         nodeIndex.set(flat.id, root);
       }
     }

@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { markdownToTree, treeToMarkdown } from "../src/markdown.js";
 import { createEntry } from "../src/tree-node.js";
 import {
-  createAgentRegistry,
+  createAgentNodeFactory,
   NodeType,
   Session,
   type Turn,
 } from "../src/wrappers.js";
 
-const registry = createAgentRegistry();
+const factory = createAgentNodeFactory();
 
 function buildConversation() {
   let time = 1700000000000;
@@ -17,7 +17,7 @@ function buildConversation() {
 
   const session = new Session(
     createEntry({ type: NodeType.session, idGen }),
-    registry,
+    factory,
   );
   const turn1 = session.addTurn({ turnNumber: 1 });
   turn1.addUserMessage("Read /tmp/data.json");
@@ -75,7 +75,7 @@ describe("markdown round-trip", () => {
   it("preserves full conversation structure", () => {
     const { session } = buildConversation();
     const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, registry) as Session;
+    const restored = markdownToTree(md, factory) as Session;
 
     expect(restored.turns).toHaveLength(2);
 
@@ -102,14 +102,14 @@ describe("markdown round-trip", () => {
     const { session } = buildConversation();
     const originalId = session.id;
     const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, registry);
+    const restored = markdownToTree(md, factory);
     expect(restored.id).toBe(originalId);
   });
 
   it("preserves parent-child relationships", () => {
     const { session } = buildConversation();
     const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, registry);
+    const restored = markdownToTree(md, factory);
     expect(restored.parent).toBeUndefined();
     expect(restored.children[0]?.parent).toBe(restored);
     expect(restored.children[0]?.parentId).toBe(restored.id);

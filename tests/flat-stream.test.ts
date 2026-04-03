@@ -2,9 +2,9 @@ import { SnowflakeId } from "@repo/ids";
 import { describe, expect, it } from "vitest";
 import { toFlatStream } from "../src/flat-stream.js";
 import { createEntry, TreeNode } from "../src/tree-node.js";
-import type { NodeRegistry } from "../src/types.js";
+import type { NodeFactory } from "../src/types.js";
 
-const emptyRegistry: NodeRegistry = new Map();
+const defaultFactory: NodeFactory = (data) => new TreeNode(data);
 
 function makeTree() {
   let time = 1700000000000;
@@ -12,7 +12,7 @@ function makeTree() {
 
   const session = new TreeNode(
     createEntry({ type: "session", idGen }),
-    emptyRegistry,
+    defaultFactory,
   );
   const turn = session.addChild(
     createEntry({ type: "turn", idGen, props: { turnNumber: 1 } }),

@@ -2,9 +2,9 @@ import { SnowflakeId } from "@repo/ids";
 import { describe, expect, it, vi } from "vitest";
 import { jsonToTree, treeToJson } from "../src/json.js";
 import { createEntry, TreeNode } from "../src/tree-node.js";
-import type { NodeRegistry } from "../src/types.js";
+import type { NodeFactory } from "../src/types.js";
 
-const emptyRegistry: NodeRegistry = new Map();
+const defaultFactory: NodeFactory = (data) => new TreeNode(data);
 
 function makeTree() {
   let time = 1700000000000;
@@ -12,7 +12,7 @@ function makeTree() {
 
   const session = new TreeNode(
     createEntry({ type: "session", idGen }),
-    emptyRegistry,
+    defaultFactory,
   );
   const turn = session.addChild(
     createEntry({ type: "turn", idGen, props: { turnNumber: 1 } }),
@@ -77,7 +77,7 @@ describe("jsonToTree", () => {
   it("reconstructs tree with parent refs", () => {
     const { session } = makeTree();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, emptyRegistry);
+    const restored = jsonToTree(json, defaultFactory);
 
     expect(restored.id).toBe(session.id);
     expect(restored.children).toHaveLength(1);
@@ -89,7 +89,7 @@ describe("jsonToTree", () => {
   it("bubbleUp works on restored tree", () => {
     const { session } = makeTree();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, emptyRegistry);
+    const restored = jsonToTree(json, defaultFactory);
 
     const listener = vi.fn();
     restored.onUpdate(listener);
@@ -102,7 +102,7 @@ describe("JSON round-trip", () => {
   it("treeToJson -> jsonToTree preserves structure", () => {
     const { session } = makeTree();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, emptyRegistry);
+    const restored = jsonToTree(json, defaultFactory);
     const jsonAgain = treeToJson(restored);
     expect(jsonAgain).toEqual(json);
   });

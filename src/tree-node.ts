@@ -1,29 +1,32 @@
 import { extractTime, SnowflakeId } from "@repo/ids";
 import { BaseClass } from "@repo/shared/models";
-import type { NodeRegistry, TreeEntry } from "./types.js";
+import type { NodeFactory, TreeEntry } from "./types.js";
 
 const defaultIdGen = new SnowflakeId();
 
+/** Default factory — creates plain TreeNode for any data. */
+const defaultFactory: NodeFactory = (data) =>
+  new TreeNode(data, defaultFactory);
+
 /**
  * Reactive wrapper over `TreeEntry` data.
- * Provides utility methods (addChild, bubbleUp, visit, touch)
- * and caches child wrappers via the registry.
+ * Caches child wrappers created via the factory.
  *
  * Subclasses (Session, Turn, Message, ToolCall) add typed accessors.
  */
 export class TreeNode extends BaseClass {
   readonly data: TreeEntry;
-  readonly registry: NodeRegistry;
+  readonly factory: NodeFactory;
   parent?: TreeNode;
 
   private _childCleanups = new Map<TreeNode, () => void>();
   private _childCache = new Map<string, TreeNode>();
   private _cachedUpdatedAt?: Date;
 
-  constructor(data: TreeEntry, registry: NodeRegistry) {
+  constructor(data: TreeEntry, factory: NodeFactory = defaultFactory) {
     super();
     this.data = data;
-    this.registry = registry;
+    this.factory = factory;
   }
 
   // ── Data delegates ──────────────────────────────────────────
@@ -78,13 +81,12 @@ export class TreeNode extends BaseClass {
     this.bubbleUp();
   }
 
-  // ── Children (cached wrappers via registry) ─────────────────
+  // ── Children (cached wrappers via factory) ──────────────────
 
   get children(): TreeNode[] {
     const dataChildren = this.data.children;
     if (!dataChildren || dataChildren.length === 0) return [];
 
-    // Sync cache with data: wrap new entries, keep existing ones
     const result: TreeNode[] = [];
     for (const entry of dataChildren) {
       let cached = this._childCache.get(entry.id);
@@ -161,11 +163,7 @@ export class TreeNode extends BaseClass {
   // ── Internal ────────────────────────────────────────────────
 
   private _wrapChild(entry: TreeEntry): TreeNode {
-    const type = (entry.props.type as string) ?? "message";
-    const factory = this.registry.get(type);
-    const node = factory
-      ? factory(entry, this.registry)
-      : new TreeNode(entry, this.registry);
+    const node = this.factory(entry);
     node.parent = this;
     this._childCache.set(entry.id, node);
 
@@ -201,11 +199,8 @@ export function createEntry(
 }
 
 /**
- * Wrap a `TreeEntry` data tree with `TreeNode` wrappers using the registry.
- * The root gets the appropriate wrapper based on its type.
+ * Wrap a `TreeEntry` data tree using a factory.
  */
-export function wrapTree(data: TreeEntry, registry: NodeRegistry): TreeNode {
-  const type = (data.props.type as string) ?? "message";
-  const factory = registry.get(type);
-  return factory ? factory(data, registry) : new TreeNode(data, registry);
+export function wrapTree(data: TreeEntry, factory: NodeFactory): TreeNode {
+  return factory(data);
 }

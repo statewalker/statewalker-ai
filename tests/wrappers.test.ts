@@ -5,7 +5,7 @@ import { toFlatStream } from "../src/flat-stream.js";
 import { jsonToTree, treeToJson } from "../src/json.js";
 import { createEntry } from "../src/tree-node.js";
 import {
-  createAgentRegistry,
+  createAgentNodeFactory,
   Message,
   NodeType,
   Session,
@@ -13,14 +13,14 @@ import {
   Turn,
 } from "../src/wrappers.js";
 
-const registry = createAgentRegistry();
+const factory = createAgentNodeFactory();
 
 function buildConversation() {
   let time = 1700000000000;
   const idGen = new SnowflakeId({ now: () => time++ });
 
   const rootData = createEntry({ type: NodeType.session, idGen });
-  const session = new Session(rootData, registry);
+  const session = new Session(rootData, factory);
 
   const turn1 = session.addTurn({ turnNumber: 1 });
   turn1.addUserMessage("Read /tmp/data.json");
@@ -171,7 +171,7 @@ describe("JSON round-trip", () => {
   it("preserves full conversation", () => {
     const { session } = buildConversation();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, registry) as Session;
+    const restored = jsonToTree(json, factory) as Session;
 
     expect(restored).toBeInstanceOf(Session);
     expect(restored.turns).toHaveLength(2);
@@ -197,7 +197,7 @@ describe("Flat stream round-trip", () => {
     const clone = applyFlat(
       undefined,
       toFlatStream(session),
-      registry,
+      factory,
     ) as Session;
 
     expect(clone).toBeInstanceOf(Session);
@@ -210,13 +210,13 @@ describe("Flat stream round-trip", () => {
     const clone = applyFlat(
       undefined,
       toFlatStream(session),
-      registry,
+      factory,
     ) as Session;
 
     const sinceId = idGen.generate();
     session.addTurn({ turnNumber: 3 }).addUserMessage("More?");
 
-    applyFlat(clone, toFlatStream(session, sinceId), registry);
+    applyFlat(clone, toFlatStream(session, sinceId), factory);
     expect(clone.turns).toHaveLength(3);
     expect(clone.turns[2]?.messages[0]?.text).toBe("More?");
   });
@@ -230,7 +230,7 @@ describe("Children caching", () => {
     expect(t1a).toBe(t1b);
   });
 
-  it("typed wrappers from registry", () => {
+  it("typed wrappers from factory", () => {
     const { session } = buildConversation();
     expect(session.turns[0]).toBeInstanceOf(Turn);
     expect(session.turns[0]?.messages[0]).toBeInstanceOf(Message);

@@ -3,7 +3,7 @@ import { parseDocument, serializeDocument } from "@repo/content-blocks/parser";
 import { applyFlat } from "./apply-flat.js";
 import { toFlatStream } from "./flat-stream.js";
 import type { TreeNode } from "./tree-node.js";
-import type { FlatTreeEntry, NodeRegistry } from "./types.js";
+import type { FlatTreeEntry, NodeFactory } from "./types.js";
 
 /**
  * Serialize a tree to markdown. Each node becomes a content-blocks section.
@@ -33,11 +33,11 @@ export function treeToMarkdown(root: TreeNode): string {
 }
 
 /**
- * Deserialize a tree from markdown. Uses the registry for typed wrappers.
+ * Deserialize a tree from markdown.
  */
 export function markdownToTree(
   markdown: string,
-  registry: NodeRegistry,
+  factory: NodeFactory,
 ): TreeNode {
   const doc = parseDocument(markdown);
   const nodes: FlatTreeEntry[] = [];
@@ -57,7 +57,7 @@ export function markdownToTree(
     nodes.push(flat);
   }
 
-  return applyFlat(undefined, nodes, registry);
+  return applyFlat(undefined, nodes, factory);
 }
 
 function sectionPropsToFlat(

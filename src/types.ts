@@ -23,14 +23,8 @@ export interface FlatTreeEntry {
 
 /**
  * Factory function that creates a TreeNode wrapper for a given TreeEntry.
+ * The factory decides which subclass to instantiate based on data (e.g., props.type).
  */
 export type NodeFactory = (
   data: TreeEntry,
-  registry: NodeRegistry,
 ) => import("./tree-node.js").TreeNode;
-
-/**
- * Maps props.type → factory. Used to create typed wrappers during
- * child access, deserialization, and tree construction.
- */
-export type NodeRegistry = Map<string, NodeFactory>;

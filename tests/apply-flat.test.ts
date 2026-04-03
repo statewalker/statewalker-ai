@@ -3,9 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { applyFlat } from "../src/apply-flat.js";
 import { toFlatStream } from "../src/flat-stream.js";
 import { createEntry, TreeNode } from "../src/tree-node.js";
-import type { NodeRegistry } from "../src/types.js";
+import type { NodeFactory } from "../src/types.js";
 
-const emptyRegistry: NodeRegistry = new Map();
+const defaultFactory: NodeFactory = (data) => new TreeNode(data);
 
 function makeTree() {
   let time = 1700000000000;
@@ -13,7 +13,7 @@ function makeTree() {
 
   const session = new TreeNode(
     createEntry({ type: "session", idGen }),
-    emptyRegistry,
+    defaultFactory,
   );
   const turn = session.addChild(
     createEntry({ type: "turn", idGen, props: { turnNumber: 1 } }),
@@ -38,7 +38,7 @@ function treeIds(node: TreeNode): string[] {
 describe("applyFlat: build from scratch", () => {
   it("builds a tree from flat stream", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
 
     expect(clone.id).toBe(session.id);
     expect(clone.type).toBe("session");
@@ -49,13 +49,13 @@ describe("applyFlat: build from scratch", () => {
 
   it("preserves all IDs", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     expect(treeIds(clone)).toEqual(treeIds(session));
   });
 
   it("preserves content and props", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const turnClone = clone.children[0];
     expect(turnClone?.props.turnNumber).toBe(1);
     expect(turnClone?.children[0]?.content).toBe("Hello");
@@ -64,7 +64,7 @@ describe("applyFlat: build from scratch", () => {
 
   it("wires parent references", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const turnClone = clone.children[0];
     expect(turnClone?.parent).toBe(clone);
     expect(turnClone?.parentId).toBe(clone.id);
@@ -72,7 +72,7 @@ describe("applyFlat: build from scratch", () => {
 
   it("bubbleUp works on cloned tree", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const listener = vi.fn();
     clone.onUpdate(listener);
     clone.children[0]?.children[0]?.bubbleUp();
@@ -84,7 +84,7 @@ describe("applyFlat: update existing tree", () => {
   it("updates content of existing node", () => {
     const { session } = makeTree();
     const agent = session.children[0]?.children[1];
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const agentClone = clone.children[0]?.children[1];
     expect(agentClone?.content).toBe("Hi there");
 
@@ -98,7 +98,7 @@ describe("applyFlat: update existing tree", () => {
           content: "Hi there, updated!",
         },
       ],
-      emptyRegistry,
+      defaultFactory,
     );
 
     expect(agentClone?.content).toBe("Hi there, updated!");
@@ -106,7 +106,7 @@ describe("applyFlat: update existing tree", () => {
 
   it("adds new node to existing tree", () => {
     const { session, idGen } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const newId = idGen.generate();
 
     applyFlat(
@@ -118,7 +118,7 @@ describe("applyFlat: update existing tree", () => {
           props: { type: "turn", turnNumber: 2 },
         },
       ],
-      emptyRegistry,
+      defaultFactory,
     );
 
     expect(clone.children).toHaveLength(2);
@@ -129,7 +129,7 @@ describe("applyFlat: update existing tree", () => {
 describe("applyFlat: round-trip", () => {
   it("toFlatStream -> applyFlat produces equivalent tree", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     expect(treeIds(clone)).toEqual(treeIds(session));
     expect([...toFlatStream(clone)]).toEqual([...toFlatStream(session)]);
   });
@@ -138,7 +138,7 @@ describe("applyFlat: round-trip", () => {
 describe("applyFlat: incremental sync", () => {
   it("syncs new and modified nodes", () => {
     const { session, idGen } = makeTree();
-    const tree2 = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const tree2 = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const sinceId = idGen.generate();
 
     const agent = session.children[0]?.children[1];
@@ -150,7 +150,7 @@ describe("applyFlat: incremental sync", () => {
       createEntry({ type: "turn", idGen, props: { turnNumber: 2 } }),
     );
 
-    applyFlat(tree2, toFlatStream(session, sinceId), emptyRegistry);
+    applyFlat(tree2, toFlatStream(session, sinceId), defaultFactory);
     expect(tree2.children[0]?.children[1]?.content).toBe("Updated reply");
     expect(tree2.children).toHaveLength(2);
   });
@@ -159,10 +159,10 @@ describe("applyFlat: incremental sync", () => {
 describe("applyFlat: idempotent", () => {
   it("applying same stream twice is a no-op", () => {
     const { session } = makeTree();
-    const clone = applyFlat(undefined, toFlatStream(session), emptyRegistry);
+    const clone = applyFlat(undefined, toFlatStream(session), defaultFactory);
     const stream = [...toFlatStream(session)];
-    applyFlat(clone, stream, emptyRegistry);
-    applyFlat(clone, stream, emptyRegistry);
+    applyFlat(clone, stream, defaultFactory);
+    applyFlat(clone, stream, defaultFactory);
     expect(clone.children).toHaveLength(1);
     expect(treeIds(clone)).toEqual(treeIds(session));
   });
