@@ -4,12 +4,7 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./agent": "./src/agent/index.ts",
-    "./events": "./src/events/index.ts",
-    "./tools": "./src/tools/index.ts",
-    "./context": "./src/context/index.ts",
-    "./skills": "./src/skills/index.ts"
+    ".": "./src/index.ts"
   },
   "files": ["dist/**", "src/**"],
   "scripts": {
@@ -24,7 +19,7 @@
   },
   "dependencies": {
     "@statewalker/ai": "workspace:*",
-    "zod": "catalog:"
+    "@statewalker/ai-agent-state": "workspace:*"
   },
   "devDependencies": {
     "tsdown": "catalog:",
