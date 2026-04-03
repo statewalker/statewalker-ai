@@ -1,7 +1,8 @@
 import { SnowflakeId } from "@repo/ids";
 import { describe, expect, it } from "vitest";
+import { createEntry } from "../src/create-entry.js";
 import { toFlatStream } from "../src/flat-stream.js";
-import { createEntry, TreeNode } from "../src/tree-node.js";
+import { TreeNode } from "../src/tree-node.js";
 import type { NodeFactory } from "../src/types.js";
 
 const defaultFactory: NodeFactory = (data) => new TreeNode(data);

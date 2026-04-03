@@ -1,21 +1,7 @@
-import { createEntry, TreeNode } from "./tree-node.js";
+import { createEntry } from "./create-entry.js";
+import { NodeType } from "./node-types.js";
+import { TreeNode } from "./tree-node.js";
 import type { NodeFactory, TreeEntry } from "./types.js";
-
-// ─── Node types ─────────────────────────────────────────────────
-
-export const NodeType = {
-  session: "session",
-  turn: "turn",
-  userMessage: "user_message",
-  agentMessage: "agent_message",
-  thinking: "thinking",
-  text: "text",
-  toolCall: "tool_call",
-  toolRequest: "tool_request",
-  toolResponse: "tool_response",
-  error: "error",
-  inputRejected: "input_rejected",
-} as const;
 
 const MESSAGE_TYPES: Set<string> = new Set([
   NodeType.userMessage,

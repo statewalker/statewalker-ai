@@ -1,6 +1,7 @@
 import { SNOWFLAKE_BASE32_LENGTH, SnowflakeId } from "@repo/ids";
 import { describe, expect, it, vi } from "vitest";
-import { createEntry, TreeNode } from "../src/tree-node.js";
+import { createEntry } from "../src/create-entry.js";
+import { TreeNode } from "../src/tree-node.js";
 import type { NodeFactory, TreeEntry } from "../src/types.js";
 
 const defaultFactory: NodeFactory = (data) => new TreeNode(data);

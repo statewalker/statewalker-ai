@@ -1,4 +1,5 @@
-import { type TreeNode, wrapTree } from "./tree-node.js";
+import { wrapTree } from "./create-entry.js";
+import type { TreeNode } from "./tree-node.js";
 import type { FlatTreeEntry, NodeFactory, TreeEntry } from "./types.js";
 
 /**
