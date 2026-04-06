@@ -22,9 +22,9 @@ export function markdownToTree(
     if (!rawProps.id) continue;
 
     const flat = sectionPropsToFlat(rawProps);
-    const content =
+    const raw =
       section.blocks.length > 0 ? section.blocks[0]?.content : undefined;
-    if (content) flat.content = content;
+    if (raw) flat.content = stripCodeFence(raw);
     nodes.push(flat);
   }
 
@@ -47,6 +47,14 @@ function sectionPropsToFlat(
   const flat: FlatTreeEntry = { id, props };
   if (parentId) flat.parentId = parentId;
   return flat;
+}
+
+const CODE_FENCE_RE = /^```[^\n]*\n([\s\S]*)\n```$/;
+
+/** Strip a fenced code block wrapper, returning the inner content. */
+function stripCodeFence(text: string): string {
+  const m = CODE_FENCE_RE.exec(text);
+  return m ? (m[1] as string) : text;
 }
 
 function tryParseJson(value: string): unknown {
