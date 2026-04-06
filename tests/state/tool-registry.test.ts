@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { ToolRegistry } from "../src/state/tool-registry.js";
+import { ToolRegistry } from "../../src/state/tool-registry.js";
 
 function makeTool(desc: string) {
   return tool({

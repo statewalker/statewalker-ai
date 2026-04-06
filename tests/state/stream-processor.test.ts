@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { createAgentNodeFactory, type Session } from "../src/state/index.js";
-import { NodeType } from "../src/state/node-types.js";
-import type { Turn } from "../src/state/turn.js";
+import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
+import { NodeType } from "../../src/state/node-types.js";
+import type { Turn } from "../../src/state/turn.js";
 
 function makeSession(): Session {
   const factory = createAgentNodeFactory();

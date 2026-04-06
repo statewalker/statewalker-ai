@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseSkillMarkdown } from "../src/skills/skill-parser.js";
+import { parseSkillMarkdown } from "../../src/skills/skill-parser.js";
 
 describe("parseSkillMarkdown", () => {
   describe("with frontmatter", () => {

@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { AgentController } from "../src/agent-controller.js";
-import { Inbox } from "../src/state/inbox.js";
-import { createAgentNodeFactory, type Session } from "../src/state/index.js";
-import { SkillsModel } from "../src/state/skills-model.js";
-import { ToolRegistry } from "../src/state/tool-registry.js";
+import { AgentController } from "../../src/controller/agent-controller.js";
+import { Inbox } from "../../src/state/inbox.js";
+import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
+import { SkillsModel } from "../../src/state/skills-model.js";
+import { ToolRegistry } from "../../src/state/tool-registry.js";
 
 function makeSession(): Session {
   const factory = createAgentNodeFactory();

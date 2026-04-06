@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ContentSummarizer } from "../src/context/content-summarizer.js";
-import { selectWithCompaction } from "../src/context/select-messages.js";
-import { createAgentNodeFactory, type Session } from "../src/state/index.js";
+import type { ContentSummarizer } from "../../src/context/content-summarizer.js";
+import { selectWithCompaction } from "../../src/context/select-messages.js";
+import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
 
 function makeSession(): Session {
   const factory = createAgentNodeFactory();

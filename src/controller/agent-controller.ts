@@ -3,18 +3,18 @@ import { stepCountIs, streamText } from "ai";
 import {
   type SelectionStrategy,
   selectAll,
-} from "./context/select-messages.js";
-import { Inbox, type InboxMessage } from "./state/inbox.js";
-import type { LogMessage } from "./state/log-message.js";
-import { createAgentNodeFactory } from "./state/node-factory.js";
-import { NodeType } from "./state/node-types.js";
-import type { Session } from "./state/session.js";
-import { SkillsModel } from "./state/skills-model.js";
-import { ToolRegistry } from "./state/tool-registry.js";
-import type { Turn } from "./state/turn.js";
-import { createListSkillsTool } from "./tools/list-skills-tool.js";
-import { createListToolsTool } from "./tools/list-tools-tool.js";
-import { createUseSkillsTool } from "./tools/use-skills-tool.js";
+} from "../context/select-messages.js";
+import { Inbox, type InboxMessage } from "../state/inbox.js";
+import type { LogMessage } from "../state/log-message.js";
+import { createAgentNodeFactory } from "../state/node-factory.js";
+import { NodeType } from "../state/node-types.js";
+import type { Session } from "../state/session.js";
+import { SkillsModel } from "../state/skills-model.js";
+import { ToolRegistry } from "../state/tool-registry.js";
+import type { Turn } from "../state/turn.js";
+import { createListSkillsTool } from "../tools/list-skills-tool.js";
+import { createListToolsTool } from "../tools/list-tools-tool.js";
+import { createUseSkillsTool } from "../tools/use-skills-tool.js";
 
 const SKILLS_INSTRUCTION = `## Skills
 You have access to specialized skills. Use the \`use_skills\` tool to search

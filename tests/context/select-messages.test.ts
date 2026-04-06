@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { selectAll } from "../src/context/select-messages.js";
-import { createAgentNodeFactory, type Session } from "../src/state/index.js";
+import { selectAll } from "../../src/context/select-messages.js";
+import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
 
 function makeSession(): Session {
   const factory = createAgentNodeFactory();

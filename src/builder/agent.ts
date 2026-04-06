@@ -1,5 +1,5 @@
-import type { AgentController } from "../agent-controller.js";
 import type { AgentContext } from "../config/types.js";
+import type { AgentController } from "../controller/agent-controller.js";
 import type { Inbox } from "../state/inbox.js";
 import type { LogMessage } from "../state/log-message.js";
 import type { Session } from "../state/session.js";

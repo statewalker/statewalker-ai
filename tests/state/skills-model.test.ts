@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { SkillsModel } from "../src/state/skills-model.js";
+import { SkillsModel } from "../../src/state/skills-model.js";
 
 const SKILL_A = {
   name: "skill-a",

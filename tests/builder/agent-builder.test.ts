@@ -3,12 +3,12 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { tool } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { Agent } from "../src/builder/agent.js";
+import { Agent } from "../../src/builder/agent.js";
 import {
   AgentBuilder,
   type ToolFactory,
-} from "../src/builder/agent-builder.js";
-import { AgentManager } from "../src/builder/agent-manager.js";
+} from "../../src/builder/agent-builder.js";
+import { AgentManager } from "../../src/builder/agent-manager.js";
 
 function mockProvider() {
   return { languageModel: vi.fn() } as any;

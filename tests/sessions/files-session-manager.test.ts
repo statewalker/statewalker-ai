@@ -1,15 +1,15 @@
 import { tryReadText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
-import { FilesSessionManager } from "../src/sessions/files-session-manager.js";
-import type { SessionManager } from "../src/sessions/types.js";
+import { FilesSessionManager } from "../../src/sessions/files-session-manager.js";
+import type { SessionManager } from "../../src/sessions/types.js";
 import {
   createAgentNodeFactory,
   NodeType,
   Session,
   ToolCall,
   Turn,
-} from "../src/state/index.js";
+} from "../../src/state/index.js";
 
 const factory = createAgentNodeFactory();
 

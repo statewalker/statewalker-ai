@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { SkillsModel } from "../src/state/skills-model.js";
-import { createUseSkillsTool } from "../src/tools/use-skills-tool.js";
+import { SkillsModel } from "../../src/state/skills-model.js";
+import { createUseSkillsTool } from "../../src/tools/use-skills-tool.js";
 
 // Mock generateText at the module level
 vi.mock("ai", async (importOriginal) => {

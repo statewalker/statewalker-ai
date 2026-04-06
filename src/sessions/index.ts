@@ -1,2 +1,2 @@
-export { FilesSessionManager } from "./files-session-manager.js";
-export type { SessionManager, SessionMetadata } from "./types.js";
+export * from "./files-session-manager.js";
+export * from "./types.js";

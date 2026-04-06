@@ -2,8 +2,8 @@ import { BaseClass } from "@repo/shared/models";
 import { tool } from "ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { bridgeMcpTools } from "../src/mcp/bridge-mcp-tools.js";
-import { ToolRegistry } from "../src/state/tool-registry.js";
+import { bridgeMcpTools } from "../../src/mcp/bridge-mcp-tools.js";
+import { ToolRegistry } from "../../src/state/tool-registry.js";
 
 function makeTool(desc: string) {
   return tool({

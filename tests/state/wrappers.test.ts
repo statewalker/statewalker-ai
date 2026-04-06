@@ -12,7 +12,7 @@ import {
   Session,
   ToolCall,
   Turn,
-} from "../src/state/index.js";
+} from "../../src/state/index.js";
 
 const factory = createAgentNodeFactory();
 

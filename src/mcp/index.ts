@@ -1,5 +1,2 @@
-export { bridgeMcpTools } from "./bridge-mcp-tools.js";
-export {
-  McpClientManager,
-  type McpServerConfig,
-} from "./mcp-client-manager.js";
+export * from "./bridge-mcp-tools.js";
+export * from "./mcp-client-manager.js";

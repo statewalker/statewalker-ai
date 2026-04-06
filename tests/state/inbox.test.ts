@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Inbox } from "../src/state/inbox.js";
+import { Inbox } from "../../src/state/inbox.js";
 
 describe("Inbox", () => {
   it("push enqueues and increments pending", () => {

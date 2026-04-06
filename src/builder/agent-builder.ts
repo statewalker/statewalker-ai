@@ -2,17 +2,17 @@ import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import type { ToolSet } from "ai";
-import {
-  AgentController,
-  type AgentControllerConfig,
-} from "../agent-controller.js";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
 import type { AgentContext } from "../config/types.js";
 import type { SelectionStrategy } from "../context/select-messages.js";
+import {
+  AgentController,
+  type AgentControllerConfig,
+} from "../controller/agent-controller.js";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
 import { McpClientManager } from "../mcp/mcp-client-manager.js";
-import { createProvider } from "../provider-factory.js";
+import { createProvider } from "../provider/provider-factory.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
 import type { SessionManager } from "../sessions/types.js";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";

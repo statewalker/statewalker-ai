@@ -1,7 +1,7 @@
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
-import { ConfigManager } from "../src/config/config-manager.js";
+import { ConfigManager } from "../../src/config/config-manager.js";
 
 describe("ConfigManager", () => {
   let files: MemFilesApi;
