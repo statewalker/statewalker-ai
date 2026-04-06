@@ -27,7 +27,7 @@
     "@repo/shared": "workspace:*"
   },
   "devDependencies": {
-    "@statewalker/ai": "workspace:*",
+    "@statewalker/ai-agent": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

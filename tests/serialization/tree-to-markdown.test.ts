@@ -2,7 +2,7 @@ import {
   createAgentNodeFactory,
   NodeType,
   type Session,
-} from "@statewalker/ai";
+} from "@statewalker/ai-agent";
 import { describe, expect, it } from "vitest";
 import { treeToMarkdown } from "../../src/serialization/tree-to-markdown.js";
 
