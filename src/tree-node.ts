@@ -3,8 +3,8 @@ import { BaseClass } from "@repo/shared/models";
 import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
 
 /** Default factory — creates plain TreeNode for any data. */
-const defaultFactory: NodeFactory = (data) =>
-  new TreeNode(data as TreeEntry, defaultFactory);
+const defaultFactory: NodeFactory = ((data: TreeEntry | NewEntryOptions) =>
+  new TreeNode(data as TreeEntry, defaultFactory)) as NodeFactory;
 
 /**
  * Reactive wrapper over `TreeEntry` data.
