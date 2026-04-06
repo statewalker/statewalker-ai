@@ -320,16 +320,11 @@ export class Turn extends TreeNode {
     this.stop(reason);
     this._active.clear();
 
-    // Accumulate per-step usage (SDK sends { promptTokens, completionTokens })
-    const stepUsage = part.usage as
-      | { promptTokens?: number; completionTokens?: number }
-      | undefined;
+    // AI SDK v6 sends LanguageModelUsage { inputTokens, outputTokens, … }
+    const stepUsage = part.usage as SdkUsage | undefined;
     if (stepUsage) {
       const prev = this.usage ?? { input: 0, output: 0 };
-      this.usage = {
-        input: prev.input + (stepUsage.promptTokens ?? 0),
-        output: prev.output + (stepUsage.completionTokens ?? 0),
-      };
+      this.usage = addUsage(prev, stepUsage);
     }
 
     return { type: "step-finish", turnId: this.id, finishReason: reason };
@@ -337,14 +332,9 @@ export class Turn extends TreeNode {
 
   /** Handle stream finish — sets authoritative total usage. */
   handleFinish(part: StreamPart): void {
-    const totalUsage = part.totalUsage as
-      | { promptTokens?: number; completionTokens?: number }
-      | undefined;
+    const totalUsage = part.totalUsage as SdkUsage | undefined;
     if (totalUsage) {
-      this.usage = {
-        input: totalUsage.promptTokens ?? 0,
-        output: totalUsage.completionTokens ?? 0,
-      };
+      this.usage = sdkUsageToUsage(totalUsage);
     }
   }
 
@@ -374,4 +364,46 @@ function copyMetadata(props: Record<string, unknown>, part: StreamPart): void {
   if (part.providerMetadata) {
     props.providerMetadata = part.providerMetadata;
   }
+}
+
+/** AI SDK v6 LanguageModelUsage shape. */
+interface SdkUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  inputTokenDetails?: {
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+  };
+}
+
+function sdkUsageToUsage(sdk: SdkUsage): Usage {
+  return {
+    input: sdk.inputTokens ?? 0,
+    output: sdk.outputTokens ?? 0,
+    ...(sdk.totalTokens != null && { totalTokens: sdk.totalTokens }),
+    ...(sdk.inputTokenDetails?.cacheReadTokens != null && {
+      cacheRead: sdk.inputTokenDetails.cacheReadTokens,
+    }),
+    ...(sdk.inputTokenDetails?.cacheWriteTokens != null && {
+      cacheWrite: sdk.inputTokenDetails.cacheWriteTokens,
+    }),
+  };
+}
+
+function addUsage(prev: Usage, sdk: SdkUsage): Usage {
+  const step = sdkUsageToUsage(sdk);
+  return {
+    input: prev.input + step.input,
+    output: prev.output + step.output,
+    ...(prev.totalTokens != null || step.totalTokens != null
+      ? { totalTokens: (prev.totalTokens ?? 0) + (step.totalTokens ?? 0) }
+      : {}),
+    ...(prev.cacheRead != null || step.cacheRead != null
+      ? { cacheRead: (prev.cacheRead ?? 0) + (step.cacheRead ?? 0) }
+      : {}),
+    ...(prev.cacheWrite != null || step.cacheWrite != null
+      ? { cacheWrite: (prev.cacheWrite ?? 0) + (step.cacheWrite ?? 0) }
+      : {}),
+  };
 }

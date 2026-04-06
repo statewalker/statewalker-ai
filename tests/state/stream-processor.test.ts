@@ -275,13 +275,13 @@ describe("Turn stream handlers", () => {
     expect(turn.stopReason).toBe("stop");
   });
 
-  it("handleFinishStep: accumulates per-step usage", () => {
+  it("handleFinishStep: accumulates per-step usage (SDK v6 property names)", () => {
     const turn = makeTurn();
 
     turn.handleFinishStep({
       type: "finish-step",
       finishReason: "tool-calls",
-      usage: { promptTokens: 100, completionTokens: 50 },
+      usage: { inputTokens: 100, outputTokens: 50 },
     });
 
     expect(turn.usage).toEqual({ input: 100, output: 50 });
@@ -290,27 +290,50 @@ describe("Turn stream handlers", () => {
     turn.handleFinishStep({
       type: "finish-step",
       finishReason: "stop",
-      usage: { promptTokens: 80, completionTokens: 30 },
+      usage: { inputTokens: 80, outputTokens: 30 },
     });
 
     expect(turn.usage).toEqual({ input: 180, output: 80 });
   });
 
-  it("handleFinish: sets authoritative total usage", () => {
+  it("handleFinishStep: captures cache and total token details", () => {
+    const turn = makeTurn();
+
+    turn.handleFinishStep({
+      type: "finish-step",
+      finishReason: "stop",
+      usage: {
+        inputTokens: 200,
+        outputTokens: 60,
+        totalTokens: 260,
+        inputTokenDetails: { cacheReadTokens: 150, cacheWriteTokens: 50 },
+      },
+    });
+
+    expect(turn.usage).toEqual({
+      input: 200,
+      output: 60,
+      totalTokens: 260,
+      cacheRead: 150,
+      cacheWrite: 50,
+    });
+  });
+
+  it("handleFinish: sets authoritative total usage (SDK v6 property names)", () => {
     const turn = makeTurn();
 
     // Accumulated from steps
     turn.handleFinishStep({
       type: "finish-step",
       finishReason: "stop",
-      usage: { promptTokens: 100, completionTokens: 50 },
+      usage: { inputTokens: 100, outputTokens: 50 },
     });
 
     // finish overwrites with authoritative total
     turn.handleFinish({
       type: "finish",
       finishReason: "stop",
-      totalUsage: { promptTokens: 120, completionTokens: 60 },
+      totalUsage: { inputTokens: 120, outputTokens: 60 },
     });
 
     expect(turn.usage).toEqual({ input: 120, output: 60 });
