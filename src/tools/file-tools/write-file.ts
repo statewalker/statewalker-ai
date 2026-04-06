@@ -1,0 +1,33 @@
+import { type FilesApi, writeText } from "@statewalker/webrun-files";
+import { tool } from "ai";
+import { z } from "zod";
+import { guardPath, type PathFilter } from "./path-utils.js";
+
+export function createWriteFileTool(files: FilesApi, isExcluded: PathFilter) {
+  return tool({
+    description:
+      "Write content to a file, creating it and any parent directories if needed. " +
+      "All paths are absolute (start with '/'). " +
+      "Overwrites the file if it already exists.",
+    inputSchema: z.object({
+      path: z
+        .string()
+        .describe("Absolute virtual path to the file, e.g. '/src/index.ts'"),
+      content: z.string().describe("The full content to write to the file"),
+    }),
+    execute: async ({ path, content }) => {
+      let normalized: string;
+      try {
+        normalized = guardPath(path, isExcluded);
+      } catch (e) {
+        return { error: (e as Error).message };
+      }
+
+      await writeText(files, normalized, content);
+      return {
+        path: normalized,
+        bytes_written: new TextEncoder().encode(content).length,
+      };
+    },
+  });
+}
