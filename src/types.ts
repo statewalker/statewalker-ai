@@ -1,3 +1,5 @@
+import type { TreeNode } from "./tree-node";
+
 /**
  * Pure data shape for tree nodes.
  * This is what gets serialized/deserialized.
@@ -40,6 +42,9 @@ export interface NewEntryOptions {
  * The factory generates a Snowflake ID if `id` is not provided,
  * and decides which subclass to instantiate based on type.
  */
-export type NodeFactory = (
-  data: TreeEntry | NewEntryOptions,
-) => import("./tree-node.js").TreeNode;
+export type NodeFactory = <
+  N extends TreeNode = TreeNode,
+  T extends TreeEntry | NewEntryOptions = TreeEntry | NewEntryOptions,
+>(
+  data: T,
+) => N;

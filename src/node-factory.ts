@@ -22,9 +22,12 @@ export function newNodeFactory(
   >,
   idGen: SnowflakeId = new SnowflakeId(),
 ): NodeFactory {
-  const factory: NodeFactory = (
-    data: TreeEntry | NewEntryOptions,
-  ): TreeNode => {
+  const factory: NodeFactory = <
+    N extends TreeNode = TreeNode,
+    T extends TreeEntry | NewEntryOptions = TreeEntry | NewEntryOptions,
+  >(
+    data: T,
+  ) => {
     const id = data.id ?? idGen.generate();
     const props: Record<string, unknown> = { ...data.props };
     if ("type" in data && data.type !== undefined) {
@@ -40,7 +43,7 @@ export function newNodeFactory(
 
     const type = (props.type as string) ?? "message";
     const Ctor = index[type] ?? TreeNode;
-    return new Ctor(entry, factory);
+    return new Ctor(entry, factory) as N;
   };
   return factory;
 }

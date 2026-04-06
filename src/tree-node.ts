@@ -17,7 +17,7 @@ export class TreeNode extends BaseClass {
   readonly factory: NodeFactory;
   parent?: TreeNode;
 
-  private _childCleanups = new Map<TreeNode, () => void>();
+  private _childCleanups = new WeakMap<TreeNode, () => void>();
   private _childCache = new Map<string, TreeNode>();
   private _cachedUpdatedAt?: Date;
 
@@ -130,7 +130,7 @@ export class TreeNode extends BaseClass {
     const unsub = node.onUpdate(() => this.bubbleUp());
     this._childCleanups.set(node, unsub);
 
-    this.notify();
+    this.bubbleUp();
     return node;
   }
 
@@ -145,7 +145,11 @@ export class TreeNode extends BaseClass {
     this.data.children = (this.data.children ?? []).filter(
       (c) => c.id !== child.id,
     );
-    this.notify();
+    this.bubbleUp();
+  }
+
+  remove() {
+    this.parent?.removeChild(this);
   }
 
   childrenOfType(type: string): TreeNode[] {
