@@ -91,6 +91,18 @@ export class Turn extends TreeNode {
   }
 
   addToolCall(callId: string, toolName: string, args?: unknown): ToolCall {
+    const existing = this.toolCalls.find((t) => t.callId === callId);
+    if (existing) {
+      if (args !== undefined) {
+        const req = existing.request;
+        if (req) {
+          req.props.args = args;
+          req.touch();
+        }
+      }
+      return existing;
+    }
+
     const tc = this.addChild({
       type: NodeType.toolCall,
       props: { callId, toolName },
