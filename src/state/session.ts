@@ -7,6 +7,15 @@ export class Session extends TreeNode {
   isStreaming = false;
   error = "";
 
+  get title(): string | undefined {
+    return this.props.title as string | undefined;
+  }
+
+  set title(value: string | undefined) {
+    this.props.title = value;
+    this.touch();
+  }
+
   get turns(): Turn[] {
     return this.childrenOfType(NodeType.turn) as Turn[];
   }

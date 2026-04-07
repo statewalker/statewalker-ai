@@ -1,5 +1,5 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
-import { stepCountIs, streamText } from "ai";
+import { generateText, stepCountIs, streamText } from "ai";
 import {
   type SelectionStrategy,
   selectAll,
@@ -118,6 +118,8 @@ export class AgentController {
         yield* this.selectSkillsForFirstTurn(message, signal);
       }
 
+      const isFirstTurn = this.session.turns.length === 0;
+
       let reason = yield* this.streamTurn(message.text, signal);
 
       // Continue if no definitive stop reason: "tool-calls" needs another
@@ -127,6 +129,10 @@ export class AgentController {
       while ((!reason || reason === "tool-calls") && remaining > 0) {
         remaining--;
         reason = yield* this.streamTurn("", signal);
+      }
+
+      if (isFirstTurn && !this.session.title) {
+        this.session.title = await this.generateTitle(message.text, signal);
       }
     }
   }
@@ -233,6 +239,29 @@ export class AgentController {
     }
 
     return prompt;
+  }
+
+  /**
+   * Generate a short title for the session based on the user's first message.
+   * Runs a lightweight LLM call; swallows errors silently.
+   */
+  private async generateTitle(
+    userText: string,
+    signal?: AbortSignal,
+  ): Promise<string | undefined> {
+    try {
+      const { text } = await generateText({
+        model: this.provider.languageModel(this.model),
+        system:
+          "Generate a short title (max 6 words) for a conversation that starts with the following user message. Reply with the title only, no quotes or punctuation at the end.",
+        messages: [{ role: "user", content: userText }],
+        abortSignal: signal,
+      });
+      return text.trim();
+    } catch {
+      // Title generation is best-effort — do not propagate errors.
+      return undefined;
+    }
   }
 
   /** Route stream parts to Turn handlers, yield log messages as they arrive. */
