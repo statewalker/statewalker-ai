@@ -173,7 +173,8 @@ export class AgentBuilder {
 
     // 4. SessionManager
     const sessions =
-      this._sessionManager ?? new FilesSessionManager(systemFiles);
+      this._sessionManager ??
+      new FilesSessionManager(systemFiles, this._systemFolder);
 
     // 5. AgentContext
     const context: AgentContext = {

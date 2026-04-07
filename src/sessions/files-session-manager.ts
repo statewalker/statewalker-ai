@@ -11,9 +11,6 @@ import {
 } from "../state/session-serialization.js";
 import type { SessionManager, SessionMetadata } from "./types.js";
 
-const SESSIONS_DIR = "/sessions";
-const INDEX_FILE = `${SESSIONS_DIR}/index.json`;
-
 interface IndexData {
   sessions: SessionMetadata[];
 }
@@ -21,12 +18,18 @@ interface IndexData {
 export class FilesSessionManager implements SessionManager {
   private idGen = new SnowflakeId();
   private factory: NodeFactory;
+  private sessionsDir: string;
+  private indexFile: string;
 
   constructor(
     private files: FilesApi,
+    basePath = "/",
     factory?: NodeFactory,
   ) {
     this.factory = factory ?? createAgentNodeFactory();
+    const prefix = basePath === "/" ? "" : basePath;
+    this.sessionsDir = `${prefix}/sessions`;
+    this.indexFile = `${this.sessionsDir}/index.json`;
   }
 
   async create(title?: string): Promise<string> {
@@ -51,13 +54,13 @@ export class FilesSessionManager implements SessionManager {
       props: { title: meta.title },
     }) as Session;
     const markdown = sessionToMarkdown(session);
-    await writeText(this.files, `${SESSIONS_DIR}/${id}/${id}.md`, markdown);
+    await writeText(this.files, `${this.sessionsDir}/${id}/${id}.md`, markdown);
 
     return id;
   }
 
   async save(id: string, session: Session): Promise<void> {
-    const sessionDir = `${SESSIONS_DIR}/${id}`;
+    const sessionDir = `${this.sessionsDir}/${id}`;
     const markdown = sessionToMarkdown(session);
 
     // Extract large attachments
@@ -88,7 +91,7 @@ export class FilesSessionManager implements SessionManager {
   }
 
   async load(id: string): Promise<Session> {
-    const sessionDir = `${SESSIONS_DIR}/${id}`;
+    const sessionDir = `${this.sessionsDir}/${id}`;
     const text = await readText(this.files, `${sessionDir}/${id}.md`);
 
     // Re-inject attachments
@@ -113,7 +116,7 @@ export class FilesSessionManager implements SessionManager {
   }
 
   async delete(id: string): Promise<boolean> {
-    const sessionDir = `${SESSIONS_DIR}/${id}`;
+    const sessionDir = `${this.sessionsDir}/${id}`;
     const removed = await this.files.remove(sessionDir);
     if (removed) {
       const index = await this.loadIndex();
@@ -124,13 +127,13 @@ export class FilesSessionManager implements SessionManager {
   }
 
   async exists(id: string): Promise<boolean> {
-    return this.files.exists(`${SESSIONS_DIR}/${id}`);
+    return this.files.exists(`${this.sessionsDir}/${id}`);
   }
 
   // --- Index management ---
 
   private async loadIndex(): Promise<IndexData> {
-    const text = await tryReadText(this.files, INDEX_FILE);
+    const text = await tryReadText(this.files, this.indexFile);
     if (text) {
       try {
         return JSON.parse(text) as IndexData;
@@ -142,18 +145,18 @@ export class FilesSessionManager implements SessionManager {
   }
 
   private async saveIndex(index: IndexData): Promise<void> {
-    await writeText(this.files, INDEX_FILE, JSON.stringify(index, null, 2));
+    await writeText(this.files, this.indexFile, JSON.stringify(index, null, 2));
   }
 
   private async rebuildIndex(): Promise<IndexData> {
     const sessions: SessionMetadata[] = [];
-    if (!(await this.files.exists(SESSIONS_DIR))) {
+    if (!(await this.files.exists(this.sessionsDir))) {
       return { sessions };
     }
-    for await (const entry of this.files.list(SESSIONS_DIR)) {
+    for await (const entry of this.files.list(this.sessionsDir)) {
       if (entry.kind !== "directory") continue;
       const id = entry.name;
-      const mdPath = `${SESSIONS_DIR}/${id}/${id}.md`;
+      const mdPath = `${this.sessionsDir}/${id}/${id}.md`;
       if (!(await this.files.exists(mdPath))) continue;
       sessions.push({
         id,

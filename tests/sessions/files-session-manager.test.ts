@@ -43,7 +43,7 @@ describe("FilesSessionManager", () => {
 
   beforeEach(() => {
     files = new MemFilesApi();
-    manager = new FilesSessionManager(files, factory);
+    manager = new FilesSessionManager(files, "/", factory);
   });
 
   describe("create", () => {

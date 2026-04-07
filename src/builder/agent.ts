@@ -4,6 +4,8 @@ import type { Inbox } from "../state/inbox.js";
 import type { LogMessage } from "../state/log-message.js";
 import type { Session } from "../state/session.js";
 
+const AUTO_SAVE_MS = 250;
+
 export class Agent {
   constructor(
     readonly controller: AgentController,
@@ -19,7 +21,12 @@ export class Agent {
   }
 
   async *run(signal?: AbortSignal): AsyncGenerator<LogMessage> {
-    yield* this.controller.run(signal);
+    const stopAutoSave = this._startAutoSave();
+    try {
+      yield* this.controller.run(signal);
+    } finally {
+      stopAutoSave();
+    }
   }
 
   async save(title?: string): Promise<string> {
@@ -36,18 +43,39 @@ export class Agent {
 
   async resume(id: string): Promise<void> {
     const loaded = await this.context.sessions.load(id);
-    // Replace the session in the controller
-    // The controller's session is readonly, so we copy turns into it
-    // This is a simplified approach — in practice the controller would
-    // accept a session replacement method
     const session = this.controller.session;
-    // Clear existing turns
     for (const turn of [...session.turns]) {
       session.removeChild(turn);
     }
-    // Copy loaded turns
     for (const child of loaded.children) {
       session.addChild(child.data);
     }
+  }
+
+  private _startAutoSave(): () => void {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let dirty = false;
+
+    const flush = () => {
+      timer = undefined;
+      if (dirty) {
+        dirty = false;
+        this.save().catch(() => {});
+      }
+    };
+
+    const unsubscribe = this.session.onUpdate(() => {
+      if (this.session.turns.length === 0) return;
+      dirty = true;
+      if (!timer) {
+        timer = setTimeout(flush, AUTO_SAVE_MS);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      clearTimeout(timer);
+      flush();
+    };
   }
 }
