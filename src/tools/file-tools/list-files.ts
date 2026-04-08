@@ -82,6 +82,42 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
             "Defaults to 3 when no pattern is given, unlimited when a pattern is given.",
         ),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the listed directory"),
+        entries: z
+          .array(
+            z.object({
+              name: z
+                .string()
+                .describe("Entry name (directories end with '/')"),
+              path: z.string().describe("Absolute path of the entry"),
+              kind: z.string().describe("Entry type: 'file' or 'directory'"),
+              size: z
+                .number()
+                .optional()
+                .describe("File size in bytes (when available)"),
+              lastModified: z
+                .string()
+                .optional()
+                .describe("ISO 8601 last modified timestamp (when available)"),
+            }),
+          )
+          .optional()
+          .describe(
+            "Listed directory entries, sorted directories-first then by name",
+          ),
+        count: z.number().optional().describe("Number of entries returned"),
+        truncated: z
+          .boolean()
+          .optional()
+          .describe("True if results were capped at 200 entries"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path: searchPath, pattern, max_depth }) => {
       let dir: string;
       try {

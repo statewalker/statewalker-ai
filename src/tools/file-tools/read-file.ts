@@ -93,6 +93,45 @@ export function createReadFileTool(files: FilesApi, isExcluded: PathFilter) {
             "When omitted, returns the first 50 000 characters.",
         ),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the file"),
+        content_length: z
+          .number()
+          .optional()
+          .describe("Total character count of the file"),
+        content: z
+          .string()
+          .optional()
+          .describe("File text content (returned when reading without ranges)"),
+        truncated: z
+          .boolean()
+          .optional()
+          .describe("True if content was truncated at 50 000 characters"),
+        parts: z
+          .array(
+            z.object({
+              range: z.object({
+                begin: z
+                  .number()
+                  .describe("Actual start character offset (clamped)"),
+                end: z
+                  .number()
+                  .describe("Actual end character offset (clamped)"),
+              }),
+              text: z.string().describe("Extracted text for this range"),
+            }),
+          )
+          .optional()
+          .describe(
+            "Extracted character ranges (returned when reading with ranges)",
+          ),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path, ranges }) => {
       let normalized: string;
       try {

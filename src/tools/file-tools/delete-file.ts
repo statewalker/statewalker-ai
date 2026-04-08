@@ -13,6 +13,19 @@ export function createDeleteFileTool(files: FilesApi, isExcluded: PathFilter) {
         .string()
         .describe("Absolute virtual path to the file or directory to delete"),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the deleted entry"),
+        removed: z
+          .boolean()
+          .optional()
+          .describe("True if the file or directory was removed"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path }) => {
       let normalized: string;
       try {

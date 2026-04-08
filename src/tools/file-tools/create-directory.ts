@@ -15,6 +15,19 @@ export function createCreateDirectoryTool(
     inputSchema: z.object({
       path: z.string().describe("Absolute virtual path for the new directory"),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the created directory"),
+        created: z
+          .boolean()
+          .optional()
+          .describe("True if the directory was created successfully"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path }) => {
       let normalized: string;
       try {

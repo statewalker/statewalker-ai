@@ -43,6 +43,49 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
         .optional()
         .describe("If true, search case-sensitively. Defaults to true."),
     }),
+    outputSchema: z
+      .object({
+        pattern: z
+          .string()
+          .optional()
+          .describe("The regex pattern that was searched"),
+        search_path: z
+          .string()
+          .optional()
+          .describe("Normalized directory path that was searched"),
+        files_searched: z
+          .number()
+          .optional()
+          .describe("Total number of files scanned"),
+        files_with_matches: z
+          .number()
+          .optional()
+          .describe("Number of files containing at least one match"),
+        matches: z
+          .array(
+            z.object({
+              file: z.string().describe("Absolute path of the matching file"),
+              line: z.number().describe("1-based line number of the match"),
+              content: z
+                .string()
+                .describe("Matching line content (truncated to 200 chars)"),
+            }),
+          )
+          .optional()
+          .describe("List of matching lines with file path and line number"),
+        count: z
+          .number()
+          .optional()
+          .describe("Total number of matches returned"),
+        truncated: z
+          .boolean()
+          .optional()
+          .describe(
+            "True if results were capped (200 total matches or 50 files)",
+          ),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ pattern, path: searchPath, include, case_sensitive }) => {
       let dir: string;
       try {

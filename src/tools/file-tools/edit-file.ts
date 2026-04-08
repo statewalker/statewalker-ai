@@ -20,6 +20,19 @@ export function createEditFileTool(files: FilesApi, isExcluded: PathFilter) {
           "If true, replace all occurrences. Defaults to false (replace first only).",
         ),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the edited file"),
+        replacements: z
+          .number()
+          .optional()
+          .describe("Number of replacements performed"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path, old_string, new_string, replace_all }) => {
       let normalized: string;
       try {

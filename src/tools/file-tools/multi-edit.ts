@@ -33,6 +33,19 @@ export function createMultiEditTool(files: FilesApi, isExcluded: PathFilter) {
             "Each edit sees the result of all previous edits.",
         ),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the edited file"),
+        edits_applied: z
+          .number()
+          .optional()
+          .describe("Number of edit operations applied"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path, edits }) => {
       let normalized: string;
       try {

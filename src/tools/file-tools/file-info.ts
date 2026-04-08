@@ -3,6 +3,25 @@ import { tool } from "ai";
 import { z } from "zod";
 import { guardPath, type PathFilter } from "./path-utils.js";
 
+const fileInfoOutputSchema = z
+  .object({
+    path: z.string().optional().describe("Normalized absolute path"),
+    kind: z.string().optional().describe("Entry type: 'file' or 'directory'"),
+    size: z.number().optional().describe("File size in bytes"),
+    size_formatted: z
+      .string()
+      .optional()
+      .describe("Human-readable file size (e.g. '1.5 KB', '3.2 MB')"),
+    last_modified: z
+      .string()
+      .optional()
+      .describe("ISO 8601 timestamp of last modification"),
+  })
+  .passthrough()
+  .describe("On error returns { error: string } instead.");
+
+type FileInfoOutput = z.infer<typeof fileInfoOutputSchema>;
+
 export function createFileInfoTool(files: FilesApi, isExcluded: PathFilter) {
   return tool({
     description:
@@ -15,7 +34,8 @@ export function createFileInfoTool(files: FilesApi, isExcluded: PathFilter) {
         .string()
         .describe("Absolute virtual path to the file or directory"),
     }),
-    execute: async ({ path }) => {
+    outputSchema: fileInfoOutputSchema,
+    execute: async ({ path }): Promise<FileInfoOutput> => {
       let normalized: string;
       try {
         normalized = guardPath(path, isExcluded);

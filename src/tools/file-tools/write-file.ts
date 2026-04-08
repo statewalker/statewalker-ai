@@ -15,6 +15,19 @@ export function createWriteFileTool(files: FilesApi, isExcluded: PathFilter) {
         .describe("Absolute virtual path to the file, e.g. '/src/index.ts'"),
       content: z.string().describe("The full content to write to the file"),
     }),
+    outputSchema: z
+      .object({
+        path: z
+          .string()
+          .optional()
+          .describe("Normalized absolute path of the written file"),
+        bytes_written: z
+          .number()
+          .optional()
+          .describe("Number of bytes written (UTF-8 encoded size)"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ path, content }) => {
       let normalized: string;
       try {

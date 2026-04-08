@@ -82,6 +82,73 @@ function truncateLine(line: string): string {
     : line;
 }
 
+const grepOutputSchema = z
+  .object({
+    search_path: z
+      .string()
+      .optional()
+      .describe("Normalized directory path that was searched"),
+    // 'content' mode fields
+    matches: z
+      .array(
+        z.object({
+          file: z.string().describe("Absolute path of the matching file"),
+          line: z.number().describe("1-based line number of the match"),
+          content: z
+            .string()
+            .describe("Matching line content (truncated to 300 chars)"),
+          context_before: z
+            .array(z.string())
+            .optional()
+            .describe("Lines before the match (when before_context > 0)"),
+          context_after: z
+            .array(z.string())
+            .optional()
+            .describe("Lines after the match (when after_context > 0)"),
+        }),
+      )
+      .optional()
+      .describe("Matching lines with context (content mode)"),
+    // 'files_with_matches' mode fields
+    files: z
+      .array(z.string())
+      .optional()
+      .describe("Paths of files containing matches (files_with_matches mode)"),
+    // 'count' mode fields
+    counts: z
+      .array(
+        z.object({
+          file: z.string().describe("Absolute path of the matching file"),
+          count: z.number().describe("Number of matches in this file"),
+        }),
+      )
+      .optional()
+      .describe("Per-file match counts (count mode)"),
+    files_with_matches: z
+      .number()
+      .optional()
+      .describe("Number of files with at least one match (count mode)"),
+    total_matches: z
+      .number()
+      .optional()
+      .describe("Sum of all matches across files (count mode)"),
+    // Shared fields
+    count: z
+      .number()
+      .optional()
+      .describe(
+        "Number of entries returned (content and files_with_matches modes)",
+      ),
+    truncated: z
+      .boolean()
+      .optional()
+      .describe("True if output was capped by head_limit"),
+  })
+  .passthrough()
+  .describe("On error returns { error: string } instead.");
+
+type GrepOutput = z.infer<typeof grepOutputSchema>;
+
 export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
   return tool({
     description:
@@ -174,6 +241,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
         .optional()
         .describe("Skip first N entries before applying head_limit."),
     }),
+    outputSchema: grepOutputSchema,
     execute: async ({
       pattern,
       path: searchPath,
@@ -186,7 +254,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
       multiline,
       head_limit,
       offset,
-    }) => {
+    }): Promise<GrepOutput> => {
       let dir: string;
       try {
         dir = guardPath(searchPath ?? "/", isExcluded);

@@ -14,6 +14,17 @@ export function createMoveFileTool(files: FilesApi, isExcluded: PathFilter) {
         .describe("Current absolute virtual path of the file or directory"),
       new_path: z.string().describe("Target absolute virtual path"),
     }),
+    outputSchema: z
+      .object({
+        old_path: z.string().optional().describe("Normalized source path"),
+        new_path: z.string().optional().describe("Normalized destination path"),
+        moved: z
+          .boolean()
+          .optional()
+          .describe("True if the move/rename succeeded"),
+      })
+      .passthrough()
+      .describe("On error returns { error: string } instead."),
     execute: async ({ old_path, new_path }) => {
       let normalizedOld: string;
       let normalizedNew: string;
