@@ -44,6 +44,12 @@ export class Agent {
   async resume(id: string): Promise<void> {
     const loaded = await this.context.sessions.load(id);
     const session = this.controller.session;
+    // Adopt the stored session's ID so that auto-save writes
+    // back to the same location instead of creating a duplicate.
+    session.data.id = id;
+    if (loaded.props) {
+      session.update(loaded.props);
+    }
     for (const turn of [...session.turns]) {
       session.removeChild(turn);
     }
