@@ -1,0 +1,29 @@
+{
+  "name": "@repo/ai-provider-core",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./init": "./src/init-ai-provider-core.ts",
+    "./intents": "./src/intents.ts",
+    "./adapters": "./src/adapters.ts"
+  },
+  "files": [
+    "src/**"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write --unsafe .",
+    "lint:check": "biome check ."
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "^3.0.8",
+    "@repo/shared": "workspace:*",
+    "@repo/shared-views": "workspace:*",
+    "@statewalker/ai-provider": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
