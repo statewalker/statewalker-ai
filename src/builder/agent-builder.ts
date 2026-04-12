@@ -1,4 +1,6 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelManager } from "@statewalker/ai-provider";
+import { UnifiedProvider } from "@statewalker/ai-provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import type { ToolSet } from "ai";
@@ -12,7 +14,6 @@ import {
 } from "../controller/agent-controller.js";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
 import { McpClientManager } from "../mcp/mcp-client-manager.js";
-import { createProvider } from "../provider/provider-factory.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
 import type { SessionManager } from "../sessions/types.js";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";
@@ -32,8 +33,6 @@ interface McpServerConfig {
 
 export class AgentBuilder {
   private _provider?: ProviderV3;
-  private _providerName?: string;
-  private _apiKey?: string;
   private _model = "";
   private _filesApi?: FilesApi;
   private _systemFolder = "/.settings";
@@ -52,21 +51,24 @@ export class AgentBuilder {
   private _systemPrompt?: string;
   private _maxSteps?: number;
   private _selectionStrategy?: SelectionStrategy;
+  private _modelManager?: ModelManager;
 
   // --- Provider ---
 
-  withProvider(providerOrName: ProviderV3 | string, apiKey?: string): this {
-    if (typeof providerOrName === "string") {
-      this._providerName = providerOrName;
-      this._apiKey = apiKey;
-    } else {
-      this._provider = providerOrName;
-    }
+  /** Provide a pre-built ProviderV3 directly. */
+  withProvider(provider: ProviderV3): this {
+    this._provider = provider;
     return this;
   }
 
   withModel(model: string): this {
     this._model = model;
+    return this;
+  }
+
+  /** Use a ModelManager for model resolution (recommended). */
+  withModelManager(manager: ModelManager): this {
+    this._modelManager = manager;
     return this;
   }
 
@@ -185,6 +187,7 @@ export class AgentBuilder {
       sessions,
       provider,
       model: this._model,
+      modelManager: this._modelManager,
     };
 
     // 6. Resolve tools
@@ -237,14 +240,11 @@ export class AgentBuilder {
   // --- Private helpers ---
 
   private resolveProvider(): ProviderV3 {
-    if (!this._providerName || !this._apiKey) {
-      throw new Error(
-        "Provider not configured. Use .withProvider(name, apiKey) or .withProvider(provider)",
-      );
+    if (this._modelManager) {
+      return new UnifiedProvider(this._modelManager.store);
     }
-    return createProvider(
-      this._providerName as "anthropic" | "google" | "openai",
-      this._apiKey,
+    throw new Error(
+      "Provider not configured. Use .withProvider(provider) or .withModelManager(manager)",
     );
   }
 
@@ -253,10 +253,8 @@ export class AgentBuilder {
       throw new Error("FilesApi not configured. Use .withFilesApi(files)");
     }
 
-    // System files: the root FS itself (tools/config access the system folder directly)
     const systemFiles = this._filesApi;
 
-    // Working files: root FS with guards blocking excluded paths
     const allExcluded = [...this._excludedPaths];
     if (!allExcluded.some((p) => p.startsWith(this._systemFolder))) {
       allExcluded.push(this._systemFolder);
