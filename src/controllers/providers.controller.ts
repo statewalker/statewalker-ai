@@ -288,7 +288,7 @@ function openAddProviderDialog(
 
   const dialog = new DialogView({
     header: "Configure Provider",
-    size: "M",
+    size: "md",
     isDismissable: true,
     isOpen: true,
     children: [

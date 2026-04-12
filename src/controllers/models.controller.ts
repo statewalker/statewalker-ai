@@ -437,7 +437,7 @@ function openAddModelDialog(
 
   const dialog = new DialogView({
     header: "Add Model",
-    size: "M",
+    size: "md",
     isDismissable: true,
     isOpen: true,
     children: [

@@ -1,5 +1,5 @@
 import { newRegistry } from "@repo/shared/registry";
-import { DockPanelView, publishPanel, TabsView } from "@repo/shared-views";
+import { DialogView, TabsView, publishDialog } from "@repo/shared-views";
 import {
   getActiveModelKey,
   getModelManager,
@@ -40,18 +40,18 @@ export function createModelSettingsController(
         ],
       });
 
-      register(
-        publishPanel(
-          ctx,
-          new DockPanelView({
-            label: "Model Settings",
-            icon: "settings",
-            content: tabs,
-            area: "center",
-            closable: true,
-          }),
-        ),
-      );
+      const dialog = new DialogView({
+        header: "Model Settings",
+        children: [tabs],
+        isDismissable: true,
+        isOpen: true,
+        size: "lg",
+        buttons: [
+          { label: "Close", variant: "outline" },
+        ],
+      });
+
+      register(publishDialog(ctx, dialog));
       return true;
     }),
   );
