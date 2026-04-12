@@ -1,5 +1,6 @@
 import { newRegistry } from "@repo/shared/registry";
 import { getModelManager } from "../adapters.js";
+import { restoreDownloadStatuses } from "../download-status-store.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
 /**
@@ -24,6 +25,11 @@ export function createStartupController(
 async function startup(ctx: Record<string, unknown>): Promise<void> {
   const manager = getModelManager(ctx);
   const store = manager.store;
+
+  // Restore download statuses from /.settings/models/ before anything else
+  if (manager.files) {
+    await restoreDownloadStatuses(manager.files, store);
+  }
 
   const activeKey = store.activeModelKey;
   if (!activeKey) return;

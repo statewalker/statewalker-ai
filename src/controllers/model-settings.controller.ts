@@ -37,7 +37,7 @@ export function createModelSettingsController(
         children: [tabs],
         isDismissable: true,
         isOpen: true,
-        size: "lg",
+        size: "75vw",
         buttons: [{ label: "Close", variant: "outline" }],
       });
 

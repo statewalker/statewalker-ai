@@ -30,6 +30,10 @@ import type {
   RemoteModelConfig,
 } from "@statewalker/ai-provider";
 import { getModelManager } from "../adapters.js";
+import {
+  persistDownloadStatus,
+  removeDownloadStatus,
+} from "../download-status-store.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
 export const [getModelsTabView] = newAdapter<FlexView>(
@@ -151,11 +155,15 @@ function buildModelListItems(
         ? "●"
         : state.status === "downloaded"
           ? "↓"
-          : state.status === "error"
-            ? "✗"
-            : state.status === "loading"
-              ? "◌"
-              : "○";
+          : state.status === "downloading"
+            ? "◌"
+            : state.status === "partial"
+              ? "⇣"
+              : state.status === "error"
+                ? "✗"
+                : state.status === "loading"
+                  ? "◌"
+                  : "○";
 
     const description =
       config.runtime === "remote"
@@ -184,6 +192,7 @@ function updateDetailPanel(
   if (!state) return;
 
   const { config } = state;
+  const isLocal = config.runtime === "local";
   panel.header = config.label;
 
   const metadata: import("@repo/shared-views").ViewModel[] = [
@@ -200,7 +209,7 @@ function updateDetailPanel(
       }),
     );
   }
-  if (config.runtime === "local") {
+  if (isLocal) {
     const lc = config as LocalModelConfig;
     metadata.push(
       new LabeledValueView({ label: "Family", value: lc.family }),
@@ -216,7 +225,7 @@ function updateDetailPanel(
         ? "positive"
         : state.status === "error"
           ? "negative"
-          : state.status === "loading"
+          : state.status === "loading" || state.status === "downloading"
             ? "notice"
             : "neutral",
   });
@@ -238,7 +247,7 @@ function updateDetailPanel(
         step: 1,
         isFilled: true,
       }),
-      ...(config.runtime === "local"
+      ...(isLocal
         ? [
             new SliderView({
               label: "Context length",
@@ -254,21 +263,34 @@ function updateDetailPanel(
   });
 
   const progressBar = new ProgressBarView({
-    label: "Activation",
+    label: "Progress",
     showValueLabel: true,
   });
   const progressMessage = new TextView({ text: "" });
 
+  // ── Download action (local models only) ──────────────────────
+  const downloadAction = new ActionView({
+    key: "download",
+    label: state.status === "partial" ? "Resume Download" : "Download",
+    variant: "primary",
+    disabled:
+      !isLocal ||
+      state.status === "downloaded" ||
+      state.status === "ready" ||
+      state.status === "downloading" ||
+      state.status === "loading",
+  });
+
+  // ── Activate action ──────────────────────────────────────────
   const activateAction = new ActionView({
     key: "activate",
-    label:
-      state.status === "not-downloaded"
-        ? "Download & Activate"
-        : state.status === "downloaded"
-          ? "Load Model"
-          : "Activate",
+    label: isLocal ? "Load Model" : "Activate",
     variant: "primary",
-    disabled: state.status === "ready" || state.status === "loading",
+    disabled:
+      state.status === "ready" ||
+      state.status === "loading" ||
+      state.status === "downloading" ||
+      (isLocal && state.status !== "downloaded"),
   });
 
   const deactivateAction = new ActionView({
@@ -282,7 +304,10 @@ function updateDetailPanel(
     key: "deleteWeights",
     label: "Delete Weights",
     variant: "danger",
-    disabled: config.runtime !== "local" || state.status === "not-downloaded",
+    disabled:
+      !isLocal ||
+      state.status === "not-downloaded" ||
+      state.status === "downloading",
   });
 
   const cancelAction = new ActionView({
@@ -294,6 +319,57 @@ function updateDetailPanel(
 
   let abortController: AbortController | undefined;
 
+  // ── Wire: Download ───────────────────────────────────────────
+  register(
+    downloadAction.onSubmit(async () => {
+      downloadAction.disabled = true;
+      cancelAction.disabled = false;
+      abortController = new AbortController();
+      try {
+        for await (const p of manager.download(
+          catalogKey,
+          abortController.signal,
+        )) {
+          progressBar.value = p.progress != null ? p.progress * 100 : undefined;
+          progressBar.label = p.phase;
+          progressMessage.text = p.message;
+        }
+        // Persist "downloaded" status
+        if (manager.files) {
+          await persistDownloadStatus(
+            manager.files,
+            catalogKey,
+            config.modelId,
+            "downloaded",
+          );
+        }
+      } catch {
+        // Persist "partial" status on cancellation/error
+        const currentState = manager.store.getState(catalogKey);
+        if (manager.files && currentState?.status === "partial") {
+          const dp = manager.store.getDownloadProgress(catalogKey);
+          await persistDownloadStatus(
+            manager.files,
+            catalogKey,
+            config.modelId,
+            "partial",
+            dp
+              ? {
+                  bytesDownloaded: dp.bytesDownloaded ?? 0,
+                  bytesTotal: dp.bytesTotal ?? 0,
+                }
+              : undefined,
+          );
+        }
+      } finally {
+        cancelAction.disabled = true;
+        abortController = undefined;
+        updateDetailPanel(panel, catalogKey, ctx, register, manager);
+      }
+    }),
+  );
+
+  // ── Wire: Activate ───────────────────────────────────────────
   register(
     activateAction.onSubmit(async () => {
       activateAction.disabled = true;
@@ -314,15 +390,14 @@ function updateDetailPanel(
         }
         manager.store.setActiveModelKey(catalogKey, config.label);
       } finally {
-        activateAction.disabled = false;
         cancelAction.disabled = true;
         abortController = undefined;
-        // Refresh
         updateDetailPanel(panel, catalogKey, ctx, register, manager);
       }
     }),
   );
 
+  // ── Wire: Cancel ─────────────────────────────────────────────
   register(
     cancelAction.onSubmit(() => {
       abortController?.abort();
@@ -330,6 +405,7 @@ function updateDetailPanel(
     }),
   );
 
+  // ── Wire: Deactivate ────────────────────────────────────────
   register(
     deactivateAction.onSubmit(() => {
       manager.deactivate(catalogKey);
@@ -337,21 +413,46 @@ function updateDetailPanel(
     }),
   );
 
+  // ── Wire: Delete weights ────────────────────────────────────
   register(
     deleteWeightsAction.onSubmit(async () => {
       await manager.deleteLocal(catalogKey);
+      if (manager.files) {
+        await removeDownloadStatus(manager.files, catalogKey);
+      }
       updateDetailPanel(panel, catalogKey, ctx, register, manager);
     }),
   );
 
-  const actionGroup = new ActionGroupView({
-    children: [
-      activateAction,
-      deactivateAction,
-      deleteWeightsAction,
-      cancelAction,
-    ],
-  });
+  // ── Subscribe to store for live status updates ──────────────
+  register(
+    manager.store.onUpdate(() => {
+      const updated = manager.store.getState(catalogKey);
+      if (!updated) return;
+      statusLight.label = updated.status;
+      statusLight.variant =
+        updated.status === "ready"
+          ? "positive"
+          : updated.status === "error"
+            ? "negative"
+            : updated.status === "loading" || updated.status === "downloading"
+              ? "notice"
+              : "neutral";
+    }),
+  );
+
+  // ── Build action buttons ────────────────────────────────────
+  const actions = isLocal
+    ? [
+        downloadAction,
+        activateAction,
+        deactivateAction,
+        deleteWeightsAction,
+        cancelAction,
+      ]
+    : [activateAction, deactivateAction, cancelAction];
+
+  const actionGroup = new ActionGroupView({ children: actions });
 
   panel.setChildren([
     statusLight,
