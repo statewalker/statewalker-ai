@@ -39,11 +39,7 @@ export type ModelConfig = RemoteModelConfig | LocalModelConfig;
 
 export type ProviderName = "google" | "anthropic" | "openai";
 
-export const PROVIDER_NAMES: ProviderName[] = [
-  "google",
-  "anthropic",
-  "openai",
-];
+export const PROVIDER_NAMES: ProviderName[] = ["google", "anthropic", "openai"];
 
 /**
  * Common settings for creating a remote AI provider.

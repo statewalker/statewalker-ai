@@ -87,12 +87,7 @@ export class ModelManager {
       this.store.setStatus(key, "loading");
 
       if (config.runtime === "remote") {
-        yield* this.activateRemote(
-          key,
-          config,
-          options?.settings,
-          ac.signal,
-        );
+        yield* this.activateRemote(key, config, options?.settings, ac.signal);
       } else {
         yield* this.activateLocal(key, config, ac.signal);
       }
