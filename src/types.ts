@@ -91,8 +91,10 @@ export interface ActivationProgress {
 
 export type ModelStatus =
   | "not-downloaded" // local: weights not in storage
+  | "downloading" // local: weights currently being downloaded
+  | "partial" // local: download was interrupted, partial files on disk (resumable)
   | "downloaded" // local: weights in storage but not loaded
-  | "loading" // currently activating
+  | "loading" // currently activating (loading into memory)
   | "ready" // model is loaded and ready
   | "error"; // last activation failed
 

@@ -22,6 +22,8 @@ import { verifyModelAccess } from "./verify-model.js";
  */
 export class ModelManager {
   readonly store: ModelStateStore;
+  /** FilesApi used for model storage, or undefined if not configured. */
+  readonly files: FilesApi | undefined;
   private readonly storage: LocalModelStorage | undefined;
   private localFactory: LocalModelFactory | undefined;
   private readonly abortControllers = new Map<string, AbortController>();
@@ -32,6 +34,7 @@ export class ModelManager {
     modelStoragePath?: string;
   }) {
     this.store = options.store;
+    this.files = options.files;
 
     if (options.files) {
       this.storage = new LocalModelStorage(
@@ -67,6 +70,20 @@ export class ModelManager {
         phase: "error",
         message: `Unknown model: ${key}`,
         error: new Error(`Unknown model: ${key}`),
+      };
+      return;
+    }
+
+    // Guard: cannot activate while a download is in progress
+    const currentStatus = this.store.getState(key)?.status;
+    if (currentStatus === "downloading") {
+      yield {
+        modelKey: key,
+        phase: "error",
+        message: `Model "${key}" is currently being downloaded. Wait for the download to complete before activating.`,
+        error: new Error(
+          `Model "${key}" is currently being downloaded. Wait for the download to complete before activating.`,
+        ),
       };
       return;
     }
@@ -124,6 +141,100 @@ export class ModelManager {
       await this.storage.delete(config.modelId);
     }
     this.store.setStatus(key, "not-downloaded");
+  }
+
+  /**
+   * Download model weights without loading into memory.
+   * For remote models: no-op (yields a single "ready" event).
+   * For local models: delegates to LocalModelStorage.download() with progress tracking.
+   * Supports resume from partial downloads via HTTP Range headers.
+   */
+  async *download(
+    key: string,
+    signal?: AbortSignal,
+  ): AsyncGenerator<ActivationProgress> {
+    const config = this.store.catalog[key];
+    if (!config) {
+      yield {
+        modelKey: key,
+        phase: "error",
+        message: `Unknown model: ${key}`,
+        error: new Error(`Unknown model: ${key}`),
+      };
+      return;
+    }
+
+    // Remote models don't need downloading
+    if (config.runtime === "remote") {
+      yield {
+        modelKey: key,
+        phase: "ready",
+        message: "Remote model — no download needed",
+      };
+      return;
+    }
+
+    // Already downloaded or ready — skip
+    const currentStatus = this.store.getState(key)?.status;
+    if (currentStatus === "downloaded" || currentStatus === "ready") {
+      yield { modelKey: key, phase: "ready", message: "Already downloaded" };
+      return;
+    }
+
+    if (!this.storage) {
+      const error = new Error(
+        "No FilesApi configured for local model storage. Provide `files` option to ModelManager.",
+      );
+      this.store.setStatus(key, "error", error);
+      yield { modelKey: key, phase: "error", message: error.message, error };
+      return;
+    }
+
+    const ac = new AbortController();
+    this.abortControllers.set(key, ac);
+    const cleanup: (() => void)[] = [() => this.abortControllers.delete(key)];
+
+    if (signal) {
+      const interrupt = () => ac.abort(signal.reason);
+      signal.addEventListener("abort", interrupt);
+      cleanup.push(() => signal.removeEventListener("abort", interrupt));
+    }
+
+    try {
+      this.store.setStatus(key, "downloading");
+
+      for await (const progress of this.storage.download(
+        key,
+        config.modelId,
+        config,
+        ac.signal,
+      )) {
+        this.store.setDownloadProgress(key, progress);
+        yield progress;
+      }
+
+      this.store.setStatus(key, "downloaded");
+      this.store.clearDownloadProgress(key);
+      yield {
+        modelKey: key,
+        phase: "ready",
+        message: `${config.label} downloaded`,
+      };
+    } catch (e) {
+      const error = e instanceof Error ? e : new Error(String(e));
+      if (ac.signal.aborted) {
+        // Cancelled — mark as partial so it can be resumed
+        this.store.setStatus(key, "partial");
+      } else {
+        this.store.setStatus(key, "error", error);
+      }
+      this.store.clearDownloadProgress(key);
+      if (!ac.signal.aborted) {
+        yield { modelKey: key, phase: "error", message: error.message, error };
+      }
+    } finally {
+      for (const fn of cleanup) fn();
+    }
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────

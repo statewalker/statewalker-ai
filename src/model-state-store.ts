@@ -1,5 +1,6 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
 import type {
+  ActivationProgress,
   ModelConfig,
   ModelState,
   ModelStatus,
@@ -16,6 +17,7 @@ export class ModelStateStore {
   private readonly _catalog: Record<string, ModelConfig>;
   private readonly _states = new Map<string, ModelState>();
   private readonly _activeModels = new Map<string, LanguageModelV3>();
+  private readonly _downloadProgress = new Map<string, ActivationProgress>();
   private readonly _providerSettings = new Map<
     ProviderName,
     RemoteProviderSettings
@@ -152,5 +154,30 @@ export class ModelStateStore {
       );
     }
     return model;
+  }
+
+  // ── Download progress ───────────────────────────────────────────────
+
+  /** Update download progress for a model. Notifies listeners. */
+  setDownloadProgress(key: string, progress: ActivationProgress): void {
+    this._downloadProgress.set(key, progress);
+    this.notify();
+  }
+
+  /** Get the latest download progress for a model, or undefined if not downloading. */
+  getDownloadProgress(key: string): ActivationProgress | undefined {
+    return this._downloadProgress.get(key);
+  }
+
+  /** Clear download progress for a model. Notifies listeners. */
+  clearDownloadProgress(key: string): void {
+    if (this._downloadProgress.delete(key)) {
+      this.notify();
+    }
+  }
+
+  /** Get all active downloads (models with status "downloading"). */
+  getActiveDownloads(): Map<string, ActivationProgress> {
+    return new Map(this._downloadProgress);
   }
 }
