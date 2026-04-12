@@ -4,11 +4,7 @@ import {
   type PickerModelItem,
 } from "@repo/shared-views/ai-models";
 import type { RemoteModelConfig } from "@statewalker/ai-provider";
-import {
-  getModelManager,
-  setActiveModelKey,
-  setModelPickerView,
-} from "../adapters.js";
+import { getModelManager, setModelPickerView } from "../adapters.js";
 import {
   getIntents,
   handlePickModel,
@@ -28,7 +24,7 @@ export function createModelPickerController(
 
   function syncItems(): void {
     const items: PickerModelItem[] = [];
-    for (const [key, state] of manager.getStates()) {
+    for (const [key, state] of manager.store.getStates()) {
       items.push({
         key,
         label: state.config.label,
@@ -56,11 +52,11 @@ export function createModelPickerController(
       if (!catalogKey) return;
 
       // If already active, just switch
-      const state = manager.getState(catalogKey);
+      const state = manager.store.getState(catalogKey);
       if (state?.status === "ready") {
         picker.currentKey = catalogKey;
         picker.currentLabel = state.config.label;
-        setActiveModelKey(ctx, { key: catalogKey, label: state.config.label });
+        manager.store.setActiveModelKey(catalogKey, state.config.label);
         syncItems();
         return;
       }
@@ -75,13 +71,13 @@ export function createModelPickerController(
             throw p.error ?? new Error(p.message);
           }
         }
-        const updatedState = manager.getState(catalogKey);
+        const updatedState = manager.store.getState(catalogKey);
         picker.currentKey = catalogKey;
         picker.currentLabel = updatedState?.config.label ?? catalogKey;
-        setActiveModelKey(ctx, {
-          key: catalogKey,
-          label: updatedState?.config.label ?? "",
-        });
+        manager.store.setActiveModelKey(
+          catalogKey,
+          updatedState?.config.label ?? "",
+        );
         syncItems();
       } catch (err) {
         picker.activationMessage = String(err);

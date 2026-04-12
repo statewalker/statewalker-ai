@@ -29,7 +29,7 @@ import type {
   ModelManager,
   RemoteModelConfig,
 } from "@statewalker/ai-provider";
-import { getModelManager, setActiveModelKey } from "../adapters.js";
+import { getModelManager } from "../adapters.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
 export const [getModelsTabView] = newAdapter<FlexView>(
@@ -138,7 +138,7 @@ function buildModelListItems(
   search?: string,
 ): ListBoxItem[] {
   const items: ListBoxItem[] = [];
-  for (const [key, state] of manager.getStates()) {
+  for (const [key, state] of manager.store.getStates()) {
     const { config } = state;
 
     if (filter && filter !== "all" && config.runtime !== filter) continue;
@@ -180,7 +180,7 @@ function updateDetailPanel(
   register: (cleanup: () => void) => () => void,
   manager: ModelManager,
 ): void {
-  const state = manager.getState(catalogKey);
+  const state = manager.store.getState(catalogKey);
   if (!state) return;
 
   const { config } = state;
@@ -312,7 +312,7 @@ function updateDetailPanel(
             progressMessage.text = p.error.message;
           }
         }
-        setActiveModelKey(ctx, { key: catalogKey, label: config.label });
+        manager.store.setActiveModelKey(catalogKey, config.label);
       } finally {
         activateAction.disabled = false;
         cancelAction.disabled = true;

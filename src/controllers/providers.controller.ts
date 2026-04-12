@@ -120,16 +120,20 @@ function createProviderCard(
   register: (cleanup: () => void) => () => void,
   manager: ReturnType<typeof getModelManager>,
 ): CardView {
+  const storedSettings = manager.store.getProviderSettings(providerName);
+  const hasKey = Boolean(storedSettings?.apiKey);
+
   const apiKeyField = new TextFieldView({
     label: "API Key",
     type: "password",
     placeholder: "sk-...",
     isRequired: true,
+    value: storedSettings?.apiKey ?? "",
   });
 
   const statusLight = new StatusLightView({
-    label: "Not configured",
-    variant: "neutral",
+    label: hasKey ? "Configured" : "Not configured",
+    variant: hasKey ? "positive" : "neutral",
   });
 
   const lastVerified = new LabeledValueView({
@@ -160,7 +164,7 @@ function createProviderCard(
       testResult.variant = "informative";
 
       // Find a model for this provider in the catalog
-      const firstModelKey = [...manager.getStates().entries()].find(
+      const firstModelKey = [...manager.store.getStates().entries()].find(
         ([, s]) =>
           s.config.runtime === "remote" &&
           (s.config as RemoteModelConfig).provider === providerName,
@@ -205,7 +209,7 @@ function createProviderCard(
     }),
   );
 
-  const modelCount = [...manager.getStates().values()].filter(
+  const modelCount = [...manager.store.getStates().values()].filter(
     (s) =>
       s.config.runtime === "remote" &&
       (s.config as RemoteModelConfig).provider === providerName,
