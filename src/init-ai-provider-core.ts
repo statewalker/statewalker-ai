@@ -1,4 +1,5 @@
 import { newRegistry } from "@repo/shared/registry";
+import { removeModelActivationController } from "./controllers/model-activation.controller.js";
 import { createModelManagerController } from "./controllers/model-manager.controller.js";
 import { createModelPickerController } from "./controllers/model-picker.controller.js";
 import { createModelSettingsController } from "./controllers/model-settings.controller.js";
@@ -21,6 +22,7 @@ export function initAiProviderCore(
   register(createModelSettingsController(ctx));
   register(createModelPickerController(ctx));
   register(createStartupController(ctx));
+  register(() => removeModelActivationController(ctx));
 
   return cleanup;
 }

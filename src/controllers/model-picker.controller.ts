@@ -10,7 +10,7 @@ import {
   handlePickModel,
   runOpenModelSettings,
 } from "../intents.js";
-import { resolveActivationSettings } from "../resolve-settings.js";
+import { getModelActivationController } from "./model-activation.controller.js";
 
 export function createModelPickerController(
   ctx: Record<string, unknown>,
@@ -18,6 +18,7 @@ export function createModelPickerController(
   const [register, cleanup] = newRegistry();
   const intents = getIntents(ctx);
   const manager = getModelManager(ctx);
+  const activation = getModelActivationController(ctx);
 
   const picker = new ModelPickerView();
   setModelPickerView(ctx, picker);
@@ -43,7 +44,17 @@ export function createModelPickerController(
     picker.items = items;
   }
 
+  // Sync activation state from controller → picker view
+  function syncActivationState(): void {
+    picker.isActivating = activation.isActivating;
+    picker.activationMessage = activation.activationMessage;
+  }
+
   syncItems();
+  syncActivationState();
+
+  // Keep picker view in sync with activation controller
+  register(activation.onUpdate(syncActivationState));
 
   // ── Wire selectAction → activate model ─────────────────────
   register(
@@ -61,16 +72,8 @@ export function createModelPickerController(
         return;
       }
 
-      picker.isActivating = true;
-      picker.activationMessage = "Activating...";
       try {
-        const settings = resolveActivationSettings(ctx, manager, catalogKey);
-        for await (const p of manager.activate(catalogKey, { settings })) {
-          picker.activationMessage = p.message;
-          if (p.phase === "error") {
-            throw p.error ?? new Error(p.message);
-          }
-        }
+        await activation.activate(ctx, manager, catalogKey);
         const updatedState = manager.store.getState(catalogKey);
         picker.currentKey = catalogKey;
         picker.currentLabel = updatedState?.config.label ?? catalogKey;
@@ -79,10 +82,8 @@ export function createModelPickerController(
           updatedState?.config.label ?? "",
         );
         syncItems();
-      } catch (err) {
-        picker.activationMessage = String(err);
-      } finally {
-        picker.isActivating = false;
+      } catch {
+        // Error message is already set by activation controller
       }
     }),
   );
