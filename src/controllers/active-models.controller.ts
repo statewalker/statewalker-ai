@@ -55,7 +55,7 @@ function buildActiveModelsTab(ctx: Record<string, unknown>): FlexView {
 
   function refreshActiveTab(): void {
     const cards: CardView[] = [];
-    for (const [key, state] of manager.getStates()) {
+    for (const [key, state] of manager.store.getStates()) {
       if (state.status !== "ready") continue;
       cards.push(
         createActiveModelCard(key, state, register, manager, refreshActiveTab),
@@ -69,7 +69,7 @@ function buildActiveModelsTab(ctx: Record<string, unknown>): FlexView {
 
   register(
     deactivateAllAction.onSubmit(() => {
-      for (const [key, state] of manager.getStates()) {
+      for (const [key, state] of manager.store.getStates()) {
         if (state.status === "ready") manager.deactivate(key);
       }
       refreshActiveTab();
