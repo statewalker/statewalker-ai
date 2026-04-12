@@ -11,7 +11,6 @@ import {
   getDialogStackView,
   HeadingView,
   InlineAlertView,
-  LabeledValueView,
   PickerView,
   publishDialog,
   StatusLightView,
@@ -136,11 +135,6 @@ function createProviderCard(
     variant: hasKey ? "positive" : "neutral",
   });
 
-  const lastVerified = new LabeledValueView({
-    label: "Last verified",
-    value: "—",
-  });
-
   const testResult = new InlineAlertView({
     content: "",
     variant: "informative",
@@ -157,11 +151,46 @@ function createProviderCard(
     variant: "danger",
   });
 
+  const modelCount = [...manager.store.getStates().values()].filter(
+    (s) =>
+      s.config.runtime === "remote" &&
+      (s.config as RemoteModelConfig).provider === providerName,
+  ).length;
+
+  const card = new CardView({
+    header: new FlexView({
+      direction: "row",
+      justifyContent: "between",
+      alignItems: "center",
+      children: [
+        new HeadingView({
+          text: providerName.charAt(0).toUpperCase() + providerName.slice(1),
+          level: 3,
+        }),
+        statusLight,
+      ],
+    }),
+    children: [apiKeyField],
+    footer: new BadgeView({
+      label: `${modelCount} models`,
+      variant: "neutral",
+      size: "S",
+    }),
+    actions: [testAction, removeAction],
+  });
+
+  function showTestResult(content: string, variant: typeof testResult.variant) {
+    testResult.content = content;
+    testResult.variant = variant;
+    if (!card.children.includes(testResult)) {
+      card.addChild(testResult);
+    }
+  }
+
   register(
     testAction.onSubmit(async () => {
       testAction.disabled = true;
-      testResult.content = "Verifying...";
-      testResult.variant = "informative";
+      showTestResult("Verifying...", "informative");
 
       // Find a model for this provider in the catalog
       const firstModelKey = [...manager.store.getStates().entries()].find(
@@ -171,8 +200,7 @@ function createProviderCard(
       )?.[0];
 
       if (!firstModelKey) {
-        testResult.content = `No models configured for ${providerName}`;
-        testResult.variant = "negative";
+        showTestResult(`No models configured for ${providerName}`, "negative");
         testAction.disabled = false;
         return;
       }
@@ -187,13 +215,11 @@ function createProviderCard(
         }
         statusLight.label = "Connected";
         statusLight.variant = "positive";
-        testResult.content = "Connection successful";
-        testResult.variant = "positive";
+        showTestResult("Connection successful", "positive");
       } catch (err) {
         statusLight.label = "Error";
         statusLight.variant = "negative";
-        testResult.content = String(err);
-        testResult.variant = "negative";
+        showTestResult(String(err), "negative");
       } finally {
         testAction.disabled = false;
       }
@@ -205,37 +231,11 @@ function createProviderCard(
       apiKeyField.value = "";
       statusLight.label = "Not configured";
       statusLight.variant = "neutral";
-      testResult.content = "";
+      card.setChildren([apiKeyField]);
     }),
   );
 
-  const modelCount = [...manager.store.getStates().values()].filter(
-    (s) =>
-      s.config.runtime === "remote" &&
-      (s.config as RemoteModelConfig).provider === providerName,
-  ).length;
-
-  return new CardView({
-    header: new FlexView({
-      direction: "row",
-      justifyContent: "between",
-      alignItems: "center",
-      children: [
-        new HeadingView({
-          text: providerName.charAt(0).toUpperCase() + providerName.slice(1),
-          level: 3,
-        }),
-        statusLight,
-      ],
-    }),
-    children: [apiKeyField, lastVerified, testResult],
-    footer: new BadgeView({
-      label: `${modelCount} models`,
-      variant: "neutral",
-      size: "S",
-    }),
-    actions: [testAction, removeAction],
-  });
+  return card;
 }
 
 function openAddProviderDialog(
