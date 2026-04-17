@@ -4,6 +4,7 @@ import type { ActivationProgress, ModelConfig } from "../src/types.js";
 
 const LOCAL_MODEL: ModelConfig = {
   runtime: "local",
+  engine: "tjs",
   modelId: "test/local-model",
   label: "Test Local",
   family: "Test",

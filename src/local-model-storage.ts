@@ -1,8 +1,40 @@
-import type { FilesApi } from "@statewalker/webrun-files";
-import type { ActivationProgress, LocalModelConfig } from "./types.js";
+import type { FileInfo, FilesApi } from "@statewalker/webrun-files";
+import type {
+  ActivationProgress,
+  EngineId,
+  LocalModelConfig,
+} from "./types.js";
 
 const METADATA_FILE = "model.json";
 const HF_CDN = "https://huggingface.co";
+
+/** Produces the file list to download for a model. */
+export type FileResolver = (
+  modelId: string,
+  config: LocalModelConfig,
+  signal?: AbortSignal,
+) => Promise<Array<{ name: string; size: number }>>;
+
+/** Predicate that decides whether a model directory contains valid weights. */
+export type WeightVerifier = (
+  entries: AsyncIterable<FileInfo>,
+) => Promise<boolean>;
+
+export interface LocalModelStorageOptions {
+  /** Root path for all model storage, default `/models`. */
+  basePath?: string;
+  /**
+   * Engine identifier; when provided, paths are namespaced as
+   * `/{basePath}/{engine}/{modelId}/` so multiple engines can coexist.
+   */
+  engine?: EngineId;
+}
+
+export interface DownloadOptions {
+  /** Custom resolver for the file list (e.g. MLC shards, single GGUF). */
+  fileResolver?: FileResolver;
+  signal?: AbortSignal;
+}
 
 /**
  * Manages local model files (weights, config, tokenizer) via FilesApi.
@@ -10,26 +42,32 @@ const HF_CDN = "https://huggingface.co";
  */
 export class LocalModelStorage {
   readonly files: FilesApi;
+  private readonly basePath: string;
+  private readonly engine: EngineId | undefined;
 
   constructor(
     files: FilesApi,
-    private readonly basePath = "/models",
+    optionsOrBasePath: LocalModelStorageOptions | string = {},
   ) {
     this.files = files;
+    if (typeof optionsOrBasePath === "string") {
+      this.basePath = optionsOrBasePath;
+      this.engine = undefined;
+    } else {
+      this.basePath = optionsOrBasePath.basePath ?? "/models";
+      this.engine = optionsOrBasePath.engine;
+    }
   }
 
   private modelDir(modelId: string): string {
-    return `${this.basePath}/${modelId}`;
+    return this.engine
+      ? `${this.basePath}/${this.engine}/${modelId}`
+      : `${this.basePath}/${modelId}`;
   }
 
-  /** Check if model weights exist in storage. */
-  async hasWeights(modelId: string): Promise<boolean> {
-    const dir = this.modelDir(modelId);
-    const meta = await this.files.stats(`${dir}/${METADATA_FILE}`);
-    if (!meta) return false;
-
-    // Check at least one .onnx or .onnx_data file exists
-    for await (const entry of this.files.list(dir)) {
+  /** Default verifier: metadata file + at least one ONNX weight file. */
+  private static defaultVerifier: WeightVerifier = async (entries) => {
+    for await (const entry of entries) {
       if (
         entry.kind === "file" &&
         (entry.name.endsWith(".onnx") || entry.name.includes(".onnx_data"))
@@ -38,6 +76,15 @@ export class LocalModelStorage {
       }
     }
     return false;
+  };
+
+  /** Check if model weights exist in storage. */
+  async hasWeights(modelId: string, verify?: WeightVerifier): Promise<boolean> {
+    const dir = this.modelDir(modelId);
+    const meta = await this.files.stats(`${dir}/${METADATA_FILE}`);
+    if (!meta) return false;
+    const verifier = verify ?? LocalModelStorage.defaultVerifier;
+    return verifier(this.files.list(dir));
   }
 
   /**
@@ -49,13 +96,19 @@ export class LocalModelStorage {
     modelKey: string,
     modelId: string,
     config: LocalModelConfig,
-    signal?: AbortSignal,
+    options?: DownloadOptions | AbortSignal,
   ): AsyncGenerator<ActivationProgress> {
+    const opts: DownloadOptions =
+      options instanceof AbortSignal ? { signal: options } : (options ?? {});
+    const signal = opts.signal;
+    const resolver = opts.fileResolver;
     const dir = this.modelDir(modelId);
     await this.files.mkdir(dir);
 
-    // Resolve files to download from the model's file list
-    const filesToDownload = await this.resolveModelFiles(modelId, signal);
+    // Resolve files to download — use custom resolver if provided
+    const filesToDownload = resolver
+      ? await resolver(modelId, config, signal)
+      : await this.resolveModelFiles(modelId, signal);
 
     let totalBytes = 0;
     let downloadedBytes = 0;

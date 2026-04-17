@@ -48,6 +48,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     // SmolLM2
     "local:smollm2-135m": {
       runtime: "local",
+      engine: "tjs",
       modelId: "HuggingFaceTB/SmolLM2-135M-Instruct",
       label: "SmolLM2-135M",
       family: "SmolLM2",
@@ -57,6 +58,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     },
     "local:smollm2-360m": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/SmolLM2-360M-Instruct-ONNX",
       label: "SmolLM2-360M",
       family: "SmolLM2",
@@ -66,6 +68,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     },
     "local:smollm2-1.7b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/SmolLM2-1.7B-Instruct-ONNX",
       label: "SmolLM2-1.7B",
       family: "SmolLM2",
@@ -77,6 +80,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     // Qwen 3.5
     "local:qwen3.5-0.8b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/Qwen3.5-0.8B-Text-ONNX",
       label: "Qwen3.5-0.8B",
       family: "Qwen 3.5",
@@ -86,6 +90,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     },
     "local:qwen3.5-2b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/Qwen3.5-2B-ONNX",
       label: "Qwen3.5-2B",
       family: "Qwen 3.5",
@@ -95,6 +100,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     },
     "local:qwen3.5-4b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/Qwen3.5-4B-ONNX",
       label: "Qwen3.5-4B",
       family: "Qwen 3.5",
@@ -106,6 +112,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     // Phi
     "local:phi-3.5-mini": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/Phi-3.5-mini-instruct-onnx-web",
       label: "Phi-3.5-mini",
       family: "Phi",
@@ -117,6 +124,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     // Llama
     "local:llama-3.2-1b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/Llama-3.2-1B-Instruct",
       label: "Llama 3.2-1B",
       family: "Llama",
@@ -126,6 +134,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     },
     "local:llama-3.2-3b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/Llama-3.2-3B-Instruct",
       label: "Llama 3.2-3B",
       family: "Llama",
@@ -137,6 +146,7 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
     // DeepSeek
     "local:deepseek-r1-1.5b": {
       runtime: "local",
+      engine: "tjs",
       modelId: "onnx-community/DeepSeek-R1-Distill-Qwen-1.5B",
       label: "DeepSeek-R1 1.5B",
       family: "DeepSeek",
@@ -148,12 +158,12 @@ export function createDefaultCatalog(): Record<string, ModelConfig> {
 }
 
 /**
- * Merge an override catalog into a base catalog.
- * Override entries replace base entries with the same key.
+ * Merge catalogs left-to-right. Later catalogs override earlier ones for the
+ * same key. Engine-specific fields on `LocalModelConfig` are preserved as-is
+ * (standard object spread — no field-level merging).
  */
 export function mergeCatalogs(
-  base: Record<string, ModelConfig>,
-  override: Record<string, ModelConfig>,
+  ...catalogs: Array<Record<string, ModelConfig>>
 ): Record<string, ModelConfig> {
-  return { ...base, ...override };
+  return Object.assign({}, ...catalogs);
 }

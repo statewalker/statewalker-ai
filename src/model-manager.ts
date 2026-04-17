@@ -3,16 +3,34 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
-import { LocalModelStorage } from "./local-model-storage.js";
+import {
+  type FileResolver,
+  LocalModelStorage,
+  type WeightVerifier,
+} from "./local-model-storage.js";
 import type { ModelStateStore } from "./model-state-store.js";
 import type {
   ActivationProgress,
+  EngineId,
   LocalModelConfig,
   LocalModelFactory,
   ProviderName,
   RemoteProviderSettings,
 } from "./types.js";
 import { verifyModelAccess } from "./verify-model.js";
+
+/**
+ * Registration for a local engine: the factory that creates
+ * `LanguageModelV3` instances and optional helpers for custom download
+ * and weight-verification logic.
+ */
+export interface LocalEngineRegistration {
+  factory: LocalModelFactory;
+  /** Custom file resolver (e.g. MLC shard listing, single GGUF file). */
+  fileResolver?: FileResolver;
+  /** Custom weight-presence verifier (defaults to ONNX file check). */
+  verifier?: WeightVerifier;
+}
 
 /**
  * Operations controller for model activation lifecycle.
@@ -24,8 +42,10 @@ export class ModelManager {
   readonly store: ModelStateStore;
   /** FilesApi used for model storage, or undefined if not configured. */
   readonly files: FilesApi | undefined;
-  private readonly storage: LocalModelStorage | undefined;
-  private localFactory: LocalModelFactory | undefined;
+  /** Root path under which engine-specific subdirectories are created. */
+  private readonly basePath: string;
+  private readonly engines = new Map<EngineId, LocalEngineRegistration>();
+  private readonly storageByEngine = new Map<EngineId, LocalModelStorage>();
   private readonly abortControllers = new Map<string, AbortController>();
 
   constructor(options: {
@@ -35,18 +55,42 @@ export class ModelManager {
   }) {
     this.store = options.store;
     this.files = options.files;
-
-    if (options.files) {
-      this.storage = new LocalModelStorage(
-        options.files,
-        options.modelStoragePath ?? "/models",
-      );
-    }
+    this.basePath = options.modelStoragePath ?? "/models";
   }
 
-  /** Register a factory for creating local LanguageModelV3 instances. */
-  registerLocalFactory(factory: LocalModelFactory): void {
-    this.localFactory = factory;
+  /**
+   * Register an engine-specific factory (and optional resolver/verifier).
+   * Overloads accept either a single factory or a `LocalEngineRegistration`
+   * with resolver/verifier hooks.
+   */
+  registerLocalFactory(
+    engine: EngineId,
+    factoryOrRegistration: LocalModelFactory | LocalEngineRegistration,
+  ): void {
+    const registration: LocalEngineRegistration =
+      typeof factoryOrRegistration === "function"
+        ? { factory: factoryOrRegistration }
+        : factoryOrRegistration;
+    this.engines.set(engine, registration);
+  }
+
+  /** Returns true if a factory has been registered for the given engine. */
+  hasFactory(engine: EngineId): boolean {
+    return this.engines.has(engine);
+  }
+
+  /** Get (or lazily build) the storage backend for an engine. */
+  private storageFor(engine: EngineId): LocalModelStorage | undefined {
+    if (!this.files) return undefined;
+    let storage = this.storageByEngine.get(engine);
+    if (!storage) {
+      storage = new LocalModelStorage(this.files, {
+        basePath: this.basePath,
+        engine,
+      });
+      this.storageByEngine.set(engine, storage);
+    }
+    return storage;
   }
 
   /**
@@ -137,8 +181,9 @@ export class ModelManager {
   async deleteLocal(key: string): Promise<void> {
     this.deactivate(key);
     const config = this.store.catalog[key];
-    if (config?.runtime === "local" && this.storage) {
-      await this.storage.delete(config.modelId);
+    if (config?.runtime === "local") {
+      const storage = this.storageFor(config.engine);
+      if (storage) await storage.delete(config.modelId);
     }
     this.store.setStatus(key, "not-downloaded");
   }
@@ -181,7 +226,8 @@ export class ModelManager {
       return;
     }
 
-    if (!this.storage) {
+    const storage = this.storageFor(config.engine);
+    if (!storage) {
       const error = new Error(
         "No FilesApi configured for local model storage. Provide `files` option to ModelManager.",
       );
@@ -190,6 +236,7 @@ export class ModelManager {
       return;
     }
 
+    const registration = this.engines.get(config.engine);
     const ac = new AbortController();
     this.abortControllers.set(key, ac);
     const cleanup: (() => void)[] = [() => this.abortControllers.delete(key)];
@@ -203,11 +250,14 @@ export class ModelManager {
     try {
       this.store.setStatus(key, "downloading");
 
-      for await (const progress of this.storage.download(
+      for await (const progress of storage.download(
         key,
         config.modelId,
         config,
-        ac.signal,
+        {
+          fileResolver: registration?.fileResolver,
+          signal: ac.signal,
+        },
       )) {
         this.store.setDownloadProgress(key, progress);
         yield progress;
@@ -298,16 +348,25 @@ export class ModelManager {
     config: LocalModelConfig,
     signal: AbortSignal,
   ): AsyncGenerator<ActivationProgress> {
-    if (!this.localFactory) {
+    const registration = this.engines.get(config.engine);
+    if (!registration) {
       const error = new Error(
-        "No local model provider registered. Install @statewalker/ai-provider-local and call registerLocalProvider(manager).",
+        `No factory registered for engine '${config.engine}'. ` +
+          `Install the matching provider package and call its register${
+            config.engine === "tjs"
+              ? "LocalProvider"
+              : config.engine === "webllm"
+                ? "WebLLMProvider"
+                : "LlamaCppProvider"
+          }(manager) before activating.`,
       );
       this.store.setStatus(key, "error", error);
       yield { modelKey: key, phase: "error", message: error.message, error };
       return;
     }
 
-    if (!this.storage) {
+    const storage = this.storageFor(config.engine);
+    if (!storage) {
       const error = new Error(
         "No FilesApi configured for local model storage. Provide `files` option to ModelManager.",
       );
@@ -322,24 +381,27 @@ export class ModelManager {
       message: `Checking storage for ${config.label}...`,
     };
 
-    const hasWeights = await this.storage.hasWeights(config.modelId);
+    const hasWeights = await storage.hasWeights(
+      config.modelId,
+      registration.verifier,
+    );
 
     if (!hasWeights) {
-      for await (const progress of this.storage.download(
+      for await (const progress of storage.download(
         key,
         config.modelId,
         config,
-        signal,
+        { fileResolver: registration.fileResolver, signal },
       )) {
         yield progress;
       }
     }
 
     try {
-      const model = await this.localFactory(
+      const model = await registration.factory(
         config.modelId,
         config,
-        this.storage.files,
+        storage.files,
         () => {},
         signal,
       );

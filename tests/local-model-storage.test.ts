@@ -61,6 +61,7 @@ describe("LocalModelStorage", () => {
       await files.mkdir(dir);
       const meta = {
         runtime: "local",
+        engine: "tjs",
         modelId: "test-model",
         label: "Test",
         family: "Test",

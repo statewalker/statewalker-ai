@@ -17,6 +17,7 @@ const REMOTE_MODEL: ModelConfig = {
 
 const LOCAL_MODEL: LocalModelConfig = {
   runtime: "local",
+  engine: "tjs",
   modelId: "test/local-model",
   label: "Test Local",
   family: "Test",
@@ -81,18 +82,18 @@ describe("ModelManager", () => {
   });
 
   describe("activate local model without factory", () => {
-    it("yields error when no local factory registered", async () => {
+    it("yields error when no factory registered for engine", async () => {
       const { manager } = createManager({ "local:test": LOCAL_MODEL });
       const events = await collectProgress(manager.activate("local:test"));
       expect(events.at(-1)?.phase).toBe("error");
-      expect(events.at(-1)?.message).toContain("ai-provider-local");
+      expect(events.at(-1)?.message).toContain("engine 'tjs'");
     });
   });
 
   describe("activate local model without files", () => {
     it("yields error when no FilesApi configured", async () => {
       const { manager } = createManager({ "local:test": LOCAL_MODEL });
-      manager.registerLocalFactory(vi.fn());
+      manager.registerLocalFactory("tjs", vi.fn());
       const events = await collectProgress(manager.activate("local:test"));
       expect(events.at(-1)?.phase).toBe("error");
       expect(events.at(-1)?.message).toContain("FilesApi");
@@ -292,6 +293,100 @@ describe("ModelManager", () => {
 
         expect(store.getState("local:test")?.status).toBe("partial");
         expect(store.getDownloadProgress("local:test")).toBeUndefined();
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+  });
+
+  describe("multi-engine factory registry", () => {
+    const WEBLLM_MODEL: LocalModelConfig = {
+      runtime: "local",
+      engine: "webllm",
+      modelId: "mlc/test-model",
+      label: "WebLLM Test",
+      family: "Test",
+      dtype: "q4f16",
+      size: "100 MB",
+      sizeBytes: 100_000_000,
+      mlcModelLib: "https://example.com/test.wasm",
+    };
+
+    it("hasFactory returns false when nothing registered", () => {
+      const { manager } = createManager({});
+      expect(manager.hasFactory("tjs")).toBe(false);
+      expect(manager.hasFactory("webllm")).toBe(false);
+      expect(manager.hasFactory("llamacpp")).toBe(false);
+    });
+
+    it("hasFactory reports registered engines only", () => {
+      const { manager } = createManager({});
+      manager.registerLocalFactory("tjs", vi.fn());
+      manager.registerLocalFactory("webllm", { factory: vi.fn() });
+      expect(manager.hasFactory("tjs")).toBe(true);
+      expect(manager.hasFactory("webllm")).toBe(true);
+      expect(manager.hasFactory("llamacpp")).toBe(false);
+    });
+
+    it("dispatches to the factory matching config.engine", async () => {
+      const files = new MemFilesApi();
+      const { manager } = createManager(
+        { "local:tjs": LOCAL_MODEL, "webllm:test": WEBLLM_MODEL },
+        { files },
+      );
+      const tjsFactory = vi.fn().mockResolvedValue({ provider: "tjs" });
+      const webllmFactory = vi.fn().mockResolvedValue({ provider: "webllm" });
+      manager.registerLocalFactory("tjs", {
+        factory: tjsFactory,
+        fileResolver: async () => [],
+        verifier: async () => true,
+      });
+      manager.registerLocalFactory("webllm", {
+        factory: webllmFactory,
+        fileResolver: async () => [],
+        verifier: async () => true,
+      });
+
+      await collectProgress(manager.activate("webllm:test"));
+      expect(webllmFactory).toHaveBeenCalledOnce();
+      expect(tjsFactory).not.toHaveBeenCalled();
+    });
+
+    it("yields engine-specific error when no factory registered", async () => {
+      const files = new MemFilesApi();
+      const { manager } = createManager(
+        { "webllm:test": WEBLLM_MODEL },
+        { files },
+      );
+      const events = await collectProgress(manager.activate("webllm:test"));
+      expect(events.at(-1)?.phase).toBe("error");
+      expect(events.at(-1)?.message).toContain("engine 'webllm'");
+    });
+
+    it("engine-namespaces storage paths", async () => {
+      const files = new MemFilesApi();
+      const { manager } = createManager(
+        { "webllm:test": WEBLLM_MODEL },
+        { files },
+      );
+      manager.registerLocalFactory("webllm", {
+        factory: vi.fn().mockResolvedValue({ provider: "webllm" }),
+        fileResolver: async () => [{ name: "weights.bin", size: 4 }],
+        verifier: async () => false,
+      });
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValue(
+        new Response(new Uint8Array([1, 2, 3, 4]), {
+          status: 200,
+          headers: { "content-length": "4" },
+        }),
+      );
+      try {
+        await collectProgress(manager.activate("webllm:test"));
+        const stored = await files.stats(
+          "/models/webllm/mlc/test-model/weights.bin",
+        );
+        expect(stored?.kind).toBe("file");
       } finally {
         globalThis.fetch = originalFetch;
       }

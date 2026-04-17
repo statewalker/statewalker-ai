@@ -1,10 +1,17 @@
-export { LocalModelStorage } from "./local-model-storage.js";
+export {
+  type DownloadOptions,
+  type FileResolver,
+  LocalModelStorage,
+  type LocalModelStorageOptions,
+  type WeightVerifier,
+} from "./local-model-storage.js";
 export { createDefaultCatalog, mergeCatalogs } from "./model-catalog.js";
-export { ModelManager } from "./model-manager.js";
+export { type LocalEngineRegistration, ModelManager } from "./model-manager.js";
 export { ModelStateStore } from "./model-state-store.js";
 export type {
   ActivationPhase,
   ActivationProgress,
+  EngineId,
   LocalModelConfig,
   LocalModelFactory,
   ModelConfig,

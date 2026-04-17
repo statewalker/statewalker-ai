@@ -41,6 +41,7 @@ describe("UnifiedProvider", () => {
     const store = new ModelStateStore({
       "local:test": {
         runtime: "local",
+        engine: "tjs",
         modelId: "test",
         label: "Test",
         family: "Test",

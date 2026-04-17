@@ -47,6 +47,7 @@ describe("mergeCatalogs", () => {
     const base: Record<string, ModelConfig> = {
       "local:qwen": {
         runtime: "local",
+        engine: "tjs",
         modelId: "qwen",
         label: "Qwen",
         family: "Qwen",
@@ -59,6 +60,7 @@ describe("mergeCatalogs", () => {
     const override: Record<string, ModelConfig> = {
       "local:qwen": {
         runtime: "local",
+        engine: "tjs",
         modelId: "qwen",
         label: "Qwen",
         family: "Qwen",

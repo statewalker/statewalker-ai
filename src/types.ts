@@ -15,8 +15,13 @@ export interface RemoteModelConfig {
   label: string;
 }
 
+/** Identifier for the engine that runs a local model. */
+export type EngineId = "tjs" | "webllm" | "llamacpp";
+
 export interface LocalModelConfig {
   runtime: "local";
+  /** Which local inference engine evaluates this model. */
+  engine: EngineId;
   /** HuggingFace model ID, e.g. "onnx-community/Qwen3.5-2B-ONNX" */
   modelId: string;
   /** Human-readable display name */
@@ -31,6 +36,22 @@ export interface LocalModelConfig {
   sizeBytes: number;
   /** Max new tokens for generation (default 512) */
   maxNewTokens?: number;
+
+  // ── WebLLM (engine: "webllm") ────────────────────────────────────────────
+  /** URL to the MLC-compiled .wasm library for this model. */
+  mlcModelLib?: string;
+  /** Override for mlc-chat-config.json context_window_size. */
+  mlcContextWindowSize?: number;
+  /** Estimated VRAM in MB required to run this model on WebGPU. */
+  mlcVramRequiredMB?: number;
+
+  // ── llama.cpp (engine: "llamacpp") ───────────────────────────────────────
+  /** Single GGUF file name within the HuggingFace repo. */
+  ggufFile?: string;
+  /** Context window size for the llama.cpp context. */
+  ggufNCtx?: number;
+  /** Number of layers offloaded to GPU (0 = CPU only). */
+  ggufNGpuLayers?: number;
 }
 
 export type ModelConfig = RemoteModelConfig | LocalModelConfig;
