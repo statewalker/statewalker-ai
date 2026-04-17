@@ -13,8 +13,8 @@ import { createPipeline } from "./tjs-loader.js";
  * This enables activation of `runtime: "local"` models via transformers.js.
  */
 export function registerLocalProvider(manager: ModelManager): void {
-  manager.registerLocalFactory(
-    async (
+  manager.registerLocalFactory("tjs", {
+    factory: async (
       modelId: string,
       config: LocalModelConfig,
       files: FilesApi,
@@ -25,7 +25,7 @@ export function registerLocalProvider(manager: ModelManager): void {
         modelId,
         config.dtype,
         files,
-        "/models",
+        "/models/tjs",
       );
       return new LocalLanguageModel(
         modelId,
@@ -34,5 +34,5 @@ export function registerLocalProvider(manager: ModelManager): void {
         config.maxNewTokens,
       );
     },
-  );
+  });
 }
