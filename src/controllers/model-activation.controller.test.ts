@@ -6,7 +6,7 @@ function createMockManager(
 ) {
   return {
     store: {
-      getState: () => ({ config: { runtime: "local" } }),
+      getState: () => ({ config: { runtime: "local", engine: "tjs" } }),
       getStates: () => new Map(),
     },
     async *activate() {
@@ -73,7 +73,7 @@ describe("ModelActivationController", () => {
     // Create a manager that yields indefinitely
     const manager = {
       store: {
-        getState: () => ({ config: { runtime: "local" } }),
+        getState: () => ({ config: { runtime: "local", engine: "tjs" } }),
       },
       async *activate() {
         yield { phase: "download", message: "Downloading..." };
