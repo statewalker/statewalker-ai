@@ -1,0 +1,42 @@
+{
+  "name": "@statewalker/ai-provider-webllm",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist/**",
+    "src/**"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "lint": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "^3.0.8",
+    "@statewalker/ai-provider": "workspace:*",
+    "@statewalker/webrun-files": "workspace:*"
+  },
+  "peerDependencies": {
+    "@mlc-ai/web-llm": "^0.2.82"
+  },
+  "peerDependenciesMeta": {
+    "@mlc-ai/web-llm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@mlc-ai/web-llm": "^0.2.82",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
