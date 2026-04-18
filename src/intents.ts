@@ -13,7 +13,14 @@ export const [getIntents, setIntents] = newAdapter<Intents>(
   "ai-provider:intents",
 );
 
-/** Open the full Model Settings panel. */
+/**
+ * Open the full Model Settings panel.
+ *
+ * The legacy `{ tab }` payload is accepted for one release but ignored;
+ * the panel now presents all content as a single list grouped by provider.
+ * Callers should omit the payload. A deprecation warning is logged when
+ * the field is supplied — see `model-settings.controller.ts`.
+ */
 export const [runOpenModelSettings, handleOpenModelSettings] = newIntent<
   { tab?: "providers" | "models" | "active" } | undefined,
   void
