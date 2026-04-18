@@ -2,6 +2,7 @@
 export const NodeType = {
   session: "session",
   turn: "turn",
+  turnGroup: "turn_group",
   step: "step",
   userMessage: "user_message",
   agentMessage: "agent_message",

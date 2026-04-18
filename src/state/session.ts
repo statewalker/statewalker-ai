@@ -16,8 +16,22 @@ export class Session extends TreeNode {
     this.touch();
   }
 
+  /**
+   * Direct `Turn` children only (non-recursive). Preserves the invariant used
+   * by `AgentController`: one inbox message → one new turn at the root's end.
+   */
   get turns(): Turn[] {
     return this.childrenOfType(NodeType.turn) as Turn[];
+  }
+
+  /**
+   * Every raw `Turn` descendant in document order, recursing through any
+   * `TurnGroup` wrappers introduced by context compaction.
+   */
+  allTurns(): Turn[] {
+    const out: Turn[] = [];
+    collectTurns(this, out);
+    return out;
   }
 
   get currentTurn(): Turn | undefined {
@@ -63,6 +77,16 @@ export class Session extends TreeNode {
       };
     } finally {
       this.stopStreaming(error);
+    }
+  }
+}
+
+function collectTurns(node: TreeNode, out: Turn[]): void {
+  for (const child of node.children) {
+    if (child.type === NodeType.turn) {
+      out.push(child as Turn);
+    } else if (child.type === NodeType.turnGroup) {
+      collectTurns(child, out);
     }
   }
 }

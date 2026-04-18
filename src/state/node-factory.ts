@@ -9,6 +9,7 @@ import { NodeType } from "./node-types.js";
 import { Session } from "./session.js";
 import { ToolCall } from "./tool-call.js";
 import { Turn } from "./turn.js";
+import { TurnGroup } from "./turn-group.js";
 
 const AGENT_TYPES: Record<
   string,
@@ -19,6 +20,7 @@ const AGENT_TYPES: Record<
 > = {
   [NodeType.session]: Session,
   [NodeType.turn]: Turn,
+  [NodeType.turnGroup]: TurnGroup,
   [NodeType.userMessage]: Message,
   [NodeType.agentMessage]: Message,
   [NodeType.thinking]: Message,
