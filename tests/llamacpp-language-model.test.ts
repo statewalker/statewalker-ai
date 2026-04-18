@@ -99,3 +99,20 @@ describe("LlamaCppLanguageModel.doStream", () => {
     expect(deltas.map((d) => d.delta).join("")).toBe("hello");
   });
 });
+
+describe("LlamaCppLanguageModel.[Symbol.asyncDispose]", () => {
+  it("forwards each dispose call to the onDispose hook", async () => {
+    const onDispose = vi.fn(async () => {});
+    const make = sessionFactory({ reply: "x" });
+    const model = new LlamaCppLanguageModel("m", make, onDispose);
+    await model[Symbol.asyncDispose]();
+    await model[Symbol.asyncDispose]();
+    expect(onDispose).toHaveBeenCalledTimes(2);
+  });
+
+  it("is a no-op when onDispose is omitted", async () => {
+    const make = sessionFactory({ reply: "x" });
+    const model = new LlamaCppLanguageModel("m", make);
+    await expect(model[Symbol.asyncDispose]()).resolves.toBeUndefined();
+  });
+});

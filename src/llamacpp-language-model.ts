@@ -53,8 +53,16 @@ export class LlamaCppLanguageModel implements LanguageModelV3 {
     private readonly makeSession: (opts: {
       systemPrompt: string;
     }) => LlamaChatSession,
+    private readonly onDispose?: () => void | Promise<void>,
   ) {
     this.modelId = modelId;
+  }
+
+  /** Invoked by `ModelManager.deactivate(key)` to release the LlamaContext
+   * and LlamaModel that this instance wraps. Safe to call multiple times. */
+  async [Symbol.asyncDispose](): Promise<void> {
+    const fn = this.onDispose;
+    if (fn) await fn();
   }
 
   async doGenerate(

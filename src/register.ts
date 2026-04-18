@@ -83,12 +83,26 @@ export function registerLlamaCppProvider(
         message: `${config.label} ready`,
       });
 
-      return new LlamaCppLanguageModel(modelId, ({ systemPrompt }) => {
-        return new LlamaChatSession({
-          contextSequence: context.getSequence(),
-          systemPrompt,
-        });
-      });
+      let disposed = false;
+      const dispose = async () => {
+        if (disposed) return;
+        disposed = true;
+        try {
+          await context.dispose?.();
+        } finally {
+          await model.dispose?.();
+        }
+      };
+
+      return new LlamaCppLanguageModel(
+        modelId,
+        ({ systemPrompt }) =>
+          new LlamaChatSession({
+            contextSequence: context.getSequence(),
+            systemPrompt,
+          }),
+        dispose,
+      );
     },
   });
 }
