@@ -41,4 +41,11 @@ export type LogMessage =
       finishReason: string;
       kind: TurnFinishKind;
     }
-  | { type: "error"; turnId: string; message: string };
+  | { type: "error"; turnId: string; message: string }
+  | {
+      type: "context-thrash";
+      turnId: string;
+      stamp: string;
+      budget: number;
+      estimated: number;
+    };
