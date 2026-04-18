@@ -3,7 +3,12 @@ import type { TreeNode } from "../tree-node.js";
 import type { FlatTreeEntry } from "../types.js";
 
 /**
- * Emit a `FlatTreeEntry` stream from a tree, ordered by id ascending.
+ * Emit a `FlatTreeEntry` stream from a tree in document order (depth-first
+ * pre-order traversal). Document order guarantees that parents precede their
+ * children and that siblings appear in their structural position — both
+ * invariants required by `applyFlat` to reconstruct the tree correctly when
+ * wrapper nodes (created later in time than the children they adopt) are
+ * present.
  *
  * If `since` is provided (a Snowflake ID string), only emits:
  * - Nodes where `id >= since` (created at or after that point)
@@ -15,7 +20,6 @@ export function* toFlatStream(
 ): Generator<FlatTreeEntry> {
   const nodes: TreeNode[] = [];
   collectNodes(root, nodes);
-  nodes.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
   if (!since) {
     for (const node of nodes) {

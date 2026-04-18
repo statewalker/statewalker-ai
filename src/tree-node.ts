@@ -1,6 +1,11 @@
 import { extractTime } from "@repo/ids";
 import { BaseClass } from "@repo/shared/models";
-import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
+import type {
+  GroupWrapperFactory,
+  NewEntryOptions,
+  NodeFactory,
+  TreeEntry,
+} from "./types.js";
 
 /** Default factory — creates plain TreeNode for any data. */
 const defaultFactory: NodeFactory = ((data: TreeEntry | NewEntryOptions) =>
@@ -150,6 +155,142 @@ export class TreeNode extends BaseClass {
 
   remove() {
     this.parent?.removeChild(this);
+  }
+
+  // ── Grouping (wrap / unwrap a range of children) ────────────
+
+  /**
+   * Wrap a contiguous slice `[fromIndex, toIndex)` of this node's children
+   * under a newly created intermediate node produced by `wrapperFactory`.
+   * The wrapper takes the adopted children's original position (`fromIndex`)
+   * in the child list. Emits a single `bubbleUp()`.
+   */
+  groupChildren(
+    fromIndex: number,
+    toIndex: number,
+    wrapperFactory: GroupWrapperFactory,
+  ): TreeNode {
+    const existing = this.data.children ?? [];
+    if (
+      !Number.isInteger(fromIndex) ||
+      !Number.isInteger(toIndex) ||
+      fromIndex < 0 ||
+      toIndex > existing.length
+    ) {
+      throw new RangeError(
+        `groupChildren: range [${fromIndex}, ${toIndex}) out of bounds for ${existing.length} children`,
+      );
+    }
+    if (toIndex <= fromIndex) {
+      throw new RangeError(
+        `groupChildren: empty or reversed range [${fromIndex}, ${toIndex})`,
+      );
+    }
+
+    // Take the slice by reference so the wrapper factory sees the real entries.
+    const adopted = existing.slice(fromIndex, toIndex);
+
+    // Build the wrapper node via the factory. The returned NewEntryOptions may
+    // carry its own `children` — if not, we attach the adopted slice verbatim.
+    const opts = wrapperFactory(adopted);
+    const wrapperOpts: NewEntryOptions =
+      opts.children !== undefined ? opts : { ...opts, children: adopted };
+    const wrapper = this.factory(wrapperOpts);
+
+    // Migrate any already-wrapped adopted children from this node's caches
+    // onto the wrapper so their update events route through the wrapper.
+    for (const entry of adopted) {
+      const cached = this._childCache.get(entry.id);
+      if (!cached) continue;
+      const unsub = this._childCleanups.get(cached);
+      unsub?.();
+      this._childCleanups.delete(cached);
+      this._childCache.delete(entry.id);
+      cached.parent = wrapper;
+      wrapper._childCache.set(entry.id, cached);
+      wrapper._childCleanups.set(
+        cached,
+        cached.onUpdate(() => wrapper.bubbleUp()),
+      );
+    }
+
+    // Splice the wrapper's entry into this node's data.children in place of
+    // the adopted range.
+    const next = [
+      ...existing.slice(0, fromIndex),
+      wrapper.data,
+      ...existing.slice(toIndex),
+    ];
+    this.data.children = next;
+
+    // Hook the wrapper into this node's own cache + cleanup set.
+    wrapper.parent = this;
+    this._childCache.set(wrapper.id, wrapper);
+    this._childCleanups.set(
+      wrapper,
+      wrapper.onUpdate(() => this.bubbleUp()),
+    );
+
+    this.bubbleUp();
+    return wrapper;
+  }
+
+  /**
+   * Inverse of `groupChildren`. Splices `wrapper`'s children back into this
+   * node's child list at the wrapper's position, removes the wrapper, and
+   * emits a single `bubbleUp()`. `wrapper.parent` must be `this`.
+   */
+  ungroup(wrapper: TreeNode): void {
+    if (wrapper.parent !== this) {
+      throw new Error(
+        `ungroup: wrapper is not a direct child of this node (id=${wrapper.id})`,
+      );
+    }
+    const existing = this.data.children ?? [];
+    const index = existing.findIndex((e) => e.id === wrapper.id);
+    if (index < 0) {
+      throw new Error(
+        `ungroup: wrapper ${wrapper.id} not present in parent's child list`,
+      );
+    }
+
+    const adopted = wrapper.data.children ?? [];
+
+    // Migrate adopted children off the wrapper and onto this node.
+    for (const entry of adopted) {
+      const cached = wrapper._childCache.get(entry.id);
+      if (cached) {
+        const unsub = wrapper._childCleanups.get(cached);
+        unsub?.();
+        wrapper._childCleanups.delete(cached);
+        wrapper._childCache.delete(entry.id);
+        cached.parent = this;
+        this._childCache.set(entry.id, cached);
+        this._childCleanups.set(
+          cached,
+          cached.onUpdate(() => this.bubbleUp()),
+        );
+      }
+    }
+
+    // Remove the wrapper from this node's caches.
+    const wrapperUnsub = this._childCleanups.get(wrapper);
+    wrapperUnsub?.();
+    this._childCleanups.delete(wrapper);
+    this._childCache.delete(wrapper.id);
+    wrapper.parent = undefined;
+    // Also detach the adopted entries from the wrapper's data so the two
+    // trees can't leak state if callers keep the wrapper reference.
+    wrapper.data.children = undefined;
+
+    // Splice wrapper out and adopted slice back in at its position.
+    this.data.children = [
+      ...existing.slice(0, index),
+      ...adopted,
+      ...existing.slice(index + 1),
+    ];
+
+    this.bubbleUp();
   }
 
   childrenOfType(type: string): TreeNode[] {

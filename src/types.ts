@@ -25,14 +25,25 @@ export interface FlatTreeEntry {
 
 /**
  * Options for creating a new tree node. `id` is optional — the factory generates
- * one if not provided.
+ * one if not provided. `children` is optional and, when present, is adopted
+ * verbatim (the factory keeps existing child ids intact).
  */
 export interface NewEntryOptions {
   id?: string;
   type?: string;
   props?: Record<string, unknown>;
   content?: string;
+  children?: TreeEntry[];
 }
+
+/**
+ * Factory supplied to `TreeNode.groupChildren` — receives the slice of
+ * adopted child entries (verbatim, with their existing ids) and returns
+ * a description of the wrapper node that should adopt them.
+ */
+export type GroupWrapperFactory = (
+  adoptedChildren: TreeEntry[],
+) => NewEntryOptions;
 
 /**
  * Factory function that creates a TreeNode from either:
