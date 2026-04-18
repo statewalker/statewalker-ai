@@ -1,6 +1,7 @@
 import { newRegistry } from "@repo/shared/registry";
 import { getModelManager } from "../adapters.js";
 import { restoreDownloadStatuses } from "../download-status-store.js";
+import { migrateEngineNamespacing } from "../migrations.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
 /**
@@ -26,8 +27,11 @@ async function startup(ctx: Record<string, unknown>): Promise<void> {
   const manager = getModelManager(ctx);
   const store = manager.store;
 
-  // Restore download statuses from /.settings/models/ before anything else
+  // Migrate legacy `/models/{modelId}/` layouts into
+  // `/models/tjs/{modelId}/` before reading download metadata so both
+  // refer to the same on-disk locations.
   if (manager.files) {
+    await migrateEngineNamespacing(manager.files);
     await restoreDownloadStatuses(manager.files, store);
   }
 

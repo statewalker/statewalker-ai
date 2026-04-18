@@ -10,6 +10,10 @@ import { modelKinds } from "@statewalker/ai-provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { getModelManager } from "../adapters.js";
 import {
+  detectAvailableEngines,
+  type EngineAvailability,
+} from "../engine-detection.js";
+import {
   type ProviderSettings,
   ProviderSettingsStore,
 } from "../provider-settings-store.js";
@@ -57,18 +61,25 @@ export function createActiveModelsLifecycleController(
   // Snapshot of provider settings and activeModels loaded from disk;
   // kept mutable so subsequent saves merge correctly.
   let settings: ProviderSettings = {};
+  let availableEngines: EngineAvailability | undefined;
 
   const refreshListView = () => {
     listView.recompute(
       manager.store.getStates(),
       settings,
       settings.activeModels ?? { reasoning: [], embedding: [] },
+      availableEngines,
     );
   };
 
   // Kick off async startup
   void (async () => {
-    settings = await store.load();
+    const [loaded, engines] = await Promise.all([
+      store.load(),
+      detectAvailableEngines(),
+    ]);
+    settings = loaded;
+    availableEngines = engines;
     hydrateProviderSettings(manager, settings);
     refreshListView();
 

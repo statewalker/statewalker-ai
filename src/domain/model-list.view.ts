@@ -1,5 +1,6 @@
 import { BaseClass } from "@repo/shared/models";
 import {
+  type EngineId,
   type LocalModelConfig,
   type ModelConfig,
   type ModelState,
@@ -11,6 +12,15 @@ import type {
   ActiveModelsSet,
   ProviderSettings,
 } from "../provider-settings-store.js";
+
+/** Short runtime label displayed next to each Local row in the settings UI. */
+export type EngineBadge = "WASM" | "WebGPU" | "Native";
+
+const ENGINE_BADGES: Record<EngineId, EngineBadge> = {
+  tjs: "WASM",
+  webllm: "WebGPU",
+  llamacpp: "Native",
+};
 
 /** One model row in the settings panel. */
 export interface ModelRow {
@@ -28,6 +38,16 @@ export interface ModelRow {
   activeForEmbedding: boolean;
   /** Effective kinds (defaults to ["reasoning"]). */
   kinds: ("reasoning" | "embedding")[];
+  /** Engine id for local rows; `undefined` for remote rows. */
+  engine?: EngineId;
+  /** Short engine label for local rows; `undefined` for remote rows. */
+  engineBadge?: EngineBadge;
+  /**
+   * Whether this row's engine is available on the current runtime.
+   * `true` for remote rows and for `tjs` (WASM is universally available);
+   * `false` for `webllm`/`llamacpp` when the host lacks WebGPU / Node.
+   */
+  available: boolean;
 }
 
 /** One group in the settings panel. */
@@ -71,11 +91,15 @@ export class ModelListView extends BaseClass {
   /**
    * Recompute from a snapshot of state. Called by the controller on every
    * store `onUpdate` event. Mutates internal fields and notifies listeners.
+   *
+   * `availableEngines` defaults to all engines being available, which is
+   * what non-UI consumers (tests, CLI) expect.
    */
   recompute(
     states: ReadonlyMap<string, ModelState>,
     providerSettings: ProviderSettings,
     activeModels: ActiveModelsSet,
+    availableEngines?: Partial<Record<EngineId, boolean>>,
   ): void {
     this.#activeReasoningKeys = new Set(
       activeModels.reasoning.filter((k) => states.get(k)?.status === "ready"),
@@ -88,6 +112,7 @@ export class ModelListView extends BaseClass {
       providerSettings,
       this.#activeReasoningKeys,
       this.#activeEmbeddingKeys,
+      availableEngines,
     );
     this.notify();
   }
@@ -98,12 +123,25 @@ function buildGroups(
   providerSettings: ProviderSettings,
   activeReasoning: ReadonlySet<string>,
   activeEmbedding: ReadonlySet<string>,
+  availableEngines: Partial<Record<EngineId, boolean>> | undefined,
 ): ModelGroup[] {
   const groupsById = new Map<string, ModelGroup>();
 
   for (const [key, state] of states) {
     const group = ensureGroup(groupsById, providerSettings, state.config);
     const kinds = modelKinds(state.config);
+    const isLocal = state.config.runtime === "local";
+    const engine = isLocal
+      ? (state.config as LocalModelConfig).engine
+      : undefined;
+    const engineBadge = engine ? ENGINE_BADGES[engine] : undefined;
+    const available = engine
+      ? // `tjs` runs in WASM and is treated as always-available unless a
+        // caller explicitly flags it false.
+        engine === "tjs"
+        ? availableEngines?.tjs !== false
+        : availableEngines?.[engine] === true
+      : true;
     group.rows.push({
       key,
       label: state.config.label,
@@ -112,6 +150,9 @@ function buildGroups(
       activeForReasoning: activeReasoning.has(key),
       activeForEmbedding: activeEmbedding.has(key),
       kinds,
+      engine,
+      engineBadge,
+      available,
     });
   }
 

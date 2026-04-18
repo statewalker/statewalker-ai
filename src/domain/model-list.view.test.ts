@@ -1,4 +1,4 @@
-import type { ModelState } from "@statewalker/ai-provider";
+import type { EngineId, ModelState } from "@statewalker/ai-provider";
 import { describe, expect, it } from "vitest";
 import { ModelListView } from "./model-list.view.js";
 
@@ -26,11 +26,12 @@ function localState(
   family: string,
   label: string,
   status: ModelState["status"],
+  engine: EngineId = "tjs",
 ): ModelState {
   return {
     config: {
       runtime: "local",
-      engine: "tjs",
+      engine,
       modelId,
       family,
       label,
@@ -162,5 +163,64 @@ describe("ModelListView", () => {
       { reasoning: [], embedding: [] },
     );
     expect(count).toBe(1);
+  });
+
+  it("maps engine to engineBadge and leaves remote rows without a badge", () => {
+    const states = new Map<string, ModelState>([
+      ["anthropic/a", remoteState("anthropic", "a", "Claude A", "ready")],
+      ["local:tjs", localState("t", "TJS", "TJS-M", "downloaded", "tjs")],
+      ["local:web", localState("w", "WLM", "WLM-M", "downloaded", "webllm")],
+      [
+        "local:llama",
+        localState("l", "LCPP", "LCPP-M", "downloaded", "llamacpp"),
+      ],
+    ]);
+
+    const view = new ModelListView();
+    view.recompute(
+      states,
+      {
+        anthropic: { apiKey: "sk-a" },
+        activeModels: { reasoning: [], embedding: [] },
+      },
+      { reasoning: [], embedding: [] },
+    );
+
+    const rowsByKey = new Map(
+      view.groups.flatMap((g) => g.rows).map((r) => [r.key, r]),
+    );
+    expect(rowsByKey.get("anthropic/a")?.engine).toBeUndefined();
+    expect(rowsByKey.get("anthropic/a")?.engineBadge).toBeUndefined();
+    expect(rowsByKey.get("local:tjs")?.engineBadge).toBe("WASM");
+    expect(rowsByKey.get("local:web")?.engineBadge).toBe("WebGPU");
+    expect(rowsByKey.get("local:llama")?.engineBadge).toBe("Native");
+  });
+
+  it("marks rows unavailable when their engine isn't available", () => {
+    const states = new Map<string, ModelState>([
+      ["remote", remoteState("anthropic", "x", "X", "ready")],
+      ["tjs", localState("t", "TJS", "TJS-M", "downloaded", "tjs")],
+      ["web", localState("w", "WLM", "WLM-M", "downloaded", "webllm")],
+      ["llama", localState("l", "LCPP", "LCPP-M", "downloaded", "llamacpp")],
+    ]);
+
+    const view = new ModelListView();
+    view.recompute(
+      states,
+      {
+        anthropic: { apiKey: "sk" },
+        activeModels: { reasoning: [], embedding: [] },
+      },
+      { reasoning: [], embedding: [] },
+      { tjs: true, webllm: false, llamacpp: true },
+    );
+
+    const rowsByKey = new Map(
+      view.groups.flatMap((g) => g.rows).map((r) => [r.key, r]),
+    );
+    expect(rowsByKey.get("remote")?.available).toBe(true);
+    expect(rowsByKey.get("tjs")?.available).toBe(true);
+    expect(rowsByKey.get("web")?.available).toBe(false);
+    expect(rowsByKey.get("llama")?.available).toBe(true);
   });
 });

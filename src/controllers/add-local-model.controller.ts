@@ -121,6 +121,8 @@ export function openAddLocalModelDialog(
             key,
             config.modelId,
             "downloaded",
+            undefined,
+            config.runtime === "local" ? config.engine : undefined,
           );
         }
         vm.completeDownload();

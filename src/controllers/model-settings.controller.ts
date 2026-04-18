@@ -237,12 +237,14 @@ function buildRows(view: ModelListView): ListBoxItem[] {
   const items: ListBoxItem[] = [];
   for (const g of view.groups) {
     for (const r of g.rows) {
+      const unavailable = r.available ? "" : " · unavailable";
+      const badge = r.engineBadge ? ` · ${r.engineBadge}` : "";
       items.push({
         key: r.key,
         label: `${statusIcon(r.status)} ${r.label}${
           r.activeForReasoning ? "  ●" : ""
         }`,
-        description: g.label,
+        description: `${g.label}${badge}${unavailable}`,
       });
     }
   }

@@ -11,6 +11,7 @@ import {
   TextView,
 } from "@repo/shared-views";
 import type {
+  EngineId,
   LocalModelConfig,
   ModelConfig,
   ModelManager,
@@ -21,7 +22,14 @@ import {
   persistDownloadStatus,
   removeDownloadStatus,
 } from "../download-status-store.js";
+import { detectAvailableEngines } from "../engine-detection.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
+
+const ENGINE_BADGES: Record<EngineId, string> = {
+  tjs: "WASM",
+  webllm: "WebGPU",
+  llamacpp: "Native",
+};
 
 /**
  * Build a ContentPanelView that reflects the state of one model and wires
@@ -44,7 +52,11 @@ export function buildModelDetailPanel(
 
   const { config } = state;
   const isLocal = config.runtime === "local";
-  panel.header = config.label;
+  const engine = isLocal ? (config as LocalModelConfig).engine : undefined;
+  const engineBadge = engine ? ENGINE_BADGES[engine] : undefined;
+  panel.header = engineBadge
+    ? `${config.label} — ${engineBadge}`
+    : config.label;
 
   const metadata = buildMetadata(config);
   const statusLight = new StatusLightView({
@@ -110,6 +122,26 @@ export function buildModelDetailPanel(
     variant: "neutral",
     disabled: true,
   });
+  const retryAction = new ActionView({
+    key: "retry",
+    label: "Retry",
+    variant: "primary",
+    disabled: state.status !== "error",
+  });
+
+  // If the engine this model uses isn't available on the current host,
+  // lock out the actions that would try to run it. Remote models and `tjs`
+  // are unaffected since they run anywhere.
+  if (engine && engine !== "tjs") {
+    void detectAvailableEngines().then((available) => {
+      if (!available[engine]) {
+        downloadAction.disabled = true;
+        activateAction.disabled = true;
+        retryAction.disabled = true;
+        progressMessage.text = `${engine} is not available on this runtime`;
+      }
+    });
+  }
 
   let abortController: AbortController | undefined;
 
@@ -133,6 +165,8 @@ export function buildModelDetailPanel(
             catalogKey,
             config.modelId,
             "downloaded",
+            undefined,
+            isLocal ? (config as LocalModelConfig).engine : undefined,
           );
         }
       } catch {
@@ -150,6 +184,7 @@ export function buildModelDetailPanel(
                   bytesTotal: dp.bytesTotal ?? 0,
                 }
               : undefined,
+            isLocal ? (config as LocalModelConfig).engine : undefined,
           );
         }
       } finally {
@@ -160,27 +195,50 @@ export function buildModelDetailPanel(
     }),
   );
 
-  register(
-    activateAction.onSubmit(async () => {
-      activateAction.disabled = true;
-      cancelAction.disabled = false;
-      abortController = new AbortController();
-      try {
-        const settings = resolveActivationSettings(ctx, manager, catalogKey);
-        for await (const p of manager.activate(catalogKey, {
-          settings,
-          signal: abortController.signal,
-        })) {
-          progressBar.value = p.progress != null ? p.progress * 100 : undefined;
-          progressBar.label = p.phase;
-          progressMessage.text = p.error?.message ?? p.message;
-        }
-        manager.store.setActiveModelKey(catalogKey, config.label);
-      } finally {
-        cancelAction.disabled = true;
-        abortController = undefined;
-        onRefresh();
+  const runActivate = async () => {
+    activateAction.disabled = true;
+    retryAction.disabled = true;
+    cancelAction.disabled = false;
+    abortController = new AbortController();
+    try {
+      const settings = resolveActivationSettings(ctx, manager, catalogKey);
+      for await (const p of manager.activate(catalogKey, {
+        settings,
+        signal: abortController.signal,
+      })) {
+        progressBar.value = p.progress != null ? p.progress * 100 : undefined;
+        progressBar.label = p.phase;
+        progressMessage.text = p.error?.message ?? p.message;
       }
+      const final = manager.store.getState(catalogKey);
+      if (final?.status === "ready") {
+        manager.store.setActiveModelKey(catalogKey, config.label);
+      }
+    } finally {
+      cancelAction.disabled = true;
+      abortController = undefined;
+      onRefresh();
+    }
+  };
+
+  register(activateAction.onSubmit(runActivate));
+
+  register(
+    retryAction.onSubmit(async () => {
+      // Move out of "error" back to the prior download status so the
+      // activate flow can re-enter. For local models that means "downloaded"
+      // if the weights are still present, otherwise "not-downloaded" so
+      // the user is steered to re-download.
+      if (isLocal) {
+        const next =
+          manager.store.getDownloadProgress(catalogKey) != null
+            ? "partial"
+            : "downloaded";
+        manager.store.setStatus(catalogKey, next);
+      } else {
+        manager.store.setStatus(catalogKey, "not-downloaded");
+      }
+      await runActivate();
     }),
   );
 
@@ -224,6 +282,7 @@ export function buildModelDetailPanel(
       if (!updated) return;
       statusLight.label = updated.status;
       statusLight.variant = statusVariant(updated.status);
+      retryAction.disabled = updated.status !== "error";
     }),
   );
 
@@ -231,11 +290,12 @@ export function buildModelDetailPanel(
     ? [
         downloadAction,
         activateAction,
+        retryAction,
         deactivateAction,
         deleteWeightsAction,
         cancelAction,
       ]
-    : [activateAction, deactivateAction, cancelAction];
+    : [activateAction, retryAction, deactivateAction, cancelAction];
 
   panel.setChildren([
     statusLight,
@@ -278,6 +338,10 @@ function buildMetadata(config: ModelConfig): LabeledValueView[] {
   } else {
     const l = config as LocalModelConfig;
     rows.push(
+      new LabeledValueView({
+        label: "Engine",
+        value: `${ENGINE_BADGES[l.engine]} (${l.engine})`,
+      }),
       new LabeledValueView({ label: "Family", value: l.family }),
       new LabeledValueView({ label: "Quantization", value: l.dtype }),
       new LabeledValueView({ label: "Size", value: l.size }),
