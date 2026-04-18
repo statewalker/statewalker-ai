@@ -161,13 +161,19 @@ export class ModelManager {
     }
   }
 
-  /** Unload a model from memory. */
+  /**
+   * Unload a model from memory. If the language-model instance implements
+   * `[Symbol.dispose]` / `[Symbol.asyncDispose]`, the disposer is invoked
+   * so engines like llama.cpp can free their native LlamaContext/LlamaModel.
+   */
   deactivate(key: string): void {
+    const model = this.store.peekActiveModel(key);
     this.store.removeActiveModel(key);
     const state = this.store.getState(key);
     if (state && state.config.runtime === "local") {
       this.store.setStatus(key, "downloaded");
     }
+    disposeModel(model);
   }
 
   /** Cancel an in-progress activation. */
@@ -478,6 +484,25 @@ export class ModelManager {
       const error = e instanceof Error ? e : new Error(String(e));
       this.store.setStatus(key, "error", error);
       yield { modelKey: key, phase: "error", message: error.message, error };
+    }
+  }
+}
+
+function disposeModel(model: unknown): void {
+  if (!model || typeof model !== "object") return;
+  const asyncDispose = (model as { [Symbol.asyncDispose]?: () => unknown })[
+    Symbol.asyncDispose
+  ];
+  if (typeof asyncDispose === "function") {
+    void Promise.resolve(asyncDispose.call(model)).catch(() => {});
+    return;
+  }
+  const sync = (model as { [Symbol.dispose]?: () => unknown })[Symbol.dispose];
+  if (typeof sync === "function") {
+    try {
+      sync.call(model);
+    } catch {
+      // Swallow: disposal is best-effort.
     }
   }
 }

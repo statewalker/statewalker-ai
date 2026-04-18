@@ -184,6 +184,11 @@ export class ModelStateStore {
     return model;
   }
 
+  /** Return the active model instance or `undefined` without throwing. */
+  peekActiveModel(key: string): LanguageModelV3 | undefined {
+    return this._activeModels.get(key);
+  }
+
   // ── Download progress ───────────────────────────────────────────────
 
   /** Update download progress for a model. Notifies listeners. */
