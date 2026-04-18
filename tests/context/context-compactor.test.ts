@@ -1,19 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { ContextCompactor } from "../../src/context/context-compactor.js";
-import { createDefaultPinPolicy } from "../../src/context/pin-policy.js";
-import { createTokenEstimator } from "../../src/context/token-estimator.js";
-import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
 import type {
   HierarchicalSummarizer,
   SummaryOutput,
 } from "../../src/context/hierarchical-summarizer.js";
-import type { LogMessage } from "../../src/state/log-message.js";
+import { createDefaultPinPolicy } from "../../src/context/pin-policy.js";
+import { createTokenEstimator } from "../../src/context/token-estimator.js";
+import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
 import {
   createAgentNodeFactory,
   NodeType,
   type Session,
   type TurnGroup,
 } from "../../src/state/index.js";
+import type { LogMessage } from "../../src/state/log-message.js";
 
 function makeSession(): Session {
   const factory = createAgentNodeFactory();
@@ -137,8 +137,11 @@ describe("ContextCompactor.compact — depth-1 grouping", () => {
     });
     expect(result.newGroups.length).toBeGreaterThanOrEqual(2);
     const byId = new Map<string, TurnGroup>();
-    const walk = (node: { children: TurnGroup[] | { children: unknown }[] }) => {
-      for (const child of (node as unknown as { children: TurnGroup[] }).children) {
+    const walk = (node: {
+      children: TurnGroup[] | { children: unknown }[];
+    }) => {
+      for (const child of (node as unknown as { children: TurnGroup[] })
+        .children) {
         byId.set(child.id, child);
         walk(child as unknown as { children: TurnGroup[] });
       }
@@ -181,9 +184,7 @@ describe("ContextCompactor.compact — pin-aware grouping", () => {
     for (let i = 0; i < 5; i++) {
       const t = addTurnWithLoad(session, 400, `q${i}`);
       if (i === 2) {
-        t.addToolCall("c1", "use_skills", { q: "pin" }).addResponse(
-          "selected",
-        );
+        t.addToolCall("c1", "use_skills", { q: "pin" }).addResponse("selected");
       }
     }
     const { summ } = mockSummarizer();
@@ -253,10 +254,11 @@ describe("ContextCompactor.compact — thrashing guard", () => {
     });
 
     expect(result.thrashed).toBe(true);
-    const thrashEvents = events.filter((e) => e.type === "context-thrash");
-    expect(thrashEvents).toHaveLength(1);
-    expect((thrashEvents[0] as { type: "context-thrash" }).stamp).toBe(
-      result.stamp,
+    const thrashEvents = events.filter(
+      (e): e is Extract<LogMessage, { type: "context-thrash" }> =>
+        e.type === "context-thrash",
     );
+    expect(thrashEvents).toHaveLength(1);
+    expect(thrashEvents[0]?.stamp).toBe(result.stamp);
   });
 });

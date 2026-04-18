@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultPinPolicy, createPinPolicy } from "../../src/context/pin-policy.js";
-import { selectAll } from "../../src/context/select-messages.js";
+import {
+  createDefaultPinPolicy,
+  createPinPolicy,
+} from "../../src/context/pin-policy.js";
 import { selectHierarchical } from "../../src/context/select-hierarchical.js";
+import { selectAll } from "../../src/context/select-messages.js";
 import { createTokenEstimator } from "../../src/context/token-estimator.js";
 import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
 import {
@@ -76,9 +79,7 @@ describe("selectHierarchical — group summary rendering", () => {
     const g = session.addChild({ type: NodeType.turnGroup }) as TurnGroup;
     g.summaryText = "prose";
     g.stamp = "stamp";
-    g.sections = [
-      { title: "Decisions", body: "chose X", refs: ["t1", "t2"] },
-    ];
+    g.sections = [{ title: "Decisions", body: "chose X", refs: ["t1", "t2"] }];
 
     const strategy = selectHierarchical(baseOptions());
     const got = await strategy(session);

@@ -108,11 +108,7 @@ export function elideToolResponse(
   }
 }
 
-function formatPlaceholder(
-  n: number,
-  toolName: string,
-  args: unknown,
-): string {
+function formatPlaceholder(n: number, toolName: string, args: unknown): string {
   const keys = argKeys(args);
   const keysPart = keys.length > 0 ? ` with args {${keys.join(", ")}}` : "";
   return `[result elided — ${n} chars, call ${toolName}${keysPart}]`;

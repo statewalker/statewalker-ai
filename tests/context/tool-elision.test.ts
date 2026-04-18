@@ -14,17 +14,17 @@ describe("elideToolResponse", () => {
   it("passes content through unchanged under the minElideChars threshold", () => {
     const policy = createDefaultElisionPolicy({ minElideChars: 2000 });
     const content = "a".repeat(500);
-    expect(
-      elideToolResponse(content, "unknown_tool", { foo: 1 }, policy),
-    ).toBe(content);
+    expect(elideToolResponse(content, "unknown_tool", { foo: 1 }, policy)).toBe(
+      content,
+    );
   });
 
   it("never-elide strategy keeps content intact regardless of length", () => {
     const policy = createDefaultElisionPolicy();
     const content = "x".repeat(10_000);
-    expect(
-      elideToolResponse(content, "use_skills", { q: "…" }, policy),
-    ).toBe(content);
+    expect(elideToolResponse(content, "use_skills", { q: "…" }, policy)).toBe(
+      content,
+    );
   });
 
   it("head-tail keeps the configured boundaries and shows elision count", () => {
@@ -69,9 +69,9 @@ describe("elideToolResponse", () => {
     });
     const content = "y".repeat(5000);
     const out = elideToolResponse(content, "unknown_tool", {}, policy);
-    expect(out.startsWith("[result elided — 5000 chars, call unknown_tool")).toBe(
-      true,
-    );
+    expect(
+      out.startsWith("[result elided — 5000 chars, call unknown_tool"),
+    ).toBe(true);
   });
 
   it("default registry pins stateful tools to never-elide", () => {

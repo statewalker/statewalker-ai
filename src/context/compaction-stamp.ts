@@ -33,10 +33,7 @@ export function newStamp(): string {
  *                                                 (non-legacy) stamp.
  *   - otherwise                                 → plain lexicographic compare.
  */
-export function isStampStale(
-  group: TurnGroup,
-  relativeTo: string,
-): boolean {
+export function isStampStale(group: TurnGroup, relativeTo: string): boolean {
   const groupStamp = group.stamp;
   if (groupStamp === undefined) return true;
   if (groupStamp === relativeTo) return false;

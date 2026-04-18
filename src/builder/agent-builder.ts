@@ -8,8 +8,8 @@ import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
 import type { AgentContext } from "../config/types.js";
 import {
-  ContextCompactor,
   type CompactOptions,
+  ContextCompactor,
 } from "../context/context-compactor.js";
 import type { HierarchicalSummarizer } from "../context/hierarchical-summarizer.js";
 import {
@@ -267,8 +267,7 @@ export class AgentBuilder {
       const bc = this._budgetCompaction;
       const estimator = bc.estimator ?? createTokenEstimator();
       const pinPolicy = bc.pinPolicy ?? createDefaultPinPolicy();
-      const elisionPolicy =
-        bc.elisionPolicy ?? createDefaultElisionPolicy();
+      const elisionPolicy = bc.elisionPolicy ?? createDefaultElisionPolicy();
       const keepRecentTurns = bc.keepRecentTurns ?? 4;
       controllerConfig.select = selectHierarchical({
         budgetTokens: bc.budgetTokens,

@@ -108,9 +108,7 @@ export function createDefaultPinPolicy(
       return true;
     }
     if (node.type === NodeType.toolCall) {
-      const latest = pinnedLatestStatefulCalls.get(
-        (node as ToolCall).toolName,
-      );
+      const latest = pinnedLatestStatefulCalls.get((node as ToolCall).toolName);
       if (latest && latest.id === node.id) return true;
     }
     for (const p of additional) {

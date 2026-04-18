@@ -1,14 +1,11 @@
-import {
-  markdownToTree,
-  treeToMarkdown,
-} from "@statewalker/ai-agent-state";
+import { markdownToTree, treeToMarkdown } from "@statewalker/ai-agent-state";
 import { describe, expect, it } from "vitest";
 import {
   createAgentNodeFactory,
   NodeType,
   type Session,
   type SummarySection,
-  TurnGroup,
+  type TurnGroup,
 } from "../../src/state/index.js";
 
 function makeSession(): Session {

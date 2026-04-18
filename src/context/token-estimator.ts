@@ -58,10 +58,7 @@ function countMessage(
   return total;
 }
 
-function countPart(
-  part: unknown,
-  countText: (text: string) => number,
-): number {
+function countPart(part: unknown, countText: (text: string) => number): number {
   if (part === undefined || part === null) return 0;
   if (typeof part === "string") return countText(part);
   if (typeof part !== "object") return 0;

@@ -7,6 +7,7 @@ import {
   createAgentNodeFactory,
   NodeType,
   type Session,
+  type ToolCall,
 } from "../../src/state/index.js";
 
 function makeSession(): Session {
@@ -28,10 +29,7 @@ describe("createPinPolicy (composition)", () => {
     const turn = session.addTurn();
     const userMsg = turn.addUserMessage("hello");
     const policy = createPinPolicy({
-      predicates: [
-        (n) => n.type === NodeType.userMessage,
-        () => false,
-      ],
+      predicates: [(n) => n.type === NodeType.userMessage, () => false],
     });
     expect(policy.shouldPin(userMsg)).toBe(true);
   });
@@ -85,7 +83,7 @@ describe("createDefaultPinPolicy", () => {
       additionalPredicates: [
         (n) =>
           n.type === NodeType.toolCall &&
-          (n as { toolName: string }).toolName === "my_custom_tool",
+          (n as ToolCall).toolName === "my_custom_tool",
       ],
     });
     policy.prepare?.(session);

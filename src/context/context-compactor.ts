@@ -1,5 +1,6 @@
 import type { TreeNode } from "@statewalker/ai-agent-state";
 import type { LogMessage } from "../state/log-message.js";
+import type { Message } from "../state/message.js";
 import { NodeType } from "../state/node-types.js";
 import type { Session } from "../state/session.js";
 import type { ToolCall } from "../state/tool-call.js";
@@ -9,10 +10,7 @@ import { LEGACY_STAMP, newStamp } from "./compaction-stamp.js";
 import type { HierarchicalSummarizer } from "./hierarchical-summarizer.js";
 import type { PinPolicy } from "./pin-policy.js";
 import type { TokenEstimator } from "./token-estimator.js";
-import {
-  elideToolResponse,
-  type ToolElisionPolicy,
-} from "./tool-elision.js";
+import { elideToolResponse, type ToolElisionPolicy } from "./tool-elision.js";
 
 const DEFAULT_MAX_PASSES = 8;
 const DEFAULT_GROUP_SIZE = 6;
@@ -391,9 +389,9 @@ function estimateTurn(
   let total = 0;
   for (const child of turn.children) {
     if (child.type === NodeType.userMessage) {
-      total += estimator.estimate((child as { text: string }).text);
+      total += estimator.estimate((child as Message).text);
     } else if (child.type === NodeType.agentMessage) {
-      total += estimator.estimate((child as { text: string }).text ?? "");
+      total += estimator.estimate((child as Message).text ?? "");
     } else if (child.type === NodeType.toolCall) {
       const tc = child as ToolCall;
       total += estimator.estimate(JSON.stringify(tc.args ?? {}));

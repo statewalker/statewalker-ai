@@ -1,9 +1,9 @@
-import { type LanguageModel, generateText } from "ai";
+import { generateText, type LanguageModel } from "ai";
+import type { Message } from "../state/message.js";
 import { NodeType } from "../state/node-types.js";
 import type { ToolCall } from "../state/tool-call.js";
 import type { Turn } from "../state/turn.js";
-import type { TurnGroup } from "../state/turn-group.js";
-import type { SummarySection } from "../state/turn-group.js";
+import type { SummarySection, TurnGroup } from "../state/turn-group.js";
 import {
   createDefaultElisionPolicy,
   elideToolResponse,
@@ -91,10 +91,20 @@ export function createHierarchicalSummarizer(
     async summarize(input) {
       if (input.kind === "depth-1") {
         const rendered = renderDepth1Input(input.turns, elision);
-        return runSummariser(depth1Model, DEPTH1_SYSTEM_PROMPT, rendered, maxOutputTokens);
+        return runSummariser(
+          depth1Model,
+          DEPTH1_SYSTEM_PROMPT,
+          rendered,
+          maxOutputTokens,
+        );
       }
       const rendered = renderDepthKInput(input.children, spotPeekPerChild);
-      return runSummariser(depthKModel, DEPTHK_SYSTEM_PROMPT, rendered, maxOutputTokens);
+      return runSummariser(
+        depthKModel,
+        DEPTHK_SYSTEM_PROMPT,
+        rendered,
+        maxOutputTokens,
+      );
     },
   };
 }
@@ -110,9 +120,9 @@ export function renderDepth1Input(
     parts.push(`[T${turn.id}]`);
     for (const child of turn.children) {
       if (child.type === NodeType.userMessage) {
-        parts.push(`User: ${(child as { text: string }).text}`);
+        parts.push(`User: ${(child as Message).text}`);
       } else if (child.type === NodeType.agentMessage) {
-        const text = (child as { text: string }).text;
+        const text = (child as Message).text;
         if (text) parts.push(`Assistant: ${text}`);
       } else if (child.type === NodeType.toolCall) {
         const tc = child as ToolCall;
@@ -149,7 +159,7 @@ export function renderDepthKInput(
       for (const turn of peek) {
         for (const child of turn.children) {
           if (child.type === NodeType.userMessage) {
-            const text = (child as { text: string }).text;
+            const text = (child as Message).text;
             if (text) parts.push(`peek[T${turn.id}]: User: ${text}`);
             break;
           }
@@ -226,11 +236,13 @@ function sanitise(out: SummaryOutput): SummaryOutput {
   const sections = out.sections
     ?.map((s) => {
       if (!s || typeof s !== "object") return undefined;
-      const obj = s as Record<string, unknown>;
+      const obj = s as unknown as Record<string, unknown>;
       const title = typeof obj.title === "string" ? obj.title.trim() : "";
       const body = typeof obj.body === "string" ? obj.body.trim() : "";
       const refs = Array.isArray(obj.refs)
-        ? (obj.refs as unknown[]).filter((r): r is string => typeof r === "string")
+        ? (obj.refs as unknown[]).filter(
+            (r): r is string => typeof r === "string",
+          )
         : [];
       if (!title || !body || refs.length === 0) return undefined;
       return { title, body, refs } satisfies SummarySection;

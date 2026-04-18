@@ -116,8 +116,9 @@ describe("AgentController with budget compaction", () => {
       (c) => c.type === NodeType.turnGroup,
     ) as TurnGroup[];
     expect(groups.length).toBeGreaterThanOrEqual(1);
-    expect((summarizer.summarize as ReturnType<typeof vi.fn>).mock.calls.length)
-      .toBeGreaterThanOrEqual(1);
+    expect(
+      (summarizer.summarize as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBeGreaterThanOrEqual(1);
     // Controller loop did not crash — at least one turn-finish was yielded.
     expect(events.some((e) => e.type === "turn-finish")).toBe(true);
   });

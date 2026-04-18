@@ -5,9 +5,9 @@ import type { HierarchicalSummarizer } from "../../src/context/hierarchical-summ
 import { selectAll } from "../../src/context/select-messages.js";
 
 function mockProvider() {
-  return { languageModel: vi.fn() } as unknown as import(
-    "@ai-sdk/provider"
-  ).ProviderV3;
+  return {
+    languageModel: vi.fn(),
+  } as unknown as import("@ai-sdk/provider").ProviderV3;
 }
 
 function stubSummarizer(): HierarchicalSummarizer {

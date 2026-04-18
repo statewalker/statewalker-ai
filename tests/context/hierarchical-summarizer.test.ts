@@ -119,9 +119,7 @@ describe("createHierarchicalSummarizer", () => {
     mockGenerate.mockResolvedValue({
       text: JSON.stringify({
         content: "summary",
-        sections: [
-          { title: "Decisions", body: "chose X", refs: ["01", "02"] },
-        ],
+        sections: [{ title: "Decisions", body: "chose X", refs: ["01", "02"] }],
       }),
     });
     const summ = createHierarchicalSummarizer({

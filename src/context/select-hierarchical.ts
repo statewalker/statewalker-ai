@@ -5,13 +5,10 @@ import type { Session } from "../state/session.js";
 import type { ToolCall } from "../state/tool-call.js";
 import type { Turn } from "../state/turn.js";
 import type { TurnGroup } from "../state/turn-group.js";
-import type { SelectionStrategy } from "./select-messages.js";
 import type { PinPolicy } from "./pin-policy.js";
+import type { SelectionStrategy } from "./select-messages.js";
 import type { TokenEstimator } from "./token-estimator.js";
-import {
-  elideToolResponse,
-  type ToolElisionPolicy,
-} from "./tool-elision.js";
+import { elideToolResponse, type ToolElisionPolicy } from "./tool-elision.js";
 
 export interface SelectHierarchicalOptions {
   budgetTokens: number;
@@ -204,10 +201,7 @@ function renderGroupSummary(group: TurnGroup): ModelMessage {
   let text = `[group:${stamp}] ${body}`;
   if (sections && sections.length > 0) {
     const rendered = sections
-      .map(
-        (s) =>
-          `## ${s.title}\n${s.body}\nrefs: ${s.refs.join(", ")}`,
-      )
+      .map((s) => `## ${s.title}\n${s.body}\nrefs: ${s.refs.join(", ")}`)
       .join("\n\n");
     text += `\n\n${rendered}`;
   }
