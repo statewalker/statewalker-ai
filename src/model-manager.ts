@@ -9,12 +9,14 @@ import {
   type WeightVerifier,
 } from "./local-model-storage.js";
 import type { ModelStateStore } from "./model-state-store.js";
+import { type DiscoveredModel, listModels } from "./remote-discovery.js";
 import type {
   ActivationProgress,
   EngineId,
   LocalModelConfig,
   LocalModelFactory,
   ProviderName,
+  RemoteModelConfig,
   RemoteProviderSettings,
 } from "./types.js";
 import { verifyModelAccess } from "./verify-model.js";
@@ -287,6 +289,62 @@ export class ModelManager {
     }
   }
 
+  /**
+   * Test credentials for a remote provider by listing its models.
+   * Never mutates persistent state or the store — callers decide what to
+   * persist based on the returned list.
+   */
+  async testConnection(
+    providerType: ProviderName,
+    settings: RemoteProviderSettings,
+  ): Promise<DiscoveredModel[]> {
+    return listModels(providerType, settings);
+  }
+
+  /**
+   * Import a set of discovered models into the runtime catalog as
+   * `RemoteModelConfig` entries. Idempotent: existing entries for the same
+   * (provider, providerInstanceId, modelId) keep their status but have their
+   * label refreshed. Persists provider settings via the store in the same
+   * pass so callers only notify once.
+   */
+  importDiscoveredModels(
+    providerType: ProviderName,
+    providerInstanceId: string | null,
+    selected: DiscoveredModel[],
+    settings: RemoteProviderSettings,
+  ): string[] {
+    const prefix = providerInstanceId
+      ? `${providerType}:${providerInstanceId}`
+      : providerType;
+    const catalog = this.store.catalog as Record<string, RemoteModelConfig>;
+    const addedKeys: string[] = [];
+    for (const entry of selected) {
+      const key = `${prefix}/${entry.id}`;
+      const existing = catalog[key];
+      if (existing) {
+        existing.label = entry.label;
+        continue;
+      }
+      const config: RemoteModelConfig = {
+        runtime: "remote",
+        provider: providerType,
+        modelId: entry.id,
+        label: entry.label,
+        kinds: ["reasoning"],
+        ...(providerInstanceId ? { providerInstanceId } : {}),
+      };
+      this.store.addCatalogEntry(key, config);
+      addedKeys.push(key);
+    }
+    this.store.setProviderSettings(
+      providerType,
+      settings,
+      providerInstanceId ?? undefined,
+    );
+    return addedKeys;
+  }
+
   // ── Private helpers ────────────────────────────────────────────────────────
 
   private createRemoteProvider(
@@ -299,6 +357,13 @@ export class ModelManager {
       case "google":
         return createGoogleGenerativeAI(settings);
       case "openai":
+        return createOpenAI(settings);
+      case "openai-compatible":
+        if (!settings.baseURL) {
+          throw new Error(
+            "openai-compatible provider requires settings.baseURL",
+          );
+        }
         return createOpenAI(settings);
       default:
         throw new Error(`Unknown provider: ${providerName as string}`);

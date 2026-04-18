@@ -7,12 +7,16 @@ export type ModelRuntime = "remote" | "local";
 
 export interface RemoteModelConfig {
   runtime: "remote";
-  /** Vercel AI SDK provider name */
-  provider: "google" | "anthropic" | "openai";
+  /** Vercel AI SDK provider name, or "openai-compatible" for custom endpoints */
+  provider: ProviderName;
+  /** Disambiguator when `provider === "openai-compatible"` and multiple custom instances coexist. */
+  providerInstanceId?: string;
   /** Provider-specific model ID, e.g. "claude-sonnet-4-20250514" */
   modelId: string;
   /** Human-readable display name */
   label: string;
+  /** Roles this model is eligible for. Omitted ≡ ["reasoning"]. */
+  kinds?: ModelKind[];
 }
 
 /** Identifier for the engine that runs a local model. */
@@ -36,6 +40,8 @@ export interface LocalModelConfig {
   sizeBytes: number;
   /** Max new tokens for generation (default 512) */
   maxNewTokens?: number;
+  /** Roles this model is eligible for. Omitted ≡ ["reasoning"]. */
+  kinds?: ModelKind[];
 
   // ── WebLLM (engine: "webllm") ────────────────────────────────────────────
   /** URL to the MLC-compiled .wasm library for this model. */
@@ -56,11 +62,37 @@ export interface LocalModelConfig {
 
 export type ModelConfig = RemoteModelConfig | LocalModelConfig;
 
+/** Role a model is eligible for. */
+export type ModelKind = "reasoning" | "embedding";
+
+/** The canonical roles that apply when `ModelConfig.kinds` is omitted. */
+export const DEFAULT_MODEL_KINDS: ModelKind[] = ["reasoning"];
+
+/** Returns the effective `kinds` for a model, defaulting to `["reasoning"]`. */
+export function modelKinds(config: ModelConfig): ModelKind[] {
+  return config.kinds ?? DEFAULT_MODEL_KINDS;
+}
+
 // ── Remote provider settings ───────────────────────────────────────────────
 
-export type ProviderName = "google" | "anthropic" | "openai";
+export type ProviderName =
+  | "google"
+  | "anthropic"
+  | "openai"
+  | "openai-compatible";
 
-export const PROVIDER_NAMES: ProviderName[] = ["google", "anthropic", "openai"];
+export const PROVIDER_NAMES: ProviderName[] = [
+  "google",
+  "anthropic",
+  "openai",
+  "openai-compatible",
+];
+
+/** Canonical providers — the three with first-class SDK support. */
+export const CANONICAL_PROVIDER_NAMES: Exclude<
+  ProviderName,
+  "openai-compatible"
+>[] = ["google", "anthropic", "openai"];
 
 /**
  * Common settings for creating a remote AI provider.

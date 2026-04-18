@@ -18,8 +18,12 @@ export class ModelStateStore {
   private readonly _states = new Map<string, ModelState>();
   private readonly _activeModels = new Map<string, LanguageModelV3>();
   private readonly _downloadProgress = new Map<string, ActivationProgress>();
+  /**
+   * Provider settings keyed by `{provider}` for canonical providers, or
+   * `{provider}:{instanceId}` for `openai-compatible` instances.
+   */
   private readonly _providerSettings = new Map<
-    ProviderName,
+    string,
     RemoteProviderSettings
   >();
   private _activeModelKey = "";
@@ -53,17 +57,37 @@ export class ModelStateStore {
     return this._catalog;
   }
 
-  // ── Provider settings ─────────────────────────────────────────────────
-
-  /** Get settings for a specific provider. */
-  getProviderSettings(
-    provider: ProviderName,
-  ): RemoteProviderSettings | undefined {
-    return this._providerSettings.get(provider);
+  /**
+   * Add a new catalog entry at runtime (e.g. after discovering a remote
+   * model). Seeds its state with `not-downloaded` and notifies listeners.
+   * Idempotent: existing entries are overwritten (their state reset).
+   */
+  addCatalogEntry(key: string, config: ModelConfig): void {
+    this._catalog[key] = config;
+    this._states.set(key, { config, status: "not-downloaded" });
+    this.notify();
   }
 
-  /** Get all provider settings. */
-  get providerSettings(): ReadonlyMap<ProviderName, RemoteProviderSettings> {
+  // ── Provider settings ─────────────────────────────────────────────────
+
+  /**
+   * Compose a storage key: `{provider}` for canonical providers,
+   * `{provider}:{instanceId}` for openai-compatible instances.
+   */
+  private providerKey(provider: ProviderName, instanceId?: string): string {
+    return instanceId ? `${provider}:${instanceId}` : provider;
+  }
+
+  /** Get settings for a specific provider (optionally scoped to an instance). */
+  getProviderSettings(
+    provider: ProviderName,
+    instanceId?: string,
+  ): RemoteProviderSettings | undefined {
+    return this._providerSettings.get(this.providerKey(provider, instanceId));
+  }
+
+  /** Get all provider settings keyed by composite key. */
+  get providerSettings(): ReadonlyMap<string, RemoteProviderSettings> {
     return this._providerSettings;
   }
 
@@ -75,18 +99,22 @@ export class ModelStateStore {
     return false;
   }
 
-  /** Set settings for a provider. Notifies listeners. */
+  /** Set settings for a provider (optionally scoped to an instance). Notifies listeners. */
   setProviderSettings(
     provider: ProviderName,
     settings: RemoteProviderSettings,
+    instanceId?: string,
   ): void {
-    this._providerSettings.set(provider, settings);
+    this._providerSettings.set(
+      this.providerKey(provider, instanceId),
+      settings,
+    );
     this.notify();
   }
 
-  /** Remove settings for a provider. Notifies listeners. */
-  removeProviderSettings(provider: ProviderName): void {
-    if (this._providerSettings.delete(provider)) {
+  /** Remove settings for a provider (optionally scoped to an instance). Notifies listeners. */
+  removeProviderSettings(provider: ProviderName, instanceId?: string): void {
+    if (this._providerSettings.delete(this.providerKey(provider, instanceId))) {
       this.notify();
     }
   }
