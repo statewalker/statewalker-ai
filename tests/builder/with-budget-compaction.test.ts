@@ -1,13 +1,14 @@
+import type { ProviderV3 } from "@ai-sdk/provider";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentBuilder } from "../../src/builder/agent-builder.js";
 import type { HierarchicalSummarizer } from "../../src/context/hierarchical-summarizer.js";
 import { selectAll } from "../../src/context/select-messages.js";
 
-function mockProvider() {
+function mockProvider(): ProviderV3 {
   return {
     languageModel: vi.fn(),
-  } as unknown as import("@ai-sdk/provider").ProviderV3;
+  } as unknown as ProviderV3;
 }
 
 function stubSummarizer(): HierarchicalSummarizer {

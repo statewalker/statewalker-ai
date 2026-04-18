@@ -64,7 +64,7 @@ describe("FilesSessionManager", () => {
       const id = await manager.create("Indexed session");
       const indexText = await tryReadText(files, "/sessions/index.json");
       expect(indexText).toBeTruthy();
-      const index = JSON.parse(indexText!);
+      const index = JSON.parse(indexText as string);
       expect(index.sessions).toHaveLength(1);
       expect(index.sessions[0].id).toBe(id);
       expect(index.sessions[0].title).toBe("Indexed session");
@@ -82,7 +82,7 @@ describe("FilesSessionManager", () => {
       expect(loaded).toBeInstanceOf(Session);
       expect(loaded.turns).toHaveLength(1);
 
-      const turn = loaded.turns[0]!;
+      const turn = loaded.turns[0] as Turn;
       expect(turn).toBeInstanceOf(Turn);
       expect(turn.model).toBe("claude-sonnet-4-20250514");
       expect(turn.stopReason).toBe("stop");
@@ -95,7 +95,7 @@ describe("FilesSessionManager", () => {
       await manager.save(id, session);
       const loaded = await manager.load(id);
 
-      const turn = loaded.turns[0]!;
+      const turn = loaded.turns[0] as Turn;
       expect(turn.messages).toHaveLength(3); // user + agent + agent2
       expect(turn.messages[0]?.text).toBe("Hello, what time is it?");
       expect(turn.messages[0]?.role).toBe("user");
@@ -108,7 +108,7 @@ describe("FilesSessionManager", () => {
       await manager.save(id, session);
       const loaded = await manager.load(id);
 
-      const turn = loaded.turns[0]!;
+      const turn = loaded.turns[0] as Turn;
       const agentMsgs = turn.messages.filter((m) => m.role === "assistant");
       expect(agentMsgs).toHaveLength(2);
       expect(agentMsgs[0]?.text).toBe("Let me check the time for you.");
@@ -122,9 +122,9 @@ describe("FilesSessionManager", () => {
       await manager.save(id, session);
       const loaded = await manager.load(id);
 
-      const turn = loaded.turns[0]!;
+      const turn = loaded.turns[0] as Turn;
       expect(turn.toolCalls).toHaveLength(1);
-      const tc = turn.toolCalls[0]!;
+      const tc = turn.toolCalls[0] as ToolCall;
       expect(tc).toBeInstanceOf(ToolCall);
       expect(tc.callId).toBe("call-001");
       expect(tc.toolName).toBe("get_current_time");
@@ -138,7 +138,7 @@ describe("FilesSessionManager", () => {
       await manager.save(id, session);
       const loaded = await manager.load(id);
 
-      const turn = loaded.turns[0]!;
+      const turn = loaded.turns[0] as Turn;
       expect(turn.usage).toEqual({ input: 100, output: 50 });
     });
 

@@ -3,6 +3,7 @@ import { tool } from "ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { bridgeMcpTools } from "../../src/mcp/bridge-mcp-tools.js";
+import type { McpClientManager } from "../../src/mcp/mcp-client-manager.js";
 import { ToolRegistry } from "../../src/state/tool-registry.js";
 
 function makeTool(desc: string) {
@@ -33,7 +34,7 @@ describe("bridgeMcpTools", () => {
     mcp.setTools({ mcp_a: makeTool("A"), mcp_b: makeTool("B") });
 
     const registry = new ToolRegistry();
-    bridgeMcpTools(mcp as any, registry);
+    bridgeMcpTools(mcp as unknown as McpClientManager, registry);
 
     const set = registry.toToolSet();
     expect(set).toHaveProperty("mcp_a");
@@ -43,7 +44,7 @@ describe("bridgeMcpTools", () => {
   it("re-syncs when MCP notifies (server connect)", () => {
     const mcp = new FakeMcp();
     const registry = new ToolRegistry();
-    bridgeMcpTools(mcp as any, registry);
+    bridgeMcpTools(mcp as unknown as McpClientManager, registry);
 
     expect(registry.size).toBe(0);
 
@@ -56,7 +57,7 @@ describe("bridgeMcpTools", () => {
     mcp.setTools({ mcp_old: makeTool("old") });
 
     const registry = new ToolRegistry();
-    bridgeMcpTools(mcp as any, registry);
+    bridgeMcpTools(mcp as unknown as McpClientManager, registry);
     expect(registry.toToolSet()).toHaveProperty("mcp_old");
 
     mcp.setTools({ mcp_new: makeTool("new") });
@@ -70,7 +71,7 @@ describe("bridgeMcpTools", () => {
 
     const registry = new ToolRegistry();
     registry.register("local_tool", makeTool("local"));
-    bridgeMcpTools(mcp as any, registry);
+    bridgeMcpTools(mcp as unknown as McpClientManager, registry);
 
     const set = registry.toToolSet();
     expect(set).toHaveProperty("local_tool");
@@ -82,7 +83,10 @@ describe("bridgeMcpTools", () => {
     mcp.setTools({ mcp_tool: makeTool("mcp") });
 
     const registry = new ToolRegistry();
-    const cleanup = bridgeMcpTools(mcp as any, registry);
+    const cleanup = bridgeMcpTools(
+      mcp as unknown as McpClientManager,
+      registry,
+    );
     expect(registry.toToolSet()).toHaveProperty("mcp_tool");
 
     cleanup();

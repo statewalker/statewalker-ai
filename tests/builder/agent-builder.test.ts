@@ -1,3 +1,4 @@
+import type { ProviderV3 } from "@ai-sdk/provider";
 import { writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { tool } from "ai";
@@ -10,8 +11,8 @@ import {
 } from "../../src/builder/agent-builder.js";
 import { AgentManager } from "../../src/builder/agent-manager.js";
 
-function mockProvider() {
-  return { languageModel: vi.fn() } as any;
+function mockProvider(): ProviderV3 {
+  return { languageModel: vi.fn() } as unknown as ProviderV3;
 }
 
 describe("AgentBuilder", () => {
@@ -139,7 +140,7 @@ describe("AgentBuilder", () => {
     });
 
     it("resolves tool factories with AgentContext", async () => {
-      let receivedCtx: any = null;
+      let receivedCtx: unknown = null;
 
       const factory: ToolFactory = (ctx) => {
         receivedCtx = ctx;
@@ -160,11 +161,12 @@ describe("AgentBuilder", () => {
 
       // Factory was called with AgentContext
       expect(receivedCtx).not.toBeNull();
-      expect(receivedCtx.files).toBeDefined();
-      expect(receivedCtx.systemFiles).toBeDefined();
-      expect(receivedCtx.config).toBeDefined();
-      expect(receivedCtx.secrets).toBeDefined();
-      expect(receivedCtx.sessions).toBeDefined();
+      const ctx = receivedCtx as Record<string, unknown>;
+      expect(ctx.files).toBeDefined();
+      expect(ctx.systemFiles).toBeDefined();
+      expect(ctx.config).toBeDefined();
+      expect(ctx.secrets).toBeDefined();
+      expect(ctx.sessions).toBeDefined();
 
       const toolSet = agent.controller.tools.toToolSet();
       expect(toolSet).toHaveProperty("factory_tool");
