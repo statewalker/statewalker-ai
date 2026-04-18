@@ -127,6 +127,13 @@ export class Turn extends TreeNode {
     this.stopReason = reason;
   }
 
+  /** Persist a caught exception as an error child node. */
+  recordError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    this.addChild({ type: NodeType.error, content: message });
+    return message;
+  }
+
   // ── Summary (cached on node props) ─────────────────────────
 
   get summary(): string | undefined {
@@ -296,14 +303,20 @@ export class Turn extends TreeNode {
     }
     if (type === "tool-error") {
       const callId = part.toolCallId as string;
+      const toolName = (part.toolName as string) ?? "";
+      const message =
+        part.error instanceof Error ? part.error.message : String(part.error);
       const tc = this.toolCalls.find((t) => t.callId === callId);
       if (tc) {
-        tc.addResponse(
-          part.error instanceof Error ? part.error.message : String(part.error),
-          true,
-        );
+        tc.addResponse(message, true);
       }
-      return undefined;
+      return {
+        type: "tool-error",
+        turnId: this.id,
+        toolCallId: callId,
+        toolName,
+        message,
+      };
     }
     if (type === "tool-output-denied") {
       this.addChild({

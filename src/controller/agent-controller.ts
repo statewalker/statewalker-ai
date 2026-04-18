@@ -5,7 +5,7 @@ import {
   selectAll,
 } from "../context/select-messages.js";
 import { Inbox, type InboxMessage } from "../state/inbox.js";
-import type { LogMessage } from "../state/log-message.js";
+import type { LogMessage, TurnFinishKind } from "../state/log-message.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";
 import { NodeType } from "../state/node-types.js";
 import type { Session } from "../state/session.js";
@@ -41,12 +41,18 @@ export interface AgentControllerConfig {
   skills?: SkillsModel;
   systemPrompt?: string;
   maxSteps?: number;
+  /** Cap per-step model output length. Omit to use provider default. */
+  maxOutputTokens?: number;
   select?: SelectionStrategy;
 }
 
 /**
  * Manages the main agent cycle: consumes messages from the Inbox,
  * runs LLM turns via Vercel AI SDK, and updates the Session tree.
+ *
+ * Invariant: one inbox message produces exactly one Turn node.
+ * `streamText` is responsible for multi-step tool-call continuation via
+ * `stopWhen: stepCountIs(maxSteps)`.
  */
 export class AgentController {
   readonly session: Session;
@@ -57,13 +63,19 @@ export class AgentController {
   model: string;
   systemPrompt: string;
   maxSteps: number;
+  maxOutputTokens?: number;
   select: SelectionStrategy;
+
+  /** The Turn currently being streamed. Set by run(); read by helpers. */
+  #currentTurn: Turn | null = null;
+  #builtinToolsRegistered = false;
 
   constructor(config: AgentControllerConfig) {
     this.provider = config.provider;
     this.model = config.model;
     this.systemPrompt = config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
     this.maxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
+    this.maxOutputTokens = config.maxOutputTokens;
     this.select = config.select ?? selectAll;
 
     this.inbox = config.inbox ?? new Inbox();
@@ -98,63 +110,62 @@ export class AgentController {
     }
   }
 
-  #builtinToolsRegistered = false;
-
   /**
    * Main agent cycle — runs until signal aborts or inbox is closed.
    *
+   * Each iteration opens a new Turn up-front so all downstream operations
+   * (skill selection, streamText, error handling) persist into a single
+   * tree node.
+   *
    * Signal is needed to unblock `inbox.take()` (raw await, not an iterator)
    * and to cancel in-flight HTTP requests in `streamText`.
-   * The caller can also break the generator to stop between yields.
    */
   async *run(signal?: AbortSignal): AsyncGenerator<LogMessage> {
     this.ensureBuiltinTools();
     for (;;) {
-      // Signal needed here: inbox.take() blocks on a raw await
       const message = await this.inbox.take(signal);
       if (!message) break;
 
-      if (this.session.turns.length === 0 && this.skills.available.length > 0) {
-        yield* this.selectSkillsForFirstTurn(message, signal);
-      }
-
       const isFirstTurn = this.session.turns.length === 0;
+      const turn = this.session.addTurn();
+      this.#currentTurn = turn;
+      this.session.startStreaming();
 
-      let reason = yield* this.streamTurn(message.text, signal);
+      try {
+        turn.addUserMessage(message.text);
 
-      // Continue if no definitive stop reason: "tool-calls" needs another
-      // round, "" means error/incomplete stream — worth retrying.
-      // Only "stop", "length", etc. are terminal.
-      let remaining = this.maxSteps;
-      while ((!reason || reason === "tool-calls") && remaining > 0) {
-        remaining--;
-        reason = yield* this.streamTurn("", signal);
-      }
+        if (isFirstTurn && this.skills.available.length > 0) {
+          yield* this.selectSkillsForFirstTurn(message, signal);
+        }
 
-      if (isFirstTurn && !this.session.title) {
-        this.session.title = await this.generateTitle(message.text, signal);
+        yield* this.streamTurn(signal);
+
+        if (isFirstTurn && !this.session.title) {
+          this.session.title = await this.generateTitle(message.text, signal);
+        }
+
+        this.session.stopStreaming();
+      } catch (e) {
+        // Safety net — individual helpers already persist their own errors.
+        // Anything that escapes to here is logged and the cycle continues.
+        const msg = turn.recordError(e);
+        yield { type: "error", turnId: turn.id, message: msg };
+        this.session.stopStreaming(e);
+      } finally {
+        this.#currentTurn = null;
       }
     }
   }
 
   /**
-   * Run a single streamText cycle as a session turn.
-   * Returns the finish reason from the final step.
+   * Run one streamText invocation against the current Turn.
+   * streamText internally loops over tool-call steps until `stopWhen` fires.
    */
-  private async *streamTurn(
-    text: string,
-    signal?: AbortSignal,
-  ): AsyncGenerator<LogMessage, string> {
-    this.session.startStreaming();
-    const turn = this.session.addTurn();
-    if (text) {
-      turn.addUserMessage(text);
-    }
-
+  private async *streamTurn(signal?: AbortSignal): AsyncGenerator<LogMessage> {
+    const turn = this.#requireTurn();
+    let sawContent = false;
     try {
       const messages = await this.select(this.session);
-
-      // Signal needed here: cancels HTTP request and tool executions
       const result = streamText({
         model: this.provider.languageModel(this.model),
         system: this.buildSystemPrompt(),
@@ -162,39 +173,48 @@ export class AgentController {
         tools: this.tools.toToolSet(),
         stopWhen: stepCountIs(this.maxSteps),
         abortSignal: signal,
+        ...(this.maxOutputTokens !== undefined && {
+          maxOutputTokens: this.maxOutputTokens,
+        }),
       });
 
-      yield* this.processStream(turn, result.fullStream);
+      for await (const log of this.processStream(turn, result.fullStream)) {
+        if (isContentLog(log)) sawContent = true;
+        yield log;
+      }
 
       turn.model = this.model;
-      this.session.stopStreaming();
-      return turn.stopReason ?? "";
     } catch (e) {
-      yield {
-        type: "error",
-        turnId: turn.id,
-        message: e instanceof Error ? e.message : String(e),
-      };
-      this.session.stopStreaming(e);
-      return "";
+      if (isAbortError(e, signal)) {
+        yield this.finishTurn(turn, "aborted", "aborted");
+        return;
+      }
+      const msg = turn.recordError(e);
+      yield { type: "error", turnId: turn.id, message: msg };
+      yield this.finishTurn(turn, "error", turn.stopReason ?? "error");
+      return;
     }
+
+    const reason = turn.stopReason ?? "";
+    const kind = classifyFinish(reason, sawContent);
+    yield this.finishTurn(turn, kind, reason || kind);
   }
 
   /**
    * Automatic skill selection on first turn.
-   * Runs silently without creating a session turn.
+   * Results and errors are persisted on the current Turn.
    */
   private async *selectSkillsForFirstTurn(
     message: InboxMessage,
     signal?: AbortSignal,
   ): AsyncGenerator<LogMessage> {
+    const turn = this.#requireTurn();
     try {
       const useSkillsTool = createUseSkillsTool({
         skills: this.skills,
         provider: this.provider,
         model: this.model,
       });
-      // Signal needed here: cancels the LLM call (raw await)
       const result = await useSkillsTool.execute?.(
         { prompt: message.text },
         {
@@ -209,17 +229,15 @@ export class AgentController {
         if (selected.length > 0) {
           yield {
             type: "step-finish",
-            turnId: "",
+            turnId: turn.id,
             finishReason: `skills: ${selected.join(", ")}`,
           };
         }
       }
     } catch (e) {
-      yield {
-        type: "error",
-        turnId: "",
-        message: e instanceof Error ? e.message : String(e),
-      };
+      if (isAbortError(e, signal)) throw e;
+      const msg = turn.recordError(e);
+      yield { type: "error", turnId: turn.id, message: msg };
     }
   }
 
@@ -295,4 +313,64 @@ export class AgentController {
       if (log) yield log;
     }
   }
+
+  #requireTurn(): Turn {
+    const turn = this.#currentTurn;
+    if (!turn) {
+      throw new Error(
+        "AgentController: no current Turn — helper called outside run()",
+      );
+    }
+    return turn;
+  }
+
+  private finishTurn(
+    turn: Turn,
+    kind: TurnFinishKind,
+    finishReason: string,
+  ): LogMessage {
+    if (!turn.stopReason) turn.stop(finishReason);
+    return { type: "turn-finish", turnId: turn.id, finishReason, kind };
+  }
+}
+
+/** Classify the SDK finishReason into a stable kind the caller can switch on. */
+function classifyFinish(reason: string, sawContent: boolean): TurnFinishKind {
+  switch (reason) {
+    case "stop":
+      return sawContent ? "ok" : "empty";
+    case "tool-calls":
+      // Reached the end of a streamText run with tool-calls still pending:
+      // streamText only returns this when stopWhen cut us off.
+      return "step-limit";
+    case "length":
+      return "length";
+    case "content-filter":
+      return "filtered";
+    case "error":
+      return "error";
+    case "":
+      // No finish-step arrived — stream ended without the SDK announcing a
+      // reason. Treat as empty so consumers see a clean terminal event.
+      return "empty";
+    default:
+      return "unknown";
+  }
+}
+
+function isContentLog(log: LogMessage): boolean {
+  return (
+    log.type === "text-delta" ||
+    log.type === "reasoning" ||
+    log.type === "tool-call" ||
+    log.type === "tool-result"
+  );
+}
+
+function isAbortError(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  if (error instanceof Error) {
+    return error.name === "AbortError" || error.name === "AbortSignalError";
+  }
+  return false;
 }

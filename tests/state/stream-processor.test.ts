@@ -118,7 +118,7 @@ describe("Turn stream handlers", () => {
     expect(turn.toolCalls[0]?.result).toBe("file contents");
   });
 
-  it("handleTool: tool-error adds error response by callId", () => {
+  it("handleTool: tool-error adds error response by callId and yields a log", () => {
     const turn = makeTurn();
     turn.handleTool({
       type: "tool-call",
@@ -127,14 +127,21 @@ describe("Turn stream handlers", () => {
       input: {},
     });
 
-    turn.handleTool({
+    const log = turn.handleTool({
       type: "tool-error",
       toolCallId: "c2",
+      toolName: "write",
       error: new Error("permission denied"),
     });
 
     expect(turn.toolCalls[0]?.isError).toBe(true);
     expect(turn.toolCalls[0]?.result).toBe("permission denied");
+    expect(log).toMatchObject({
+      type: "tool-error",
+      toolCallId: "c2",
+      toolName: "write",
+      message: "permission denied",
+    });
   });
 
   it("handleToolInput: streams input deltas before tool-call", () => {

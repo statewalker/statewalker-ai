@@ -50,6 +50,7 @@ export class AgentBuilder {
   private _sessionManager?: SessionManager;
   private _systemPrompt?: string;
   private _maxSteps?: number;
+  private _maxOutputTokens?: number;
   private _selectionStrategy?: SelectionStrategy;
   private _modelManager?: ModelManager;
 
@@ -155,6 +156,12 @@ export class AgentBuilder {
     return this;
   }
 
+  /** Cap per-step model output length. Omit to use provider default. */
+  withMaxOutputTokens(n: number): this {
+    this._maxOutputTokens = n;
+    return this;
+  }
+
   withSelectionStrategy(strategy: SelectionStrategy): this {
     this._selectionStrategy = strategy;
     return this;
@@ -196,6 +203,7 @@ export class AgentBuilder {
       model: this._model,
       systemPrompt: this._systemPrompt,
       maxSteps: this._maxSteps,
+      maxOutputTokens: this._maxOutputTokens,
       select: this._selectionStrategy,
     };
     const controller = new AgentController(controllerConfig);
