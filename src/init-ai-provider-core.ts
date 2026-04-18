@@ -1,5 +1,4 @@
 import { newRegistry } from "@repo/shared/registry";
-import { createActiveModelsLifecycleController } from "./controllers/active-models-lifecycle.controller.js";
 import { removeModelActivationController } from "./controllers/model-activation.controller.js";
 import { createModelManagerController } from "./controllers/model-manager.controller.js";
 import { createModelPickerController } from "./controllers/model-picker.controller.js";
@@ -12,6 +11,11 @@ import { createStartupController } from "./controllers/startup.controller.js";
  * Prerequisites:
  * - ModelManager must be set via setModelManager(ctx, ...) before calling this.
  *
+ * The active-models lifecycle controller is NOT registered here — it
+ * depends on a FilesApi which is only available once the workspace has
+ * booted. Host apps must call `createActiveModelsLifecycleController(ctx)`
+ * after `setActiveModelsFilesApi(ctx, filesApi)` has been invoked.
+ *
  * Returns a cleanup function.
  */
 export function initAiProviderCore(
@@ -20,10 +24,8 @@ export function initAiProviderCore(
   const [register, cleanup] = newRegistry();
 
   register(createModelManagerController(ctx));
-  // Settings controller creates the shared ModelListView; lifecycle
-  // controller subscribes to it — order matters.
+  // Settings controller creates the shared ModelListView.
   register(createModelSettingsController(ctx));
-  register(createActiveModelsLifecycleController(ctx));
   register(createModelPickerController(ctx));
   register(createStartupController(ctx));
   register(() => removeModelActivationController(ctx));
