@@ -5,13 +5,18 @@ import {
 } from "@repo/shared-views/ai-models";
 import type { RemoteModelConfig } from "@statewalker/ai-provider";
 import { getModelManager, setModelPickerView } from "../adapters.js";
-import {
-  getIntents,
-  handlePickModel,
-  runOpenModelSettings,
-} from "../intents.js";
+import { getIntents, runOpenModelSettings } from "../intents.js";
 import { getModelActivationController } from "./model-activation.controller.js";
+import { getModelListView } from "./model-settings.controller.js";
 
+/**
+ * Owns the shared `ModelPickerView` visible in the chat header. Drives
+ * its `mode` from `ModelListView.activeReasoningKeys`:
+ *   0 → "Configure model…" button; clicks open the settings panel.
+ *   1 → static label (no dropdown).
+ *   ≥ 2 → dropdown listing each active reasoning model; selection
+ *         updates `store.activeModelKey` for the next agent turn.
+ */
 export function createModelPickerController(
   ctx: Record<string, unknown>,
 ): () => Promise<void> {
@@ -19,94 +24,83 @@ export function createModelPickerController(
   const intents = getIntents(ctx);
   const manager = getModelManager(ctx);
   const activation = getModelActivationController(ctx);
+  const listView = getModelListView(ctx);
 
   const picker = new ModelPickerView();
   setModelPickerView(ctx, picker);
 
-  function syncItems(): void {
-    const items: PickerModelItem[] = [];
-    for (const [key, state] of manager.store.getStates()) {
-      items.push({
+  function sync(): void {
+    const activeKeys = [...listView.activeReasoningKeys];
+    const items: PickerModelItem[] = activeKeys.map((key) => {
+      const state = manager.store.getState(key);
+      const config = state?.config;
+      const provider =
+        config?.runtime === "remote"
+          ? (config as RemoteModelConfig).provider
+          : (config?.runtime ?? "");
+      return {
         key,
-        label: state.config.label,
-        provider:
-          state.config.runtime === "remote"
-            ? (state.config as RemoteModelConfig).provider
-            : state.config.runtime,
-        isActive: state.status === "ready",
-        isInteractive:
-          state.status !== "loading" &&
-          !(state.config.runtime === "remote" && state.status === "error"),
-        statusReason:
-          state.status === "error" ? state.error?.message : undefined,
-      });
-    }
+        label: config?.label ?? key,
+        provider,
+        isActive: true,
+        isInteractive: true,
+      };
+    });
     picker.items = items;
+
+    picker.mode =
+      activeKeys.length === 0
+        ? "none"
+        : activeKeys.length === 1
+          ? "single"
+          : "multi";
+
+    // Keep the visible label/key in sync with the store's active key, or
+    // default to the first active entry when nothing is selected.
+    const current = manager.store.activeModelKey;
+    if (current && activeKeys.includes(current)) {
+      picker.currentKey = current;
+      picker.currentLabel = manager.store.getState(current)?.config.label ?? "";
+    } else if (activeKeys.length > 0) {
+      const first = activeKeys[0];
+      if (typeof first === "string") {
+        const label = manager.store.getState(first)?.config.label ?? first;
+        picker.currentKey = first;
+        picker.currentLabel = label;
+        manager.store.setActiveModelKey(first, label);
+      }
+    } else {
+      picker.currentKey = "";
+      picker.currentLabel = "";
+    }
   }
 
-  // Sync activation state from controller → picker view
   function syncActivationState(): void {
     picker.isActivating = activation.isActivating;
     picker.activationMessage = activation.activationMessage;
   }
 
-  syncItems();
+  register(listView.onUpdate(sync));
+  register(activation.onUpdate(syncActivationState));
+  sync();
   syncActivationState();
 
-  // Keep picker view in sync with activation controller
-  register(activation.onUpdate(syncActivationState));
-
-  // ── Wire selectAction → activate model ─────────────────────
+  // Select-action: switch the current active model to the picked entry.
   register(
-    picker.selectAction.onSubmit(async () => {
-      const catalogKey = picker.selectAction.payload;
-      if (!catalogKey) return;
-
-      // If already active, just switch
-      const state = manager.store.getState(catalogKey);
-      if (state?.status === "ready") {
-        picker.currentKey = catalogKey;
-        picker.currentLabel = state.config.label;
-        manager.store.setActiveModelKey(catalogKey, state.config.label);
-        syncItems();
-        return;
-      }
-
-      try {
-        await activation.activate(ctx, manager, catalogKey);
-        const updatedState = manager.store.getState(catalogKey);
-        picker.currentKey = catalogKey;
-        picker.currentLabel = updatedState?.config.label ?? catalogKey;
-        manager.store.setActiveModelKey(
-          catalogKey,
-          updatedState?.config.label ?? "",
-        );
-        syncItems();
-      } catch {
-        // Error message is already set by activation controller
-      }
+    picker.selectAction.onSubmit(() => {
+      const key = picker.selectAction.payload;
+      if (!key) return;
+      const state = manager.store.getState(key);
+      if (state?.status !== "ready") return;
+      manager.store.setActiveModelKey(key, state.config.label);
+      sync();
     }),
   );
 
-  // ── Wire manageAction → open settings ──────────────────────
+  // Manage-action: open the settings panel.
   register(
     picker.manageAction.onSubmit(() => {
-      runOpenModelSettings(intents, { tab: "models" });
-    }),
-  );
-
-  // ── Handle pick-model intent ───────────────────────────────
-  register(
-    handlePickModel(intents, (intent) => {
-      picker.isOpen = true;
-      const unsub = picker.selectAction.onSubmit(() => {
-        const key = picker.selectAction.payload;
-        if (key) {
-          intent.resolve({ catalogKey: key });
-          unsub();
-        }
-      });
-      return true;
+      runOpenModelSettings(intents, undefined).catch(console.error);
     }),
   );
 
