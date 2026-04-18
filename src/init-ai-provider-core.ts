@@ -1,4 +1,5 @@
 import { newRegistry } from "@repo/shared/registry";
+import { createActiveModelsLifecycleController } from "./controllers/active-models-lifecycle.controller.js";
 import { removeModelActivationController } from "./controllers/model-activation.controller.js";
 import { createModelManagerController } from "./controllers/model-manager.controller.js";
 import { createModelPickerController } from "./controllers/model-picker.controller.js";
@@ -19,7 +20,10 @@ export function initAiProviderCore(
   const [register, cleanup] = newRegistry();
 
   register(createModelManagerController(ctx));
+  // Settings controller creates the shared ModelListView; lifecycle
+  // controller subscribes to it — order matters.
   register(createModelSettingsController(ctx));
+  register(createActiveModelsLifecycleController(ctx));
   register(createModelPickerController(ctx));
   register(createStartupController(ctx));
   register(() => removeModelActivationController(ctx));
