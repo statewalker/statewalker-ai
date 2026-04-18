@@ -34,32 +34,13 @@ export function applyFlat(
     }
   }
 
-  // Determine the root among the pending entries (if no pre-existing root).
-  if (!root) {
-    const idSet = new Set(pending.map((p) => p.id));
-    const rootCandidates = pending.filter(
-      (p) => !p.parentId || !idSet.has(p.parentId),
-    );
-    if (rootCandidates.length === 0) {
-      throw new Error("applyFlat: no root candidate in stream");
-    }
-    const rootFlat = rootCandidates[0];
-    if (!rootFlat) {
-      throw new Error("applyFlat: root candidate is undefined");
-    }
-    const rootEntry: TreeEntry = { id: rootFlat.id, props: { ...rootFlat.props } };
-    if (rootFlat.content !== undefined) rootEntry.content = rootFlat.content;
-    root = wrapTree(rootEntry, factory);
-    nodeIndex.set(rootFlat.id, root);
-  }
-
-  // Index children-by-parent for deterministic top-down attachment that
-  // preserves the incoming stream's document order within each parent.
-  const childrenByParent = new Map<string, FlatTreeEntry[]>();
+  // Index pending children by their (pending) parent id. A pending entry's
+  // parent may already exist in the live tree (delta-sync case) or may be
+  // another pending entry (a wrapper written after its adopted children in
+  // the same batch).
+  const childrenByParent = new Map<string | undefined, FlatTreeEntry[]>();
   for (const flat of pending) {
-    if (flat.id === root.id) continue;
     const pid = flat.parentId;
-    if (!pid) continue;
     let bucket = childrenByParent.get(pid);
     if (!bucket) {
       bucket = [];
@@ -68,8 +49,36 @@ export function applyFlat(
     bucket.push(flat);
   }
 
-  // Walk top-down from the root, attaching each parent's children in order.
-  const queue: string[] = [root.id];
+  // If no pre-existing root, the stream must supply one.
+  if (!root) {
+    const rootless = childrenByParent.get(undefined) ?? [];
+    // Also treat pending entries whose `parentId` is not resolvable as roots.
+    const pendingIds = new Set(pending.map((p) => p.id));
+    const orphans = pending.filter(
+      (p) => p.parentId !== undefined && !pendingIds.has(p.parentId),
+    );
+    const rootFlat = rootless[0] ?? orphans[0];
+    if (!rootFlat) {
+      throw new Error("applyFlat: no root candidate in stream");
+    }
+    const rootEntry: TreeEntry = {
+      id: rootFlat.id,
+      props: { ...rootFlat.props },
+    };
+    if (rootFlat.content !== undefined) rootEntry.content = rootFlat.content;
+    root = wrapTree(rootEntry, factory);
+    nodeIndex.set(rootFlat.id, root);
+  }
+
+  // Walk top-down: for each parent that has resolvable pending children,
+  // attach them in stream order. Seed the queue with every parent id that
+  // already exists in `nodeIndex` (root + everything pre-existing in the
+  // live tree) — so children whose parent lives in the existing tree
+  // attach on the first pass.
+  const queue: string[] = Array.from(nodeIndex.keys());
+  const attached = new Set<string>();
+  for (const n of nodeIndex.values()) attached.add(n.id);
+
   while (queue.length > 0) {
     const parentId = queue.shift();
     if (parentId === undefined) break;
@@ -78,11 +87,12 @@ export function applyFlat(
     const bucket = childrenByParent.get(parentId);
     if (!bucket) continue;
     for (const flat of bucket) {
-      if (nodeIndex.has(flat.id)) continue;
+      if (attached.has(flat.id)) continue;
       const entry: TreeEntry = { id: flat.id, props: { ...flat.props } };
       if (flat.content !== undefined) entry.content = flat.content;
       const childNode = parentNode.addChild(entry);
       nodeIndex.set(flat.id, childNode);
+      attached.add(flat.id);
       queue.push(flat.id);
     }
   }
