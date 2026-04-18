@@ -331,12 +331,13 @@ Session IDs are Snowflake IDs. The index auto-rebuilds from directory scanning i
 
 ## Context Selection Strategies
 
-Two built-in strategies for managing context window usage:
+Three built-in strategies for managing context window usage:
 
 | Strategy | Description |
 |---|---|
 | `selectAll` | All turns sent verbatim (simple, grows unbounded) |
 | `selectWithCompaction` | Older turns summarized via LLM, recent N turns kept verbatim. Summaries cached on Turn nodes. |
+| `selectHierarchical` | Token-budget-driven tree-growing compaction. Old turns get wrapped under `TurnGroup` parent nodes carrying a single subject-structured summary. Groups can themselves be promoted under deeper parents; unbounded depth. Pinning, tool-result elision, and expand-on-pin all built in. |
 
 ```typescript
 import { selectWithCompaction, createContentSummarizer } from "@statewalker/ai-agent";
@@ -348,6 +349,35 @@ builder.withSelectionStrategy(
   })
 );
 ```
+
+### Budget compaction (hierarchical)
+
+Preferred strategy for long-running sessions. Opts in via a single builder call:
+
+```typescript
+import { createHierarchicalSummarizer } from "@statewalker/ai-agent";
+
+builder.withBudgetCompaction({
+  budgetTokens: 120_000,                             // ~70% of 200k context
+  summarizer: createHierarchicalSummarizer({         // two prompts (depth-1 / depth-k)
+    model: languageModel,                            // or: { depth1, depthK }
+  }),
+  // Optional — defaults shown:
+  keepRecentTurns: 4,
+  groupSize: 6,
+  depthPromoteThreshold: 4,
+  // estimator / pinPolicy / elisionPolicy default to the package defaults.
+});
+```
+
+What happens:
+- Before each `streamText`, `ContextCompactor.compact(session, ...)` runs. If the session exceeds `budgetTokens`, older turns are wrapped under `TurnGroup` nodes whose `node.content` holds the LLM-generated summary prose (readable in markdown dumps) and whose `node.props.sections` hold structured `{ title, body, refs }` entries.
+- Raw turns are never dropped — groups are non-destructive overlays. A `TurnGroup` can be expanded back via `TreeNode.ungroup(wrapper)`.
+- The hierarchical selector emits one synthetic `user`-role message per group, tagged `[group:{stamp}]`. The model can cite those ids in its reply.
+- Pinning forces expansion: any group containing a pinned descendant (latest user message, latest stateful tool output, `props.pinned: true`) is rendered as raw turns instead of a summary.
+- Over-budget projections demote deepest non-pinned expansions first.
+- Oversized `tool_response` bodies are elided at projection time (never mutating the tree); pre-registered stateful tools (`list_tools`, `list_skills`, `use_skills`) are never elided.
+- If no compaction can bring the session under budget after `maxPassesPerCompact` passes (default 8), a `context-thrash` LogMessage event is emitted and compaction returns best-effort.
 
 ## Provider Support
 

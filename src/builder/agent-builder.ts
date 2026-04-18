@@ -7,7 +7,25 @@ import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
 import type { AgentContext } from "../config/types.js";
+import {
+  ContextCompactor,
+  type CompactOptions,
+} from "../context/context-compactor.js";
+import type { HierarchicalSummarizer } from "../context/hierarchical-summarizer.js";
+import {
+  createDefaultPinPolicy,
+  type PinPolicy,
+} from "../context/pin-policy.js";
+import { selectHierarchical } from "../context/select-hierarchical.js";
 import type { SelectionStrategy } from "../context/select-messages.js";
+import {
+  createTokenEstimator,
+  type TokenEstimator,
+} from "../context/token-estimator.js";
+import {
+  createDefaultElisionPolicy,
+  type ToolElisionPolicy,
+} from "../context/tool-elision.js";
 import {
   AgentController,
   type AgentControllerConfig,
@@ -20,6 +38,18 @@ import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 import { Agent } from "./agent.js";
 import { SubAgentTool } from "./sub-agent-tool.js";
+
+export interface BudgetCompactionOptions {
+  budgetTokens: number;
+  summarizer: HierarchicalSummarizer;
+  keepRecentTurns?: number;
+  groupSize?: number;
+  depthPromoteThreshold?: number;
+  maxPassesPerCompact?: number;
+  estimator?: TokenEstimator;
+  pinPolicy?: PinPolicy;
+  elisionPolicy?: ToolElisionPolicy;
+}
 
 export type ToolFactory = (ctx: AgentContext) => ToolSet | Promise<ToolSet>;
 
@@ -53,6 +83,7 @@ export class AgentBuilder {
   private _maxOutputTokens?: number;
   private _selectionStrategy?: SelectionStrategy;
   private _modelManager?: ModelManager;
+  private _budgetCompaction?: BudgetCompactionOptions;
 
   // --- Provider ---
 
@@ -163,7 +194,31 @@ export class AgentBuilder {
   }
 
   withSelectionStrategy(strategy: SelectionStrategy): this {
+    if (this._budgetCompaction) {
+      // eslint-disable-next-line no-console
+      console.debug(
+        "AgentBuilder: withSelectionStrategy overrides prior withBudgetCompaction configuration",
+      );
+      this._budgetCompaction = undefined;
+    }
     this._selectionStrategy = strategy;
+    return this;
+  }
+
+  /**
+   * Install the hierarchical selector + compactor on the resulting agent.
+   * Compaction runs before every `streamText` call; the selector projects
+   * the session tree with pinning, elision, and budget-driven demotion.
+   */
+  withBudgetCompaction(options: BudgetCompactionOptions): this {
+    if (this._selectionStrategy) {
+      // eslint-disable-next-line no-console
+      console.debug(
+        "AgentBuilder: withBudgetCompaction overrides prior withSelectionStrategy configuration",
+      );
+      this._selectionStrategy = undefined;
+    }
+    this._budgetCompaction = options;
     return this;
   }
 
@@ -206,6 +261,36 @@ export class AgentBuilder {
       maxOutputTokens: this._maxOutputTokens,
       select: this._selectionStrategy,
     };
+
+    // Budget compaction wiring — install hierarchical selector + compactor.
+    if (this._budgetCompaction) {
+      const bc = this._budgetCompaction;
+      const estimator = bc.estimator ?? createTokenEstimator();
+      const pinPolicy = bc.pinPolicy ?? createDefaultPinPolicy();
+      const elisionPolicy =
+        bc.elisionPolicy ?? createDefaultElisionPolicy();
+      const keepRecentTurns = bc.keepRecentTurns ?? 4;
+      controllerConfig.select = selectHierarchical({
+        budgetTokens: bc.budgetTokens,
+        keepRecentTurns,
+        pinPolicy,
+        elisionPolicy,
+        estimator,
+      });
+      controllerConfig.compactor = new ContextCompactor();
+      controllerConfig.compactOptions = {
+        budgetTokens: bc.budgetTokens,
+        summarizer: bc.summarizer,
+        estimator,
+        pinPolicy,
+        elisionPolicy,
+        keepRecentTurns,
+        groupSize: bc.groupSize,
+        depthPromoteThreshold: bc.depthPromoteThreshold,
+        maxPassesPerCompact: bc.maxPassesPerCompact,
+      } satisfies Omit<CompactOptions, "eventSink">;
+    }
+
     const controller = new AgentController(controllerConfig);
 
     // Register static tools

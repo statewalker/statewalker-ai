@@ -1,5 +1,9 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import { generateText, stepCountIs, streamText } from "ai";
+import type {
+  CompactOptions,
+  ContextCompactor,
+} from "../context/context-compactor.js";
 import {
   type SelectionStrategy,
   selectAll,
@@ -44,6 +48,14 @@ export interface AgentControllerConfig {
   /** Cap per-step model output length. Omit to use provider default. */
   maxOutputTokens?: number;
   select?: SelectionStrategy;
+  /**
+   * Optional hierarchical context compactor. When set, `compact(...)` runs
+   * before each `streamText` call on the session, using `compactOptions`.
+   * `context-thrash` events produced by the compactor are propagated into
+   * the controller's LogMessage stream.
+   */
+  compactor?: ContextCompactor;
+  compactOptions?: Omit<CompactOptions, "eventSink">;
 }
 
 /**
@@ -65,6 +77,8 @@ export class AgentController {
   maxSteps: number;
   maxOutputTokens?: number;
   select: SelectionStrategy;
+  compactor?: ContextCompactor;
+  compactOptions?: Omit<CompactOptions, "eventSink">;
 
   /** The Turn currently being streamed. Set by run(); read by helpers. */
   #currentTurn: Turn | null = null;
@@ -77,6 +91,8 @@ export class AgentController {
     this.maxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
     this.maxOutputTokens = config.maxOutputTokens;
     this.select = config.select ?? selectAll;
+    this.compactor = config.compactor;
+    this.compactOptions = config.compactOptions;
 
     this.inbox = config.inbox ?? new Inbox();
     this.tools = config.tools ?? new ToolRegistry();
@@ -165,6 +181,15 @@ export class AgentController {
     const turn = this.#requireTurn();
     let sawContent = false;
     try {
+      // Run hierarchical compaction before projection, if configured.
+      if (this.compactor && this.compactOptions) {
+        const thrashEvents: LogMessage[] = [];
+        await this.compactor.compact(this.session, {
+          ...this.compactOptions,
+          eventSink: (e) => thrashEvents.push(e),
+        });
+        for (const e of thrashEvents) yield e;
+      }
       const messages = await this.select(this.session);
       const result = streamText({
         model: this.provider.languageModel(this.model),
