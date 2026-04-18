@@ -17,6 +17,9 @@ export function resolveActivationSettings(
   const state = manager.store.getState(catalogKey);
   if (!state || state.config.runtime !== "remote") return undefined;
 
-  const provider = (state.config as RemoteModelConfig).provider;
-  return manager.store.getProviderSettings(provider);
+  const config = state.config as RemoteModelConfig;
+  return manager.store.getProviderSettings(
+    config.provider,
+    config.providerInstanceId,
+  );
 }
