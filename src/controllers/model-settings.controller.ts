@@ -1,5 +1,5 @@
-import { newAdapter } from "@repo/shared-adapters";
-import { newRegistry } from "@repo/shared-registry";
+import { newAdapter } from "@statewalker/shared-adapters";
+import { newRegistry } from "@statewalker/shared-registry";
 import {
   ActionView,
   BadgeView,

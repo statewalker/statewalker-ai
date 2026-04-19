@@ -25,10 +25,10 @@
     "@repo/shared-views": "workspace:*",
     "@statewalker/ai-provider": "workspace:*",
     "@statewalker/webrun-files": "workspace:*",
-    "@repo/shared-adapters": "workspace:*",
-    "@repo/shared-registry": "workspace:*",
-    "@repo/shared-baseclass": "workspace:*",
-    "@repo/shared-intents": "workspace:*"
+    "@statewalker/shared-adapters": "workspace:*",
+    "@statewalker/shared-registry": "workspace:*",
+    "@statewalker/shared-baseclass": "workspace:*",
+    "@statewalker/shared-intents": "workspace:*"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "workspace:*",

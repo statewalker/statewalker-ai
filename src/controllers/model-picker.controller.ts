@@ -1,4 +1,4 @@
-import { newRegistry } from "@repo/shared-registry";
+import { newRegistry } from "@statewalker/shared-registry";
 import {
   ModelPickerView,
   type PickerModelItem,
