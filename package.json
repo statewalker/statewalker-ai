@@ -30,13 +30,13 @@
     "@ai-sdk/provider": "^3.0.8",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@repo/ids": "workspace:*",
-    "@repo/shared": "workspace:*",
     "@statewalker/ai-agent-state": "workspace:*",
     "@statewalker/ai-provider": "workspace:*",
     "@statewalker/webrun-files": "workspace:*",
     "@statewalker/webrun-files-composite": "workspace:*",
     "ai": "^6.0.154",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "@repo/shared-baseclass": "workspace:*"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "workspace:*",

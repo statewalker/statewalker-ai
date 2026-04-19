@@ -1,4 +1,4 @@
-import { BaseClass } from "@repo/shared/models";
+import { BaseClass } from "@repo/shared-baseclass";
 
 export type InboxMessage = {
   role: "user" | "agent" | "system";
