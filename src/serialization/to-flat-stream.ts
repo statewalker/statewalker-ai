@@ -1,4 +1,4 @@
-import { extractTime } from "@repo/ids";
+import { extractTime } from "@statewalker/ids";
 import type { TreeNode } from "../tree-node.js";
 import type { FlatTreeEntry } from "../types.js";
 

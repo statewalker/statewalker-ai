@@ -1,4 +1,4 @@
-import { SNOWFLAKE_BASE32_LENGTH, SnowflakeId } from "@repo/ids";
+import { SNOWFLAKE_BASE32_LENGTH, SnowflakeId } from "@statewalker/ids";
 import { describe, expect, it, vi } from "vitest";
 import { newNodeFactory } from "../src/node-factory.js";
 import { TreeNode } from "../src/tree-node.js";

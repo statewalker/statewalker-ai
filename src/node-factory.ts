@@ -1,4 +1,4 @@
-import { SnowflakeId } from "@repo/ids";
+import { SnowflakeId } from "@statewalker/ids";
 import { TreeNode } from "./tree-node.js";
 import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
 

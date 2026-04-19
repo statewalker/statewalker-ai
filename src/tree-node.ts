@@ -1,5 +1,5 @@
-import { extractTime } from "@repo/ids";
-import { BaseClass } from "@repo/shared-baseclass";
+import { extractTime } from "@statewalker/ids";
+import { BaseClass } from "@statewalker/shared-baseclass";
 import type {
   GroupWrapperFactory,
   NewEntryOptions,

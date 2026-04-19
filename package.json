@@ -23,8 +23,8 @@
   },
   "dependencies": {
     "@repo/content-blocks": "workspace:*",
-    "@repo/ids": "workspace:*",
-    "@repo/shared-baseclass": "workspace:*"
+    "@statewalker/ids": "workspace:*",
+    "@statewalker/shared-baseclass": "workspace:*"
   },
   "devDependencies": {
     "tsdown": "catalog:",
