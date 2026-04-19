@@ -9,7 +9,7 @@ import {
   ProgressBarView,
   StatusLightView,
   TextView,
-} from "@repo/shared-views";
+} from "@statewalker/shared-views";
 import type {
   EngineId,
   LocalModelConfig,

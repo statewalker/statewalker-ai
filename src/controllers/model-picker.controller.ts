@@ -2,7 +2,7 @@ import { newRegistry } from "@statewalker/shared-registry";
 import {
   ModelPickerView,
   type PickerModelItem,
-} from "@repo/shared-views/ai-models";
+} from "@statewalker/shared-views/ai-models";
 import type { RemoteModelConfig } from "@statewalker/ai-provider";
 import { getModelManager, setModelPickerView } from "../adapters.js";
 import { getIntents, runOpenModelSettings } from "../intents.js";

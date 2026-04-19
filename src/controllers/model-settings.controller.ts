@@ -16,7 +16,7 @@ import {
   publishPanel,
   StatusLightView,
   TextView,
-} from "@repo/shared-views";
+} from "@statewalker/shared-views";
 import { getModelManager } from "../adapters.js";
 import { ModelListView } from "../domain/model-list.view.js";
 import {

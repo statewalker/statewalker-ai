@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "^3.0.8",
-    "@repo/shared-views": "workspace:*",
+    "@statewalker/shared-views": "workspace:*",
     "@statewalker/ai-provider": "workspace:*",
     "@statewalker/webrun-files": "workspace:*",
     "@statewalker/shared-adapters": "workspace:*",

@@ -9,7 +9,7 @@ import {
   ProgressBarView,
   publishDialog,
   TextView,
-} from "@repo/shared-views";
+} from "@statewalker/shared-views";
 import type { ModelManager } from "@statewalker/ai-provider";
 import { AddLocalModelFormVM } from "../domain/add-local-model.form.js";
 import { persistDownloadStatus } from "../download-status-store.js";

@@ -13,7 +13,7 @@ import {
   publishDialog,
   TextFieldView,
   TextView,
-} from "@repo/shared-views";
+} from "@statewalker/shared-views";
 import type { ModelManager, ProviderName } from "@statewalker/ai-provider";
 import { AddRemoteProviderFormVM } from "../domain/add-remote-provider.form.js";
 
