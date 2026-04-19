@@ -24,10 +24,9 @@
   "dependencies": {
     "@repo/content-blocks": "workspace:*",
     "@repo/ids": "workspace:*",
-    "@repo/shared": "workspace:*"
+    "@repo/shared-baseclass": "workspace:*"
   },
   "devDependencies": {
-    "@statewalker/ai-agent": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

@@ -1,5 +1,5 @@
 import { extractTime } from "@repo/ids";
-import { BaseClass } from "@repo/shared/models";
+import { BaseClass } from "@repo/shared-baseclass";
 import type {
   GroupWrapperFactory,
   NewEntryOptions,
