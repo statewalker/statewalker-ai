@@ -1,6 +1,6 @@
 import { createMCPClient } from "@ai-sdk/mcp";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { BaseClass } from "@repo/shared-baseclass";
+import { BaseClass } from "@statewalker/shared-baseclass";
 import type { ToolSet } from "ai";
 
 export interface McpServerConfig {

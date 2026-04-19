@@ -1,4 +1,4 @@
-import { BaseClass } from "@repo/shared-baseclass";
+import { BaseClass } from "@statewalker/shared-baseclass";
 import { tool } from "ai";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";

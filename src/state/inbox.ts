@@ -1,4 +1,4 @@
-import { BaseClass } from "@repo/shared-baseclass";
+import { BaseClass } from "@statewalker/shared-baseclass";
 
 export type InboxMessage = {
   role: "user" | "agent" | "system";

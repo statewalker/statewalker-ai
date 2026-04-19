@@ -1,4 +1,4 @@
-import { BaseClass } from "@repo/shared-baseclass";
+import { BaseClass } from "@statewalker/shared-baseclass";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 

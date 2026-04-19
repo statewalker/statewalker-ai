@@ -1,4 +1,4 @@
-import { SnowflakeId } from "@repo/ids";
+import { SnowflakeId } from "@statewalker/ids";
 import type { NodeFactory } from "@statewalker/ai-agent-state";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
