@@ -1,4 +1,4 @@
-import { newRegistry } from "@repo/shared/registry";
+import { newRegistry } from "@repo/shared-registry";
 import { getModelManager } from "../adapters.js";
 import { restoreDownloadStatuses } from "../download-status-store.js";
 import { migrateEngineNamespacing } from "../migrations.js";

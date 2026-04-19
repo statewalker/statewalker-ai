@@ -1,5 +1,5 @@
-import { newAdapter } from "@repo/shared/adapters";
-import { newRegistry } from "@repo/shared/registry";
+import { newAdapter } from "@repo/shared-adapters";
+import { newRegistry } from "@repo/shared-registry";
 import {
   ActionView,
   BadgeView,

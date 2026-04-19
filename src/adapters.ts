@@ -1,4 +1,4 @@
-import { newAdapter } from "@repo/shared/adapters";
+import { newAdapter } from "@repo/shared-adapters";
 import type { ModelPickerView } from "@repo/shared-views/ai-models";
 import type { ModelManager, ModelStateStore } from "@statewalker/ai-provider";
 

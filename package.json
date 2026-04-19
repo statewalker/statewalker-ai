@@ -22,10 +22,13 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "^3.0.8",
-    "@repo/shared": "workspace:*",
     "@repo/shared-views": "workspace:*",
     "@statewalker/ai-provider": "workspace:*",
-    "@statewalker/webrun-files": "workspace:*"
+    "@statewalker/webrun-files": "workspace:*",
+    "@repo/shared-adapters": "workspace:*",
+    "@repo/shared-registry": "workspace:*",
+    "@repo/shared-baseclass": "workspace:*",
+    "@repo/shared-intents": "workspace:*"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "workspace:*",

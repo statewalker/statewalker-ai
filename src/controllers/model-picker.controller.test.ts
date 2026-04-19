@@ -1,4 +1,4 @@
-import { createIntents } from "@repo/shared/intents";
+import { createIntents } from "@repo/shared-intents";
 import {
   ModelManager,
   ModelStateStore,

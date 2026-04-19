@@ -1,5 +1,5 @@
-import { newAdapter } from "@repo/shared/adapters";
-import { BaseClass } from "@repo/shared/models";
+import { newAdapter } from "@repo/shared-adapters";
+import { BaseClass } from "@repo/shared-baseclass";
 import type { ModelManager } from "@statewalker/ai-provider";
 import { resolveActivationSettings } from "../resolve-settings.js";
 

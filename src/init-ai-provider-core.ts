@@ -1,4 +1,4 @@
-import { newRegistry } from "@repo/shared/registry";
+import { newRegistry } from "@repo/shared-registry";
 import { removeModelActivationController } from "./controllers/model-activation.controller.js";
 import { createModelManagerController } from "./controllers/model-manager.controller.js";
 import { createModelPickerController } from "./controllers/model-picker.controller.js";

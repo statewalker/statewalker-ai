@@ -1,6 +1,6 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import { newAdapter } from "@repo/shared/adapters";
-import { type Intents, newIntent } from "@repo/shared/intents";
+import { newAdapter } from "@repo/shared-adapters";
+import { type Intents, newIntent } from "@repo/shared-intents";
 
 export type { Intents };
 
