@@ -1,0 +1,21 @@
+/** Standard node type constants for agent conversations. */
+export const NodeType = {
+  session: "session",
+  turn: "turn",
+  turnGroup: "turn_group",
+  step: "step",
+  userMessage: "user_message",
+  agentMessage: "agent_message",
+  thinking: "thinking",
+  text: "text",
+  toolCall: "tool_call",
+  toolRequest: "tool_request",
+  toolResponse: "tool_response",
+  toolError: "tool_error",
+  toolOutputDenied: "tool_output_denied",
+  toolInput: "tool_input",
+  source: "source",
+  file: "file",
+  error: "error",
+  inputRejected: "input_rejected",
+} as const;

@@ -1,0 +1,52 @@
+{
+  "name": "@statewalker/ai-agent",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./state": "./src/state/index.ts",
+    "./config": "./src/config/index.ts",
+    "./sessions": "./src/sessions/index.ts",
+    "./builder": "./src/builder/index.ts",
+    "./tools": "./src/tools/index.ts"
+  },
+  "files": [
+    "dist/**",
+    "src/**"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "lint": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/mcp": "^1.0.35",
+    "@ai-sdk/provider": "^3.0.8",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@statewalker/ids": "workspace:*",
+    "@statewalker/ai-agent-state": "workspace:*",
+    "@statewalker/ai-provider": "workspace:*",
+    "@statewalker/webrun-files": "workspace:*",
+    "@statewalker/webrun-files-composite": "workspace:*",
+    "ai": "^6.0.154",
+    "zod": "catalog:",
+    "@statewalker/shared-baseclass": "workspace:*"
+  },
+  "devDependencies": {
+    "@statewalker/webrun-files-mem": "workspace:*",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-agent"
+  }
+}
