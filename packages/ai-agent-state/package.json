@@ -22,9 +22,9 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@statewalker/content-blocks": "workspace:*",
-    "@statewalker/ids": "workspace:*",
-    "@statewalker/shared-baseclass": "workspace:*"
+    "@statewalker/content-blocks": "catalog:",
+    "@statewalker/ids": "catalog:",
+    "@statewalker/shared-baseclass": "catalog:"
   },
   "devDependencies": {
     "tsdown": "catalog:",

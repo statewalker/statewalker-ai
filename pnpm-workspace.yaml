@@ -3,15 +3,34 @@ packages:
   - "apps/*"
 
 catalog:
-  "@biomejs/biome": "^2.4.12"
-  "@types/node": "^22.19.11"
-  "@vitest/coverage-v8": "^3.2.4"
-  ai: "^6.0.155"
-  rimraf: "^6.0.1"
-  tsdown: "^0.12.3"
-  tsx: "^4.21.0"
-  turbo: "^2.9.6"
-  typescript: "^5.9.3"
-  vitest: "^3.2.4"
-  zod: "^3.25.76"
-  zod-to-json-schema: "^3.25.1"
+  "@ai-sdk/anthropic": ^3.0.71
+  "@ai-sdk/google": ^3.0.64
+  "@ai-sdk/mcp": ^1.0.36
+  "@ai-sdk/openai": ^3.0.53
+  "@ai-sdk/provider": ^3.0.8
+  "@biomejs/biome": ^2.4.12
+  "@huggingface/transformers": ^4.1.0
+  "@mlc-ai/web-llm": ^0.2.82
+  "@modelcontextprotocol/sdk": ^1.29.0
+  "@statewalker/content-blocks": ^0.1.0
+  "@statewalker/fsm": ^0.37.0
+  "@statewalker/ids": ^0.1.0
+  "@statewalker/shared-adapters": ^0.1.0
+  "@statewalker/shared-baseclass": ^0.1.0
+  "@statewalker/shared-intents": ^0.1.0
+  "@statewalker/shared-registry": ^0.1.0
+  "@statewalker/shared-views": ^0.1.0
+  "@statewalker/webrun-files": ^0.7.0
+  "@statewalker/webrun-files-composite": ^0.7.1
+  "@statewalker/webrun-files-mem": ^0.7.2
+  "@types/node": ^25.6.0
+  "@vitest/coverage-v8": ^4.1.4
+  ai: ^6.0.168
+  rimraf: ^6.1.3
+  tsdown: ^0.21.9
+  tsx: ^4.21.0
+  turbo: ^2.9.6
+  typescript: ^6.0.3
+  vitest: ^4.1.4
+  zod: ^4.3.6
+  zod-to-json-schema: ^3.25.2
