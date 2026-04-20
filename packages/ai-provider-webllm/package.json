@@ -21,9 +21,9 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/provider": "^3.0.8",
+    "@ai-sdk/provider": "catalog:",
     "@statewalker/ai-provider": "workspace:*",
-    "@statewalker/webrun-files": "workspace:*"
+    "@statewalker/webrun-files": "catalog:"
   },
   "peerDependencies": {
     "@mlc-ai/web-llm": "^0.2.82"
@@ -34,7 +34,7 @@
     }
   },
   "devDependencies": {
-    "@mlc-ai/web-llm": "^0.2.82",
+    "@mlc-ai/web-llm": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

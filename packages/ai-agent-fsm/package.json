@@ -17,8 +17,8 @@
     "lint:check": "biome check ."
   },
   "dependencies": {
-    "@statewalker/fsm": "workspace:*",
-    "ai": "^6.0.116",
+    "@statewalker/fsm": "catalog:",
+    "ai": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {

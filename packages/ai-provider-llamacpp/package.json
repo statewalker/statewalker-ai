@@ -21,12 +21,12 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/provider": "^3.0.8",
+    "@ai-sdk/provider": "catalog:",
     "@statewalker/ai-provider": "workspace:*",
-    "@statewalker/webrun-files": "workspace:*"
+    "@statewalker/webrun-files": "catalog:"
   },
   "peerDependencies": {
-    "node-llama-cpp": "^3.0.0"
+    "node-llama-cpp": "^3.18.1"
   },
   "peerDependenciesMeta": {
     "node-llama-cpp": {

@@ -21,15 +21,15 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.68",
-    "@ai-sdk/google": "^3.0.61",
-    "@ai-sdk/openai": "^3.0.52",
-    "@ai-sdk/provider": "^3.0.8",
-    "@statewalker/webrun-files": "workspace:*",
-    "ai": "^6.0.155"
+    "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/google": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "@ai-sdk/provider": "catalog:",
+    "@statewalker/webrun-files": "catalog:",
+    "ai": "catalog:"
   },
   "devDependencies": {
-    "@statewalker/webrun-files-mem": "workspace:*",
+    "@statewalker/webrun-files-mem": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

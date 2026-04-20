@@ -21,10 +21,10 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/provider": "^3.0.8",
+    "@ai-sdk/provider": "catalog:",
     "@statewalker/ai-provider": "workspace:*",
-    "@statewalker/webrun-files": "workspace:*",
-    "@huggingface/transformers": "^4.0.1"
+    "@statewalker/webrun-files": "catalog:",
+    "@huggingface/transformers": "catalog:"
   },
   "devDependencies": {
     "tsdown": "catalog:",

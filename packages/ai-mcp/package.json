@@ -19,9 +19,9 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/mcp": "^1.0.25",
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "ai": "^6.0.116"
+    "@ai-sdk/mcp": "catalog:",
+    "@modelcontextprotocol/sdk": "catalog:",
+    "ai": "catalog:"
   },
   "devDependencies": {
     "tsdown": "catalog:",

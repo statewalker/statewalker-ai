@@ -21,17 +21,17 @@
     "lint:check": "biome check ."
   },
   "dependencies": {
-    "@ai-sdk/provider": "^3.0.8",
-    "@statewalker/shared-views": "workspace:*",
+    "@ai-sdk/provider": "catalog:",
+    "@statewalker/shared-views": "catalog:",
     "@statewalker/ai-provider": "workspace:*",
-    "@statewalker/webrun-files": "workspace:*",
-    "@statewalker/shared-adapters": "workspace:*",
-    "@statewalker/shared-registry": "workspace:*",
-    "@statewalker/shared-baseclass": "workspace:*",
-    "@statewalker/shared-intents": "workspace:*"
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/shared-adapters": "catalog:",
+    "@statewalker/shared-registry": "catalog:",
+    "@statewalker/shared-baseclass": "catalog:",
+    "@statewalker/shared-intents": "catalog:"
   },
   "devDependencies": {
-    "@statewalker/webrun-files-mem": "workspace:*",
+    "@statewalker/webrun-files-mem": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
