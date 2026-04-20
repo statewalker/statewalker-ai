@@ -1,0 +1,33 @@
+{
+  "name": "@statewalker/ai-agent-fsm",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src/**"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write --unsafe .",
+    "lint:check": "biome check ."
+  },
+  "dependencies": {
+    "@statewalker/fsm": "workspace:*",
+    "ai": "^6.0.116",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-agent-fsm"
+  }
+}

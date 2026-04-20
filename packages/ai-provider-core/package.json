@@ -1,0 +1,43 @@
+{
+  "name": "@statewalker/ai-provider-core",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    "./init": "./src/init-ai-provider-core.ts",
+    "./intents": "./src/intents.ts",
+    "./adapters": "./src/adapters.ts",
+    "./active-models": "./src/controllers/active-models-lifecycle.controller.ts",
+    "./model-list": "./src/controllers/model-settings.controller.ts"
+  },
+  "files": [
+    "src/**"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write --unsafe .",
+    "lint:check": "biome check ."
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "^3.0.8",
+    "@statewalker/shared-views": "workspace:*",
+    "@statewalker/ai-provider": "workspace:*",
+    "@statewalker/webrun-files": "workspace:*",
+    "@statewalker/shared-adapters": "workspace:*",
+    "@statewalker/shared-registry": "workspace:*",
+    "@statewalker/shared-baseclass": "workspace:*",
+    "@statewalker/shared-intents": "workspace:*"
+  },
+  "devDependencies": {
+    "@statewalker/webrun-files-mem": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-provider-core"
+  }
+}
