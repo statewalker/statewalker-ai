@@ -1,5 +1,5 @@
-import type { ContentDocument, ContentSection } from "@repo/content-blocks";
-import { serializeDocument } from "@repo/content-blocks/parser";
+import type { ContentDocument, ContentSection } from "@statewalker/content-blocks";
+import { serializeDocument } from "@statewalker/content-blocks/parser";
 import type { TreeNode } from "../tree-node.js";
 import { toFlatStream } from "./to-flat-stream.js";
 

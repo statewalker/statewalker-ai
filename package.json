@@ -22,7 +22,7 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@repo/content-blocks": "workspace:*",
+    "@statewalker/content-blocks": "workspace:*",
     "@statewalker/ids": "workspace:*",
     "@statewalker/shared-baseclass": "workspace:*"
   },
