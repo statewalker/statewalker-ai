@@ -1,14 +1,11 @@
-import { SnowflakeId } from "@statewalker/ids";
 import type { NodeFactory } from "@statewalker/ai-agent-state";
+import { SnowflakeId } from "@statewalker/shared-ids";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
 import { createAgentNodeFactory } from "../state/node-factory.js";
 import { NodeType } from "../state/node-types.js";
 import { Session } from "../state/session.js";
-import {
-  markdownToSession,
-  sessionToMarkdown,
-} from "../state/session-serialization.js";
+import { markdownToSession, sessionToMarkdown } from "../state/session-serialization.js";
 import type { SessionManager, SessionMetadata } from "./types.js";
 
 interface IndexData {
@@ -110,8 +107,7 @@ export class FilesSessionManager implements SessionManager {
   async list(): Promise<SessionMetadata[]> {
     const index = await this.loadIndex();
     return index.sessions.sort(
-      (a, b) =>
-        new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     );
   }
 
@@ -182,10 +178,7 @@ export class FilesSessionManager implements SessionManager {
     return { text: markdown, attachments: [] };
   }
 
-  private async rehydrateAttachments(
-    text: string,
-    _sessionDir: string,
-  ): Promise<string> {
+  private async rehydrateAttachments(text: string, _sessionDir: string): Promise<string> {
     // TODO: resolve [attachment:{callId}] markers from .att.json files
     return text;
   }

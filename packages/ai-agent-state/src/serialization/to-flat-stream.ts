@@ -1,4 +1,4 @@
-import { extractTime } from "@statewalker/ids";
+import { extractTime } from "@statewalker/shared-ids";
 import type { TreeNode } from "../tree-node.js";
 import type { FlatTreeEntry } from "../types.js";
 
@@ -14,10 +14,7 @@ import type { FlatTreeEntry } from "../types.js";
  * - Nodes where `id >= since` (created at or after that point)
  * - Nodes where `updatedAt >= since time` (modified since that point)
  */
-export function* toFlatStream(
-  root: TreeNode,
-  since?: string,
-): Generator<FlatTreeEntry> {
+export function* toFlatStream(root: TreeNode, since?: string): Generator<FlatTreeEntry> {
   const nodes: TreeNode[] = [];
   collectNodes(root, nodes);
 
@@ -33,10 +30,7 @@ export function* toFlatStream(
     if (node.id >= since) {
       // New node (created at or after the checkpoint)
       yield nodeToFlat(node);
-    } else if (
-      node.props.updatedAt !== undefined &&
-      node.updatedAt.getTime() >= sinceTime
-    ) {
+    } else if (node.props.updatedAt !== undefined && node.updatedAt.getTime() >= sinceTime) {
       // Old node explicitly modified since the checkpoint
       yield nodeToFlat(node);
     }
