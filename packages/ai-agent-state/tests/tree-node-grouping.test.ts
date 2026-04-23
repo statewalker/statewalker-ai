@@ -33,9 +33,9 @@ describe("TreeNode.groupChildren", () => {
     const parent = create("session");
     parent.addChild({ type: "turn" });
     parent.addChild({ type: "turn" });
-    expect(() =>
-      parent.groupChildren(1, 1, () => ({ type: "turn_group" })),
-    ).toThrow(/empty or reversed/);
+    expect(() => parent.groupChildren(1, 1, () => ({ type: "turn_group" }))).toThrow(
+      /empty or reversed/,
+    );
     expect(parent.children).toHaveLength(2);
   });
 
@@ -44,18 +44,18 @@ describe("TreeNode.groupChildren", () => {
     parent.addChild({ type: "turn" });
     parent.addChild({ type: "turn" });
     parent.addChild({ type: "turn" });
-    expect(() =>
-      parent.groupChildren(2, 1, () => ({ type: "turn_group" })),
-    ).toThrow(/empty or reversed/);
+    expect(() => parent.groupChildren(2, 1, () => ({ type: "turn_group" }))).toThrow(
+      /empty or reversed/,
+    );
     expect(parent.children).toHaveLength(3);
   });
 
   it("rejects out-of-bounds range", () => {
     const parent = create("session");
     parent.addChild({ type: "turn" });
-    expect(() =>
-      parent.groupChildren(0, 5, () => ({ type: "turn_group" })),
-    ).toThrow(/out of bounds/);
+    expect(() => parent.groupChildren(0, 5, () => ({ type: "turn_group" }))).toThrow(
+      /out of bounds/,
+    );
   });
 
   it("preserves child identity and updates parent pointer", () => {
@@ -144,9 +144,7 @@ describe("TreeNode.ungroup", () => {
     const parent = create("session");
     parent.addChild({ type: "turn" });
     const other: TreeNode = create("turn_group");
-    expect(() => parent.ungroup(other)).toThrow(
-      /not a direct child of this node/,
-    );
+    expect(() => parent.ungroup(other)).toThrow(/not a direct child of this node/);
   });
 
   it("re-routes events back to parent after ungroup", () => {

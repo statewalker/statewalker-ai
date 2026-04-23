@@ -18,9 +18,6 @@ export function sessionToMarkdown(root: TreeNode): string {
 }
 
 /** Deserialize a session tree from markdown (auto-strips code fences). */
-export function markdownToSession(
-  markdown: string,
-  factory: NodeFactory,
-): TreeNode {
+export function markdownToSession(markdown: string, factory: NodeFactory): TreeNode {
   return markdownToTree(markdown, factory);
 }

@@ -80,9 +80,7 @@ describe("Turn stream handlers", () => {
 
     turn.handleReasoning({ type: "reasoning-end", id: "r1" });
 
-    const thinking = agentMsgs[0]?.children.filter(
-      (c) => c.type === NodeType.thinking,
-    );
+    const thinking = agentMsgs[0]?.children.filter((c) => c.type === NodeType.thinking);
     expect(thinking).toHaveLength(1);
     expect(thinking?.[0]?.content).toBe("Let me think");
   });
@@ -411,16 +409,12 @@ describe("Turn stream handlers", () => {
     expect(turn.toolCalls).toHaveLength(1);
     expect(turn.toolCalls[0]?.result).toBe("ok");
 
-    const agentMsgs = turn.children.filter(
-      (c) => c.type === NodeType.agentMessage,
-    );
+    const agentMsgs = turn.children.filter((c) => c.type === NodeType.agentMessage);
     expect(agentMsgs).toHaveLength(1);
     expect(agentMsgs[0]?.content).toBe("Let me check");
 
     // Reasoning and text share the same agent message
-    const thinking = agentMsgs[0]?.children.filter(
-      (c) => c.type === NodeType.thinking,
-    );
+    const thinking = agentMsgs[0]?.children.filter((c) => c.type === NodeType.thinking);
     expect(thinking).toHaveLength(1);
     expect(thinking?.[0]?.content).toBe("Thinking...");
   });
@@ -440,9 +434,7 @@ describe("Turn stream handlers", () => {
     turn.handleText({ type: "text-end", id: "t2" });
     turn.handleFinishStep({ type: "finish-step", finishReason: "stop" });
 
-    const agentMsgs = turn.children.filter(
-      (c) => c.type === NodeType.agentMessage,
-    );
+    const agentMsgs = turn.children.filter((c) => c.type === NodeType.agentMessage);
     expect(agentMsgs).toHaveLength(2);
     expect(agentMsgs[0]?.content).toBe("Step one");
     expect(agentMsgs[1]?.content).toBe("Step two");

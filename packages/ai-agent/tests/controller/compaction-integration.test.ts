@@ -112,9 +112,7 @@ describe("AgentController with budget compaction", () => {
     }
 
     // At least one TurnGroup must have been created in the session root.
-    const groups = session.children.filter(
-      (c) => c.type === NodeType.turnGroup,
-    ) as TurnGroup[];
+    const groups = session.children.filter((c) => c.type === NodeType.turnGroup) as TurnGroup[];
     expect(groups.length).toBeGreaterThanOrEqual(1);
     expect(
       (summarizer.summarize as ReturnType<typeof vi.fn>).mock.calls.length,

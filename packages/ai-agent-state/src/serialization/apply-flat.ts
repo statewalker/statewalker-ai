@@ -54,9 +54,7 @@ export function applyFlat(
     const rootless = childrenByParent.get(undefined) ?? [];
     // Also treat pending entries whose `parentId` is not resolvable as roots.
     const pendingIds = new Set(pending.map((p) => p.id));
-    const orphans = pending.filter(
-      (p) => p.parentId !== undefined && !pendingIds.has(p.parentId),
-    );
+    const orphans = pending.filter((p) => p.parentId !== undefined && !pendingIds.has(p.parentId));
     const rootFlat = rootless[0] ?? orphans[0];
     if (!rootFlat) {
       throw new Error("applyFlat: no root candidate in stream");

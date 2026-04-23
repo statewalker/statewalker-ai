@@ -55,10 +55,7 @@ function isBinaryFile(path: string): boolean {
   return BINARY_EXTENSIONS.has(path.slice(dot).toLowerCase());
 }
 
-export function createReplaceLinesTool(
-  files: FilesApi,
-  isExcluded: PathFilter,
-) {
+export function createReplaceLinesTool(files: FilesApi, isExcluded: PathFilter) {
   return tool({
     description:
       "Replace a range of lines in a text file with new content. " +
@@ -81,10 +78,7 @@ export function createReplaceLinesTool(
         .number()
         .int()
         .min(0)
-        .describe(
-          "Number of lines to replace. " +
-            "Use 0 to insert without removing any lines.",
-        ),
+        .describe("Number of lines to replace. " + "Use 0 to insert without removing any lines."),
       new_content: z
         .string()
         .describe(
@@ -95,18 +89,12 @@ export function createReplaceLinesTool(
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the edited file"),
+        path: z.string().optional().describe("Normalized absolute path of the edited file"),
         lines_removed: z
           .number()
           .optional()
           .describe("Number of original lines removed from the range"),
-        lines_inserted: z
-          .number()
-          .optional()
-          .describe("Number of new lines inserted"),
+        lines_inserted: z.number().optional().describe("Number of new lines inserted"),
         total_lines: z
           .number()
           .optional()

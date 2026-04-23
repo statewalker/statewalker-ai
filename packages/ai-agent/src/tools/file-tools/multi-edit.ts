@@ -17,9 +17,7 @@ export function createMultiEditTool(files: FilesApi, isExcluded: PathFilter) {
       edits: z
         .array(
           z.object({
-            old_string: z
-              .string()
-              .describe("The exact text to find and replace"),
+            old_string: z.string().describe("The exact text to find and replace"),
             new_string: z.string().describe("The replacement text"),
             replace_all: z
               .boolean()
@@ -35,14 +33,8 @@ export function createMultiEditTool(files: FilesApi, isExcluded: PathFilter) {
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the edited file"),
-        edits_applied: z
-          .number()
-          .optional()
-          .describe("Number of edit operations applied"),
+        path: z.string().optional().describe("Normalized absolute path of the edited file"),
+        edits_applied: z.number().optional().describe("Number of edit operations applied"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),

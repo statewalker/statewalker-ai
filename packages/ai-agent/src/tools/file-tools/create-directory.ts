@@ -3,10 +3,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createCreateDirectoryTool(
-  files: FilesApi,
-  isExcluded: PathFilter,
-) {
+export function createCreateDirectoryTool(files: FilesApi, isExcluded: PathFilter) {
   return tool({
     description:
       "Create a directory and all parent directories if needed. " +
@@ -17,14 +14,8 @@ export function createCreateDirectoryTool(
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the created directory"),
-        created: z
-          .boolean()
-          .optional()
-          .describe("True if the directory was created successfully"),
+        path: z.string().optional().describe("Normalized absolute path of the created directory"),
+        created: z.boolean().optional().describe("True if the directory was created successfully"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),

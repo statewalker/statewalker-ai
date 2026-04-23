@@ -46,10 +46,7 @@ export class McpClientManager extends BaseClass {
   /**
    * Load servers from saved settings. Does NOT bump revision (no save needed).
    */
-  async loadServers(
-    servers: Record<string, McpServerConfig>,
-    signal?: AbortSignal,
-  ): Promise<void> {
+  async loadServers(servers: Record<string, McpServerConfig>, signal?: AbortSignal): Promise<void> {
     this._desiredConfigs = { ...servers };
     await this.doConnect(servers, signal);
     this.notify();
@@ -67,9 +64,7 @@ export class McpClientManager extends BaseClass {
         const transport =
           config.type === "http"
             ? new StreamableHTTPClientTransport(new URL(config.url), {
-                requestInit: config.headers
-                  ? { headers: config.headers }
-                  : undefined,
+                requestInit: config.headers ? { headers: config.headers } : undefined,
               })
             : {
                 type: "sse" as const,

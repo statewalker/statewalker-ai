@@ -46,14 +46,10 @@ export interface CompactResult {
  * wrappers; it never drops data.
  */
 export class ContextCompactor {
-  async compact(
-    session: Session,
-    options: CompactOptions,
-  ): Promise<CompactResult> {
+  async compact(session: Session, options: CompactOptions): Promise<CompactResult> {
     const keepRecent = options.keepRecentTurns ?? DEFAULT_KEEP_RECENT_TURNS;
     const groupSize = options.groupSize ?? DEFAULT_GROUP_SIZE;
-    const promoteThreshold =
-      options.depthPromoteThreshold ?? DEFAULT_DEPTH_PROMOTE_THRESHOLD;
+    const promoteThreshold = options.depthPromoteThreshold ?? DEFAULT_DEPTH_PROMOTE_THRESHOLD;
     const maxPasses = options.maxPassesPerCompact ?? DEFAULT_MAX_PASSES;
 
     options.pinPolicy.prepare?.(session);
@@ -62,11 +58,7 @@ export class ContextCompactor {
     const migratedAnyLegacy = migrateLegacySummaries(session, keepRecent);
 
     // 2. Short-circuit: already under budget without any work (not even elision).
-    const rawEstimate = estimateSession(
-      session,
-      options.estimator,
-      /* elision */ undefined,
-    );
+    const rawEstimate = estimateSession(session, options.estimator, /* elision */ undefined);
     if (rawEstimate <= options.budgetTokens) {
       return {
         passes: 0,
@@ -88,37 +80,21 @@ export class ContextCompactor {
 
       // Step 1 — elision projection. Elision never mutates the tree; we
       // estimate *with* elision applied and return if that alone is enough.
-      const elidedEst = estimateSession(
-        session,
-        options.estimator,
-        options.elisionPolicy,
-      );
+      const elidedEst = estimateSession(session, options.estimator, options.elisionPolicy);
       if (elidedEst <= options.budgetTokens) {
         elided = true;
         break;
       }
 
       // Step 2 — form a new depth-1 group if possible.
-      const depth1Group = await formDepth1Group(
-        session,
-        groupSize,
-        keepRecent,
-        options,
-        stamp,
-      );
+      const depth1Group = await formDepth1Group(session, groupSize, keepRecent, options, stamp);
       if (depth1Group) {
         newGroups.push(depth1Group.id);
         continue;
       }
 
       // Step 3 — depth promotion when a run of same-depth groups exists.
-      const promoted = await promoteGroups(
-        session,
-        promoteThreshold,
-        keepRecent,
-        options,
-        stamp,
-      );
+      const promoted = await promoteGroups(session, promoteThreshold, keepRecent, options, stamp);
       if (promoted) {
         newGroups.push(promoted.id);
         continue;
@@ -131,11 +107,7 @@ export class ContextCompactor {
 
     if (thrashed || passes >= maxPasses) {
       thrashed = true;
-      const finalEst = estimateSession(
-        session,
-        options.estimator,
-        options.elisionPolicy,
-      );
+      const finalEst = estimateSession(session, options.estimator, options.elisionPolicy);
       options.eventSink?.({
         type: "context-thrash",
         turnId: "",
@@ -158,10 +130,7 @@ export class ContextCompactor {
  * is the concatenation of those legacy summaries. Marks the group with
  * `stamp = LEGACY_STAMP`. No LLM is called.
  */
-function migrateLegacySummaries(
-  session: Session,
-  keepRecentTurns: number,
-): boolean {
+function migrateLegacySummaries(session: Session, keepRecentTurns: number): boolean {
   const directChildren = session.children;
   const cutoff = Math.max(0, directChildren.length - keepRecentTurns);
   let fromIdx = -1;

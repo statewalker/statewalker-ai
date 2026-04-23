@@ -19,9 +19,7 @@ export function createUseSkillsTool(options: {
       "the most relevant skills from those available, activates them, " +
       "and returns their full content.",
     inputSchema: z.object({
-      prompt: z
-        .string()
-        .describe("Human-readable description of the problem to resolve"),
+      prompt: z.string().describe("Human-readable description of the problem to resolve"),
     }),
     execute: async ({ prompt }) => {
       const { skills, provider, model } = options;
@@ -38,9 +36,7 @@ export function createUseSkillsTool(options: {
         model: provider.languageModel(model),
         output: Output.object({
           schema: z.object({
-            selected: z
-              .array(z.string())
-              .describe("Names of skills to activate"),
+            selected: z.array(z.string()).describe("Names of skills to activate"),
           }),
         }),
         system:

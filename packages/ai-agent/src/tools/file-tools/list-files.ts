@@ -35,20 +35,7 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${regex}$`);
 }
 
-const REGEX_ESCAPE_CHARS = new Set([
-  ".",
-  "[",
-  "]",
-  "+",
-  "^",
-  "$",
-  "{",
-  "}",
-  "(",
-  ")",
-  "|",
-  "\\",
-]);
+const REGEX_ESCAPE_CHARS = new Set([".", "[", "]", "+", "^", "$", "{", "}", "(", ")", "|", "\\"]);
 
 export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
   return tool({
@@ -62,9 +49,7 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
       path: z
         .string()
         .optional()
-        .describe(
-          "Absolute path to the directory to list or search in. Defaults to '/' (root).",
-        ),
+        .describe("Absolute path to the directory to list or search in. Defaults to '/' (root)."),
       pattern: z
         .string()
         .optional()
@@ -84,22 +69,14 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the listed directory"),
+        path: z.string().optional().describe("Normalized absolute path of the listed directory"),
         entries: z
           .array(
             z.object({
-              name: z
-                .string()
-                .describe("Entry name (directories end with '/')"),
+              name: z.string().describe("Entry name (directories end with '/')"),
               path: z.string().describe("Absolute path of the entry"),
               kind: z.string().describe("Entry type: 'file' or 'directory'"),
-              size: z
-                .number()
-                .optional()
-                .describe("File size in bytes (when available)"),
+              size: z.number().optional().describe("File size in bytes (when available)"),
               lastModified: z
                 .string()
                 .optional()
@@ -107,14 +84,9 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
             }),
           )
           .optional()
-          .describe(
-            "Listed directory entries, sorted directories-first then by name",
-          ),
+          .describe("Listed directory entries, sorted directories-first then by name"),
         count: z.number().optional().describe("Number of entries returned"),
-        truncated: z
-          .boolean()
-          .optional()
-          .describe("True if results were capped at 200 entries"),
+        truncated: z.boolean().optional().describe("True if results were capped at 200 entries"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),
@@ -132,8 +104,7 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
       }
 
       const depthLimit = max_depth ?? (pattern ? undefined : 3);
-      const recursive =
-        pattern !== undefined || depthLimit === undefined || depthLimit > 1;
+      const recursive = pattern !== undefined || depthLimit === undefined || depthLimit > 1;
       const re = pattern ? globToRegex(pattern) : undefined;
 
       const entries: {
@@ -149,20 +120,14 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
 
         // Depth check
         if (depthLimit !== undefined) {
-          const relative =
-            dir === "/"
-              ? entry.path.slice(1)
-              : entry.path.slice(dir.length + 1);
+          const relative = dir === "/" ? entry.path.slice(1) : entry.path.slice(dir.length + 1);
           const depth = relative.split("/").length;
           if (depth > depthLimit) continue;
         }
 
         // Pattern matching
         if (re) {
-          const relative =
-            dir === "/"
-              ? entry.path.slice(1)
-              : entry.path.slice(dir.length + 1);
+          const relative = dir === "/" ? entry.path.slice(1) : entry.path.slice(dir.length + 1);
           if (!re.test(relative) && !re.test(entry.name)) continue;
         }
 

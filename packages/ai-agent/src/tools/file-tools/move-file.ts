@@ -9,19 +9,14 @@ export function createMoveFileTool(files: FilesApi, isExcluded: PathFilter) {
       "Move or rename a file or directory. All paths are absolute (start with '/'). " +
       "Creates parent directories of the target path if needed.",
     inputSchema: z.object({
-      old_path: z
-        .string()
-        .describe("Current absolute virtual path of the file or directory"),
+      old_path: z.string().describe("Current absolute virtual path of the file or directory"),
       new_path: z.string().describe("Target absolute virtual path"),
     }),
     outputSchema: z
       .object({
         old_path: z.string().optional().describe("Normalized source path"),
         new_path: z.string().optional().describe("Normalized destination path"),
-        moved: z
-          .boolean()
-          .optional()
-          .describe("True if the move/rename succeeded"),
+        moved: z.boolean().optional().describe("True if the move/rename succeeded"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),

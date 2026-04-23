@@ -198,10 +198,7 @@ describe("Session serialization — Markdown round-trip", () => {
   });
 
   it("round-trips the test-session.md fixture", () => {
-    const fixturePath = resolve(
-      import.meta.dirname,
-      "fixtures/test-session.md",
-    );
+    const fixturePath = resolve(import.meta.dirname, "fixtures/test-session.md");
     const markdown = readFileSync(fixturePath, "utf-8");
     const session = markdownToTree(markdown, factory) as Session;
 

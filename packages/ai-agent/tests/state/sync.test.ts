@@ -1,8 +1,4 @@
-import {
-  applyFlat,
-  toFlatStream,
-  treeToJson,
-} from "@statewalker/ai-agent-state";
+import { applyFlat, toFlatStream, treeToJson } from "@statewalker/ai-agent-state";
 import { describe, expect, it } from "vitest";
 import {
   createAgentNodeFactory,
@@ -21,11 +17,7 @@ describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
     const session1 = factory({ type: NodeType.session }) as Session;
 
     // ── Create session2 as a copy of session1 ────────────────
-    const session2 = applyFlat(
-      undefined,
-      toFlatStream(session1),
-      factory,
-    ) as Session;
+    const session2 = applyFlat(undefined, toFlatStream(session1), factory) as Session;
 
     // ── Subscribe session2 to session1 updates ───────────────
     let lastSyncId = session2.id;
@@ -142,9 +134,7 @@ describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
 
     const thinkingBlocks1 = t1.messages[1]?.thinkingBlocks ?? [];
     expect(thinkingBlocks1).toHaveLength(1);
-    expect(thinkingBlocks1[0]?.text).toBe(
-      "I should list the directory contents.",
-    );
+    expect(thinkingBlocks1[0]?.text).toBe("I should list the directory contents.");
 
     expect(t1.toolCalls).toHaveLength(1);
     const s_tc1 = t1.toolCalls[0] as ToolCall;
@@ -156,13 +146,9 @@ describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
     // 4. Turn 2 (interleaved)
     const t2 = session2.turns[1] as Turn;
     expect(t2.messages).toHaveLength(3);
-    expect(t2.messages[0]?.text).toBe(
-      "There are 3 files: data.json, config.yaml, README.md.",
-    );
+    expect(t2.messages[0]?.text).toBe("There are 3 files: data.json, config.yaml, README.md.");
     expect(t2.messages[1]?.text).toBe("Also check /var/log");
-    expect(t2.messages[2]?.text).toBe(
-      "I couldn't read /var/log due to permissions.",
-    );
+    expect(t2.messages[2]?.text).toBe("I couldn't read /var/log due to permissions.");
 
     const s_tc2 = t2.toolCalls[0] as ToolCall;
     expect(s_tc2.result).toBe("Permission denied");

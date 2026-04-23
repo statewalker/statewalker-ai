@@ -12,10 +12,7 @@ const fileInfoOutputSchema = z
       .string()
       .optional()
       .describe("Human-readable file size (e.g. '1.5 KB', '3.2 MB')"),
-    last_modified: z
-      .string()
-      .optional()
-      .describe("ISO 8601 timestamp of last modification"),
+    last_modified: z.string().optional().describe("ISO 8601 timestamp of last modification"),
   })
   .passthrough()
   .describe("On error returns { error: string } instead.");
@@ -30,9 +27,7 @@ export function createFileInfoTool(files: FilesApi, isExcluded: PathFilter) {
       "Use this to check if a file exists, " +
       "inspect file size before reading, or check modification dates.",
     inputSchema: z.object({
-      path: z
-        .string()
-        .describe("Absolute virtual path to the file or directory"),
+      path: z.string().describe("Absolute virtual path to the file or directory"),
     }),
     outputSchema: fileInfoOutputSchema,
     execute: async ({ path }): Promise<FileInfoOutput> => {

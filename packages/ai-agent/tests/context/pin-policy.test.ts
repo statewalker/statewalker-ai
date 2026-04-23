@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createDefaultPinPolicy,
-  createPinPolicy,
-} from "../../src/context/pin-policy.js";
+import { createDefaultPinPolicy, createPinPolicy } from "../../src/context/pin-policy.js";
 import {
   createAgentNodeFactory,
   NodeType,
@@ -81,9 +78,7 @@ describe("createDefaultPinPolicy", () => {
 
     const policy = createDefaultPinPolicy({
       additionalPredicates: [
-        (n) =>
-          n.type === NodeType.toolCall &&
-          (n as ToolCall).toolName === "my_custom_tool",
+        (n) => n.type === NodeType.toolCall && (n as ToolCall).toolName === "my_custom_tool",
       ],
     });
     policy.prepare?.(session);

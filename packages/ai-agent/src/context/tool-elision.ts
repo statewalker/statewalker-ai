@@ -43,9 +43,7 @@ const DEFAULT_TAIL_CHARS = 200;
 const DEFAULT_MIN_ELIDE_CHARS = 2000;
 const DEFAULT_NEVER_ELIDE_TOOLS = ["list_tools", "list_skills", "use_skills"];
 
-export function createDefaultElisionPolicy(
-  options: DefaultElisionOptions = {},
-): ToolElisionPolicy {
+export function createDefaultElisionPolicy(options: DefaultElisionOptions = {}): ToolElisionPolicy {
   const perTool = new Map<string, ElisionStrategy>();
   const neverElideTools = new Set([
     ...DEFAULT_NEVER_ELIDE_TOOLS,

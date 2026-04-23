@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  isStampStale,
-  LEGACY_STAMP,
-  newStamp,
-} from "../../src/context/compaction-stamp.js";
+import { isStampStale, LEGACY_STAMP, newStamp } from "../../src/context/compaction-stamp.js";
 import {
   createAgentNodeFactory,
   NodeType,

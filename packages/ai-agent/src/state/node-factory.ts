@@ -11,13 +11,7 @@ import { ToolCall } from "./tool-call.js";
 import { Turn } from "./turn.js";
 import { TurnGroup } from "./turn-group.js";
 
-const AGENT_TYPES: Record<
-  string,
-  new (
-    data: TreeEntry,
-    factory: NodeFactory,
-  ) => TreeNode
-> = {
+const AGENT_TYPES: Record<string, new (data: TreeEntry, factory: NodeFactory) => TreeNode> = {
   [NodeType.session]: Session,
   [NodeType.turn]: Turn,
   [NodeType.turnGroup]: TurnGroup,
@@ -34,13 +28,7 @@ const AGENT_TYPES: Record<
  * Accepts additional type mappings that override or extend the defaults.
  */
 export function createAgentNodeFactory(
-  extra?: Record<
-    string,
-    new (
-      data: TreeEntry,
-      factory: NodeFactory,
-    ) => TreeNode
-  >,
+  extra?: Record<string, new (data: TreeEntry, factory: NodeFactory) => TreeNode>,
 ): NodeFactory {
   return newNodeFactory(extra ? { ...AGENT_TYPES, ...extra } : AGENT_TYPES);
 }

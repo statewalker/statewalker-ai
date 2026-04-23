@@ -69,22 +69,12 @@ export function createReadFileTool(files: FilesApi, isExcluded: PathFilter) {
     inputSchema: z.object({
       path: z
         .string()
-        .describe(
-          "Absolute virtual path to the file, e.g. '/src/index.ts', '/README.md'.",
-        ),
+        .describe("Absolute virtual path to the file, e.g. '/src/index.ts', '/README.md'."),
       ranges: z
         .array(
           z.object({
-            begin: z
-              .number()
-              .int()
-              .min(0)
-              .describe("Start character offset (inclusive)"),
-            end: z
-              .number()
-              .int()
-              .min(0)
-              .describe("End character offset (exclusive)"),
+            begin: z.number().int().min(0).describe("Start character offset (inclusive)"),
+            end: z.number().int().min(0).describe("End character offset (exclusive)"),
           }),
         )
         .optional()
@@ -95,14 +85,8 @@ export function createReadFileTool(files: FilesApi, isExcluded: PathFilter) {
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the file"),
-        content_length: z
-          .number()
-          .optional()
-          .describe("Total character count of the file"),
+        path: z.string().optional().describe("Normalized absolute path of the file"),
+        content_length: z.number().optional().describe("Total character count of the file"),
         content: z
           .string()
           .optional()
@@ -115,20 +99,14 @@ export function createReadFileTool(files: FilesApi, isExcluded: PathFilter) {
           .array(
             z.object({
               range: z.object({
-                begin: z
-                  .number()
-                  .describe("Actual start character offset (clamped)"),
-                end: z
-                  .number()
-                  .describe("Actual end character offset (clamped)"),
+                begin: z.number().describe("Actual start character offset (clamped)"),
+                end: z.number().describe("Actual end character offset (clamped)"),
               }),
               text: z.string().describe("Extracted text for this range"),
             }),
           )
           .optional()
-          .describe(
-            "Extracted character ranges (returned when reading with ranges)",
-          ),
+          .describe("Extracted character ranges (returned when reading with ranges)"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),
@@ -163,10 +141,7 @@ export function createReadFileTool(files: FilesApi, isExcluded: PathFilter) {
       if (ranges && ranges.length > 0) {
         const parts = ranges.map(({ begin, end }) => {
           const clampedBegin = Math.max(0, Math.min(begin, contentLength));
-          const clampedEnd = Math.max(
-            clampedBegin,
-            Math.min(end, contentLength),
-          );
+          const clampedEnd = Math.max(clampedBegin, Math.min(end, contentLength));
           return {
             range: { begin: clampedBegin, end: clampedEnd },
             text: content.slice(clampedBegin, clampedEnd),

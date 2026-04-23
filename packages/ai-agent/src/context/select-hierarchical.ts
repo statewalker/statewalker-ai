@@ -36,9 +36,7 @@ export interface SelectHierarchicalOptions {
  * outward, collapsing expansions to their summary messages until the
  * estimate fits. Pin-forced expansions are never collapsed.
  */
-export function selectHierarchical(
-  options: SelectHierarchicalOptions,
-): SelectionStrategy {
+export function selectHierarchical(options: SelectHierarchicalOptions): SelectionStrategy {
   return async (session: Session) => {
     options.pinPolicy.prepare?.(session);
 
@@ -88,11 +86,7 @@ type PlanNode =
       pinned: boolean; // expansion forced by pinned descendant — do not collapse
     };
 
-function buildPlanNode(
-  node: TreeNode,
-  pin: PinPolicy,
-  _inTail: boolean,
-): PlanNode {
+function buildPlanNode(node: TreeNode, pin: PinPolicy, _inTail: boolean): PlanNode {
   if (node.type === NodeType.turnGroup) {
     const group = node as TurnGroup;
     const hasPinned = containsPinnedDescendant(group, pin);
@@ -115,10 +109,7 @@ function buildPlanNode(
 
 // ── Materialisation ─────────────────────────────────────────
 
-function materialise(
-  plan: PlanNode[],
-  options: SelectHierarchicalOptions,
-): ModelMessage[] {
+function materialise(plan: PlanNode[], options: SelectHierarchicalOptions): ModelMessage[] {
   const out: ModelMessage[] = [];
   for (const p of plan) {
     materialiseInto(p, options, out);
@@ -210,10 +201,7 @@ function renderGroupSummary(group: TurnGroup): ModelMessage {
 
 // ── Demotion ────────────────────────────────────────────────
 
-function demoteUntilFits(
-  plan: PlanNode[],
-  options: SelectHierarchicalOptions,
-): void {
+function demoteUntilFits(plan: PlanNode[], options: SelectHierarchicalOptions): void {
   // Collect collapsible expansions ordered by descending depth so the
   // deepest ones collapse first.
   const demotable = collectDemotable(plan);
@@ -244,11 +232,7 @@ function collectDemotable(plan: PlanNode[]): DemotableEntry[] {
   return out;
 }
 
-function walkDemotable(
-  list: PlanNode[],
-  depth: number,
-  out: DemotableEntry[],
-): void {
+function walkDemotable(list: PlanNode[], depth: number, out: DemotableEntry[]): void {
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
     if (!p || p.kind !== "group-expanded") continue;
@@ -257,11 +241,7 @@ function walkDemotable(
   }
 }
 
-function replacePlanEntry(
-  list: PlanNode[],
-  index: number,
-  replacement: PlanNode,
-): void {
+function replacePlanEntry(list: PlanNode[], index: number, replacement: PlanNode): void {
   list[index] = replacement;
 }
 

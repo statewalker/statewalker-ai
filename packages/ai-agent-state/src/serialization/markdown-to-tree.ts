@@ -9,10 +9,7 @@ import { applyFlat } from "./apply-flat.js";
  * key: value block before the first empty line. Content is everything after
  * that empty line — kept as a raw string (not split by markdown headings).
  */
-export function markdownToTree(
-  markdown: string,
-  factory: NodeFactory,
-): TreeNode {
+export function markdownToTree(markdown: string, factory: NodeFactory): TreeNode {
   const segments = markdown.split(/^-{3,}\s*$/m);
   const nodes: FlatTreeEntry[] = [];
 
@@ -22,7 +19,7 @@ export function markdownToTree(
 
   for (let i = start; i < segments.length; i++) {
     const segment = segments[i];
-    if (!segment || !segment.trim()) continue;
+    if (!segment?.trim()) continue;
 
     const flat = parseNodeSegment(segment);
     if (flat.id) nodes.push(flat);
@@ -54,8 +51,7 @@ function parseNodeSegment(segment: string): FlatTreeEntry {
   } else {
     propsText = trimmed.slice(0, emptyLineIdx);
     const afterEmpty = trimmed.indexOf("\n", emptyLineIdx + 1);
-    contentText =
-      afterEmpty >= 0 ? trimmed.slice(afterEmpty + 1).replace(/\s+$/, "") : "";
+    contentText = afterEmpty >= 0 ? trimmed.slice(afterEmpty + 1).replace(/\s+$/, "") : "";
   }
 
   // Parse key: value properties

@@ -68,9 +68,7 @@ describe("createTokenEstimator with custom tokeniser", () => {
     const est = createTokenEstimator({
       tokenize: (t) => t.split(/\s+/).filter(Boolean).length,
     });
-    const msgs: ModelMessage[] = [
-      { role: "user", content: "one two three four" },
-    ];
+    const msgs: ModelMessage[] = [{ role: "user", content: "one two three four" }];
     expect(est.estimate(msgs)).toBe(4);
   });
 });
@@ -78,9 +76,7 @@ describe("createTokenEstimator with custom tokeniser", () => {
 describe("createTokenEstimator tolerance", () => {
   it("treats missing content as 0 without throwing", () => {
     const est = createTokenEstimator();
-    const msgs: ModelMessage[] = [
-      { role: "user", content: undefined as unknown as string },
-    ];
+    const msgs: ModelMessage[] = [{ role: "user", content: undefined as unknown as string }];
     expect(est.estimate(msgs)).toBe(0);
   });
 

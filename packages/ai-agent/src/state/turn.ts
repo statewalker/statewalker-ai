@@ -304,8 +304,7 @@ export class Turn extends TreeNode {
     if (type === "tool-error") {
       const callId = part.toolCallId as string;
       const toolName = (part.toolName as string) ?? "";
-      const message =
-        part.error instanceof Error ? part.error.message : String(part.error);
+      const message = part.error instanceof Error ? part.error.message : String(part.error);
       const tc = this.toolCalls.find((t) => t.callId === callId);
       if (tc) {
         tc.addResponse(message, true);
@@ -352,8 +351,7 @@ export class Turn extends TreeNode {
   }
 
   handleError(part: StreamPart): LogMessage {
-    const msg =
-      part.error instanceof Error ? part.error.message : String(part.error);
+    const msg = part.error instanceof Error ? part.error.message : String(part.error);
     this.addChild({ type: NodeType.error, content: msg });
     return { type: "error", turnId: this.id, message: msg };
   }

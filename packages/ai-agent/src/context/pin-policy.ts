@@ -60,9 +60,7 @@ export interface DefaultPinPolicyOptions {
  *  - any node with `props.pinned === true`,
  *  - any caller-supplied `additionalPredicates`.
  */
-export function createDefaultPinPolicy(
-  options: DefaultPinPolicyOptions = {},
-): PinPolicy {
+export function createDefaultPinPolicy(options: DefaultPinPolicyOptions = {}): PinPolicy {
   const statefulTools = new Set(
     options.pinStatefulTools ?? ["list_tools", "list_skills", "use_skills"],
   );

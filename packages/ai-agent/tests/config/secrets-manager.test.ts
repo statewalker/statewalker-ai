@@ -1,10 +1,7 @@
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ConfigManager } from "../../src/config/config-manager.js";
-import {
-  type ApiKeyData,
-  SecretsManager,
-} from "../../src/config/secrets-manager.js";
+import { type ApiKeyData, SecretsManager } from "../../src/config/secrets-manager.js";
 
 describe("SecretsManager", () => {
   let files: MemFilesApi;

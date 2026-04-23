@@ -5,10 +5,7 @@ import { tool } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { Agent } from "../../src/builder/agent.js";
-import {
-  AgentBuilder,
-  type ToolFactory,
-} from "../../src/builder/agent-builder.js";
+import { AgentBuilder, type ToolFactory } from "../../src/builder/agent-builder.js";
 import { AgentManager } from "../../src/builder/agent-manager.js";
 
 function mockProvider(): ProviderV3 {
@@ -46,10 +43,7 @@ describe("AgentBuilder", () => {
 
     it("throws without filesApi", async () => {
       await expect(
-        new AgentBuilder()
-          .withProvider(mockProvider())
-          .withModel("test")
-          .build(),
+        new AgentBuilder().withProvider(mockProvider()).withModel("test").build(),
       ).rejects.toThrow("FilesApi not configured");
     });
   });
@@ -68,9 +62,7 @@ describe("AgentBuilder", () => {
         .build();
 
       // systemFiles is the full FS
-      expect(
-        await agent.context.systemFiles.exists("/.settings/key.json"),
-      ).toBe(true);
+      expect(await agent.context.systemFiles.exists("/.settings/key.json")).toBe(true);
     });
 
     it("workingFiles guards block writes to system folder", async () => {
@@ -111,9 +103,9 @@ describe("AgentBuilder", () => {
         .build();
 
       const enc = new TextEncoder();
-      await expect(
-        agent.context.files.write("/.git/config", [enc.encode("x")]),
-      ).rejects.toThrow("Access denied");
+      await expect(agent.context.files.write("/.git/config", [enc.encode("x")])).rejects.toThrow(
+        "Access denied",
+      );
       await expect(
         agent.context.files.write("/node_modules/pkg/x", [enc.encode("x")]),
       ).rejects.toThrow("Access denied");

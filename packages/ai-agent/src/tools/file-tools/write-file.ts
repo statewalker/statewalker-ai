@@ -10,17 +10,12 @@ export function createWriteFileTool(files: FilesApi, isExcluded: PathFilter) {
       "All paths are absolute (start with '/'). " +
       "Overwrites the file if it already exists.",
     inputSchema: z.object({
-      path: z
-        .string()
-        .describe("Absolute virtual path to the file, e.g. '/src/index.ts'"),
+      path: z.string().describe("Absolute virtual path to the file, e.g. '/src/index.ts'"),
       content: z.string().describe("The full content to write to the file"),
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the written file"),
+        path: z.string().optional().describe("Normalized absolute path of the written file"),
         bytes_written: z
           .number()
           .optional()
