@@ -29,9 +29,7 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
       path: z
         .string()
         .optional()
-        .describe(
-          "Absolute path to the directory to search in. Defaults to '/' (root).",
-        ),
+        .describe("Absolute path to the directory to search in. Defaults to '/' (root)."),
       include: z
         .string()
         .optional()
@@ -45,18 +43,9 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
     }),
     outputSchema: z
       .object({
-        pattern: z
-          .string()
-          .optional()
-          .describe("The regex pattern that was searched"),
-        search_path: z
-          .string()
-          .optional()
-          .describe("Normalized directory path that was searched"),
-        files_searched: z
-          .number()
-          .optional()
-          .describe("Total number of files scanned"),
+        pattern: z.string().optional().describe("The regex pattern that was searched"),
+        search_path: z.string().optional().describe("Normalized directory path that was searched"),
+        files_searched: z.number().optional().describe("Total number of files scanned"),
         files_with_matches: z
           .number()
           .optional()
@@ -66,23 +55,16 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
             z.object({
               file: z.string().describe("Absolute path of the matching file"),
               line: z.number().describe("1-based line number of the match"),
-              content: z
-                .string()
-                .describe("Matching line content (truncated to 200 chars)"),
+              content: z.string().describe("Matching line content (truncated to 200 chars)"),
             }),
           )
           .optional()
           .describe("List of matching lines with file path and line number"),
-        count: z
-          .number()
-          .optional()
-          .describe("Total number of matches returned"),
+        count: z.number().optional().describe("Total number of matches returned"),
         truncated: z
           .boolean()
           .optional()
-          .describe(
-            "True if results were capped (200 total matches or 50 files)",
-          ),
+          .describe("True if results were capped (200 total matches or 50 files)"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),
@@ -151,8 +133,7 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
         matches,
         count: matches.length,
         truncated:
-          matches.length >= MAX_TOTAL_MATCHES ||
-          filesWithMatches >= MAX_FILES_WITH_MATCHES,
+          matches.length >= MAX_TOTAL_MATCHES || filesWithMatches >= MAX_FILES_WITH_MATCHES,
       };
     },
   });
@@ -168,10 +149,7 @@ function nameGlobToRegex(pattern: string): RegExp {
         .map((s: string) => escapeRegex(s.trim()))
         .join("|")})`,
   );
-  expanded = expanded
-    .replace(/\./g, "\\.")
-    .replace(/\*/g, ".*")
-    .replace(/\?/g, ".");
+  expanded = expanded.replace(/\./g, "\\.").replace(/\*/g, ".*").replace(/\?/g, ".");
   return new RegExp(`^${expanded}$`);
 }
 

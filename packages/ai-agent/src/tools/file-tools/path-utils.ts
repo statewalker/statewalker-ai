@@ -10,15 +10,11 @@ export type PathFilter = (path: string) => boolean;
  * Create a filter that returns true for paths that should be excluded.
  * Matches any path that starts with one of the given prefixes.
  */
-export function createExcludedPathFilter(
-  excludedPrefixes: readonly string[],
-): PathFilter {
+export function createExcludedPathFilter(excludedPrefixes: readonly string[]): PathFilter {
   const normalized = excludedPrefixes.map(normalizePath);
   return (path: string): boolean => {
     const p = normalizePath(path);
-    return normalized.some(
-      (prefix) => p.startsWith(prefix) || p === prefix.replace(/\/$/, ""),
-    );
+    return normalized.some((prefix) => p.startsWith(prefix) || p === prefix.replace(/\/$/, ""));
   };
 }
 

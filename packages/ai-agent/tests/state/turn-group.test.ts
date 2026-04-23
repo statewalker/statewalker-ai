@@ -148,12 +148,8 @@ describe("TurnGroup markdown readability", () => {
 
     const groupSection = extractSection(md, group.id);
     expect(groupSection.frontmatter).toContain("type: turn_group");
-    expect(groupSection.frontmatter).not.toContain(
-      "The agent decided to refactor",
-    );
-    expect(groupSection.body).toContain(
-      "The agent decided to refactor the auth module.",
-    );
+    expect(groupSection.frontmatter).not.toContain("The agent decided to refactor");
+    expect(groupSection.body).toContain("The agent decided to refactor the auth module.");
   });
 
   it("sections JSON round-trips through markdown frontmatter", () => {
@@ -170,19 +166,14 @@ describe("TurnGroup markdown readability", () => {
     const md = treeToMarkdown(session);
     const restored = markdownToTree(md, factory) as Session;
 
-    const restoredGroup = restored.children.find(
-      (c) => c.id === group.id,
-    ) as TurnGroup;
+    const restoredGroup = restored.children.find((c) => c.id === group.id) as TurnGroup;
     expect(restoredGroup).toBeDefined();
     expect(restoredGroup.summaryText).toBe("summary body");
     expect(restoredGroup.sections).toEqual(sections);
   });
 });
 
-function extractSection(
-  md: string,
-  nodeId: string,
-): { frontmatter: string; body: string } {
+function extractSection(md: string, nodeId: string): { frontmatter: string; body: string } {
   const segments = md.split(/^-{3,}\s*$/m);
   for (const seg of segments) {
     if (!seg.includes(`id: ${nodeId}`)) continue;

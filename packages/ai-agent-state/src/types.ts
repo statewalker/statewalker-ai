@@ -41,9 +41,7 @@ export interface NewEntryOptions {
  * adopted child entries (verbatim, with their existing ids) and returns
  * a description of the wrapper node that should adopt them.
  */
-export type GroupWrapperFactory = (
-  adoptedChildren: TreeEntry[],
-) => NewEntryOptions;
+export type GroupWrapperFactory = (adoptedChildren: TreeEntry[]) => NewEntryOptions;
 
 /**
  * Factory function that creates a TreeNode from either:

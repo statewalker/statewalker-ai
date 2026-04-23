@@ -20,9 +20,7 @@ function extractParams(schema: unknown): ParamInfo[] {
   const shape = (schema as { shape?: Record<string, unknown> })?.shape;
   if (!shape) return [];
   return Object.entries(shape).map(([name, field]) => {
-    const def = (
-      field as { _def?: { typeName?: string; description?: string } }
-    )?._def;
+    const def = (field as { _def?: { typeName?: string; description?: string } })?._def;
     const param: ParamInfo = {
       name,
       type: def?.typeName?.replace("Zod", "").toLowerCase() ?? "unknown",
@@ -46,9 +44,7 @@ export function createListToolsTool(registry: ToolRegistry) {
           description: t.description ?? "",
           parameters: extractParams(t.inputSchema),
         };
-        const result = extractParams(
-          (t as { outputSchema?: unknown }).outputSchema,
-        );
+        const result = extractParams((t as { outputSchema?: unknown }).outputSchema);
         if (result.length > 0) info.result = result;
         tools.push(info);
       }

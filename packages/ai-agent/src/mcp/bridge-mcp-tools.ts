@@ -7,10 +7,7 @@ import type { McpClientManager } from "./mcp-client-manager.js";
  *
  * @returns Cleanup function that stops listening and unregisters all MCP tools.
  */
-export function bridgeMcpTools(
-  mcp: McpClientManager,
-  registry: ToolRegistry,
-): () => void {
+export function bridgeMcpTools(mcp: McpClientManager, registry: ToolRegistry): () => void {
   let cleanups: Array<() => void> = [];
 
   function sync() {

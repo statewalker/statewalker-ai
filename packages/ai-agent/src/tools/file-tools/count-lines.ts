@@ -64,20 +64,12 @@ export function createCountLinesTool(files: FilesApi, isExcluded: PathFilter) {
     inputSchema: z.object({
       path: z
         .string()
-        .describe(
-          "Absolute virtual path to the file, e.g. '/src/index.ts', '/README.md'.",
-        ),
+        .describe("Absolute virtual path to the file, e.g. '/src/index.ts', '/README.md'."),
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the file"),
-        line_count: z
-          .number()
-          .optional()
-          .describe("Total number of lines in the file"),
+        path: z.string().optional().describe("Normalized absolute path of the file"),
+        line_count: z.number().optional().describe("Total number of lines in the file"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),

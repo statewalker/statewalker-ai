@@ -78,9 +78,7 @@ describe("toFlatStream (since filter)", () => {
     agent.touch();
 
     const nodes = [...toFlatStream(session, sinceId)];
-    expect(nodes.find((n) => n.id === agent.id)?.content).toBe(
-      "Hi there, updated!",
-    );
+    expect(nodes.find((n) => n.id === agent.id)?.content).toBe("Hi there, updated!");
   });
 
   it("emits both new and modified", () => {

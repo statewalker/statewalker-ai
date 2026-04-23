@@ -5,9 +5,7 @@ export type ContentSummarizer = {
   summarize(text: string, maxTokens?: number): Promise<string>;
 };
 
-export function createContentSummarizer(options: {
-  model: LanguageModel;
-}): ContentSummarizer {
+export function createContentSummarizer(options: { model: LanguageModel }): ContentSummarizer {
   return {
     async summarize(text, maxTokens) {
       const { text: summary } = await generateText({

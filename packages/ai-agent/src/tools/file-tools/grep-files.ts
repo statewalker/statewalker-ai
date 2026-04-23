@@ -77,26 +77,19 @@ function nameGlobToRegex(pattern: string): RegExp {
 }
 
 function truncateLine(line: string): string {
-  return line.length > MAX_LINE_LENGTH
-    ? `${line.slice(0, MAX_LINE_LENGTH)}...`
-    : line;
+  return line.length > MAX_LINE_LENGTH ? `${line.slice(0, MAX_LINE_LENGTH)}...` : line;
 }
 
 const grepOutputSchema = z
   .object({
-    search_path: z
-      .string()
-      .optional()
-      .describe("Normalized directory path that was searched"),
+    search_path: z.string().optional().describe("Normalized directory path that was searched"),
     // 'content' mode fields
     matches: z
       .array(
         z.object({
           file: z.string().describe("Absolute path of the matching file"),
           line: z.number().describe("1-based line number of the match"),
-          content: z
-            .string()
-            .describe("Matching line content (truncated to 300 chars)"),
+          content: z.string().describe("Matching line content (truncated to 300 chars)"),
           context_before: z
             .array(z.string())
             .optional()
@@ -128,21 +121,13 @@ const grepOutputSchema = z
       .number()
       .optional()
       .describe("Number of files with at least one match (count mode)"),
-    total_matches: z
-      .number()
-      .optional()
-      .describe("Sum of all matches across files (count mode)"),
+    total_matches: z.number().optional().describe("Sum of all matches across files (count mode)"),
     // Shared fields
     count: z
       .number()
       .optional()
-      .describe(
-        "Number of entries returned (content and files_with_matches modes)",
-      ),
-    truncated: z
-      .boolean()
-      .optional()
-      .describe("True if output was capped by head_limit"),
+      .describe("Number of entries returned (content and files_with_matches modes)"),
+    truncated: z.boolean().optional().describe("True if output was capped by head_limit"),
   })
   .passthrough()
   .describe("On error returns { error: string } instead.");
@@ -197,8 +182,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
         .min(0)
         .optional()
         .describe(
-          "Number of lines to show before AND after each match. " +
-            "Only used in 'content' mode.",
+          "Number of lines to show before AND after each match. " + "Only used in 'content' mode.",
         ),
       before_context: z
         .number()
@@ -230,10 +214,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
         .int()
         .min(0)
         .optional()
-        .describe(
-          "Limit output to first N entries. " +
-            "Defaults to 250. Pass 0 for unlimited.",
-        ),
+        .describe("Limit output to first N entries. " + "Defaults to 250. Pass 0 for unlimited."),
       offset: z
         .number()
         .int()
@@ -265,9 +246,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
       const caseSensitive = case_sensitive !== false;
       const mode = output_mode ?? "content";
       const limit =
-        head_limit === 0
-          ? Number.POSITIVE_INFINITY
-          : (head_limit ?? DEFAULT_HEAD_LIMIT);
+        head_limit === 0 ? Number.POSITIVE_INFINITY : (head_limit ?? DEFAULT_HEAD_LIMIT);
       const skip = offset ?? 0;
       const beforeCtx = ctxLines ?? before_context ?? 0;
       const afterCtx = ctxLines ?? after_context ?? 0;
@@ -310,16 +289,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
       if (mode === "count") {
         return searchCount(files, fileEntries, re, dir, skip, limit);
       }
-      return searchContent(
-        files,
-        fileEntries,
-        re,
-        dir,
-        skip,
-        limit,
-        beforeCtx,
-        afterCtx,
-      );
+      return searchContent(files, fileEntries, re, dir, skip, limit, beforeCtx, afterCtx);
     },
   });
 }

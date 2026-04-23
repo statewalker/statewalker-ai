@@ -83,10 +83,7 @@ describe("bridgeMcpTools", () => {
     mcp.setTools({ mcp_tool: makeTool("mcp") });
 
     const registry = new ToolRegistry();
-    const cleanup = bridgeMcpTools(
-      mcp as unknown as McpClientManager,
-      registry,
-    );
+    const cleanup = bridgeMcpTools(mcp as unknown as McpClientManager, registry);
     expect(registry.toToolSet()).toHaveProperty("mcp_tool");
 
     cleanup();

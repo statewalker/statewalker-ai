@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  createDefaultPinPolicy,
-  createPinPolicy,
-} from "../../src/context/pin-policy.js";
+import { createDefaultPinPolicy, createPinPolicy } from "../../src/context/pin-policy.js";
 import { selectHierarchical } from "../../src/context/select-hierarchical.js";
 import { selectAll } from "../../src/context/select-messages.js";
 import { createTokenEstimator } from "../../src/context/token-estimator.js";

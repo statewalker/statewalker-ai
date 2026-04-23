@@ -17,18 +17,11 @@ export class SecretsManager {
     await this.config.save("/key.json", data);
   }
 
-  async getCredentials(
-    name: string,
-  ): Promise<Record<string, string> | undefined> {
-    return this.config.load<Record<string, string>>(
-      `/credentials/${name}.json`,
-    );
+  async getCredentials(name: string): Promise<Record<string, string> | undefined> {
+    return this.config.load<Record<string, string>>(`/credentials/${name}.json`);
   }
 
-  async saveCredentials(
-    name: string,
-    data: Record<string, string>,
-  ): Promise<void> {
+  async saveCredentials(name: string, data: Record<string, string>): Promise<void> {
     await this.config.save(`/credentials/${name}.json`, data);
   }
 }

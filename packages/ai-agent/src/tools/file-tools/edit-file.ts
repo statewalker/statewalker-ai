@@ -16,20 +16,12 @@ export function createEditFileTool(files: FilesApi, isExcluded: PathFilter) {
       replace_all: z
         .boolean()
         .optional()
-        .describe(
-          "If true, replace all occurrences. Defaults to false (replace first only).",
-        ),
+        .describe("If true, replace all occurrences. Defaults to false (replace first only)."),
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the edited file"),
-        replacements: z
-          .number()
-          .optional()
-          .describe("Number of replacements performed"),
+        path: z.string().optional().describe("Normalized absolute path of the edited file"),
+        replacements: z.number().optional().describe("Number of replacements performed"),
       })
       .passthrough()
       .describe("On error returns { error: string } instead."),

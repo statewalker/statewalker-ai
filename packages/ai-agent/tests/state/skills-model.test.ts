@@ -17,9 +17,7 @@ describe("SkillsModel", () => {
     const model = new SkillsModel();
     model.register(SKILL_A);
 
-    expect(model.available).toEqual([
-      { name: "skill-a", description: "Skill A" },
-    ]);
+    expect(model.available).toEqual([{ name: "skill-a", description: "Skill A" }]);
     expect(model.size).toBe(1);
   });
 
@@ -80,9 +78,7 @@ Skill content here.`;
 
     model.registerFromMarkdown(md, "/path/skill.md");
 
-    expect(model.available).toEqual([
-      { name: "from-md", description: "Parsed skill" },
-    ]);
+    expect(model.available).toEqual([{ name: "from-md", description: "Parsed skill" }]);
     const [skill] = model.selected.length ? model.selected : [];
     // Not selected yet — just registered
     expect(skill).toBeUndefined();

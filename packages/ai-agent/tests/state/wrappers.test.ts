@@ -1,9 +1,4 @@
-import {
-  applyFlat,
-  jsonToTree,
-  toFlatStream,
-  treeToJson,
-} from "@statewalker/ai-agent-state";
+import { applyFlat, jsonToTree, toFlatStream, treeToJson } from "@statewalker/ai-agent-state";
 import { describe, expect, it, vi } from "vitest";
 import {
   createAgentNodeFactory,
@@ -181,11 +176,7 @@ describe("JSON round-trip", () => {
 describe("Flat stream round-trip", () => {
   it("preserves conversation via toFlatStream → applyFlat", () => {
     const { session } = buildConversation();
-    const clone = applyFlat(
-      undefined,
-      toFlatStream(session),
-      factory,
-    ) as Session;
+    const clone = applyFlat(undefined, toFlatStream(session), factory) as Session;
 
     expect(clone).toBeInstanceOf(Session);
     expect(clone.turns).toHaveLength(2);
@@ -194,11 +185,7 @@ describe("Flat stream round-trip", () => {
 
   it("incremental sync", () => {
     const { session } = buildConversation();
-    const clone = applyFlat(
-      undefined,
-      toFlatStream(session),
-      factory,
-    ) as Session;
+    const clone = applyFlat(undefined, toFlatStream(session), factory) as Session;
 
     // Use last id in clone as sync cursor
     let lastId = clone.id;

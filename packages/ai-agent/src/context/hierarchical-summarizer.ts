@@ -91,30 +91,17 @@ export function createHierarchicalSummarizer(
     async summarize(input) {
       if (input.kind === "depth-1") {
         const rendered = renderDepth1Input(input.turns, elision);
-        return runSummariser(
-          depth1Model,
-          DEPTH1_SYSTEM_PROMPT,
-          rendered,
-          maxOutputTokens,
-        );
+        return runSummariser(depth1Model, DEPTH1_SYSTEM_PROMPT, rendered, maxOutputTokens);
       }
       const rendered = renderDepthKInput(input.children, spotPeekPerChild);
-      return runSummariser(
-        depthKModel,
-        DEPTHK_SYSTEM_PROMPT,
-        rendered,
-        maxOutputTokens,
-      );
+      return runSummariser(depthKModel, DEPTHK_SYSTEM_PROMPT, rendered, maxOutputTokens);
     },
   };
 }
 
 // ── Input rendering ─────────────────────────────────────────
 
-export function renderDepth1Input(
-  turns: Turn[],
-  elision: ToolElisionPolicy,
-): string {
+export function renderDepth1Input(turns: Turn[], elision: ToolElisionPolicy): string {
   const parts: string[] = [];
   for (const turn of turns) {
     parts.push(`[T${turn.id}]`);
@@ -137,10 +124,7 @@ export function renderDepth1Input(
   return parts.join("\n");
 }
 
-export function renderDepthKInput(
-  children: TurnGroup[],
-  spotPeekPerChild: number,
-): string {
+export function renderDepthKInput(children: TurnGroup[], spotPeekPerChild: number): string {
   const parts: string[] = [];
   for (const group of children) {
     parts.push(`[G${group.id}] depth=${group.depth}`);
@@ -216,9 +200,7 @@ function tryParseOutput(raw: string): SummaryOutput | undefined {
     if (!parsed || typeof parsed !== "object") return undefined;
     const obj = parsed as Record<string, unknown>;
     const content = typeof obj.content === "string" ? obj.content : "";
-    const sections = Array.isArray(obj.sections)
-      ? (obj.sections as unknown[])
-      : undefined;
+    const sections = Array.isArray(obj.sections) ? (obj.sections as unknown[]) : undefined;
     return { content, sections: sections as SummarySection[] | undefined };
   } catch {
     return undefined;
@@ -240,9 +222,7 @@ function sanitise(out: SummaryOutput): SummaryOutput {
       const title = typeof obj.title === "string" ? obj.title.trim() : "";
       const body = typeof obj.body === "string" ? obj.body.trim() : "";
       const refs = Array.isArray(obj.refs)
-        ? (obj.refs as unknown[]).filter(
-            (r): r is string => typeof r === "string",
-          )
+        ? (obj.refs as unknown[]).filter((r): r is string => typeof r === "string")
         : [];
       if (!title || !body || refs.length === 0) return undefined;
       return { title, body, refs } satisfies SummarySection;

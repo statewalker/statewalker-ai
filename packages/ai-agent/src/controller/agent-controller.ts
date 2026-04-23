@@ -1,13 +1,7 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import { generateText, stepCountIs, streamText } from "ai";
-import type {
-  CompactOptions,
-  ContextCompactor,
-} from "../context/context-compactor.js";
-import {
-  type SelectionStrategy,
-  selectAll,
-} from "../context/select-messages.js";
+import type { CompactOptions, ContextCompactor } from "../context/context-compactor.js";
+import { type SelectionStrategy, selectAll } from "../context/select-messages.js";
 import { Inbox, type InboxMessage } from "../state/inbox.js";
 import type { LogMessage, TurnFinishKind } from "../state/log-message.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";
@@ -275,9 +269,7 @@ export class AgentController {
 
     const selected = this.skills.selected;
     if (selected.length > 0) {
-      const blocks = selected
-        .map((s) => `### ${s.name}\n${s.content}`)
-        .join("\n\n");
+      const blocks = selected.map((s) => `### ${s.name}\n${s.content}`).join("\n\n");
       prompt += `\n\n## Active Skills\n${blocks}`;
     }
 
@@ -288,10 +280,7 @@ export class AgentController {
    * Generate a short title for the session based on the user's first message.
    * Runs a lightweight LLM call; swallows errors silently.
    */
-  private async generateTitle(
-    userText: string,
-    signal?: AbortSignal,
-  ): Promise<string | undefined> {
+  private async generateTitle(userText: string, signal?: AbortSignal): Promise<string | undefined> {
     try {
       const { text } = await generateText({
         model: this.provider.languageModel(this.model),
@@ -342,18 +331,12 @@ export class AgentController {
   #requireTurn(): Turn {
     const turn = this.#currentTurn;
     if (!turn) {
-      throw new Error(
-        "AgentController: no current Turn — helper called outside run()",
-      );
+      throw new Error("AgentController: no current Turn — helper called outside run()");
     }
     return turn;
   }
 
-  private finishTurn(
-    turn: Turn,
-    kind: TurnFinishKind,
-    finishReason: string,
-  ): LogMessage {
+  private finishTurn(turn: Turn, kind: TurnFinishKind, finishReason: string): LogMessage {
     if (!turn.stopReason) turn.stop(finishReason);
     return { type: "turn-finish", turnId: turn.id, finishReason, kind };
   }

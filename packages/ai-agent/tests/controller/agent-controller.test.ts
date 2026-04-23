@@ -24,9 +24,9 @@ const mockStreamText = streamText as unknown as ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   mockStreamText.mockReset();
-  (streamText as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-    () => ({ fullStream: emptyStream() }),
-  );
+  (streamText as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+    fullStream: emptyStream(),
+  }));
 });
 
 function makeSession(): Session {
@@ -48,10 +48,7 @@ function scriptStream(
 
 function mockStreamTurn(controller: AgentController) {
   return vi
-    .spyOn(
-      controller as unknown as { streamTurn: () => AsyncGenerator },
-      "streamTurn",
-    )
+    .spyOn(controller as unknown as { streamTurn: () => AsyncGenerator }, "streamTurn")
     .mockImplementation(async function* () {
       // no log messages
     });
@@ -268,9 +265,7 @@ describe("AgentController", () => {
     });
 
     it("classifies 'stop' with no content as empty", async () => {
-      const { logs } = await runOnce([
-        { type: "finish-step", finishReason: "stop" },
-      ]);
+      const { logs } = await runOnce([{ type: "finish-step", finishReason: "stop" }]);
       const finish = logs.find((l) => l.type === "turn-finish");
       expect(finish).toMatchObject({ kind: "empty", finishReason: "stop" });
     });
@@ -286,9 +281,7 @@ describe("AgentController", () => {
     });
 
     it("classifies 'tool-calls' (SDK cut off at stopWhen) as step-limit", async () => {
-      const { logs } = await runOnce([
-        { type: "finish-step", finishReason: "tool-calls" },
-      ]);
+      const { logs } = await runOnce([{ type: "finish-step", finishReason: "tool-calls" }]);
       const finish = logs.find((l) => l.type === "turn-finish");
       expect(finish).toMatchObject({
         kind: "step-limit",
@@ -297,17 +290,13 @@ describe("AgentController", () => {
     });
 
     it("classifies 'content-filter' as filtered", async () => {
-      const { logs } = await runOnce([
-        { type: "finish-step", finishReason: "content-filter" },
-      ]);
+      const { logs } = await runOnce([{ type: "finish-step", finishReason: "content-filter" }]);
       const finish = logs.find((l) => l.type === "turn-finish");
       expect(finish).toMatchObject({ kind: "filtered" });
     });
 
     it("classifies unknown finishReason as unknown", async () => {
-      const { logs } = await runOnce([
-        { type: "finish-step", finishReason: "weirdness" },
-      ]);
+      const { logs } = await runOnce([{ type: "finish-step", finishReason: "weirdness" }]);
       const finish = logs.find((l) => l.type === "turn-finish");
       expect(finish).toMatchObject({
         kind: "unknown",
@@ -341,9 +330,7 @@ describe("AgentController", () => {
       expect(errorLog).toMatchObject({ message: "network down" });
       expect(finish).toMatchObject({ kind: "error" });
 
-      const errorNode = session.turns[0]?.children.find(
-        (c) => c.type === NodeType.error,
-      );
+      const errorNode = session.turns[0]?.children.find((c) => c.type === NodeType.error);
       expect(errorNode?.content).toBe("network down");
       expect(session.turns).toHaveLength(1); // no retry spawns extra turn
     });
@@ -393,9 +380,7 @@ describe("AgentController", () => {
 
       const finish = logs.find((l) => l.type === "turn-finish");
       expect(finish).toMatchObject({ kind: "aborted" });
-      expect(
-        session.turns[0]?.children.some((c) => c.type === NodeType.error),
-      ).toBe(false);
+      expect(session.turns[0]?.children.some((c) => c.type === NodeType.error)).toBe(false);
     });
   });
 
@@ -448,10 +433,7 @@ describe("AgentController", () => {
       // Instead, mock the internal tool directly via spy
       vi.spyOn(
         controller as unknown as {
-          selectSkillsForFirstTurn: (
-            m: { text: string },
-            s?: AbortSignal,
-          ) => AsyncGenerator;
+          selectSkillsForFirstTurn: (m: { text: string }, s?: AbortSignal) => AsyncGenerator;
         },
         "selectSkillsForFirstTurn",
       ).mockImplementation(async function* (this: AgentController) {
@@ -465,9 +447,7 @@ describe("AgentController", () => {
       setTimeout(() => abort.abort(), 50);
       await collect(controller.run(abort.signal));
 
-      const errorNode = session.turns[0]?.children.find(
-        (c) => c.type === NodeType.error,
-      );
+      const errorNode = session.turns[0]?.children.find((c) => c.type === NodeType.error);
       expect(errorNode?.content).toBe("skill selection failed");
     });
   });

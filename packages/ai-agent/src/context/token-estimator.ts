@@ -20,9 +20,7 @@ export interface TokenEstimatorOptions {
   tokenize?: (text: string) => number;
 }
 
-export function createTokenEstimator(
-  options: TokenEstimatorOptions = {},
-): TokenEstimator {
+export function createTokenEstimator(options: TokenEstimatorOptions = {}): TokenEstimator {
   const tokenize = options.tokenize;
   const charsPerToken = options.charsPerToken ?? 4;
 
@@ -42,10 +40,7 @@ export function createTokenEstimator(
   };
 }
 
-function countMessage(
-  msg: ModelMessage,
-  countText: (text: string) => number,
-): number {
+function countMessage(msg: ModelMessage, countText: (text: string) => number): number {
   const content = (msg as { content?: unknown }).content;
   if (content === undefined || content === null) return 0;
   if (typeof content === "string") return countText(content);

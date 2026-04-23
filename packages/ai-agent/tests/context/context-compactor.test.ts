@@ -113,14 +113,10 @@ describe("ContextCompactor.compact — depth-1 grouping", () => {
     expect(result.newGroups.length).toBeGreaterThanOrEqual(1);
     expect(summarize).toHaveBeenCalled();
     const firstGroupId = result.newGroups[0];
-    const groupNode = session.children.find((c) => c.id === firstGroupId) as
-      | TurnGroup
-      | undefined;
+    const groupNode = session.children.find((c) => c.id === firstGroupId) as TurnGroup | undefined;
     expect(groupNode).toBeDefined();
     expect(groupNode?.summaryText).toBe("grouped summary");
-    expect(groupNode?.sections).toEqual([
-      { title: "T", body: "B", refs: ["x"] },
-    ]);
+    expect(groupNode?.sections).toEqual([{ title: "T", body: "B", refs: ["x"] }]);
     expect(groupNode?.stamp).toBe(result.stamp);
   });
 
@@ -137,11 +133,8 @@ describe("ContextCompactor.compact — depth-1 grouping", () => {
     });
     expect(result.newGroups.length).toBeGreaterThanOrEqual(2);
     const byId = new Map<string, TurnGroup>();
-    const walk = (node: {
-      children: TurnGroup[] | { children: unknown }[];
-    }) => {
-      for (const child of (node as unknown as { children: TurnGroup[] })
-        .children) {
+    const walk = (node: { children: TurnGroup[] | { children: unknown }[] }) => {
+      for (const child of (node as unknown as { children: TurnGroup[] }).children) {
         byId.set(child.id, child);
         walk(child as unknown as { children: TurnGroup[] });
       }
@@ -200,9 +193,7 @@ describe("ContextCompactor.compact — pin-aware grouping", () => {
     // only turns 0..1.
     const firstGroupId = result.newGroups[0];
     if (firstGroupId) {
-      const group = session.children.find((c) => c.id === firstGroupId) as
-        | TurnGroup
-        | undefined;
+      const group = session.children.find((c) => c.id === firstGroupId) as TurnGroup | undefined;
       expect(group?.childTurnCount).toBe(2);
     }
   });
@@ -255,8 +246,7 @@ describe("ContextCompactor.compact — thrashing guard", () => {
 
     expect(result.thrashed).toBe(true);
     const thrashEvents = events.filter(
-      (e): e is Extract<LogMessage, { type: "context-thrash" }> =>
-        e.type === "context-thrash",
+      (e): e is Extract<LogMessage, { type: "context-thrash" }> => e.type === "context-thrash",
     );
     expect(thrashEvents).toHaveLength(1);
     expect(thrashEvents[0]?.stamp).toBe(result.stamp);

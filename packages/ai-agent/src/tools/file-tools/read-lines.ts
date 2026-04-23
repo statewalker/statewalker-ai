@@ -68,9 +68,7 @@ export function createReadLinesTool(files: FilesApi, isExcluded: PathFilter) {
     inputSchema: z.object({
       path: z
         .string()
-        .describe(
-          "Absolute virtual path to the file, e.g. '/src/index.ts', '/README.md'.",
-        ),
+        .describe("Absolute virtual path to the file, e.g. '/src/index.ts', '/README.md'."),
       offset: z
         .number()
         .int()
@@ -92,28 +90,14 @@ export function createReadLinesTool(files: FilesApi, isExcluded: PathFilter) {
     }),
     outputSchema: z
       .object({
-        path: z
-          .string()
-          .optional()
-          .describe("Normalized absolute path of the file"),
-        total_lines: z
-          .number()
-          .optional()
-          .describe("Total number of lines in the file"),
-        offset: z
-          .number()
-          .optional()
-          .describe("Actual 0-based line offset where reading started"),
-        lines_returned: z
-          .number()
-          .optional()
-          .describe("Number of lines included in the response"),
+        path: z.string().optional().describe("Normalized absolute path of the file"),
+        total_lines: z.number().optional().describe("Total number of lines in the file"),
+        offset: z.number().optional().describe("Actual 0-based line offset where reading started"),
+        lines_returned: z.number().optional().describe("Number of lines included in the response"),
         content: z
           .string()
           .optional()
-          .describe(
-            "Numbered lines in cat -n format (1-based line numbers, tab-separated)",
-          ),
+          .describe("Numbered lines in cat -n format (1-based line numbers, tab-separated)"),
         truncated: z
           .boolean()
           .optional()
@@ -163,9 +147,7 @@ export function createReadLinesTool(files: FilesApi, isExcluded: PathFilter) {
       const end = Math.min(start + count, totalLines);
       const selected = allLines.slice(start, end);
 
-      const numbered = selected
-        .map((line, i) => `${start + i + 1}\t${line}`)
-        .join("\n");
+      const numbered = selected.map((line, i) => `${start + i + 1}\t${line}`).join("\n");
 
       return {
         path: normalized,

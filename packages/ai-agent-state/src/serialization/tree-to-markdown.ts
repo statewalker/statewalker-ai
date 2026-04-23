@@ -10,10 +10,7 @@ import { toFlatStream } from "./to-flat-stream.js";
  * Matching nodes get their content wrapped in fenced code blocks
  * for readability (e.g. `tool_request` → `` ```llm:tool-params ``).
  */
-export function treeToMarkdown(
-  root: TreeNode,
-  codeBlocks?: Record<string, string>,
-): string {
+export function treeToMarkdown(root: TreeNode, codeBlocks?: Record<string, string>): string {
   const sections: ContentSection[] = [];
 
   for (const flat of toFlatStream(root)) {

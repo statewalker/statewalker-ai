@@ -52,10 +52,7 @@ describe("renderDepth1Input", () => {
     const tc = turn.addToolCall("c1", "anything", { path: "/" });
     tc.addResponse("x".repeat(20_000));
 
-    const out = renderDepth1Input(
-      [turn],
-      createDefaultElisionPolicy({ minElideChars: 1000 }),
-    );
+    const out = renderDepth1Input([turn], createDefaultElisionPolicy({ minElideChars: 1000 }));
     expect(out).not.toContain("x".repeat(20_000));
     expect(out).toMatch(/…elided|result elided/);
   });
@@ -130,9 +127,7 @@ describe("createHierarchicalSummarizer", () => {
     t.addUserMessage("…");
 
     const out = await summ.summarize({ kind: "depth-1", turns: [t] });
-    expect(out.sections).toEqual([
-      { title: "Decisions", body: "chose X", refs: ["01", "02"] },
-    ]);
+    expect(out.sections).toEqual([{ title: "Decisions", body: "chose X", refs: ["01", "02"] }]);
   });
 
   it("drops sections missing title/body/refs", async () => {
@@ -154,9 +149,7 @@ describe("createHierarchicalSummarizer", () => {
     t.addUserMessage("…");
 
     const out = await summ.summarize({ kind: "depth-1", turns: [t] });
-    expect(out.sections).toEqual([
-      { title: "ok", body: "has both", refs: ["x"] },
-    ]);
+    expect(out.sections).toEqual([{ title: "ok", body: "has both", refs: ["x"] }]);
   });
 
   it("tolerates JSON wrapped in a code fence", async () => {
@@ -178,9 +171,7 @@ describe("createHierarchicalSummarizer", () => {
   });
 
   it("retries once when first response is empty, then throws on second fail", async () => {
-    mockGenerate
-      .mockResolvedValueOnce({ text: "" })
-      .mockResolvedValueOnce({ text: "" });
+    mockGenerate.mockResolvedValueOnce({ text: "" }).mockResolvedValueOnce({ text: "" });
     const summ = createHierarchicalSummarizer({
       model: "m" as unknown as never,
     });
@@ -188,9 +179,9 @@ describe("createHierarchicalSummarizer", () => {
     const t = session.addTurn();
     t.addUserMessage("…");
 
-    await expect(
-      summ.summarize({ kind: "depth-1", turns: [t] }),
-    ).rejects.toThrow(/empty or unparsable output/);
+    await expect(summ.summarize({ kind: "depth-1", turns: [t] })).rejects.toThrow(
+      /empty or unparsable output/,
+    );
     expect(mockGenerate).toHaveBeenCalledTimes(2);
   });
 

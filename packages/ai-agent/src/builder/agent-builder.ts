@@ -7,29 +7,14 @@ import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
 import type { AgentContext } from "../config/types.js";
-import {
-  type CompactOptions,
-  ContextCompactor,
-} from "../context/context-compactor.js";
+import { type CompactOptions, ContextCompactor } from "../context/context-compactor.js";
 import type { HierarchicalSummarizer } from "../context/hierarchical-summarizer.js";
-import {
-  createDefaultPinPolicy,
-  type PinPolicy,
-} from "../context/pin-policy.js";
+import { createDefaultPinPolicy, type PinPolicy } from "../context/pin-policy.js";
 import { selectHierarchical } from "../context/select-hierarchical.js";
 import type { SelectionStrategy } from "../context/select-messages.js";
-import {
-  createTokenEstimator,
-  type TokenEstimator,
-} from "../context/token-estimator.js";
-import {
-  createDefaultElisionPolicy,
-  type ToolElisionPolicy,
-} from "../context/tool-elision.js";
-import {
-  AgentController,
-  type AgentControllerConfig,
-} from "../controller/agent-controller.js";
+import { createTokenEstimator, type TokenEstimator } from "../context/token-estimator.js";
+import { createDefaultElisionPolicy, type ToolElisionPolicy } from "../context/tool-elision.js";
+import { AgentController, type AgentControllerConfig } from "../controller/agent-controller.js";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
 import { McpClientManager } from "../mcp/mcp-client-manager.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
@@ -117,9 +102,7 @@ export class AgentBuilder {
   }
 
   withExcludedPaths(...paths: string[]): this {
-    this._excludedPaths.push(
-      ...paths.map((p) => (p.startsWith("/") ? p : `/${p}`)),
-    );
+    this._excludedPaths.push(...paths.map((p) => (p.startsWith("/") ? p : `/${p}`)));
     return this;
   }
 
@@ -160,10 +143,7 @@ export class AgentBuilder {
 
   // --- Sub-agents ---
 
-  withSubAgent(
-    name: string,
-    factory: (parent: AgentContext) => AgentBuilder,
-  ): this {
+  withSubAgent(name: string, factory: (parent: AgentContext) => AgentBuilder): this {
     this._subAgents.push({ name, factory });
     return this;
   }
@@ -237,8 +217,7 @@ export class AgentBuilder {
 
     // 4. SessionManager
     const sessions =
-      this._sessionManager ??
-      new FilesSessionManager(systemFiles, this._systemFolder);
+      this._sessionManager ?? new FilesSessionManager(systemFiles, this._systemFolder);
 
     // 5. AgentContext
     const context: AgentContext = {
@@ -357,8 +336,7 @@ export class AgentBuilder {
       const prefix = excluded.endsWith("/") ? excluded : `${excluded}/`;
       composite.guard(
         ["write", "remove", "move", "mkdir"],
-        (p: string) =>
-          !p.startsWith(prefix) && p !== excluded.replace(/\/$/, ""),
+        (p: string) => !p.startsWith(prefix) && p !== excluded.replace(/\/$/, ""),
         `Access denied: ${excluded}`,
       );
     }
@@ -388,10 +366,7 @@ export class AgentBuilder {
     }
   }
 
-  private async connectMcp(
-    config: ConfigManager,
-    controller: AgentController,
-  ): Promise<void> {
+  private async connectMcp(config: ConfigManager, controller: AgentController): Promise<void> {
     const mcp = new McpClientManager();
     let servers = this._mcpServers ?? {};
 

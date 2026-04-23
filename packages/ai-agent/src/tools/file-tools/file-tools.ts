@@ -22,10 +22,7 @@ export interface FileToolsOptions {
 }
 
 /** Create all built-in file-operation tools. */
-export function createFileTools(
-  files: FilesApi,
-  options: FileToolsOptions,
-): ToolSet {
+export function createFileTools(files: FilesApi, options: FileToolsOptions): ToolSet {
   const isExcluded = createExcludedPathFilter(options.excludedPrefixes);
 
   return {
