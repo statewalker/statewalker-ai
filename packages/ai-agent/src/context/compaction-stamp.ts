@@ -1,4 +1,4 @@
-import { SnowflakeId } from "@statewalker/ids";
+import { SnowflakeId } from "@statewalker/shared-ids";
 import type { TurnGroup } from "../state/turn-group.js";
 
 /**

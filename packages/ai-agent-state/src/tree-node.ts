@@ -1,11 +1,6 @@
-import { extractTime } from "@statewalker/ids";
 import { BaseClass } from "@statewalker/shared-baseclass";
-import type {
-  GroupWrapperFactory,
-  NewEntryOptions,
-  NodeFactory,
-  TreeEntry,
-} from "./types.js";
+import { extractTime } from "@statewalker/shared-ids";
+import type { GroupWrapperFactory, NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
 
 /** Default factory — creates plain TreeNode for any data. */
 const defaultFactory: NodeFactory = ((data: TreeEntry | NewEntryOptions) =>
@@ -147,9 +142,7 @@ export class TreeNode extends BaseClass {
     }
     this._childCache.delete(child.id);
     child.parent = undefined;
-    this.data.children = (this.data.children ?? []).filter(
-      (c) => c.id !== child.id,
-    );
+    this.data.children = (this.data.children ?? []).filter((c) => c.id !== child.id);
     this.bubbleUp();
   }
 
@@ -165,11 +158,7 @@ export class TreeNode extends BaseClass {
    * The wrapper takes the adopted children's original position (`fromIndex`)
    * in the child list. Emits a single `bubbleUp()`.
    */
-  groupChildren(
-    fromIndex: number,
-    toIndex: number,
-    wrapperFactory: GroupWrapperFactory,
-  ): TreeNode {
+  groupChildren(fromIndex: number, toIndex: number, wrapperFactory: GroupWrapperFactory): TreeNode {
     const existing = this.data.children ?? [];
     if (
       !Number.isInteger(fromIndex) ||
@@ -182,9 +171,7 @@ export class TreeNode extends BaseClass {
       );
     }
     if (toIndex <= fromIndex) {
-      throw new RangeError(
-        `groupChildren: empty or reversed range [${fromIndex}, ${toIndex})`,
-      );
+      throw new RangeError(`groupChildren: empty or reversed range [${fromIndex}, ${toIndex})`);
     }
 
     // Take the slice by reference so the wrapper factory sees the real entries.
@@ -216,11 +203,7 @@ export class TreeNode extends BaseClass {
 
     // Splice the wrapper's entry into this node's data.children in place of
     // the adopted range.
-    const next = [
-      ...existing.slice(0, fromIndex),
-      wrapper.data,
-      ...existing.slice(toIndex),
-    ];
+    const next = [...existing.slice(0, fromIndex), wrapper.data, ...existing.slice(toIndex)];
     this.data.children = next;
 
     // Hook the wrapper into this node's own cache + cleanup set.
@@ -242,16 +225,12 @@ export class TreeNode extends BaseClass {
    */
   ungroup(wrapper: TreeNode): void {
     if (wrapper.parent !== this) {
-      throw new Error(
-        `ungroup: wrapper is not a direct child of this node (id=${wrapper.id})`,
-      );
+      throw new Error(`ungroup: wrapper is not a direct child of this node (id=${wrapper.id})`);
     }
     const existing = this.data.children ?? [];
     const index = existing.findIndex((e) => e.id === wrapper.id);
     if (index < 0) {
-      throw new Error(
-        `ungroup: wrapper ${wrapper.id} not present in parent's child list`,
-      );
+      throw new Error(`ungroup: wrapper ${wrapper.id} not present in parent's child list`);
     }
 
     const adopted = wrapper.data.children ?? [];
@@ -284,11 +263,7 @@ export class TreeNode extends BaseClass {
     wrapper.data.children = undefined;
 
     // Splice wrapper out and adopted slice back in at its position.
-    this.data.children = [
-      ...existing.slice(0, index),
-      ...adopted,
-      ...existing.slice(index + 1),
-    ];
+    this.data.children = [...existing.slice(0, index), ...adopted, ...existing.slice(index + 1)];
 
     this.bubbleUp();
   }
@@ -306,10 +281,7 @@ export class TreeNode extends BaseClass {
 
   // ── Traversal ───────────────────────────────────────────────
 
-  visit(
-    begin: (entry: TreeEntry) => undefined | boolean,
-    end?: () => void,
-  ): void {
+  visit(begin: (entry: TreeEntry) => undefined | boolean, end?: () => void): void {
     const entry: TreeEntry = {
       id: this.data.id,
       props: this.data.props,
@@ -350,9 +322,6 @@ export class TreeNode extends BaseClass {
 /**
  * Wrap a `TreeEntry` data tree using a factory.
  */
-export function wrapTree(
-  data: TreeEntry | NewEntryOptions,
-  factory: NodeFactory,
-): TreeNode {
+export function wrapTree(data: TreeEntry | NewEntryOptions, factory: NodeFactory): TreeNode {
   return factory(data);
 }

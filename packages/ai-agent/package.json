@@ -29,7 +29,7 @@
     "@ai-sdk/mcp": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@modelcontextprotocol/sdk": "catalog:",
-    "@statewalker/ids": "catalog:",
+    "@statewalker/shared-ids": "catalog:",
     "@statewalker/ai-agent-state": "workspace:*",
     "@statewalker/ai-provider": "workspace:*",
     "@statewalker/webrun-files": "catalog:",

@@ -23,8 +23,8 @@
   },
   "dependencies": {
     "@statewalker/content-blocks": "catalog:",
-    "@statewalker/ids": "catalog:",
-    "@statewalker/shared-baseclass": "catalog:"
+    "@statewalker/shared-baseclass": "catalog:",
+    "@statewalker/shared-ids": "catalog:"
   },
   "devDependencies": {
     "tsdown": "catalog:",

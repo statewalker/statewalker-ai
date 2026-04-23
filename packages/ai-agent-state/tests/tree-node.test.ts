@@ -1,4 +1,4 @@
-import { SNOWFLAKE_BASE32_LENGTH, SnowflakeId } from "@statewalker/ids";
+import { SNOWFLAKE_BASE32_LENGTH, SnowflakeId } from "@statewalker/shared-ids";
 import { describe, expect, it, vi } from "vitest";
 import { newNodeFactory } from "../src/node-factory.js";
 import { TreeNode } from "../src/tree-node.js";
@@ -72,9 +72,7 @@ describe("createdAt / updatedAt / touch", () => {
     const node = create("test");
     node.touch();
     expect(node.props.updatedAt).toBeTypeOf("string");
-    expect(new Date(node.props.updatedAt as string).getTime()).toBeGreaterThan(
-      0,
-    );
+    expect(new Date(node.props.updatedAt as string).getTime()).toBeGreaterThan(0);
   });
 
   it("touch bubbles up", () => {

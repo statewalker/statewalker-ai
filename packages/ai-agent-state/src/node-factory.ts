@@ -1,4 +1,4 @@
-import { SnowflakeId } from "@statewalker/ids";
+import { SnowflakeId } from "@statewalker/shared-ids";
 import { TreeNode } from "./tree-node.js";
 import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
 
@@ -13,13 +13,7 @@ import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
  * @param idGen  Snowflake ID generator (default: shared instance)
  */
 export function newNodeFactory(
-  index: Record<
-    string,
-    new (
-      data: TreeEntry,
-      factory: NodeFactory,
-    ) => TreeNode
-  >,
+  index: Record<string, new (data: TreeEntry, factory: NodeFactory) => TreeNode>,
   idGen: SnowflakeId = new SnowflakeId(),
 ): NodeFactory {
   const factory: NodeFactory = <
