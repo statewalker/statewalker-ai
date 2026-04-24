@@ -4,13 +4,10 @@ import type {
   RemoteProviderSettings,
 } from "@statewalker/ai-provider";
 import { describe, expect, it } from "vitest";
-import { AddRemoteProviderFormVM } from "./add-remote-provider.form.js";
+import { AddRemoteProviderFormVM } from "../../src/domain/add-remote-provider.form.js";
 
 function makeVM(
-  impl: (
-    provider: ProviderName,
-    settings: RemoteProviderSettings,
-  ) => Promise<DiscoveredModel[]>,
+  impl: (provider: ProviderName, settings: RemoteProviderSettings) => Promise<DiscoveredModel[]>,
 ): AddRemoteProviderFormVM {
   return new AddRemoteProviderFormVM(impl);
 }

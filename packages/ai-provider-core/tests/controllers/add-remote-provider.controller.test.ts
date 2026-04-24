@@ -1,10 +1,6 @@
-import {
-  ModelManager,
-  ModelStateStore,
-  type RemoteModelConfig,
-} from "@statewalker/ai-provider";
+import { ModelManager, ModelStateStore, type RemoteModelConfig } from "@statewalker/ai-provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AddRemoteProviderFormVM } from "../domain/add-remote-provider.form.js";
+import { AddRemoteProviderFormVM } from "../../src/domain/add-remote-provider.form.js";
 
 function makeManager(): ModelManager {
   const store = new ModelStateStore({});
@@ -32,9 +28,7 @@ describe("AddRemoteProviderFormVM integration with ModelManager", () => {
     } as unknown as Response);
 
     const manager = makeManager();
-    const vm = new AddRemoteProviderFormVM(
-      manager.testConnection.bind(manager),
-    );
+    const vm = new AddRemoteProviderFormVM(manager.testConnection.bind(manager));
     vm.setProviderType("anthropic");
     vm.setApiKey("sk-ant");
 
@@ -44,21 +38,14 @@ describe("AddRemoteProviderFormVM integration with ModelManager", () => {
 
     // Simulate the user clicking Save in the controller
     const selected = vm.getSelectedDiscovered();
-    manager.importDiscoveredModels(
-      "anthropic",
-      null,
-      selected,
-      vm.buildSettings(),
-    );
+    manager.importDiscoveredModels("anthropic", null, selected, vm.buildSettings());
 
     const imported = Object.keys(manager.store.catalog).sort();
     expect(imported).toEqual([
       "anthropic/claude-haiku-4-5-20251001",
       "anthropic/claude-sonnet-4-20250514",
     ]);
-    const cfg = manager.store.catalog[
-      "anthropic/claude-sonnet-4-20250514"
-    ] as RemoteModelConfig;
+    const cfg = manager.store.catalog["anthropic/claude-sonnet-4-20250514"] as RemoteModelConfig;
     expect(cfg.label).toBe("Sonnet 4");
     expect(cfg.kinds).toEqual(["reasoning"]);
     expect(manager.store.getProviderSettings("anthropic")).toEqual({
@@ -79,9 +66,7 @@ describe("AddRemoteProviderFormVM integration with ModelManager", () => {
     } as unknown as Response);
 
     const manager = makeManager();
-    const vm = new AddRemoteProviderFormVM(
-      manager.testConnection.bind(manager),
-    );
+    const vm = new AddRemoteProviderFormVM(manager.testConnection.bind(manager));
     vm.setProviderType("openai");
     vm.setApiKey("bad");
 

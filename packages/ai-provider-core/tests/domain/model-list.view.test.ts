@@ -1,6 +1,6 @@
 import type { EngineId, ModelState } from "@statewalker/ai-provider";
 import { describe, expect, it } from "vitest";
-import { ModelListView } from "./model-list.view.js";
+import { ModelListView } from "../../src/domain/model-list.view.js";
 
 function remoteState(
   provider: "anthropic" | "google" | "openai" | "openai-compatible",
@@ -47,10 +47,7 @@ describe("ModelListView", () => {
   it("groups remote models by provider and adds a Local group", () => {
     const states = new Map<string, ModelState>([
       ["anthropic/a", remoteState("anthropic", "a", "Claude A", "ready")],
-      [
-        "anthropic/b",
-        remoteState("anthropic", "b", "Claude B", "not-downloaded"),
-      ],
+      ["anthropic/b", remoteState("anthropic", "b", "Claude B", "not-downloaded")],
       ["openai/gpt", remoteState("openai", "gpt", "GPT", "not-downloaded")],
       ["local:x", localState("x", "Gemma", "Gemma-2B", "downloaded")],
     ]);
@@ -72,10 +69,7 @@ describe("ModelListView", () => {
 
     const anthropicGroup = view.groups.find((g) => g.id === "anthropic");
     expect(anthropicGroup?.configured).toBe(true);
-    expect(anthropicGroup?.rows.map((r) => r.key).sort()).toEqual([
-      "anthropic/a",
-      "anthropic/b",
-    ]);
+    expect(anthropicGroup?.rows.map((r) => r.key).sort()).toEqual(["anthropic/a", "anthropic/b"]);
   });
 
   it("treats each openai-compatible instance as its own group", () => {
@@ -86,13 +80,7 @@ describe("ModelListView", () => {
       ],
       [
         "openai-compatible:lmstudio/qwen",
-        remoteState(
-          "openai-compatible",
-          "qwen",
-          "Qwen",
-          "not-downloaded",
-          "lmstudio",
-        ),
+        remoteState("openai-compatible", "qwen", "Qwen", "not-downloaded", "lmstudio"),
       ],
     ]);
 
@@ -117,13 +105,8 @@ describe("ModelListView", () => {
     );
 
     const ids = view.groups.map((g) => g.id);
-    expect(ids).toEqual([
-      "openai-compatible:groq",
-      "openai-compatible:lmstudio",
-    ]);
-    expect(
-      view.groups.find((g) => g.id === "openai-compatible:groq")?.label,
-    ).toBe("Groq");
+    expect(ids).toEqual(["openai-compatible:groq", "openai-compatible:lmstudio"]);
+    expect(view.groups.find((g) => g.id === "openai-compatible:groq")?.label).toBe("Groq");
   });
 
   it("derives hasActiveReasoning from ready models listed in activeModels.reasoning", () => {
@@ -170,10 +153,7 @@ describe("ModelListView", () => {
       ["anthropic/a", remoteState("anthropic", "a", "Claude A", "ready")],
       ["local:tjs", localState("t", "TJS", "TJS-M", "downloaded", "tjs")],
       ["local:web", localState("w", "WLM", "WLM-M", "downloaded", "webllm")],
-      [
-        "local:llama",
-        localState("l", "LCPP", "LCPP-M", "downloaded", "llamacpp"),
-      ],
+      ["local:llama", localState("l", "LCPP", "LCPP-M", "downloaded", "llamacpp")],
     ]);
 
     const view = new ModelListView();
@@ -186,9 +166,7 @@ describe("ModelListView", () => {
       { reasoning: [], embedding: [] },
     );
 
-    const rowsByKey = new Map(
-      view.groups.flatMap((g) => g.rows).map((r) => [r.key, r]),
-    );
+    const rowsByKey = new Map(view.groups.flatMap((g) => g.rows).map((r) => [r.key, r]));
     expect(rowsByKey.get("anthropic/a")?.engine).toBeUndefined();
     expect(rowsByKey.get("anthropic/a")?.engineBadge).toBeUndefined();
     expect(rowsByKey.get("local:tjs")?.engineBadge).toBe("WASM");
@@ -215,9 +193,7 @@ describe("ModelListView", () => {
       { tjs: true, webllm: false, llamacpp: true },
     );
 
-    const rowsByKey = new Map(
-      view.groups.flatMap((g) => g.rows).map((r) => [r.key, r]),
-    );
+    const rowsByKey = new Map(view.groups.flatMap((g) => g.rows).map((r) => [r.key, r]));
     expect(rowsByKey.get("remote")?.available).toBe(true);
     expect(rowsByKey.get("tjs")?.available).toBe(true);
     expect(rowsByKey.get("web")?.available).toBe(false);

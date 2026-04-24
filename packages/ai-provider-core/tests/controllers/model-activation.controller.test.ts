@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { ModelActivationController } from "./model-activation.controller.js";
+import { ModelActivationController } from "../../src/controllers/model-activation.controller.js";
 
-function createMockManager(
-  phases: Array<{ phase: string; message: string; error?: Error }>,
-) {
+function createMockManager(phases: Array<{ phase: string; message: string; error?: Error }>) {
   return {
     store: {
       getState: () => ({ config: { runtime: "local", engine: "tjs" } }),
@@ -60,9 +58,7 @@ describe("ModelActivationController", () => {
       { phase: "error", message: "API key invalid", error: new Error("401") },
     ]);
 
-    await expect(ctrl.activate(ctx, manager, "bad-model")).rejects.toThrow(
-      "401",
-    );
+    await expect(ctrl.activate(ctx, manager, "bad-model")).rejects.toThrow("401");
     expect(ctrl.isActivating).toBe(false);
     expect(ctrl.activationMessage).toBe("Error: 401");
   });
