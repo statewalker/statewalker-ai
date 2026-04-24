@@ -1,9 +1,6 @@
-import { newRegistry } from "@statewalker/shared-registry";
-import {
-  ModelPickerView,
-  type PickerModelItem,
-} from "@statewalker/shared-views/ai-models";
 import type { RemoteModelConfig } from "@statewalker/ai-provider";
+import { newRegistry } from "@statewalker/shared-registry";
+import { ModelPickerView, type PickerModelItem } from "@statewalker/shared-views/ai-models";
 import { getModelManager, setModelPickerView } from "../adapters.js";
 import { getIntents, runOpenModelSettings } from "../intents.js";
 import { getModelActivationController } from "./model-activation.controller.js";
@@ -17,9 +14,7 @@ import { getModelListView } from "./model-settings.controller.js";
  *   ≥ 2 → dropdown listing each active reasoning model; selection
  *         updates `store.activeModelKey` for the next agent turn.
  */
-export function createModelPickerController(
-  ctx: Record<string, unknown>,
-): () => Promise<void> {
+export function createModelPickerController(ctx: Record<string, unknown>): () => Promise<void> {
   const [register, cleanup] = newRegistry();
   const intents = getIntents(ctx);
   const manager = getModelManager(ctx);
@@ -48,12 +43,7 @@ export function createModelPickerController(
     });
     picker.items = items;
 
-    picker.mode =
-      activeKeys.length === 0
-        ? "none"
-        : activeKeys.length === 1
-          ? "single"
-          : "multi";
+    picker.mode = activeKeys.length === 0 ? "none" : activeKeys.length === 1 ? "single" : "multi";
 
     // Keep the visible label/key in sync with the store's active key, or
     // default to the first active entry when nothing is selected.

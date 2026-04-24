@@ -1,3 +1,4 @@
+import type { ModelManager, ProviderName } from "@statewalker/ai-provider";
 import { newRegistry } from "@statewalker/shared-registry";
 import {
   ActionGroupView,
@@ -14,7 +15,6 @@ import {
   TextFieldView,
   TextView,
 } from "@statewalker/shared-views";
-import type { ModelManager, ProviderName } from "@statewalker/ai-provider";
 import { AddRemoteProviderFormVM } from "../domain/add-remote-provider.form.js";
 
 /**
@@ -107,13 +107,7 @@ export function openAddRemoteProviderDialog(
     size: "md",
     isDismissable: true,
     isOpen: true,
-    children: [
-      providerPicker,
-      apiKeyField,
-      baseURLField,
-      displayNameField,
-      connectingHint,
-    ],
+    children: [providerPicker, apiKeyField, baseURLField, displayNameField, connectingHint],
     footer,
   });
 
@@ -132,9 +126,7 @@ export function openAddRemoteProviderDialog(
   );
   register(apiKeyField.onUpdate(() => vm.setApiKey(apiKeyField.value)));
   register(baseURLField.onUpdate(() => vm.setBaseURL(baseURLField.value)));
-  register(
-    displayNameField.onUpdate(() => vm.setDisplayName(displayNameField.value)),
-  );
+  register(displayNameField.onUpdate(() => vm.setDisplayName(displayNameField.value)));
 
   // ── Wiring: actions ─────────────────────────────────────────────
   register(cancelAction.onSubmit(() => removeFromStack()));
@@ -148,16 +140,8 @@ export function openAddRemoteProviderDialog(
   register(
     saveAction.onSubmit(() => {
       const selected = vm.getSelectedDiscovered();
-      const instanceId =
-        vm.providerType === "openai-compatible"
-          ? slugify(vm.displayName)
-          : null;
-      manager.importDiscoveredModels(
-        vm.providerType,
-        instanceId,
-        selected,
-        vm.buildSettings(),
-      );
+      const instanceId = vm.providerType === "openai-compatible" ? slugify(vm.displayName) : null;
+      manager.importDiscoveredModels(vm.providerType, instanceId, selected, vm.buildSettings());
       vm.reset();
       removeFromStack();
     }),
@@ -189,8 +173,7 @@ export function openAddRemoteProviderDialog(
       dialog.setChildren(children.filter((c) => c !== errorAlert));
     }
 
-    connectingHint.text =
-      vm.connectionStatus === "connecting" ? "Connecting…" : "";
+    connectingHint.text = vm.connectionStatus === "connecting" ? "Connecting…" : "";
 
     addAction.disabled = !vm.canAdd;
     saveAction.disabled = !vm.canSave;

@@ -27,18 +27,13 @@ export function resetEngineDetectionCache(): void {
 }
 
 async function probe(): Promise<EngineAvailability> {
-  const [webllm, llamacpp] = await Promise.all([
-    probeWebLLM(),
-    probeLlamaCpp(),
-  ]);
+  const [webllm, llamacpp] = await Promise.all([probeWebLLM(), probeLlamaCpp()]);
   return { tjs: true, webllm, llamacpp };
 }
 
 async function probeWebLLM(): Promise<boolean> {
   const nav = (globalThis as { navigator?: { gpu?: unknown } }).navigator;
-  const gpu = nav?.gpu as
-    | { requestAdapter?: () => Promise<unknown> }
-    | undefined;
+  const gpu = nav?.gpu as { requestAdapter?: () => Promise<unknown> } | undefined;
   if (!gpu?.requestAdapter) return false;
   try {
     const adapter = await gpu.requestAdapter();
@@ -49,8 +44,7 @@ async function probeWebLLM(): Promise<boolean> {
 }
 
 async function probeLlamaCpp(): Promise<boolean> {
-  const proc = (globalThis as { process?: { versions?: { node?: string } } })
-    .process;
+  const proc = (globalThis as { process?: { versions?: { node?: string } } }).process;
   if (!proc?.versions?.node) return false;
   try {
     // Indirect specifier so TypeScript does not try to resolve the module

@@ -1,6 +1,6 @@
+import type { ModelManager } from "@statewalker/ai-provider";
 import { newAdapter } from "@statewalker/shared-adapters";
 import { BaseClass } from "@statewalker/shared-baseclass";
-import type { ModelManager } from "@statewalker/ai-provider";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
 /**

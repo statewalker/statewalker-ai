@@ -1,5 +1,3 @@
-import { newAdapter } from "@statewalker/shared-adapters";
-import { newRegistry } from "@statewalker/shared-registry";
 import type {
   ModelManager,
   ModelState,
@@ -7,24 +5,21 @@ import type {
   RemoteProviderSettings,
 } from "@statewalker/ai-provider";
 import { modelKinds } from "@statewalker/ai-provider";
+import { newAdapter } from "@statewalker/shared-adapters";
+import { newRegistry } from "@statewalker/shared-registry";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { getModelManager } from "../adapters.js";
-import {
-  detectAvailableEngines,
-  type EngineAvailability,
-} from "../engine-detection.js";
-import {
-  type ProviderSettings,
-  ProviderSettingsStore,
-} from "../provider-settings-store.js";
+import { detectAvailableEngines, type EngineAvailability } from "../engine-detection.js";
+import { type ProviderSettings, ProviderSettingsStore } from "../provider-settings-store.js";
 import { getModelListView } from "./model-settings.controller.js";
 
 /**
  * FilesApi to use for providers.json. Defaults to ModelManager.files if
  * set, otherwise must be provided via `setActiveModelsFilesApi`.
  */
-export const [getActiveModelsFilesApi, setActiveModelsFilesApi] =
-  newAdapter<FilesApi>("api:active-models-files", (ctx) => {
+export const [getActiveModelsFilesApi, setActiveModelsFilesApi] = newAdapter<FilesApi>(
+  "api:active-models-files",
+  (ctx) => {
     const manager = getModelManager(ctx as Record<string, unknown>);
     if (!manager.files) {
       throw new Error(
@@ -32,7 +27,8 @@ export const [getActiveModelsFilesApi, setActiveModelsFilesApi] =
       );
     }
     return manager.files;
-  });
+  },
+);
 
 /**
  * Persistence + startup re-activation for active reasoning/embedding models.
@@ -74,10 +70,7 @@ export function createActiveModelsLifecycleController(
 
   // Kick off async startup
   void (async () => {
-    const [loaded, engines] = await Promise.all([
-      store.load(),
-      detectAvailableEngines(),
-    ]);
+    const [loaded, engines] = await Promise.all([store.load(), detectAvailableEngines()]);
     settings = loaded;
     availableEngines = engines;
     hydrateProviderSettings(manager, settings);
@@ -109,10 +102,7 @@ export function createActiveModelsLifecycleController(
  * Copy every configured provider entry into the runtime ModelStateStore so
  * `resolveActivationSettings` can find credentials.
  */
-function hydrateProviderSettings(
-  manager: ModelManager,
-  settings: ProviderSettings,
-): void {
+function hydrateProviderSettings(manager: ModelManager, settings: ProviderSettings): void {
   for (const name of ["anthropic", "google", "openai"] as const) {
     const entry = settings[name];
     if (entry?.apiKey) {
@@ -125,11 +115,7 @@ function hydrateProviderSettings(
   for (const [instanceId, entry] of Object.entries(compat)) {
     const runtimeSettings: RemoteProviderSettings = { baseURL: entry.baseURL };
     if (entry.apiKey) runtimeSettings.apiKey = entry.apiKey;
-    manager.store.setProviderSettings(
-      "openai-compatible",
-      runtimeSettings,
-      instanceId,
-    );
+    manager.store.setProviderSettings("openai-compatible", runtimeSettings, instanceId);
   }
 }
 
@@ -138,25 +124,17 @@ function hydrateProviderSettings(
  * sequentially. Missing-credential or absent-from-catalog entries are
  * skipped with a warning but retained in `activeModels` on disk.
  */
-async function reactivate(
-  manager: ModelManager,
-  settings: ProviderSettings,
-): Promise<void> {
+async function reactivate(manager: ModelManager, settings: ProviderSettings): Promise<void> {
   const am = settings.activeModels ?? { reasoning: [], embedding: [] };
   for (const key of [...am.reasoning, ...am.embedding]) {
     const state = manager.store.getState(key);
     if (!state) {
-      console.warn(
-        `[active-models] startup skip: catalog entry ${key} is not loaded`,
-      );
+      console.warn(`[active-models] startup skip: catalog entry ${key} is not loaded`);
       continue;
     }
     if (state.config.runtime === "remote") {
       const cfg = state.config as RemoteModelConfig;
-      const rs = manager.store.getProviderSettings(
-        cfg.provider,
-        cfg.providerInstanceId,
-      );
+      const rs = manager.store.getProviderSettings(cfg.provider, cfg.providerInstanceId);
       if (!rs?.apiKey && !rs?.baseURL) {
         console.warn(`[active-models] startup skip: no credentials for ${key}`);
         continue;
@@ -166,17 +144,12 @@ async function reactivate(
           if (p.phase === "error") break;
         }
       } catch (err) {
-        console.warn(
-          `[active-models] startup re-activation failed for ${key}`,
-          err,
-        );
+        console.warn(`[active-models] startup re-activation failed for ${key}`, err);
       }
     } else {
       // Local — only re-activate when weights are present.
       if (state.status !== "downloaded" && state.status !== "ready") {
-        console.warn(
-          `[active-models] startup skip: ${key} weights not downloaded`,
-        );
+        console.warn(`[active-models] startup skip: ${key} weights not downloaded`);
         continue;
       }
       try {
@@ -184,10 +157,7 @@ async function reactivate(
           if (p.phase === "error") break;
         }
       } catch (err) {
-        console.warn(
-          `[active-models] startup re-activation failed for ${key}`,
-          err,
-        );
+        console.warn(`[active-models] startup re-activation failed for ${key}`, err);
       }
     }
   }

@@ -47,16 +47,11 @@ export async function persistDownloadStatus(
           updatedAt: new Date().toISOString(),
         };
   const content = JSON.stringify(metadata, null, 2);
-  await files.write(metadataPath(catalogKey), [
-    new TextEncoder().encode(content),
-  ]);
+  await files.write(metadataPath(catalogKey), [new TextEncoder().encode(content)]);
 }
 
 /** Remove download metadata for a model. */
-export async function removeDownloadStatus(
-  files: FilesApi,
-  catalogKey: string,
-): Promise<void> {
+export async function removeDownloadStatus(files: FilesApi, catalogKey: string): Promise<void> {
   await files.remove(metadataPath(catalogKey));
 }
 

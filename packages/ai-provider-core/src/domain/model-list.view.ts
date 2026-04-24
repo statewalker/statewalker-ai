@@ -1,4 +1,3 @@
-import { BaseClass } from "@statewalker/shared-baseclass";
 import {
   type EngineId,
   type LocalModelConfig,
@@ -8,10 +7,8 @@ import {
   type ProviderName,
   type RemoteModelConfig,
 } from "@statewalker/ai-provider";
-import type {
-  ActiveModelsSet,
-  ProviderSettings,
-} from "../provider-settings-store.js";
+import { BaseClass } from "@statewalker/shared-baseclass";
+import type { ActiveModelsSet, ProviderSettings } from "../provider-settings-store.js";
 
 /** Short runtime label displayed next to each Local row in the settings UI. */
 export type EngineBadge = "WASM" | "WebGPU" | "Native";
@@ -131,9 +128,7 @@ function buildGroups(
     const group = ensureGroup(groupsById, providerSettings, state.config);
     const kinds = modelKinds(state.config);
     const isLocal = state.config.runtime === "local";
-    const engine = isLocal
-      ? (state.config as LocalModelConfig).engine
-      : undefined;
+    const engine = isLocal ? (state.config as LocalModelConfig).engine : undefined;
     const engineBadge = engine ? ENGINE_BADGES[engine] : undefined;
     const available = engine
       ? // `tjs` runs in WASM and is treated as always-available unless a

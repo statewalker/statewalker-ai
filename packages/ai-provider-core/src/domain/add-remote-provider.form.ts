@@ -1,9 +1,9 @@
-import { BaseClass } from "@statewalker/shared-baseclass";
 import type {
   DiscoveredModel,
   ProviderName,
   RemoteProviderSettings,
 } from "@statewalker/ai-provider";
+import { BaseClass } from "@statewalker/shared-baseclass";
 
 /** Which step of the Add Remote Provider dialog is visible. */
 export type AddProviderStep = "credentials" | "discovered";
@@ -80,18 +80,14 @@ export class AddRemoteProviderFormVM extends BaseClass {
   get canAdd(): boolean {
     if (this.#status === "connecting") return false;
     if (this.#providerType === "openai-compatible") {
-      return (
-        this.#baseURL.trim().length > 0 && this.#displayName.trim().length > 0
-      );
+      return this.#baseURL.trim().length > 0 && this.#displayName.trim().length > 0;
     }
     return this.#apiKey.trim().length > 0;
   }
 
   /** Step 2 is submittable iff at least one discovered model is checked. */
   get canSave(): boolean {
-    return (
-      this.#step === "discovered" && this.#discovered.some((m) => m.selected)
-    );
+    return this.#step === "discovered" && this.#discovered.some((m) => m.selected);
   }
 
   // ── Setters (user input) ────────────────────────────────────────
@@ -168,10 +164,7 @@ export class AddRemoteProviderFormVM extends BaseClass {
     this.#error = "";
     this.notify();
     try {
-      const models = await this.#testConnection(
-        this.#providerType,
-        this.buildSettings(),
-      );
+      const models = await this.#testConnection(this.#providerType, this.buildSettings());
       this.#discovered = models.map((m) => ({ ...m, selected: true }));
       this.#status = "idle";
       this.#step = "discovered";
@@ -198,8 +191,6 @@ export class AddRemoteProviderFormVM extends BaseClass {
 
   /** The selected discovered models — consumed by Save. */
   getSelectedDiscovered(): DiscoveredModel[] {
-    return this.#discovered
-      .filter((m) => m.selected)
-      .map((m) => ({ id: m.id, label: m.label }));
+    return this.#discovered.filter((m) => m.selected).map((m) => ({ id: m.id, label: m.label }));
   }
 }
