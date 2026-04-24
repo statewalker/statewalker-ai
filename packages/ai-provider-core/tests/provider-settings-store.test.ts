@@ -1,20 +1,14 @@
 import { readText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProviderSettingsStore } from "./provider-settings-store.js";
+import { ProviderSettingsStore } from "../src/provider-settings-store.js";
 
 const PATH = "/.settings/providers.json";
 const LEGACY_PATH = "/.settings/key.json";
 
-async function writeJson(
-  files: MemFilesApi,
-  path: string,
-  value: unknown,
-): Promise<void> {
+async function writeJson(files: MemFilesApi, path: string, value: unknown): Promise<void> {
   await files.mkdir("/.settings");
-  await files.write(path, [
-    new TextEncoder().encode(JSON.stringify(value, null, 2)),
-  ]);
+  await files.write(path, [new TextEncoder().encode(JSON.stringify(value, null, 2))]);
 }
 
 describe("ProviderSettingsStore", () => {
@@ -119,9 +113,7 @@ describe("ProviderSettingsStore", () => {
     const loaded = await store.load();
 
     expect(loaded.anthropic?.apiKey).toBe("sk-old");
-    expect(loaded.activeModels?.reasoning).toEqual([
-      "anthropic:claude-sonnet-4-20250514",
-    ]);
+    expect(loaded.activeModels?.reasoning).toEqual(["anthropic:claude-sonnet-4-20250514"]);
     expect(loaded.activeModels?.embedding).toEqual([]);
     // The legacy file is preserved for backward compat
     expect(await files.exists(LEGACY_PATH)).toBe(true);

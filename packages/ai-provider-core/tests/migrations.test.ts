@@ -1,7 +1,7 @@
 import { readText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
-import { ENGINE_NAMESPACING, migrateEngineNamespacing } from "./migrations.js";
+import { ENGINE_NAMESPACING, migrateEngineNamespacing } from "../src/migrations.js";
 
 async function touch(files: MemFilesApi, path: string): Promise<void> {
   const parts = path.split("/").filter(Boolean);
@@ -19,18 +19,12 @@ describe("migrateEngineNamespacing", () => {
     const ran = await migrateEngineNamespacing(files);
     expect(ran).toBe(true);
 
-    expect(await files.exists("/models/tjs/smollm2-135m/model.onnx")).toBe(
-      true,
-    );
-    expect(await files.exists("/models/tjs/qwen2-0.5b/tokenizer.json")).toBe(
-      true,
-    );
+    expect(await files.exists("/models/tjs/smollm2-135m/model.onnx")).toBe(true);
+    expect(await files.exists("/models/tjs/qwen2-0.5b/tokenizer.json")).toBe(true);
     expect(await files.exists("/models/smollm2-135m")).toBe(false);
     expect(await files.exists("/models/qwen2-0.5b")).toBe(false);
 
-    const markers = JSON.parse(
-      await readText(files, "/.settings/migrations.json"),
-    );
+    const markers = JSON.parse(await readText(files, "/.settings/migrations.json"));
     expect(markers[ENGINE_NAMESPACING]).toBeDefined();
   });
 
@@ -68,9 +62,7 @@ describe("migrateEngineNamespacing", () => {
     const files = new MemFilesApi();
     const ran = await migrateEngineNamespacing(files);
     expect(ran).toBe(true);
-    const markers = JSON.parse(
-      await readText(files, "/.settings/migrations.json"),
-    );
+    const markers = JSON.parse(await readText(files, "/.settings/migrations.json"));
     expect(markers[ENGINE_NAMESPACING]).toBeDefined();
   });
 });

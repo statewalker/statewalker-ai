@@ -6,19 +6,16 @@ import {
 } from "@statewalker/ai-provider";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setModelManager } from "../adapters.js";
-import { ModelListView } from "../domain/model-list.view.js";
-import { ProviderSettingsStore } from "../provider-settings-store.js";
+import { setModelManager } from "../../src/adapters.js";
 import {
   createActiveModelsLifecycleController,
   setActiveModelsFilesApi,
-} from "./active-models-lifecycle.controller.js";
-import { setModelListView } from "./model-settings.controller.js";
+} from "../../src/controllers/active-models-lifecycle.controller.js";
+import { setModelListView } from "../../src/controllers/model-settings.controller.js";
+import { ModelListView } from "../../src/domain/model-list.view.js";
+import { ProviderSettingsStore } from "../../src/provider-settings-store.js";
 
-async function waitFor(
-  predicate: () => boolean,
-  timeoutMs = 1000,
-): Promise<void> {
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
     if (Date.now() - start > timeoutMs) {
@@ -45,10 +42,7 @@ function makeCtx(catalog: Record<string, RemoteModelConfig> = {}): {
   return { ctx, manager, files, listView };
 }
 
-async function seedProvidersJson(
-  files: MemFilesApi,
-  content: unknown,
-): Promise<void> {
+async function seedProvidersJson(files: MemFilesApi, content: unknown): Promise<void> {
   await files.mkdir("/.settings");
   await files.write("/.settings/providers.json", [
     new TextEncoder().encode(JSON.stringify(content, null, 2)),
@@ -73,9 +67,7 @@ describe("active-models-lifecycle.controller", () => {
 
     const cleanup = createActiveModelsLifecycleController(ctx);
     await waitFor(() => !!manager.store.getProviderSettings("anthropic"));
-    expect(manager.store.getProviderSettings("anthropic")?.apiKey).toBe(
-      "sk-hydrated",
-    );
+    expect(manager.store.getProviderSettings("anthropic")?.apiKey).toBe("sk-hydrated");
     await cleanup();
   });
 
@@ -104,9 +96,7 @@ describe("active-models-lifecycle.controller", () => {
     });
 
     const cleanup = createActiveModelsLifecycleController(ctx);
-    await waitFor(
-      () => manager.store.getState("local:tiny")?.status === "ready",
-    );
+    await waitFor(() => manager.store.getState("local:tiny")?.status === "ready");
     expect(listView.hasActiveReasoning).toBe(true);
     await cleanup();
   });
@@ -132,9 +122,7 @@ describe("active-models-lifecycle.controller", () => {
     // Entry preserved on disk for retry once credentials are added.
     expect(after.activeModels?.reasoning).toContain("anthropic/claude");
     // Not ready — no credentials were provided.
-    expect(manager.store.getState("anthropic/claude")?.status).not.toBe(
-      "ready",
-    );
+    expect(manager.store.getState("anthropic/claude")?.status).not.toBe("ready");
     await cleanup();
   });
 

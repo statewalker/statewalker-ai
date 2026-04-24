@@ -1,6 +1,6 @@
 import type { LocalModelConfig, ModelState } from "@statewalker/ai-provider";
 import { describe, expect, it } from "vitest";
-import { AddLocalModelFormVM } from "./add-local-model.form.js";
+import { AddLocalModelFormVM } from "../../src/domain/add-local-model.form.js";
 
 function localState(
   family: string,
@@ -53,9 +53,7 @@ describe("AddLocalModelFormVM", () => {
   });
 
   it("applyProgress mirrors ActivationProgress fields and notifies", () => {
-    const states = new Map<string, ModelState>([
-      ["local:gemma", localState("Gemma", "Gemma-2B")],
-    ]);
+    const states = new Map<string, ModelState>([["local:gemma", localState("Gemma", "Gemma-2B")]]);
     const vm = AddLocalModelFormVM.fromStates(states);
 
     let count = 0;
@@ -79,9 +77,7 @@ describe("AddLocalModelFormVM", () => {
   });
 
   it("failDownload records an error message", () => {
-    const states = new Map<string, ModelState>([
-      ["local:gemma", localState("Gemma", "Gemma-2B")],
-    ]);
+    const states = new Map<string, ModelState>([["local:gemma", localState("Gemma", "Gemma-2B")]]);
     const vm = AddLocalModelFormVM.fromStates(states);
     vm.beginDownload();
     vm.failDownload("network error");
