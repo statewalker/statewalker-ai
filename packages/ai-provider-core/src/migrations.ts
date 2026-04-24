@@ -49,18 +49,13 @@ async function readMarkers(files: FilesApi): Promise<MigrationMarkers> {
   try {
     const text = await readText(files, MIGRATIONS_FILE);
     const parsed = JSON.parse(text);
-    return parsed && typeof parsed === "object"
-      ? (parsed as MigrationMarkers)
-      : {};
+    return parsed && typeof parsed === "object" ? (parsed as MigrationMarkers) : {};
   } catch {
     return {};
   }
 }
 
-async function writeMarkers(
-  files: FilesApi,
-  markers: MigrationMarkers,
-): Promise<void> {
+async function writeMarkers(files: FilesApi, markers: MigrationMarkers): Promise<void> {
   await files.mkdir(MIGRATIONS_DIR);
   const content = JSON.stringify(markers, null, 2);
   await files.write(MIGRATIONS_FILE, [new TextEncoder().encode(content)]);

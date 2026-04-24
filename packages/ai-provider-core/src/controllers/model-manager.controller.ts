@@ -1,10 +1,6 @@
 import { newRegistry } from "@statewalker/shared-registry";
 import { getModelManager } from "../adapters.js";
-import {
-  getIntents,
-  handleActivateModel,
-  handleGetActiveModel,
-} from "../intents.js";
+import { getIntents, handleActivateModel, handleGetActiveModel } from "../intents.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
 /**
@@ -14,9 +10,7 @@ import { resolveActivationSettings } from "../resolve-settings.js";
  *
  * Prerequisites: ModelManager must be set on context before this runs.
  */
-export function createModelManagerController(
-  ctx: Record<string, unknown>,
-): () => Promise<void> {
+export function createModelManagerController(ctx: Record<string, unknown>): () => Promise<void> {
   const [register, cleanup] = newRegistry();
   const intents = getIntents(ctx);
 
@@ -38,10 +32,7 @@ export function createModelManagerController(
           }
           const model = store.getLanguageModel(catalogKey);
           const state = store.getState(catalogKey);
-          store.setActiveModelKey(
-            catalogKey,
-            state?.config.label ?? catalogKey,
-          );
+          store.setActiveModelKey(catalogKey, state?.config.label ?? catalogKey);
           intent.resolve({ model });
         } catch (err) {
           intent.reject(err);

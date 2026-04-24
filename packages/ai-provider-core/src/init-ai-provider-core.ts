@@ -18,9 +18,7 @@ import { createStartupController } from "./controllers/startup.controller.js";
  *
  * Returns a cleanup function.
  */
-export function initAiProviderCore(
-  ctx: Record<string, unknown>,
-): () => Promise<void> {
+export function initAiProviderCore(ctx: Record<string, unknown>): () => Promise<void> {
   const [register, cleanup] = newRegistry();
 
   register(createModelManagerController(ctx));

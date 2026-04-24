@@ -12,9 +12,7 @@ import { resolveActivationSettings } from "../resolve-settings.js";
  * is the responsibility of the host app (e.g. workspace controller),
  * which knows when settings have finished loading from storage.
  */
-export function createStartupController(
-  ctx: Record<string, unknown>,
-): () => Promise<void> {
+export function createStartupController(ctx: Record<string, unknown>): () => Promise<void> {
   const [, cleanup] = newRegistry();
 
   // Defer startup to allow all controllers to register first

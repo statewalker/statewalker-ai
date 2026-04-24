@@ -1,3 +1,11 @@
+import type {
+  EngineId,
+  LocalModelConfig,
+  ModelConfig,
+  ModelManager,
+  RemoteModelConfig,
+} from "@statewalker/ai-provider";
+import { modelKinds } from "@statewalker/ai-provider";
 import {
   ActionGroupView,
   ActionView,
@@ -10,18 +18,7 @@ import {
   StatusLightView,
   TextView,
 } from "@statewalker/shared-views";
-import type {
-  EngineId,
-  LocalModelConfig,
-  ModelConfig,
-  ModelManager,
-  RemoteModelConfig,
-} from "@statewalker/ai-provider";
-import { modelKinds } from "@statewalker/ai-provider";
-import {
-  persistDownloadStatus,
-  removeDownloadStatus,
-} from "../download-status-store.js";
+import { persistDownloadStatus, removeDownloadStatus } from "../download-status-store.js";
 import { detectAvailableEngines } from "../engine-detection.js";
 import { resolveActivationSettings } from "../resolve-settings.js";
 
@@ -54,9 +51,7 @@ export function buildModelDetailPanel(
   const isLocal = config.runtime === "local";
   const engine = isLocal ? (config as LocalModelConfig).engine : undefined;
   const engineBadge = engine ? ENGINE_BADGES[engine] : undefined;
-  panel.header = engineBadge
-    ? `${config.label} — ${engineBadge}`
-    : config.label;
+  panel.header = engineBadge ? `${config.label} — ${engineBadge}` : config.label;
 
   const metadata = buildMetadata(config);
   const statusLight = new StatusLightView({
@@ -111,10 +106,7 @@ export function buildModelDetailPanel(
     key: "deleteWeights",
     label: "Delete Weights",
     variant: "danger",
-    disabled:
-      !isLocal ||
-      state.status === "not-downloaded" ||
-      state.status === "downloading",
+    disabled: !isLocal || state.status === "not-downloaded" || state.status === "downloading",
   });
   const cancelAction = new ActionView({
     key: "cancel",
@@ -151,10 +143,7 @@ export function buildModelDetailPanel(
       cancelAction.disabled = false;
       abortController = new AbortController();
       try {
-        for await (const p of manager.download(
-          catalogKey,
-          abortController.signal,
-        )) {
+        for await (const p of manager.download(catalogKey, abortController.signal)) {
           progressBar.value = p.progress != null ? p.progress * 100 : undefined;
           progressBar.label = p.phase;
           progressMessage.text = p.message;
@@ -231,9 +220,7 @@ export function buildModelDetailPanel(
       // the user is steered to re-download.
       if (isLocal) {
         const next =
-          manager.store.getDownloadProgress(catalogKey) != null
-            ? "partial"
-            : "downloaded";
+          manager.store.getDownloadProgress(catalogKey) != null ? "partial" : "downloaded";
         manager.store.setStatus(catalogKey, next);
       } else {
         manager.store.setStatus(catalogKey, "not-downloaded");
@@ -350,9 +337,7 @@ function buildMetadata(config: ModelConfig): LabeledValueView[] {
   return rows;
 }
 
-function statusVariant(
-  status: string,
-): "positive" | "negative" | "notice" | "neutral" {
+function statusVariant(status: string): "positive" | "negative" | "notice" | "neutral" {
   if (status === "ready") return "positive";
   if (status === "error") return "negative";
   if (status === "loading" || status === "downloading") return "notice";

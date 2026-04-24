@@ -126,9 +126,7 @@ export class ProviderSettingsStore {
     this.inFlight = (async () => {
       const content = JSON.stringify(toWrite, null, 2);
       await this.files.mkdir(SETTINGS_DIR);
-      await this.files.write(PROVIDERS_PATH, [
-        new TextEncoder().encode(content),
-      ]);
+      await this.files.write(PROVIDERS_PATH, [new TextEncoder().encode(content)]);
     })();
     try {
       await this.inFlight;

@@ -19,18 +19,13 @@ import {
 } from "@statewalker/shared-views";
 import { getModelManager } from "../adapters.js";
 import { ModelListView } from "../domain/model-list.view.js";
-import {
-  getIntents,
-  handleOpenModelSettings,
-  runOpenModelSettings,
-} from "../intents.js";
+import { getIntents, handleOpenModelSettings, runOpenModelSettings } from "../intents.js";
 import { openAddLocalModelDialog } from "./add-local-model.controller.js";
 import { openAddRemoteProviderDialog } from "./add-remote-provider.controller.js";
 import { buildModelDetailPanel } from "./model-detail.controller.js";
 
 /** Shared ModelListView adapter, so other controllers can subscribe. */
-export const [getModelListView, setModelListView] =
-  newAdapter<ModelListView>("view:model-list");
+export const [getModelListView, setModelListView] = newAdapter<ModelListView>("view:model-list");
 
 /**
  * Publishes the single-page Model Settings DockPanelView driven by
@@ -40,9 +35,7 @@ export const [getModelListView, setModelListView] =
  * Legacy `{ tab }` payload is accepted but ignored — logs a deprecation
  * warning so callers can migrate.
  */
-export function createModelSettingsController(
-  ctx: Record<string, unknown>,
-): () => Promise<void> {
+export function createModelSettingsController(ctx: Record<string, unknown>): () => Promise<void> {
   const [register, cleanup] = newRegistry();
   const intents = getIntents(ctx);
   const manager = getModelManager(ctx);
@@ -81,10 +74,7 @@ export function createModelSettingsController(
   return cleanup;
 }
 
-function buildSettingsPanel(
-  ctx: Record<string, unknown>,
-  view: ModelListView,
-): DockPanelView {
+function buildSettingsPanel(ctx: Record<string, unknown>, view: ModelListView): DockPanelView {
   const [register] = newRegistry();
   const manager = getModelManager(ctx);
 
@@ -103,12 +93,8 @@ function buildSettingsPanel(
     label: "+ Add Local Model",
     variant: "secondary",
   });
-  register(
-    addRemoteAction.onSubmit(() => openAddRemoteProviderDialog(ctx, manager)),
-  );
-  register(
-    addLocalAction.onSubmit(() => openAddLocalModelDialog(ctx, manager)),
-  );
+  register(addRemoteAction.onSubmit(() => openAddRemoteProviderDialog(ctx, manager)));
+  register(addLocalAction.onSubmit(() => openAddLocalModelDialog(ctx, manager)));
 
   const header = new FlexView({
     direction: "row",
@@ -150,9 +136,7 @@ function buildSettingsPanel(
     if (!view.hasActiveReasoning && !hasBanner) {
       groupsContainer.addChild(noReasoningBanner);
     } else if (view.hasActiveReasoning && hasBanner) {
-      groupsContainer.setChildren(
-        groupsContainer.children.filter((c) => c !== noReasoningBanner),
-      );
+      groupsContainer.setChildren(groupsContainer.children.filter((c) => c !== noReasoningBanner));
     }
     list.items = buildRows(view);
   };
@@ -194,9 +178,7 @@ function buildSettingsPanel(
   });
 }
 
-function buildGroupCard(
-  group: ReturnType<ModelListView["groups"]["slice"]>[number],
-): CardView {
+function buildGroupCard(group: ReturnType<ModelListView["groups"]["slice"]>[number]): CardView {
   const statusLight = new StatusLightView({
     label: group.configured ? "Configured" : "Not configured",
     variant: group.configured ? "positive" : "neutral",
@@ -241,9 +223,7 @@ function buildRows(view: ModelListView): ListBoxItem[] {
       const badge = r.engineBadge ? ` · ${r.engineBadge}` : "";
       items.push({
         key: r.key,
-        label: `${statusIcon(r.status)} ${r.label}${
-          r.activeForReasoning ? "  ●" : ""
-        }`,
+        label: `${statusIcon(r.status)} ${r.label}${r.activeForReasoning ? "  ●" : ""}`,
         description: `${g.label}${badge}${unavailable}`,
       });
     }

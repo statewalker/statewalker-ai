@@ -1,3 +1,4 @@
+import type { ModelManager } from "@statewalker/ai-provider";
 import { newRegistry } from "@statewalker/shared-registry";
 import {
   ActionGroupView,
@@ -10,7 +11,6 @@ import {
   publishDialog,
   TextView,
 } from "@statewalker/shared-views";
-import type { ModelManager } from "@statewalker/ai-provider";
 import { AddLocalModelFormVM } from "../domain/add-local-model.form.js";
 import { persistDownloadStatus } from "../download-status-store.js";
 
@@ -34,15 +34,12 @@ export function openAddLocalModelDialog(
       isOpen: true,
       children: [
         new InlineAlertView({
-          content:
-            "No local-model catalog is loaded. Ensure WebLLM or llama.cpp is wired.",
+          content: "No local-model catalog is loaded. Ensure WebLLM or llama.cpp is wired.",
           variant: "informative",
         }),
       ],
       footer: new ActionGroupView({
-        children: [
-          new ActionView({ key: "close", label: "Close", variant: "neutral" }),
-        ],
+        children: [new ActionView({ key: "close", label: "Close", variant: "neutral" })],
       }),
     });
     register(publishDialog(ctx, empty));
@@ -149,14 +146,12 @@ export function openAddLocalModelDialog(
 
   // ── VM → views ─────────────────────────────────────────────────
   const syncViews = () => {
-    progress.value =
-      vm.progress != null ? Math.round(vm.progress * 100) : undefined;
+    progress.value = vm.progress != null ? Math.round(vm.progress * 100) : undefined;
     progress.label = vm.downloadPhase;
     message.text = vm.message;
 
     downloadAction.disabled = !vm.canDownload;
-    cancelAction.label =
-      vm.downloadPhase === "downloading" ? "Cancel" : "Close";
+    cancelAction.label = vm.downloadPhase === "downloading" ? "Cancel" : "Close";
 
     const hasError = dialog.children.includes(errorAlert);
     if (vm.downloadPhase === "error" && vm.errorMessage) {

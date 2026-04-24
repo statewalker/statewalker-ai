@@ -9,9 +9,7 @@ export type { Intents };
  * The host must call setIntents(ctx, intents) before initAiProviderCore(ctx).
  * No default factory — throws if not set.
  */
-export const [getIntents, setIntents] = newAdapter<Intents>(
-  "ai-provider:intents",
-);
+export const [getIntents, setIntents] = newAdapter<Intents>("ai-provider:intents");
 
 /**
  * Open the full Model Settings panel.
@@ -27,10 +25,9 @@ export const [runOpenModelSettings, handleOpenModelSettings] = newIntent<
 >("ai-provider:open-settings");
 
 /** Pick a model (inline, from the chat input). Resolves with the selected catalog key. */
-export const [runPickModel, handlePickModel] = newIntent<
-  void,
-  { catalogKey: string }
->("ai-provider:pick-model");
+export const [runPickModel, handlePickModel] = newIntent<void, { catalogKey: string }>(
+  "ai-provider:pick-model",
+);
 
 /** Activate a specific model (download/load/verify). Resolves with the ready model instance. */
 export const [runActivateModel, handleActivateModel] = newIntent<

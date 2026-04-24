@@ -1,9 +1,5 @@
+import type { ActivationProgress, LocalModelConfig, ModelState } from "@statewalker/ai-provider";
 import { BaseClass } from "@statewalker/shared-baseclass";
-import type {
-  ActivationProgress,
-  LocalModelConfig,
-  ModelState,
-} from "@statewalker/ai-provider";
 
 /** One local catalog entry shown in the picker. */
 export interface LocalCatalogEntry {
@@ -15,12 +11,7 @@ export interface LocalCatalogEntry {
   alreadyDownloaded: boolean;
 }
 
-export type DownloadPhase =
-  | "idle"
-  | "downloading"
-  | "downloaded"
-  | "error"
-  | "cancelled";
+export type DownloadPhase = "idle" | "downloading" | "downloaded" | "error" | "cancelled";
 
 /**
  * Reactive state for the Add Local Model dialog: picker + download
@@ -43,9 +34,7 @@ export class AddLocalModelFormVM extends BaseClass {
   }
 
   /** Build a catalog snapshot from the state map + status lookup. */
-  static fromStates(
-    states: ReadonlyMap<string, ModelState>,
-  ): AddLocalModelFormVM {
+  static fromStates(states: ReadonlyMap<string, ModelState>): AddLocalModelFormVM {
     const catalog: LocalCatalogEntry[] = [];
     for (const [key, state] of states) {
       if (state.config.runtime !== "local") continue;
@@ -55,14 +44,10 @@ export class AddLocalModelFormVM extends BaseClass {
         label: c.label,
         family: c.family,
         size: c.size,
-        alreadyDownloaded:
-          state.status === "downloaded" || state.status === "ready",
+        alreadyDownloaded: state.status === "downloaded" || state.status === "ready",
       });
     }
-    catalog.sort(
-      (a, b) =>
-        a.family.localeCompare(b.family) || a.label.localeCompare(b.label),
-    );
+    catalog.sort((a, b) => a.family.localeCompare(b.family) || a.label.localeCompare(b.label));
     return new AddLocalModelFormVM(catalog);
   }
 
