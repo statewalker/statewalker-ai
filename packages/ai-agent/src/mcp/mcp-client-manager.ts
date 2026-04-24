@@ -1,6 +1,6 @@
 import { createMCPClient } from "@ai-sdk/mcp";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { BaseClass } from "@statewalker/shared-baseclass";
+import { BaseClass, onChange } from "@statewalker/shared-baseclass";
 import type { ToolSet } from "ai";
 
 export interface McpServerConfig {
@@ -24,6 +24,11 @@ export class McpClientManager extends BaseClass {
 
   get revision(): number {
     return this.#revision;
+  }
+
+  /** Fires only when revision changes (user-initiated modifications). */
+  onRevisionChange(cb: () => void): () => void {
+    return onChange(this.onUpdate, cb, () => this.#revision);
   }
 
   private bumpRevision(): void {

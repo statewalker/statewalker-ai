@@ -6,11 +6,9 @@ AI agent and provider stack for the statewalker ecosystem. Published as the `@st
 
 | Package | Description |
 | --- | --- |
-| [`@statewalker/ai-agent`](packages/ai-agent) | Agent loop, builder, session models, Vercel AI SDK tool wiring. |
-| [`@statewalker/ai-agent-fsm`](packages/ai-agent-fsm) | FSM-based planner agent bridging `ai-agent` and `@statewalker/fsm`. |
+| [`@statewalker/ai-agent`](packages/ai-agent) | Agent loop, builder, session models, MCP client, Vercel AI SDK tool wiring. |
 | [`@statewalker/ai-agent-state`](packages/ai-agent-state) | Reactive tree infrastructure for agent session state. |
 | [`@statewalker/ai-agent-tests`](packages/ai-agent-tests) | Dev-only cross-implementation test harness for the agent loop. |
-| [`@statewalker/ai-mcp`](packages/ai-mcp) | Model Context Protocol client integration for the agent loop. |
 | [`@statewalker/ai-provider`](packages/ai-provider) | Provider abstraction plus remote provider adapters (Anthropic, OpenAI, Google). |
 | [`@statewalker/ai-provider-core`](packages/ai-provider-core) | Provider lifecycle, active-models controller, UI wiring for the model picker. |
 | [`@statewalker/ai-provider-llamacpp`](packages/ai-provider-llamacpp) | llama.cpp local-inference provider. |
