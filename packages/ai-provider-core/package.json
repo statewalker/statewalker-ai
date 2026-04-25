@@ -8,7 +8,8 @@
     "./intents": "./src/intents.ts",
     "./adapters": "./src/adapters.ts",
     "./active-models": "./src/controllers/active-models-lifecycle.controller.ts",
-    "./model-list": "./src/controllers/model-settings.controller.ts"
+    "./model-list": "./src/controllers/model-settings.controller.ts",
+    "./views/model-picker": "./src/views/model-picker.ts"
   },
   "files": [
     "src/**"
