@@ -154,7 +154,9 @@ export class ModelPickerView extends ViewModel {
           }),
         }),
     );
-    menuItems.push(new MenuItemView({ action: new ActionView({ key: "_sep" }), isSeparator: true }));
+    menuItems.push(
+      new MenuItemView({ action: new ActionView({ key: "_sep" }), isSeparator: true }),
+    );
     menuItems.push(this.#manageItem);
     this.#menu.setChildren(menuItems);
 
