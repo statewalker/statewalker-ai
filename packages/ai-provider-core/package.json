@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
-    "@statewalker/shared-views": "catalog:",
+    "@statewalker/workbench-views": "catalog:",
     "@statewalker/ai-provider": "workspace:*",
     "@statewalker/webrun-files": "catalog:",
     "@statewalker/shared-adapters": "catalog:",

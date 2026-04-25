@@ -14,7 +14,7 @@ import {
   publishDialog,
   TextFieldView,
   TextView,
-} from "@statewalker/shared-views";
+} from "@statewalker/workbench-views";
 import { AddRemoteProviderFormVM } from "../domain/add-remote-provider.form.js";
 
 /**

@@ -19,7 +19,7 @@ catalog:
   "@statewalker/shared-baseclass": ^0.1.0
   "@statewalker/shared-intents": ^0.1.0
   "@statewalker/shared-registry": ^0.1.0
-  "@statewalker/shared-views": ^0.1.0
+  "@statewalker/workbench-views": ^0.1.0
   "@statewalker/webrun-files": ^0.7.0
   "@statewalker/webrun-files-composite": ^0.7.1
   "@statewalker/webrun-files-mem": ^0.7.2
