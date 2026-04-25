@@ -17,7 +17,7 @@ import {
   ProgressBarView,
   StatusLightView,
   TextView,
-} from "@statewalker/shared-views";
+} from "@statewalker/workbench-views";
 import { persistDownloadStatus, removeDownloadStatus } from "../download-status-store.js";
 import { detectAvailableEngines } from "../engine-detection.js";
 import { resolveActivationSettings } from "../resolve-settings.js";

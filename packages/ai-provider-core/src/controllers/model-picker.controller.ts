@@ -1,6 +1,6 @@
 import type { RemoteModelConfig } from "@statewalker/ai-provider";
 import { newRegistry } from "@statewalker/shared-registry";
-import { ModelPickerView, type PickerModelItem } from "@statewalker/shared-views/ai-models";
+import { ModelPickerView, type PickerModelItem } from "@statewalker/workbench-views/ai-models";
 import { getModelManager, setModelPickerView } from "../adapters.js";
 import { getIntents, runOpenModelSettings } from "../intents.js";
 import { getModelActivationController } from "./model-activation.controller.js";

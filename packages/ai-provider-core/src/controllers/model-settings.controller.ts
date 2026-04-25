@@ -16,7 +16,7 @@ import {
   publishPanel,
   StatusLightView,
   TextView,
-} from "@statewalker/shared-views";
+} from "@statewalker/workbench-views";
 import { getModelManager } from "../adapters.js";
 import { ModelListView } from "../domain/model-list.view.js";
 import { getIntents, handleOpenModelSettings, runOpenModelSettings } from "../intents.js";

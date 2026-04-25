@@ -1,6 +1,6 @@
 import type { ModelManager, ModelStateStore } from "@statewalker/ai-provider";
 import { newAdapter } from "@statewalker/shared-adapters";
-import type { ModelPickerView } from "@statewalker/shared-views/ai-models";
+import type { ModelPickerView } from "@statewalker/workbench-views/ai-models";
 
 /** Observable data model — primary adapter for UI controllers. */
 export const [getModelStateStore, setModelStateStore] =
