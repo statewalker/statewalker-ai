@@ -1,18 +1,18 @@
 import type { RemoteModelConfig } from "@statewalker/ai-provider";
 import { newRegistry } from "@statewalker/shared-registry";
-import { ModelPickerView, type PickerModelItem } from "@statewalker/workbench-views/ai-models";
 import { getModelManager, setModelPickerView } from "../adapters.js";
 import { getIntents, runOpenModelSettings } from "../intents.js";
+import { ModelPickerView, type PickerModelItem } from "../views/model-picker.js";
 import { getModelActivationController } from "./model-activation.controller.js";
 import { getModelListView } from "./model-settings.controller.js";
 
 /**
  * Owns the shared `ModelPickerView` visible in the chat header. Drives
- * its `mode` from `ModelListView.activeReasoningKeys`:
- *   0 → "Configure model…" button; clicks open the settings panel.
- *   1 → static label (no dropdown).
- *   ≥ 2 → dropdown listing each active reasoning model; selection
- *         updates `store.activeModelKey` for the next agent turn.
+ * its mode from `ModelListView.activeReasoningKeys`:
+ *   0 → "Configure model…" button (composed `ButtonView`).
+ *   1 → static label (composed `TextView`).
+ *   ≥ 2 → dropdown (composed `MenuTriggerView`); selection updates
+ *         `store.activeModelKey` for the next agent turn.
  */
 export function createModelPickerController(ctx: Record<string, unknown>): () => Promise<void> {
   const [register, cleanup] = newRegistry();
@@ -24,9 +24,8 @@ export function createModelPickerController(ctx: Record<string, unknown>): () =>
   const picker = new ModelPickerView();
   setModelPickerView(ctx, picker);
 
-  function sync(): void {
-    const activeKeys = [...listView.activeReasoningKeys];
-    const items: PickerModelItem[] = activeKeys.map((key) => {
+  function buildItems(activeKeys: string[]): PickerModelItem[] {
+    return activeKeys.map((key) => {
       const state = manager.store.getState(key);
       const config = state?.config;
       const provider =
@@ -41,41 +40,49 @@ export function createModelPickerController(ctx: Record<string, unknown>): () =>
         isInteractive: true,
       };
     });
-    picker.items = items;
+  }
 
-    picker.mode = activeKeys.length === 0 ? "none" : activeKeys.length === 1 ? "single" : "multi";
-
-    // Keep the visible label/key in sync with the store's active key, or
-    // default to the first active entry when nothing is selected.
+  function resolveCurrent(activeKeys: string[]): { key: string; label: string } {
     const current = manager.store.activeModelKey;
     if (current && activeKeys.includes(current)) {
-      picker.currentKey = current;
-      picker.currentLabel = manager.store.getState(current)?.config.label ?? "";
-    } else if (activeKeys.length > 0) {
+      const label = manager.store.getState(current)?.config.label ?? "";
+      return { key: current, label };
+    }
+    if (activeKeys.length > 0) {
       const first = activeKeys[0];
       if (typeof first === "string") {
         const label = manager.store.getState(first)?.config.label ?? first;
-        picker.currentKey = first;
-        picker.currentLabel = label;
         manager.store.setActiveModelKey(first, label);
+        return { key: first, label };
       }
+    }
+    return { key: "", label: "" };
+  }
+
+  function sync(): void {
+    const activeKeys = [...listView.activeReasoningKeys];
+    const items = buildItems(activeKeys);
+    const { key, label } = resolveCurrent(activeKeys);
+
+    if (activeKeys.length === 0) {
+      picker.setNoneMode();
+    } else if (activeKeys.length === 1) {
+      picker.setSingleMode(items, key, label);
     } else {
-      picker.currentKey = "";
-      picker.currentLabel = "";
+      picker.setMultiMode(items, key, label);
     }
   }
 
-  function syncActivationState(): void {
-    picker.isActivating = activation.isActivating;
-    picker.activationMessage = activation.activationMessage;
+  function syncActivation(): void {
+    picker.setActivationState(activation.isActivating, activation.activationMessage);
   }
 
   register(listView.onUpdate(sync));
-  register(activation.onUpdate(syncActivationState));
+  register(activation.onUpdate(syncActivation));
   sync();
-  syncActivationState();
+  syncActivation();
 
-  // Select-action: switch the current active model to the picked entry.
+  // Select-action: switch the active model on the picked entry.
   register(
     picker.selectAction.onSubmit(() => {
       const key = picker.selectAction.payload;
@@ -87,12 +94,10 @@ export function createModelPickerController(ctx: Record<string, unknown>): () =>
     }),
   );
 
-  // Manage-action: open the settings panel.
-  register(
-    picker.manageAction.onSubmit(() => {
-      runOpenModelSettings(intents, undefined).catch(console.error);
-    }),
-  );
+  // Configure / Manage: open the settings panel.
+  const openSettings = () => runOpenModelSettings(intents, undefined).catch(console.error);
+  register(picker.configureAction.onSubmit(openSettings));
+  register(picker.manageAction.onSubmit(openSettings));
 
   return cleanup;
 }
