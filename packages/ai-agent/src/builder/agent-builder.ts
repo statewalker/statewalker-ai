@@ -2,7 +2,11 @@ import type { ProviderV3 } from "@ai-sdk/provider";
 import type { ModelManager } from "@statewalker/ai-provider";
 import { UnifiedProvider } from "@statewalker/ai-provider";
 import type { FilesApi } from "@statewalker/webrun-files";
-import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
+import {
+  CompositeFilesApi,
+  type FileGuard,
+  GuardedFilesApi,
+} from "@statewalker/webrun-files-composite";
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
@@ -332,16 +336,18 @@ export class AgentBuilder {
     }
 
     const composite = new CompositeFilesApi(this._filesApi);
-    for (const excluded of allExcluded) {
+    const guards: FileGuard[] = allExcluded.map((excluded) => {
       const prefix = excluded.endsWith("/") ? excluded : `${excluded}/`;
-      composite.guard(
-        ["write", "remove", "move", "mkdir"],
-        (p: string) => !p.startsWith(prefix) && p !== excluded.replace(/\/$/, ""),
-        `Access denied: ${excluded}`,
-      );
-    }
+      const exact = excluded.replace(/\/$/, "");
+      return {
+        operations: ["write", "remove", "move", "mkdir"],
+        check: (p: string) => !p.startsWith(prefix) && p !== exact,
+        message: `Access denied: ${excluded}`,
+      };
+    });
+    const workingFiles = guards.length > 0 ? new GuardedFilesApi(composite, guards) : composite;
 
-    return { systemFiles, workingFiles: composite };
+    return { systemFiles, workingFiles };
   }
 
   private async loadSkillsFolder(
