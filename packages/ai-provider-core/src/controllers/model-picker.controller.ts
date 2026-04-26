@@ -95,7 +95,7 @@ export function createModelPickerController(ctx: Record<string, unknown>): () =>
   );
 
   // Configure / Manage: open the settings panel.
-  const openSettings = () => runOpenModelSettings(intents, undefined).catch(console.error);
+  const openSettings = () => runOpenModelSettings(intents, undefined).promise.catch(console.error);
   register(picker.configureAction.onSubmit(openSettings));
   register(picker.manageAction.onSubmit(openSettings));
 
