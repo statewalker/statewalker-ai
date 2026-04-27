@@ -1,7 +1,7 @@
 import type { ModelManager } from "@statewalker/ai-provider";
 import { newAdapter } from "@statewalker/shared-adapters";
 import { BaseClass } from "@statewalker/shared-baseclass";
-import { resolveActivationSettings } from "../resolve-settings.js";
+import { resolveActivationSettings } from "../core/resolve-settings.js";
 
 /**
  * Persistent model activation lifecycle controller.

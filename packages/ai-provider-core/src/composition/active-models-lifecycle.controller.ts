@@ -8,9 +8,9 @@ import { modelKinds } from "@statewalker/ai-provider";
 import { newAdapter } from "@statewalker/shared-adapters";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { FilesApi } from "@statewalker/webrun-files";
-import { getModelManager } from "../adapters.js";
-import { detectAvailableEngines, type EngineAvailability } from "../engine-detection.js";
-import { type ProviderSettings, ProviderSettingsStore } from "../provider-settings-store.js";
+import { detectAvailableEngines, type EngineAvailability } from "../core/engine-detection.js";
+import { getModelManager } from "../core/legacy-adapters.js";
+import { type ProviderSettings, ProviderSettingsStore } from "../core/provider-settings.store.js";
 import { getModelListView } from "./model-settings.controller.js";
 
 /**

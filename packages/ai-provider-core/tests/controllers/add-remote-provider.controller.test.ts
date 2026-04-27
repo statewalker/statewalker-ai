@@ -1,6 +1,6 @@
 import { ModelManager, ModelStateStore, type RemoteModelConfig } from "@statewalker/ai-provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AddRemoteProviderFormVM } from "../../src/domain/add-remote-provider.form.js";
+import { AddRemoteProviderFormVM } from "../../src/core/add-remote-provider.form.js";
 
 function makeManager(): ModelManager {
   const store = new ModelStateStore({});

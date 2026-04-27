@@ -1,6 +1,6 @@
 import type { LocalModelConfig, ModelState } from "@statewalker/ai-provider";
 import { describe, expect, it } from "vitest";
-import { AddLocalModelFormVM } from "../../src/domain/add-local-model.form.js";
+import { AddLocalModelFormVM } from "../../src/core/add-local-model.form.js";
 
 function localState(
   family: string,

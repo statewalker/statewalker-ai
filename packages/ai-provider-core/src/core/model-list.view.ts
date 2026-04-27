@@ -8,7 +8,7 @@ import {
   type RemoteModelConfig,
 } from "@statewalker/ai-provider";
 import { BaseClass } from "@statewalker/shared-baseclass";
-import type { ActiveModelsSet, ProviderSettings } from "../provider-settings-store.js";
+import type { ActiveModelsSet, ProviderSettings } from "./provider-settings.store.js";
 
 /** Short runtime label displayed next to each Local row in the settings UI. */
 export type EngineBadge = "WASM" | "WebGPU" | "Native";

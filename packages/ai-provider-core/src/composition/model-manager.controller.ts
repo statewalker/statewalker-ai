@@ -1,7 +1,7 @@
 import { newRegistry } from "@statewalker/shared-registry";
-import { getModelManager } from "../adapters.js";
-import { getIntents, handleActivateModel, handleGetActiveModel } from "../intents.js";
-import { resolveActivationSettings } from "../resolve-settings.js";
+import { getIntents, handleActivateModel, handleGetActiveModel } from "../api/intents.js";
+import { getModelManager } from "../core/legacy-adapters.js";
+import { resolveActivationSettings } from "../core/resolve-settings.js";
 
 /**
  * Handles model activation lifecycle intents.

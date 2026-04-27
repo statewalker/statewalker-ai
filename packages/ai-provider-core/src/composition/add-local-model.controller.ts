@@ -11,8 +11,8 @@ import {
   publishDialog,
   TextView,
 } from "@statewalker/workbench-views";
-import { AddLocalModelFormVM } from "../domain/add-local-model.form.js";
-import { persistDownloadStatus } from "../download-status-store.js";
+import { AddLocalModelFormVM } from "../core/add-local-model.form.js";
+import { persistDownloadStatus } from "../core/download-status.store.js";
 
 /**
  * Opens the Add Local Model dialog: picker of local models (default Gemma),

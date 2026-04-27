@@ -4,12 +4,7 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    "./init": "./src/init-ai-provider-core.ts",
-    "./intents": "./src/intents.ts",
-    "./adapters": "./src/adapters.ts",
-    "./active-models": "./src/controllers/active-models-lifecycle.controller.ts",
-    "./model-list": "./src/controllers/model-settings.controller.ts",
-    "./views/model-picker": "./src/views/model-picker.ts"
+    ".": "./src/index.ts"
   },
   "files": [
     "src/**"

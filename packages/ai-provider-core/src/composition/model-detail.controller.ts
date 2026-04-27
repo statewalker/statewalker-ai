@@ -18,9 +18,9 @@ import {
   StatusLightView,
   TextView,
 } from "@statewalker/workbench-views";
-import { persistDownloadStatus, removeDownloadStatus } from "../download-status-store.js";
-import { detectAvailableEngines } from "../engine-detection.js";
-import { resolveActivationSettings } from "../resolve-settings.js";
+import { persistDownloadStatus, removeDownloadStatus } from "../core/download-status.store.js";
+import { detectAvailableEngines } from "../core/engine-detection.js";
+import { resolveActivationSettings } from "../core/resolve-settings.js";
 
 const ENGINE_BADGES: Record<EngineId, string> = {
   tjs: "WASM",

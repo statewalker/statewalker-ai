@@ -6,14 +6,14 @@ import {
 } from "@statewalker/ai-provider";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setModelManager } from "../../src/adapters.js";
 import {
   createActiveModelsLifecycleController,
   setActiveModelsFilesApi,
-} from "../../src/controllers/active-models-lifecycle.controller.js";
-import { setModelListView } from "../../src/controllers/model-settings.controller.js";
-import { ModelListView } from "../../src/domain/model-list.view.js";
-import { ProviderSettingsStore } from "../../src/provider-settings-store.js";
+} from "../../src/composition/active-models-lifecycle.controller.js";
+import { setModelListView } from "../../src/composition/model-settings.controller.js";
+import { setModelManager } from "../../src/core/legacy-adapters.js";
+import { ModelListView } from "../../src/core/model-list.view.js";
+import { ProviderSettingsStore } from "../../src/core/provider-settings.store.js";
 
 async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
   const start = Date.now();

@@ -1,6 +1,6 @@
 import type { EngineId, ModelState } from "@statewalker/ai-provider";
 import { describe, expect, it } from "vitest";
-import { ModelListView } from "../../src/domain/model-list.view.js";
+import { ModelListView } from "../../src/core/model-list.view.js";
 
 function remoteState(
   provider: "anthropic" | "google" | "openai" | "openai-compatible",

@@ -17,9 +17,9 @@ import {
   StatusLightView,
   TextView,
 } from "@statewalker/workbench-views";
-import { getModelManager } from "../adapters.js";
-import { ModelListView } from "../domain/model-list.view.js";
-import { getIntents, handleOpenModelSettings, runOpenModelSettings } from "../intents.js";
+import { getIntents, handleOpenModelSettings, runOpenModelSettings } from "../api/intents.js";
+import { getModelManager } from "../core/legacy-adapters.js";
+import { ModelListView } from "../core/model-list.view.js";
 import { openAddLocalModelDialog } from "./add-local-model.controller.js";
 import { openAddRemoteProviderDialog } from "./add-remote-provider.controller.js";
 import { buildModelDetailPanel } from "./model-detail.controller.js";

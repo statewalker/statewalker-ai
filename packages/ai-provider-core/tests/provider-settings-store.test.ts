@@ -1,7 +1,7 @@
 import { readText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { afterEach, describe, expect, it } from "vitest";
-import { ProviderSettingsStore } from "../src/provider-settings-store.js";
+import { ProviderSettingsStore } from "../src/core/provider-settings.store.js";
 
 const PATH = "/.settings/providers.json";
 const LEGACY_PATH = "/.settings/key.json";
