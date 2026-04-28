@@ -101,12 +101,24 @@ export class FilesBackedProviderSettingsStore extends ProviderSettingsStore {
 abstract class BaseActiveModelImpl {
   private _model: LanguageModelV3 | undefined;
   private _catalogKey: string | undefined;
+  private _providerId: string | undefined;
   private readonly listeners = new Set<() => void>();
 
-  protected setActive(model: LanguageModelV3 | undefined, catalogKey: string | undefined): void {
-    if (this._model === model && this._catalogKey === catalogKey) return;
+  protected setActive(
+    model: LanguageModelV3 | undefined,
+    catalogKey: string | undefined,
+    providerId: string | undefined,
+  ): void {
+    if (
+      this._model === model &&
+      this._catalogKey === catalogKey &&
+      this._providerId === providerId
+    ) {
+      return;
+    }
     this._model = model;
     this._catalogKey = catalogKey;
+    this._providerId = providerId;
     for (const cb of this.listeners) {
       try {
         cb();
@@ -122,6 +134,10 @@ abstract class BaseActiveModelImpl {
 
   get catalogKey(): string | undefined {
     return this._catalogKey;
+  }
+
+  get providerId(): string | undefined {
+    return this._providerId;
   }
 
   onChange(cb: () => void): () => void {
@@ -141,9 +157,13 @@ export class ActiveReasoningModelImpl extends BaseActiveModelImpl implements Act
     super();
   }
 
-  /** Internal — used by the activate-model intent handler in §8. */
-  setReasoning(model: LanguageModelV3 | undefined, catalogKey: string | undefined): void {
-    this.setActive(model, catalogKey);
+  /** Internal — used by the activate-model intent handler in §8 and the remove-provider cascade in §5. */
+  setReasoning(
+    model: LanguageModelV3 | undefined,
+    catalogKey: string | undefined,
+    providerId: string | undefined,
+  ): void {
+    this.setActive(model, catalogKey, providerId);
   }
 }
 
@@ -156,8 +176,12 @@ export class ActiveEmbeddingModelImpl extends BaseActiveModelImpl implements Act
     super();
   }
 
-  /** Internal — used by the activate-model intent handler in §8. */
-  setEmbedding(model: LanguageModelV3 | undefined, catalogKey: string | undefined): void {
-    this.setActive(model, catalogKey);
+  /** Internal — used by the activate-model intent handler in §8 and the remove-provider cascade in §5. */
+  setEmbedding(
+    model: LanguageModelV3 | undefined,
+    catalogKey: string | undefined,
+    providerId: string | undefined,
+  ): void {
+    this.setActive(model, catalogKey, providerId);
   }
 }

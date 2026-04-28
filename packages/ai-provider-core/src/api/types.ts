@@ -78,3 +78,49 @@ export interface StorageInfo {
 }
 
 export type { LocalModelConfig, RemoteProviderSettings };
+
+// ── Intent payload / result shapes ─────────────────────────────────────────
+
+/** Settings shape persisted for a configured remote provider. */
+export interface ConfigureProviderSettings {
+  /** Provider type — drives default models / SDK selection. */
+  providerName: ProviderName;
+  /** Human-readable label. */
+  label: string;
+  /** API key for authentication. */
+  apiKey?: string;
+  /** Auth token sent as Bearer header (alternative to apiKey). */
+  authToken?: string;
+  /** Custom base URL for API calls (e.g. for proxy servers). */
+  baseURL?: string;
+  /** Custom headers to include in requests. */
+  headers?: Record<string, string>;
+}
+
+export interface ConfigureProviderPayload {
+  /** Stable identifier — typically the canonical provider name. */
+  providerId: string;
+  /** Optional secondary id for multi-instance providers. */
+  instanceId?: string;
+  /** Settings to persist. */
+  settings: ConfigureProviderSettings;
+  /**
+   * If true, the handler validates credentials (e.g. with a lightweight
+   * `listModels` request) before persisting. Currently a no-op stub.
+   */
+  test?: boolean;
+}
+
+export interface ConfigureProviderResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface ListProvidersPayload {
+  runtime?: ModelRuntime;
+}
+
+export interface RemoveProviderPayload {
+  providerId: string;
+  instanceId?: string;
+}

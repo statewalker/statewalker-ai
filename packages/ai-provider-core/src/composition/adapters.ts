@@ -51,6 +51,11 @@ export abstract class ActiveReasoningModel {
   }
   abstract readonly model: LanguageModelV3 | undefined;
   abstract readonly catalogKey: string | undefined;
+  /**
+   * Provider id of the active model. Used by the remove-provider
+   * cascade to clear the active model when its provider is removed.
+   */
+  abstract readonly providerId: string | undefined;
   abstract onChange(cb: () => void): () => void;
 }
 
@@ -65,5 +70,6 @@ export abstract class ActiveEmbeddingModel {
   }
   abstract readonly model: LanguageModelV3 | undefined;
   abstract readonly catalogKey: string | undefined;
+  abstract readonly providerId: string | undefined;
   abstract onChange(cb: () => void): () => void;
 }
