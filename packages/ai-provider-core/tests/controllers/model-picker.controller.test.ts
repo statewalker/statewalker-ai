@@ -1,16 +1,16 @@
 import { ModelManager, ModelStateStore, type RemoteModelConfig } from "@statewalker/ai-provider";
 import { createIntents } from "@statewalker/shared-intents";
 import { describe, expect, it } from "vitest";
-import { getModelPickerView, setModelManager } from "../../src/adapters.js";
+import { setIntents } from "../../src/api/intents.js";
 import {
   getModelActivationController,
   ModelActivationController,
   setModelActivationController,
-} from "../../src/controllers/model-activation.controller.js";
-import { createModelPickerController } from "../../src/controllers/model-picker.controller.js";
-import { setModelListView } from "../../src/controllers/model-settings.controller.js";
-import { ModelListView } from "../../src/domain/model-list.view.js";
-import { setIntents } from "../../src/intents.js";
+} from "../../src/composition/model-activation.controller.js";
+import { createModelPickerController } from "../../src/composition/model-picker.controller.js";
+import { setModelListView } from "../../src/composition/model-settings.controller.js";
+import { getModelPickerView, setModelManager } from "../../src/core/legacy-adapters.js";
+import { ModelListView } from "../../src/core/model-list.view.js";
 
 function makeCtx(catalog: Record<string, RemoteModelConfig> = {}): {
   ctx: Record<string, unknown>;

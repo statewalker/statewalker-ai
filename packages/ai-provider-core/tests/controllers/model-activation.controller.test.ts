@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ModelActivationController } from "../../src/controllers/model-activation.controller.js";
+import { ModelActivationController } from "../../src/composition/model-activation.controller.js";
 
 function createMockManager(phases: Array<{ phase: string; message: string; error?: Error }>) {
   return {

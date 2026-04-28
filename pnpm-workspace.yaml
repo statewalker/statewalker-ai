@@ -14,15 +14,15 @@ catalog:
   "@modelcontextprotocol/sdk": ^1.29.0
   "@statewalker/content-blocks": ^0.1.0
   "@statewalker/fsm": ^0.37.0
-  "@statewalker/shared-ids": ^0.1.0
   "@statewalker/shared-adapters": ^0.1.0
   "@statewalker/shared-baseclass": ^0.1.0
+  "@statewalker/shared-ids": ^0.1.0
   "@statewalker/shared-intents": ^0.1.0
   "@statewalker/shared-registry": ^0.1.0
-  "@statewalker/workbench-views": ^0.1.0
   "@statewalker/webrun-files": ^0.7.0
-  "@statewalker/webrun-files-composite": ^0.7.1
+  "@statewalker/webrun-files-composite": ^0.8.0
   "@statewalker/webrun-files-mem": ^0.7.2
+  "@statewalker/workbench-views": ^0.1.0
   "@types/node": ^25.6.0
   "@vitest/coverage-v8": ^4.1.4
   ai: ^6.0.168

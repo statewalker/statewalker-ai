@@ -1,8 +1,12 @@
-export * from "./adapters.js";
+import { initAiProviderCore } from "./composition/init-ai-provider-core.js";
+
+export * from "./api/intents.js";
+export { ModelManager } from "./composition/adapters.js";
 export {
   detectAvailableEngines,
   type EngineAvailability,
   resetEngineDetectionCache,
-} from "./engine-detection.js";
-export { initAiProviderCore } from "./init-ai-provider-core.js";
-export * from "./intents.js";
+} from "./core/engine-detection.js";
+export * from "./core/legacy-adapters.js";
+export { initAiProviderCore };
+export default initAiProviderCore;

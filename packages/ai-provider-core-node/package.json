@@ -1,0 +1,33 @@
+{
+  "name": "@statewalker/ai-provider-core-node",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/ai-provider-core-node.ts"
+  },
+  "files": [
+    "src/**"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write --unsafe .",
+    "lint:check": "biome check ."
+  },
+  "dependencies": {
+    "@statewalker/ai-provider-core": "workspace:*",
+    "@statewalker/ai-provider-llamacpp": "workspace:*",
+    "@statewalker/workspace-api": "catalog:"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-provider-core-node"
+  }
+}

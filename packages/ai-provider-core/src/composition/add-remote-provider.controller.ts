@@ -15,7 +15,7 @@ import {
   TextFieldView,
   TextView,
 } from "@statewalker/workbench-views";
-import { AddRemoteProviderFormVM } from "../domain/add-remote-provider.form.js";
+import { AddRemoteProviderFormVM } from "../core/add-remote-provider.form.js";
 
 /**
  * Opens the two-step Add Remote Provider dialog and wires it to the form VM.

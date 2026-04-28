@@ -1,9 +1,9 @@
 import { newRegistry } from "@statewalker/shared-registry";
-import { removeModelActivationController } from "./controllers/model-activation.controller.js";
-import { createModelManagerController } from "./controllers/model-manager.controller.js";
-import { createModelPickerController } from "./controllers/model-picker.controller.js";
-import { createModelSettingsController } from "./controllers/model-settings.controller.js";
-import { createStartupController } from "./controllers/startup.controller.js";
+import { removeModelActivationController } from "./model-activation.controller.js";
+import { createModelManagerController } from "./model-manager.controller.js";
+import { createModelPickerController } from "./model-picker.controller.js";
+import { createModelSettingsController } from "./model-settings.controller.js";
+import { createStartupController } from "./startup.controller.js";
 
 /**
  * Initialises the AI provider fragment.

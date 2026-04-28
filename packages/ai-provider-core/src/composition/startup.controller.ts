@@ -1,8 +1,8 @@
 import { newRegistry } from "@statewalker/shared-registry";
-import { getModelManager } from "../adapters.js";
-import { restoreDownloadStatuses } from "../download-status-store.js";
-import { migrateEngineNamespacing } from "../migrations.js";
-import { resolveActivationSettings } from "../resolve-settings.js";
+import { restoreDownloadStatuses } from "../core/download-status.store.js";
+import { getModelManager } from "../core/legacy-adapters.js";
+import { migrateEngineNamespacing } from "../core/migrations.js";
+import { resolveActivationSettings } from "../core/resolve-settings.js";
 
 /**
  * Orchestrates the initial model activation flow.

@@ -1,7 +1,7 @@
 import { readText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
-import { ENGINE_NAMESPACING, migrateEngineNamespacing } from "../src/migrations.js";
+import { ENGINE_NAMESPACING, migrateEngineNamespacing } from "../src/core/migrations.js";
 
 async function touch(files: MemFilesApi, path: string): Promise<void> {
   const parts = path.split("/").filter(Boolean);
