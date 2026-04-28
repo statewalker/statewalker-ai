@@ -24,7 +24,8 @@
     "@statewalker/shared-adapters": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-baseclass": "catalog:",
-    "@statewalker/shared-intents": "catalog:"
+    "@statewalker/shared-intents": "catalog:",
+    "@statewalker/workspace-api": "catalog:"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",

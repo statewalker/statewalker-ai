@@ -6,19 +6,16 @@ import { createModelSettingsController } from "./model-settings.controller.js";
 import { createStartupController } from "./startup.controller.js";
 
 /**
- * Initialises the AI provider fragment.
+ * Legacy controller wireup — preserves the pre-reshape 4-intent surface
+ * (`ai-provider:open-settings`, `pick-model`, `activate-model`,
+ * `get-active-model`) for chat.* consumers during the transition. Wired
+ * by `initAiProviderCore` (the new single-ctx activator) until §4-§9
+ * replace these controllers with the new 16-intent surface.
  *
- * Prerequisites:
- * - ModelManager must be set via setModelManager(ctx, ...) before calling this.
- *
- * The active-models lifecycle controller is NOT registered here — it
- * depends on a FilesApi which is only available once the workspace has
- * booted. Host apps must call `createActiveModelsLifecycleController(ctx)`
- * after `setActiveModelsFilesApi(ctx, filesApi)` has been invoked.
- *
- * Returns a cleanup function.
+ * Prerequisites: legacy `setModelManager(ctx, ...)` (from `core/legacy-adapters`)
+ * must be set before calling.
  */
-export function initAiProviderCore(ctx: Record<string, unknown>): () => Promise<void> {
+export function initLegacyControllers(ctx: Record<string, unknown>): () => Promise<void> {
   const [register, cleanup] = newRegistry();
 
   register(createModelManagerController(ctx));
