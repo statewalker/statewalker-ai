@@ -18,11 +18,28 @@ export const [getIntents, setIntents] = newAdapter<Intents>("ai-provider:intents
  * the panel now presents all content as a single list grouped by provider.
  * Callers should omit the payload. A deprecation warning is logged when
  * the field is supplied — see `model-settings.controller.ts`.
+ *
+ * @deprecated Use `runOpen` instead. The new canonical intent is
+ *   `ai-provider:open` — see {@link runOpen}. Migration: replace any
+ *   `runOpenModelSettings(intents, ...)` call with `runOpen(intents, ...)`.
  */
 export const [runOpenModelSettings, handleOpenModelSettings] = newIntent<
   { tab?: "providers" | "models" | "active" } | undefined,
   void
 >("ai-provider:open-settings");
+
+/**
+ * Canonical "open AI configurator" command intent. Replaces
+ * `ai-provider:open-settings` and the duplicate `ai-provider:open` that
+ * lived in `apps/ai-provider.api`.
+ *
+ * Resolves once the configurator panel has been brought into focus (or
+ * immediately if no panel is mounted yet — handler responsibility).
+ */
+export const [runOpen, handleOpen] = newIntent<
+  { focus?: "reasoning" | "embedding" | "providers" } | undefined,
+  void
+>("ai-provider:open");
 
 /** Pick a model (inline, from the chat input). Resolves with the selected catalog key. */
 export const [runPickModel, handlePickModel] = newIntent<void, { catalogKey: string }>(
