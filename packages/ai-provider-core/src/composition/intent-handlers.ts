@@ -2,14 +2,15 @@ import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
 import { handleOpen } from "../api/intents.js";
+import { registerProviderHandlers } from "./intents/providers.handlers.js";
 
 /**
  * Register the package's intent handlers on the workspace's `Intents`
  * adapter. Returns a cleanup that unregisters all handlers.
  *
- * Handlers for the §5-§8 intent surface (providers / local-model
- * lifecycle / list-models / per-role activation) plug in here as those
- * sections of the ai-provider-core-reshape change land.
+ * Handlers for the §6-§8 intent surface (local-model lifecycle /
+ * list-models / per-role activation) plug in here as those sections of
+ * the ai-provider-core-reshape change land.
  */
 export function registerIntentHandlers(workspace: Workspace): () => void {
   const intents = workspace.requireAdapter(Intents);
@@ -24,6 +25,8 @@ export function registerIntentHandlers(workspace: Workspace): () => void {
       return true;
     }),
   );
+
+  register(registerProviderHandlers(workspace, intents));
 
   return cleanup;
 }

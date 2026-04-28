@@ -41,6 +41,62 @@ export const [runOpen, handleOpen] = newIntent<
   void
 >("ai-provider:open");
 
+// ── Provider management (G1, G4) ───────────────────────────────────────────
+
+import type {
+  ConfigureProviderPayload,
+  ConfigureProviderResult,
+  ListProvidersPayload,
+  ProviderDescriptor,
+  RemoveProviderPayload,
+} from "./types.js";
+
+/** List configured providers, optionally filtered by runtime. */
+export const [runListProviders, handleListProviders] = newIntent<
+  ListProvidersPayload | undefined,
+  ProviderDescriptor[]
+>("ai-provider:list-providers");
+
+/**
+ * Add or update a provider configuration. Persists via
+ * `ProviderSettingsStore` and emits an `ai-provider:providers-changed`
+ * broadcast on success. If `test: true`, the handler MAY validate
+ * credentials before persisting (handler decision).
+ */
+export const [runConfigureProvider, handleConfigureProvider] = newIntent<
+  ConfigureProviderPayload,
+  ConfigureProviderResult
+>("ai-provider:configure-provider");
+
+/**
+ * Remove a provider configuration. Cascade: if any model from the
+ * removed provider is currently active in either role, the
+ * corresponding `Active{Reasoning,Embedding}Model` adapter is cleared
+ * and `ai-provider:active-model-changed` broadcasts.
+ */
+export const [runRemoveProvider, handleRemoveProvider] = newIntent<RemoveProviderPayload, void>(
+  "ai-provider:remove-provider",
+);
+
+/**
+ * Broadcast intent — fires after every provider-set mutation. Payload
+ * is the full updated descriptor list. Handlers MUST be observers (not
+ * claim the intent) so multiple subscribers can react.
+ */
+export const [runProvidersChanged, handleProvidersChanged] = newIntent<ProviderDescriptor[], void>(
+  "ai-provider:providers-changed",
+);
+
+/**
+ * Broadcast intent — fires on every active-model mutation. Payload is
+ * the role + new catalog key (undefined when cleared). Handlers MUST
+ * be observers.
+ */
+export const [runActiveModelChanged, handleActiveModelChanged] = newIntent<
+  { role: "reasoning" | "embedding"; catalogKey: string | undefined },
+  void
+>("ai-provider:active-model-changed");
+
 /** Pick a model (inline, from the chat input). Resolves with the selected catalog key. */
 export const [runPickModel, handlePickModel] = newIntent<void, { catalogKey: string }>(
   "ai-provider:pick-model",
