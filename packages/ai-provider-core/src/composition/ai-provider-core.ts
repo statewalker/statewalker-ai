@@ -11,6 +11,7 @@ import {
   ModelManager,
   ProviderSettingsStore,
 } from "./adapters.js";
+import { registerIntentHandlers } from "./intent-handlers.js";
 
 /**
  * Activator for the AI provider fragment.
@@ -31,13 +32,13 @@ import {
  * — chat.* consumers must migrate to the new intent surface as part of
  * the change's Phase 6.
  */
-export default function initAiProviderCore(_ctx: Record<string, unknown>): () => void {
-  const ws = getWorkspace(_ctx);
+export default function initAiProviderCore(ctx: Record<string, unknown>): () => void {
+  const ws = getWorkspace(ctx);
 
   ws.setAdapter(ModelManager, ModelManagerAdapter)
     .setAdapter(ProviderSettingsStore, FilesBackedProviderSettingsStore)
     .setAdapter(ActiveReasoningModel, ActiveReasoningModelImpl)
     .setAdapter(ActiveEmbeddingModel, ActiveEmbeddingModelImpl);
 
-  return () => {};
+  return registerIntentHandlers(ws);
 }
