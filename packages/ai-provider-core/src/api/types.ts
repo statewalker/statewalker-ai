@@ -143,3 +143,13 @@ export interface CancelDownloadPayload {
 export interface DeleteLocalModelPayload {
   catalogKey: string;
 }
+
+// ── List models ────────────────────────────────────────────────────────────
+
+export interface ListModelsPayload {
+  runtime?: ModelRuntime;
+  role?: ModelKind;
+  providerId?: string;
+  instanceId?: string;
+  status?: ModelStatus;
+}

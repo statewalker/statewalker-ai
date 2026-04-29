@@ -2,6 +2,7 @@ import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
 import { handleOpen } from "../api/intents.js";
+import { registerListModelsHandlers } from "./intents/list-models.handlers.js";
 import { registerLocalModelHandlers } from "./intents/local-models.handlers.js";
 import { registerProviderHandlers } from "./intents/providers.handlers.js";
 
@@ -29,6 +30,7 @@ export function registerIntentHandlers(workspace: Workspace): () => void {
 
   register(registerProviderHandlers(workspace, intents));
   register(registerLocalModelHandlers(workspace, intents));
+  register(registerListModelsHandlers(workspace, intents));
 
   return cleanup;
 }

@@ -148,6 +148,20 @@ export const [runActivationProgress, handleActivationProgress] = newIntent<
   void
 >("ai-provider:activation-progress");
 
+// ── List models (G3) ───────────────────────────────────────────────────────
+
+import type { ListModelsPayload, ModelDescriptor } from "./types.js";
+
+/**
+ * List every model known to the system, optionally filtered by
+ * runtime / role / providerId / instanceId / status. Source of truth
+ * for the model-list panel and pickers.
+ */
+export const [runListModels, handleListModels] = newIntent<
+  ListModelsPayload | undefined,
+  ModelDescriptor[]
+>("ai-provider:list-models");
+
 /** Pick a model (inline, from the chat input). Resolves with the selected catalog key. */
 export const [runPickModel, handlePickModel] = newIntent<void, { catalogKey: string }>(
   "ai-provider:pick-model",
