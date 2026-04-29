@@ -153,3 +153,39 @@ export interface ListModelsPayload {
   instanceId?: string;
   status?: ModelStatus;
 }
+
+// ── Per-role activation ────────────────────────────────────────────────────
+
+import type { LanguageModelV3 } from "@ai-sdk/provider";
+
+export interface ActivateModelPayload {
+  catalogKey: string;
+  role: ModelRole;
+}
+
+export interface ActivateModelResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface DeactivateModelPayload {
+  role: ModelRole;
+}
+
+export interface GetActiveModelPayload {
+  role: ModelRole;
+}
+
+export type GetActiveModelResult =
+  | {
+      catalogKey: string;
+      descriptor: ModelDescriptor;
+      model: LanguageModelV3;
+    }
+  | undefined;
+
+export interface PickModelPayload {
+  role?: ModelRole;
+}
+
+export type PickModelResult = { catalogKey: string } | undefined;
