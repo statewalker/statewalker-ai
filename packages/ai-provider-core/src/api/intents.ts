@@ -97,6 +97,57 @@ export const [runActiveModelChanged, handleActiveModelChanged] = newIntent<
   void
 >("ai-provider:active-model-changed");
 
+// ── Local-model lifecycle (G2) ─────────────────────────────────────────────
+
+import type { ActivationProgress } from "@statewalker/ai-provider";
+import type {
+  CancelDownloadPayload,
+  DeleteLocalModelPayload,
+  DownloadModelPayload,
+  DownloadModelResult,
+  StorageInfo,
+} from "./types.js";
+
+/**
+ * Trigger a download of model weights for a local model. Resolves with
+ * `{ ok: true }` only after the model is fully downloaded. Progress
+ * events fire as `ai-provider:activation-progress` broadcasts during
+ * the download.
+ */
+export const [runDownloadModel, handleDownloadModel] = newIntent<
+  DownloadModelPayload,
+  DownloadModelResult
+>("ai-provider:download-model");
+
+/** Cancel an in-progress download for the given catalog key. */
+export const [runCancelDownload, handleCancelDownload] = newIntent<CancelDownloadPayload, void>(
+  "ai-provider:cancel-download",
+);
+
+/** Delete downloaded weights for a local model. */
+export const [runDeleteLocalModel, handleDeleteLocalModel] = newIntent<
+  DeleteLocalModelPayload,
+  void
+>("ai-provider:delete-local-model");
+
+/**
+ * Enumerate per-engine storage info (total bytes, model count). Used by
+ * the configurator UI to display disk usage.
+ */
+export const [runListStorages, handleListStorages] = newIntent<undefined, StorageInfo[]>(
+  "ai-provider:list-storages",
+);
+
+/**
+ * Broadcast intent — fires on every activation/download progress event.
+ * Handlers MUST be observers (return false) so multiple subscribers can
+ * react.
+ */
+export const [runActivationProgress, handleActivationProgress] = newIntent<
+  ActivationProgress,
+  void
+>("ai-provider:activation-progress");
+
 /** Pick a model (inline, from the chat input). Resolves with the selected catalog key. */
 export const [runPickModel, handlePickModel] = newIntent<void, { catalogKey: string }>(
   "ai-provider:pick-model",

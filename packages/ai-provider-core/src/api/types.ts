@@ -124,3 +124,22 @@ export interface RemoveProviderPayload {
   providerId: string;
   instanceId?: string;
 }
+
+// ── Local-model lifecycle ──────────────────────────────────────────────────
+
+export interface DownloadModelPayload {
+  catalogKey: string;
+}
+
+export interface DownloadModelResult {
+  ok: boolean;
+  error?: string;
+}
+
+export interface CancelDownloadPayload {
+  catalogKey: string;
+}
+
+export interface DeleteLocalModelPayload {
+  catalogKey: string;
+}
