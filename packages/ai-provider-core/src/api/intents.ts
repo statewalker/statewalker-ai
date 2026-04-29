@@ -136,4 +136,53 @@ export const [runListModels, handleListModels] = newIntent<
   ModelDescriptor[]
 >("ai-provider:list-models");
 
-// ── Per-role activation (G5, G6) lands in §8.
+// ── Per-role activation (G5, G6) ───────────────────────────────────────────
+
+import type {
+  ActivateModelPayload,
+  ActivateModelResult,
+  DeactivateModelPayload,
+  GetActiveModelPayload,
+  GetActiveModelResult,
+  PickModelPayload,
+  PickModelResult,
+} from "./types.js";
+
+/**
+ * Activate a model for a specific role. Resolves with `{ ok, error? }`
+ * after the model is loaded and assigned to the corresponding
+ * `Active{Reasoning,Embedding}Model` adapter. Broadcasts
+ * `ai-provider:active-model-changed`.
+ */
+export const [runActivateModel, handleActivateModel] = newIntent<
+  ActivateModelPayload,
+  ActivateModelResult
+>("ai-provider:activate-model");
+
+/**
+ * Deactivate the currently-active model for a role. Clears the
+ * corresponding adapter and broadcasts `ai-provider:active-model-changed`.
+ */
+export const [runDeactivateModel, handleDeactivateModel] = newIntent<DeactivateModelPayload, void>(
+  "ai-provider:deactivate-model",
+);
+
+/**
+ * Read the currently-active model for a role. Returns `undefined` if
+ * no model is active. The `model` field is a live `LanguageModelV3`
+ * usable directly with the Vercel AI SDK.
+ */
+export const [runGetActiveModel, handleGetActiveModel] = newIntent<
+  GetActiveModelPayload,
+  GetActiveModelResult
+>("ai-provider:get-active-model");
+
+/**
+ * Open a model picker UI (e.g. inline from chat input). Resolves with
+ * the chosen catalog key, or `undefined` if the user dismissed the
+ * picker. Optional `role` scopes the choice to models eligible for
+ * that role.
+ */
+export const [runPickModel, handlePickModel] = newIntent<PickModelPayload, PickModelResult>(
+  "ai-provider:pick-model",
+);
