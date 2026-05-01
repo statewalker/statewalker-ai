@@ -18,14 +18,17 @@ import { getWorkspace } from "@statewalker/workspace-api";
  *
  * Returns the unsubscriber from `onLoad` so the host can dispose.
  */
-export default function initAiProviderCoreBrowser(
-  ctx: Record<string, unknown>,
-): () => void {
+export default function initAiProviderCoreBrowser(ctx: Record<string, unknown>): () => void {
   const ws = getWorkspace(ctx);
   ws.requireAdapter(ModelManager);
   return ws.onLoad(() => {
     const manager = ws.requireAdapter(ModelManager).impl;
     registerLocalProvider(manager);
     registerWebLLMProvider(manager);
+    // Reconcile catalog statuses with weights already on disk so previously
+    // downloaded models surface as "Ready" in the UI without needing a
+    // re-download. Runs after both engines are registered so each engine's
+    // verifier is available.
+    void manager.refreshLocalStatuses();
   });
 }

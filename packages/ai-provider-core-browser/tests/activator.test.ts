@@ -2,6 +2,7 @@ import { ModelManager } from "@statewalker/ai-provider-core";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace } from "@statewalker/workspace-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { default as initAiProviderCoreBrowser } from "../src/ai-provider-core-browser.js";
 
 const registerLocalProvider = vi.fn();
 const registerWebLLMProvider = vi.fn();
@@ -13,11 +14,7 @@ vi.mock("@statewalker/ai-provider-webllm", () => ({
   registerWebLLMProvider: (...args: unknown[]) => registerWebLLMProvider(...args),
 }));
 
-const { default: initAiProviderCoreBrowser } = await import(
-  "../src/ai-provider-core-browser.js"
-);
-
-const fakeImpl = { tag: "fake-manager-impl" };
+const fakeImpl = { tag: "fake-manager-impl", refreshLocalStatuses: vi.fn() };
 class MockModelManager extends ModelManager {
   readonly impl = fakeImpl as never;
 }
@@ -36,9 +33,7 @@ describe("initAiProviderCoreBrowser", () => {
   it("throws synchronously when ModelManager is not registered", () => {
     const ctx: Record<string, unknown> = {};
     getWorkspace(ctx);
-    expect(() => initAiProviderCoreBrowser(ctx)).toThrow(
-      /No adapter registered for ModelManager/,
-    );
+    expect(() => initAiProviderCoreBrowser(ctx)).toThrow(/No adapter registered for ModelManager/);
   });
 
   it("does not register engines before the workspace opens", () => {

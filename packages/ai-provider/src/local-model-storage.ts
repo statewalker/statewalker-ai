@@ -69,13 +69,21 @@ export class LocalModelStorage {
     return false;
   };
 
-  /** Check if model weights exist in storage. */
+  /**
+   * Check if model weights exist in storage.
+   *
+   * Lists files recursively because Transformers.js model directories
+   * place weights inside an `onnx/` subdirectory (e.g. `onnx/model.onnx`)
+   * — a non-recursive listing would only see `model.json` and miss the
+   * actual `.onnx` files. The default and engine-specific verifiers
+   * inspect entries by basename, so they work over flat or nested layouts.
+   */
   async hasWeights(modelId: string, verify?: WeightVerifier): Promise<boolean> {
     const dir = this.modelDir(modelId);
     const meta = await this.files.stats(`${dir}/${METADATA_FILE}`);
     if (!meta) return false;
     const verifier = verify ?? LocalModelStorage.defaultVerifier;
-    return verifier(this.files.list(dir));
+    return verifier(this.files.list(dir, { recursive: true }));
   }
 
   /**

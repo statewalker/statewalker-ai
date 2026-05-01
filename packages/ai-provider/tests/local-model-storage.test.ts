@@ -27,6 +27,18 @@ describe("LocalModelStorage", () => {
       await files.write(`${dir}/model.onnx`, [new Uint8Array([1, 2, 3])]);
       expect(await storage.hasWeights("test/model")).toBe(true);
     });
+
+    it("returns true when onnx weights live in an `onnx/` subdirectory", async () => {
+      // Transformers.js layout: weights are stored under `onnx/`, not at the
+      // model root. The default verifier must recurse to find them.
+      const files = new MemFilesApi();
+      const storage = new LocalModelStorage(files);
+      const dir = "/models/test/model";
+      await files.mkdir(`${dir}/onnx`);
+      await files.write(`${dir}/model.json`, [new TextEncoder().encode("{}")]);
+      await files.write(`${dir}/onnx/model.onnx`, [new Uint8Array([1, 2, 3])]);
+      expect(await storage.hasWeights("test/model")).toBe(true);
+    });
   });
 
   describe("delete", () => {
