@@ -10,9 +10,14 @@ export class ProvidersTabsView extends TabsView {
     super({
       key: options.key ?? "ai-config:providers-tabs",
       tabs: [
-        { key: "remote", label: "Remote", icon: "cloud", content: options.remote },
-        { key: "webllm", label: "WebLLM", icon: "zap", content: options.webllm },
-        { key: "transformers", label: "Transformers", icon: "cpu", content: options.transformers },
+        { key: "remote", label: "Remote Providers", icon: "cloud", content: options.remote },
+        { key: "webllm", label: "WebLLM Models", icon: "zap", content: options.webllm },
+        {
+          key: "transformers",
+          label: "Transformers.js",
+          icon: "cpu",
+          content: options.transformers,
+        },
       ],
       selectedKey: "remote",
     });

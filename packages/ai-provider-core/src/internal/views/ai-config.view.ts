@@ -1,6 +1,5 @@
 import { FlexView, HeadingView, IconView, TextView } from "@statewalker/workbench-views";
 import { ActiveModelsView } from "./active-models.view.js";
-import { EmptyConfigView } from "./empty-config.view.js";
 import { ProvidersTabsView } from "./providers-tabs.view.js";
 import { RemoteProvidersView } from "./remote-providers.view.js";
 import { TransformersTabView } from "./transformers-tab.view.js";
@@ -16,12 +15,12 @@ export class AiConfigHeaderView extends FlexView {
     const icon = new IconView({ key: `${key}:icon`, name: "settings", size: "L" });
     const heading = new HeadingView({
       key: `${key}:heading`,
-      text: "AI providers",
+      text: "LLM Configuration",
       level: 2,
     });
     const subtitle = new TextView({
       key: `${key}:subtitle`,
-      text: "Configure remote and local model providers",
+      text: "Configure AI models for reasoning and embeddings",
     });
     const titleStack = new FlexView({
       key: `${key}:title`,
@@ -41,9 +40,15 @@ export class AiConfigHeaderView extends FlexView {
   }
 }
 
+/**
+ * Root view of the AI configurator. Always shows
+ * `[header, activeModels, providersTabs]`. The legacy "no providers
+ * configured" empty state is gone — predefined remote-provider tabs
+ * (OpenAI / Anthropic / Google) are always present, so the user can
+ * pick any of them and configure an API key without prior setup.
+ */
 export class AiConfigView extends FlexView {
   readonly header: AiConfigHeaderView;
-  readonly empty: EmptyConfigView;
   readonly activeModels: ActiveModelsView;
   readonly remoteProviders: RemoteProvidersView;
   readonly webllm: WebllmTabView;
@@ -53,7 +58,6 @@ export class AiConfigView extends FlexView {
   constructor(options?: { key?: string }) {
     const key = options?.key ?? "ai-config:root";
     const header = new AiConfigHeaderView({ key: `${key}:header` });
-    const empty = new EmptyConfigView({ key: `${key}:empty` });
     const activeModels = new ActiveModelsView({ key: `${key}:active-models` });
     const remoteProviders = new RemoteProvidersView({ key: `${key}:remote` });
     const webllm = new WebllmTabView({ key: `${key}:webllm` });
@@ -69,22 +73,13 @@ export class AiConfigView extends FlexView {
       direction: "column",
       gap: "1.5rem",
       padding: "1em",
-      children: [empty],
+      children: [header, activeModels, providersTabs],
     });
     this.header = header;
-    this.empty = empty;
     this.activeModels = activeModels;
     this.remoteProviders = remoteProviders;
     this.webllm = webllm;
     this.transformers = transformers;
     this.providersTabs = providersTabs;
-  }
-
-  showEmpty(): void {
-    this.setChildren([this.empty]);
-  }
-
-  showConfigured(): void {
-    this.setChildren([this.header, this.activeModels, this.providersTabs]);
   }
 }

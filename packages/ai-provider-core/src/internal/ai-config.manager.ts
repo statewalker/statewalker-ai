@@ -70,6 +70,18 @@ export const AI_CONFIG_PANEL_KEY = "ai-config:main";
 
 const CLEAR_KEY = "";
 
+/** Predefined remote provider sub-tabs that always appear in the Remote
+ *  tab, regardless of whether the user has configured them. */
+const STANDARD_REMOTE_PROVIDERS: ReadonlyArray<{
+  providerId: string;
+  providerName: ProviderName;
+  label: string;
+}> = [
+  { providerId: "openai", providerName: "openai", label: "OpenAI" },
+  { providerId: "anthropic", providerName: "anthropic", label: "Anthropic" },
+  { providerId: "google", providerName: "google", label: "Google" },
+];
+
 interface RemoteProviderSnapshot {
   descriptor: ProviderDescriptor;
   settings: Partial<ConfigureProviderSettings> & { providerName: ProviderName; label: string };
@@ -110,7 +122,6 @@ export class AiConfigManager {
     [this.#register, this.#cleanup] = newRegistry();
 
     this.view = new AiConfigView();
-    this.view.showEmpty();
 
     this.#intents = this.#workspace.requireAdapter(Intents);
 
@@ -277,16 +288,6 @@ export class AiConfigManager {
     );
   }
 
-  async #refreshConfigurationGate(): Promise<void> {
-    const store = this.#workspace.requireAdapter(ProviderSettingsStore);
-    const keys = (await store.list()).filter((k) => !k.startsWith("local#"));
-    if (keys.length > 0) {
-      this.view.showConfigured();
-    } else {
-      this.view.showEmpty();
-    }
-  }
-
   // ── Remote sub-tabs ──────────────────────────────────────────────
 
   #wireRemoteSubTabs(): void {
@@ -308,50 +309,72 @@ export class AiConfigManager {
     const descriptors = await runListProviders(this.#intents, { runtime: "remote" }).promise;
     const store = this.#workspace.requireAdapter(ProviderSettingsStore);
 
-    const snapshots: RemoteProviderSnapshot[] = [];
-    for (const d of descriptors) {
-      const key = d.instanceId ? `${d.providerId}#${d.instanceId}` : d.providerId;
-      const raw = (await store.get(key)) as
-        | (Partial<ConfigureProviderSettings> & {
-            providerId?: string;
-            instanceId?: string;
-            providerName?: ProviderName;
-            label?: string;
-          })
-        | undefined;
+    type StoredRaw = Partial<ConfigureProviderSettings> & {
+      providerId?: string;
+      instanceId?: string;
+      providerName?: ProviderName;
+      label?: string;
+    };
+
+    const buildSnapshot = async (
+      descriptor: ProviderDescriptor,
+    ): Promise<RemoteProviderSnapshot> => {
+      const key = descriptor.instanceId
+        ? `${descriptor.providerId}#${descriptor.instanceId}`
+        : descriptor.providerId;
+      const raw = (await store.get(key)) as StoredRaw | undefined;
       const settings = {
-        providerName: raw?.providerName ?? d.providerName,
-        label: raw?.label ?? d.label,
+        providerName: raw?.providerName ?? descriptor.providerName,
+        label: raw?.label ?? descriptor.label,
         apiKey: raw?.apiKey,
         authToken: raw?.authToken,
         baseURL: raw?.baseURL,
         headers: raw?.headers,
         selectedModelIds: raw?.selectedModelIds,
       };
-      snapshots.push({
-        descriptor: d,
+      return {
+        descriptor,
         settings,
         selectedModelIds: new Set(raw?.selectedModelIds ?? []),
-      });
+      };
+    };
+
+    // Always-present standard provider tabs (OpenAI / Anthropic / Google).
+    // These appear even when no settings are configured, so the user can
+    // pick any of them and enter an API key without prior setup.
+    const standardSnapshots: RemoteProviderSnapshot[] = [];
+    for (const std of STANDARD_REMOTE_PROVIDERS) {
+      const existing = descriptors.find((d) => d.providerId === std.providerId && !d.instanceId);
+      const placeholderDescriptor: ProviderDescriptor = existing ?? {
+        providerId: std.providerId,
+        providerName: std.providerName,
+        label: std.label,
+        runtime: "remote",
+        hasCredentials: false,
+      };
+      standardSnapshots.push(await buildSnapshot(placeholderDescriptor));
     }
 
+    // Custom (openai-compatible#instance) tabs added via the Add Provider dialog.
+    const customSnapshots: RemoteProviderSnapshot[] = [];
+    for (const d of descriptors) {
+      if (d.providerId !== "openai-compatible") continue;
+      customSnapshots.push(await buildSnapshot(d));
+    }
+
+    const snapshots = [...standardSnapshots, ...customSnapshots];
     this.#providers = snapshots;
-    const view = this.view.remoteProviders;
 
-    if (snapshots.length === 0) {
-      view.showEmpty();
-      this.#activeRemoteKey = undefined;
-      this.#disposeRemoteFormBindings();
-      this.#remoteForm = undefined;
-      return;
-    }
+    const view = this.view.remoteProviders;
+    const form = this.#getOrCreateForm();
+    view.setForm(form);
 
     view.subTabs.tabs = snapshots.map((s) => {
       const sub = this.#subTabKey(s.descriptor);
       return {
         key: sub,
         label: s.settings.label,
-        content: this.#getOrCreateForm(s),
+        content: form,
       };
     });
 
@@ -360,11 +383,7 @@ export class AiConfigManager {
       selected = view.subTabs.tabs[0]?.key ?? "";
       view.subTabs.selectedKey = selected;
     }
-    const formSnapshot = this.#snapshotByKey(selected) ?? snapshots[0];
-    if (formSnapshot) {
-      view.showTabs(this.#getOrCreateForm(formSnapshot));
-    }
-    this.#bindRemoteForm(selected);
+    if (selected) this.#bindRemoteForm(selected);
   }
 
   #subTabKey(d: ProviderDescriptor): string {
@@ -375,12 +394,12 @@ export class AiConfigManager {
     return this.#providers.find((s) => this.#subTabKey(s.descriptor) === key);
   }
 
-  #getOrCreateForm(snapshot: RemoteProviderSnapshot): RemoteProviderFormView {
+  #getOrCreateForm(): RemoteProviderFormView {
     if (!this.#remoteForm) {
       this.#remoteForm = new RemoteProviderFormView({
         key: "ai-config:remote-form",
-        providerName: snapshot.settings.label,
-        isCompatible: snapshot.descriptor.providerName === "openai-compatible",
+        providerName: "",
+        isCompatible: false,
       });
     }
     return this.#remoteForm;
@@ -395,12 +414,13 @@ export class AiConfigManager {
     const snapshot = this.#snapshotByKey(subTabKey);
     if (!snapshot) return;
     this.#activeRemoteKey = subTabKey;
-    const form = this.#getOrCreateForm(snapshot);
+    const form = this.#getOrCreateForm();
 
     this.#disposeRemoteFormBindings();
 
     // Re-populate fields from the snapshot.
-    form.heading.text = snapshot.settings.label;
+    form.setProviderName(snapshot.settings.label);
+    form.setIsCompatible(snapshot.descriptor.providerName === "openai-compatible");
     form.apiKeyField.value = snapshot.settings.apiKey ?? "";
     form.endpointField.value = snapshot.settings.baseURL ?? "";
     form.errorAlert.content = "";
@@ -560,9 +580,6 @@ export class AiConfigManager {
   // ── Add Provider triggers (B5 lands the dialog itself) ───────────
 
   #wireAddProviderTriggers(): void {
-    this.#register(
-      this.view.empty.openAddProviderAction.onSubmit(() => this.#openAddProviderDialog()),
-    );
     this.#register(
       this.view.remoteProviders.addProviderAction.onSubmit(() => this.#openAddProviderDialog()),
     );
@@ -1030,7 +1047,6 @@ export class AiConfigManager {
 
   async #refreshAll(): Promise<void> {
     await Promise.all([
-      this.#refreshConfigurationGate(),
       this.#refreshRemoteProviders(),
       this.#syncActivePicker("reasoning"),
       this.#syncActivePicker("embedding"),
