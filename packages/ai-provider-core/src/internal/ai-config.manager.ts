@@ -17,12 +17,14 @@ function onChange(
 import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import {
+  ActionView,
   Dialogs,
   DialogView,
   DockPanelView,
   FlexView,
   Keyboard,
   Layout,
+  MainMenu,
   type PickerItem,
 } from "@statewalker/workbench-views";
 import type { Workspace } from "@statewalker/workspace-api";
@@ -42,6 +44,7 @@ import {
   runDownloadModel,
   runListModels,
   runListProviders,
+  runOpen,
 } from "../public/intents.js";
 import type {
   ConfigureProviderSettings,
@@ -131,6 +134,7 @@ export class AiConfigManager {
     this.#wireActivationProgress();
     this.#wireOpenFocus();
     this.#wireKeyboardShortcut();
+    this.#wireSettingsMenu();
 
     // Panel lifecycle:
     //   - publish on workspace.onLoad (the AI configurator depends on the
@@ -909,6 +913,53 @@ export class AiConfigManager {
         return false;
       }),
     );
+  }
+
+  // ── Settings menu integration ────────────────────────────────────
+
+  #wireSettingsMenu(): void {
+    let mainMenu: MainMenu | undefined;
+    try {
+      mainMenu = this.#workspace.requireAdapter(MainMenu);
+    } catch {
+      return; // MainMenu adapter unavailable in this context
+    }
+    if (!mainMenu) return;
+
+    // Find or create the top-level "Settings" menu container.
+    const SETTINGS_KEY = "settings";
+    let settings = mainMenu.getAll().find((m) => m.actionKey === SETTINGS_KEY);
+    let createdSettingsContainer = false;
+    if (!settings) {
+      settings = new ActionView({ key: SETTINGS_KEY, label: "Settings", icon: "settings" });
+      mainMenu.add(settings);
+      createdSettingsContainer = true;
+    }
+    const settingsContainer = settings;
+
+    const item = new ActionView({
+      key: "ai-providers.menu",
+      label: "AI Providers",
+      icon: "sparkles",
+    });
+    this.#register(
+      item.onSubmit(() => {
+        void runOpen(this.#intents, undefined).promise.catch((err) => {
+          console.error("[ai-config.manager] runOpen failed:", err);
+        });
+      }),
+    );
+
+    settingsContainer.children = [...settingsContainer.children, item];
+    settingsContainer.notify();
+    this.#register(() => {
+      settingsContainer.children = settingsContainer.children.filter((c) => c !== item);
+      settingsContainer.notify();
+      // Remove the Settings container if we created it AND it's now empty.
+      if (createdSettingsContainer && settingsContainer.children.length === 0) {
+        mainMenu.remove(settingsContainer);
+      }
+    });
   }
 
   // ── Keyboard shortcut: Ctrl+M focuses the reasoning picker ───────
