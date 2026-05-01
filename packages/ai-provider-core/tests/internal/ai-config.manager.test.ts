@@ -116,6 +116,42 @@ describe("AiConfigManager", () => {
     });
   });
 
+  describe("Settings menu", () => {
+    it("registers a 'Settings' top-level menu with an 'AI Providers' item", async () => {
+      const ctx: Record<string, unknown> = {};
+      const ws = getWorkspace(ctx);
+      ws.setFileSystem(new MemFilesApi(), "test");
+      initAiProviderCore(ctx);
+      const { MainMenu } = await import("@statewalker/workbench-views");
+      const mainMenu = ws.requireAdapter(MainMenu);
+      const settings = mainMenu.getAll().find((m) => m.actionKey === "settings");
+      expect(settings).toBeDefined();
+      expect(settings?.label).toBe("Settings");
+      const aiProviders = settings?.children.find((c) => c.actionKey === "ai-providers.menu");
+      expect(aiProviders).toBeDefined();
+      expect(aiProviders?.label).toBe("AI Providers");
+    });
+
+    it("removes the 'AI Providers' item when the activator's cleanup runs", async () => {
+      const ctx: Record<string, unknown> = {};
+      const ws = getWorkspace(ctx);
+      ws.setFileSystem(new MemFilesApi(), "test");
+      const cleanup = initAiProviderCore(ctx);
+      const { MainMenu } = await import("@statewalker/workbench-views");
+      const mainMenu = ws.requireAdapter(MainMenu);
+      expect(
+        mainMenu
+          .getAll()
+          .find((m) => m.actionKey === "settings")
+          ?.children.find((c) => c.actionKey === "ai-providers.menu"),
+      ).toBeDefined();
+      await cleanup();
+      // The Settings container is removed too because we created it and
+      // it's now empty.
+      expect(mainMenu.getAll().find((m) => m.actionKey === "settings")).toBeUndefined();
+    });
+  });
+
   describe("manager close()", () => {
     it("does not publish the panel until the workspace is opened", async () => {
       const ctx: Record<string, unknown> = {};
