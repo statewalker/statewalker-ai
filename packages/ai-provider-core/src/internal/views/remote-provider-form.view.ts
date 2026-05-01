@@ -57,7 +57,9 @@ export class RemoteProviderFormView extends CardView {
   readonly modelsGrid: GridView;
   readonly disconnectedEmpty: EmptyView;
   readonly modelsSection: FlexView;
-  readonly isCompatible: boolean;
+  readonly divider: DividerView;
+  readonly apiKeyRow: FlexView;
+  isCompatible: boolean;
 
   #connectionStatus: ConnectionStatus = "untested";
 
@@ -162,14 +164,10 @@ export class RemoteProviderFormView extends CardView {
       children: [searchField, capabilityFilter, disconnectedEmpty],
     });
 
-    const children = options.isCompatible
-      ? [apiKeyRow, endpointField, errorAlert, divider, modelsSection]
-      : [apiKeyRow, errorAlert, divider, modelsSection];
-
     super({
       key: options.key,
       header: headerRow,
-      children,
+      children: [],
     });
 
     this.heading = heading;
@@ -188,7 +186,10 @@ export class RemoteProviderFormView extends CardView {
     this.modelsGrid = modelsGrid;
     this.disconnectedEmpty = disconnectedEmpty;
     this.modelsSection = modelsSection;
+    this.divider = divider;
+    this.apiKeyRow = apiKeyRow;
     this.isCompatible = Boolean(options.isCompatible);
+    this.#refreshChildren();
   }
 
   get connectionStatus(): ConnectionStatus {
@@ -216,5 +217,22 @@ export class RemoteProviderFormView extends CardView {
 
   setSelectedCount(count: number): void {
     this.selectedCountBadge.label = `${count} selected`;
+  }
+
+  setIsCompatible(value: boolean): void {
+    if (this.isCompatible === value) return;
+    this.isCompatible = value;
+    this.#refreshChildren();
+  }
+
+  setProviderName(name: string): void {
+    this.heading.text = name;
+  }
+
+  #refreshChildren(): void {
+    const children = this.isCompatible
+      ? [this.apiKeyRow, this.endpointField, this.errorAlert, this.divider, this.modelsSection]
+      : [this.apiKeyRow, this.errorAlert, this.divider, this.modelsSection];
+    this.setChildren(children);
   }
 }

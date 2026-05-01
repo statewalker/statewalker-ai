@@ -95,24 +95,40 @@ describe("AiConfigManager", () => {
     });
   });
 
-  describe("configuration gate", () => {
-    it("starts on the empty state when no providers are configured", async () => {
+  describe("AiConfigView always shows the full panel (header + active models + providers tabs)", () => {
+    it("the AI panel renders header + active models + providers tabs from construction", async () => {
       const { view } = await setup();
       await new Promise((r) => setTimeout(r, 20));
-      expect(view.children).toContain(view.empty);
-    });
-
-    it("flips to the configured panel after runConfigureProvider succeeds", async () => {
-      const { intents, view } = await setup();
-      await new Promise((r) => setTimeout(r, 10));
-      await runConfigureProvider(intents, {
-        providerId: "anthropic",
-        settings: { providerName: "anthropic", label: "Anthropic", apiKey: "sk-test" },
-      }).promise;
-      await new Promise((r) => setTimeout(r, 20));
+      expect(view.children).toContain(view.header);
       expect(view.children).toContain(view.activeModels);
       expect(view.children).toContain(view.providersTabs);
-      expect(view.children).not.toContain(view.empty);
+    });
+
+    it("predefined remote provider sub-tabs (OpenAI / Anthropic / Google) are present without configuration", async () => {
+      const { view } = await setup();
+      await new Promise((r) => setTimeout(r, 30));
+      const tabKeys = view.remoteProviders.subTabs.tabs.map((t: { key: string }) => t.key);
+      expect(tabKeys).toContain("openai");
+      expect(tabKeys).toContain("anthropic");
+      expect(tabKeys).toContain("google");
+    });
+
+    it("a custom (openai-compatible) provider added via runConfigureProvider appears as an extra sub-tab", async () => {
+      const { intents, view } = await setup();
+      await new Promise((r) => setTimeout(r, 20));
+      await runConfigureProvider(intents, {
+        providerId: "openai-compatible",
+        instanceId: "Foo",
+        settings: {
+          providerName: "openai-compatible",
+          label: "Foo",
+          apiKey: "sk-test",
+          baseURL: "https://example.com/v1",
+        },
+      }).promise;
+      await new Promise((r) => setTimeout(r, 30));
+      const tabKeys = view.remoteProviders.subTabs.tabs.map((t: { key: string }) => t.key);
+      expect(tabKeys).toContain("openai-compatible#Foo");
     });
   });
 
@@ -124,10 +140,10 @@ describe("AiConfigManager", () => {
       initAiProviderCore(ctx);
       await ws.open();
 
-      // Trigger the Add Provider flow from the empty state.
+      // Trigger the Add Provider flow from the Remote tab header.
       const layout = ws.requireAdapter(Layout);
       const view = layout.getPanel("ai-config:main")?.content as AiConfigView;
-      view.empty.openAddProviderAction.submit();
+      view.remoteProviders.addProviderAction.submit();
       await new Promise((r) => setTimeout(r, 10));
 
       // Find the dialog in the Dialogs adapter.
@@ -176,7 +192,7 @@ describe("AiConfigManager", () => {
 
       const layout = ws.requireAdapter(Layout);
       const view = layout.getPanel("ai-config:main")?.content as AiConfigView;
-      view.empty.openAddProviderAction.submit();
+      view.remoteProviders.addProviderAction.submit();
       await new Promise((r) => setTimeout(r, 10));
 
       const { Dialogs } = await import("@statewalker/workbench-views");
