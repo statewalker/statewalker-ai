@@ -1,10 +1,26 @@
-import { onChange } from "@statewalker/shared-baseclass";
+import type { LocalModelConfig, ModelManager as ModelManagerImpl } from "@statewalker/ai-provider";
+import { onChange as onChangeRaw } from "@statewalker/shared-baseclass";
+
+/**
+ * `onChange` wrapper with intuitive arg order: `(onUpdate, getValue, callback)`.
+ * The shared-baseclass version uses `(onUpdate, callback, getValue)` which
+ * is easy to confuse, especially because both extras are zero-arg functions.
+ */
+function onChange(
+  onUpdate: (cb: () => void) => () => void,
+  getValue: () => unknown,
+  callback: () => void,
+): () => void {
+  return onChangeRaw(onUpdate, callback, getValue);
+}
+
 import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import {
   Dialogs,
   DialogView,
   DockPanelView,
+  FlexView,
   Layout,
   type PickerItem,
 } from "@statewalker/workbench-views";
@@ -12,13 +28,16 @@ import type { Workspace } from "@statewalker/workspace-api";
 import {
   ActiveEmbeddingModel,
   ActiveReasoningModel,
+  ModelManager,
   ProviderSettingsStore,
 } from "../public/adapters.js";
 import {
-  handleProvidersChanged,
   runActivateModel,
+  runCancelDownload,
   runConfigureProvider,
   runDeactivateModel,
+  runDeleteLocalModel,
+  runDownloadModel,
   runListModels,
   runListProviders,
 } from "../public/intents.js";
@@ -35,6 +54,12 @@ import { engineBadgeVariant, engineRuntimeShortName } from "./views/providers.fo
 import type { ConnectionStatus } from "./views/providers.types.js";
 import { RemoteModelCardView } from "./views/remote-model-card.view.js";
 import { RemoteProviderFormView } from "./views/remote-provider-form.view.js";
+import { TransformersModelCardView } from "./views/transformers-model-card.view.js";
+import {
+  type VariantStatus,
+  WebllmModelCardView,
+  WebllmVariantRow,
+} from "./views/webllm-model-card.view.js";
 
 export const AI_CONFIG_PANEL_KEY = "ai-config:main";
 
@@ -98,6 +123,9 @@ export class AiConfigManager {
     this.#wireConfigurationGate();
     this.#wireRemoteSubTabs();
     this.#wireAddProviderTriggers();
+    this.#wireWebllmTab();
+    this.#wireTransformersTab();
+    this.#wireActivationProgress();
 
     if (this.#workspace.isOpened) {
       void this.#initialLoad();
@@ -193,16 +221,16 @@ export class AiConfigManager {
 
   #wireConfigurationGate(): void {
     const ws = this.#workspace;
+    // Single source of truth: ProviderSettingsStore.onUpdate fires after
+    // every set/delete. Subscribing to handleProvidersChanged additionally
+    // would double-refresh and (because runProvidersChanged is dispatched
+    // synchronously inside the configure-provider handler before
+    // intent.resolve) can re-enter the dispatch loop.
     this.#register(
       ws.requireAdapter(ProviderSettingsStore).onUpdate(() => {
-        void this.#refreshAll();
-      }),
-    );
-    this.#register(
-      handleProvidersChanged(this.#intents, (intent) => {
-        void this.#refreshAll();
-        intent.resolve();
-        return false;
+        void this.#refreshAll().catch((err) => {
+          console.error("[ai-config.manager] refreshAll failed:", err);
+        });
       }),
     );
   }
@@ -539,6 +567,303 @@ export class AiConfigManager {
     removeDialog = dialogs.add(dialog);
   }
 
+  // ── WebLLM tab ───────────────────────────────────────────────────
+
+  /** Track WebLLM family chip's previously-selected key so we can implement
+   *  "click again to clear". */
+  #webllmFamilyPrev: string | undefined;
+
+  #wireWebllmTab(): void {
+    const tab = this.view.webllm;
+
+    this.#register(
+      onChange(
+        tab.enabledSwitch.onUpdate,
+        () => tab.enabledSwitch.isSelected,
+        () => void this.#onLocalProviderEnabledChange("webllm", tab.enabledSwitch.isSelected),
+      ),
+    );
+
+    this.#register(
+      onChange(
+        tab.searchField.onUpdate,
+        () => tab.searchField.value,
+        () => void this.#syncWebllmAccordion(),
+      ),
+    );
+    this.#register(
+      onChange(
+        tab.familyFilter.onUpdate,
+        () => [...tab.familyFilter.selectedKeys].join(","),
+        () => {
+          // "click active chip again to clear" behaviour.
+          const next = [...tab.familyFilter.selectedKeys][0];
+          if (next && next === this.#webllmFamilyPrev) {
+            tab.familyFilter.setSelected([]);
+            this.#webllmFamilyPrev = undefined;
+          } else {
+            this.#webllmFamilyPrev = next;
+          }
+          void this.#syncWebllmAccordion();
+        },
+      ),
+    );
+
+    // Live updates from ModelManager state (downloads progress / status).
+    if (this.#workspace.isOpened) {
+      this.#subscribeModelManager();
+    } else {
+      this.#register(this.#workspace.onLoad(() => this.#subscribeModelManager()));
+    }
+  }
+
+  #subscribeModelManager(): void {
+    try {
+      const manager = this.#workspace.requireAdapter(ModelManager).impl;
+      // Some test fakes don't expose `onUpdate`; guard for that.
+      if (typeof manager.store.onUpdate !== "function") return;
+      this.#register(
+        manager.store.onUpdate(() => {
+          void this.#syncWebllmAccordion();
+          void this.#syncTransformersGrid();
+        }),
+      );
+    } catch {
+      // ModelManager may not be ready yet; the onLoad subscription will retry.
+    }
+  }
+
+  async #onLocalProviderEnabledChange(engineId: "webllm" | "tjs", enabled: boolean): Promise<void> {
+    await runConfigureProvider(this.#intents, {
+      providerId: engineId,
+      settings: {
+        providerName: engineId as ProviderName,
+        label: engineId,
+        enabled,
+      },
+    }).promise.catch((err) => {
+      console.error(`[ai-config.manager] toggle ${engineId} enabled failed:`, err);
+    });
+  }
+
+  async #syncWebllmAccordion(): Promise<void> {
+    const tab = this.view.webllm;
+    let manager: ModelManagerImpl | undefined;
+    try {
+      manager = this.#workspace.requireAdapter(ModelManager).impl;
+    } catch {
+      return; // workspace not yet loaded
+    }
+    if (!manager) return;
+    const catalog = manager.store.catalog;
+
+    const search = tab.searchField.value.trim().toLowerCase();
+    const familyKeys = [...tab.familyFilter.selectedKeys];
+    const familyFilter = familyKeys[0];
+
+    // Group webllm catalog entries by family.
+    const families = new Map<string, { catalogKey: string; config: LocalModelConfig }[]>();
+    for (const [catalogKey, config] of Object.entries(catalog)) {
+      if (config.runtime !== "local" || config.engine !== "webllm") continue;
+      const family = config.family;
+      const list = families.get(family) ?? [];
+      list.push({ catalogKey, config });
+      families.set(family, list);
+    }
+
+    // Family filter chips.
+    const allFamilies = [...families.keys()].sort();
+    tab.familyFilter.items = allFamilies.map((f) => ({ key: f, label: f }));
+
+    let visible = [...families.entries()];
+    if (familyFilter) {
+      visible = visible.filter(([f]) => f === familyFilter);
+    }
+    if (search) {
+      visible = visible.filter(([f, variants]) => {
+        if (f.toLowerCase().includes(search)) return true;
+        return variants.some((v) => v.config.label.toLowerCase().includes(search));
+      });
+    }
+
+    if (visible.length === 0) {
+      tab.showEmpty();
+      return;
+    }
+
+    const items = visible.map(([family, variants]) => {
+      const downloadedCount = variants.filter((v) => {
+        const state = manager?.store.getState(v.catalogKey);
+        return state?.status === "downloaded" || state?.status === "ready";
+      }).length;
+      const stateBadgeLabel =
+        downloadedCount > 0
+          ? `${downloadedCount}/${variants.length} ready`
+          : `${variants.length} variants`;
+
+      const card = new WebllmModelCardView({
+        key: `webllm:${family}`,
+        family,
+        familyIcon: "zap",
+        name: family,
+        variantCount: variants.length,
+        sizeBadgeLabel: variants[0] ? variants[0].config.size : undefined,
+      });
+      card.setStateBadge(
+        stateBadgeLabel,
+        downloadedCount === variants.length ? "positive" : "neutral",
+      );
+
+      const variantRows = variants.map((v) => this.#makeWebllmVariantRow(v.catalogKey, v.config));
+
+      return {
+        key: family,
+        title: card,
+        content: this.#wrapColumn(`webllm:${family}:body`, variantRows),
+      };
+    });
+
+    tab.accordion.items = items;
+    tab.showAccordion();
+  }
+
+  #makeWebllmVariantRow(catalogKey: string, config: { dtype: string }): WebllmVariantRow {
+    let manager: ModelManagerImpl | undefined;
+    try {
+      manager = this.#workspace.requireAdapter(ModelManager).impl;
+    } catch {
+      // fall through; row is built without live state
+    }
+    const state = manager?.store.getState(catalogKey);
+    const progress = manager?.store.getDownloadProgress?.(catalogKey);
+    const status = this.#variantStatusFor(state?.status, Boolean(progress));
+    const row = new WebllmVariantRow({
+      catalogKey,
+      quantization: config.dtype,
+      status,
+      progress: typeof progress?.progress === "number" ? Math.round(progress.progress * 100) : 0,
+    });
+    row.downloadAction.onSubmit(() => {
+      void runDownloadModel(this.#intents, { catalogKey }).promise.catch((err) => {
+        console.error(`[ai-config.manager] download ${catalogKey} failed:`, err);
+      });
+    });
+    row.cancelAction.onSubmit(() => {
+      void runCancelDownload(this.#intents, { catalogKey }).promise.catch((err) => {
+        console.error(`[ai-config.manager] cancel ${catalogKey} failed:`, err);
+      });
+    });
+    row.removeAction.onSubmit(() => {
+      void runDeleteLocalModel(this.#intents, { catalogKey }).promise.catch((err) => {
+        console.error(`[ai-config.manager] delete ${catalogKey} failed:`, err);
+      });
+    });
+    return row;
+  }
+
+  #variantStatusFor(storeStatus: string | undefined, hasProgress: boolean): VariantStatus {
+    if (hasProgress) return "downloading";
+    if (storeStatus === "downloaded" || storeStatus === "ready") return "downloaded";
+    return "not-downloaded";
+  }
+
+  #wrapColumn(key: string, children: WebllmVariantRow[]): FlexView {
+    return new FlexView({ key, direction: "column", gap: "0.25rem", children });
+  }
+
+  // ── Transformers tab ─────────────────────────────────────────────
+
+  #wireTransformersTab(): void {
+    const tab = this.view.transformers;
+    this.#register(
+      onChange(
+        tab.enabledSwitch.onUpdate,
+        () => tab.enabledSwitch.isSelected,
+        () => void this.#onLocalProviderEnabledChange("tjs", tab.enabledSwitch.isSelected),
+      ),
+    );
+    this.#register(
+      onChange(
+        tab.searchField.onUpdate,
+        () => tab.searchField.value,
+        () => void this.#syncTransformersGrid(),
+      ),
+    );
+  }
+
+  async #syncTransformersGrid(): Promise<void> {
+    const tab = this.view.transformers;
+    let manager: ModelManagerImpl | undefined;
+    try {
+      manager = this.#workspace.requireAdapter(ModelManager).impl;
+    } catch {
+      return;
+    }
+    if (!manager) return;
+    const catalog = manager.store.catalog;
+    const search = tab.searchField.value.trim().toLowerCase();
+
+    const entries: Array<{ catalogKey: string; config: LocalModelConfig }> = [];
+    for (const [catalogKey, config] of Object.entries(catalog)) {
+      if (config.runtime !== "local" || config.engine !== "tjs") continue;
+      if (search) {
+        const hay = `${config.label}\n${config.modelId}\n${config.family}`.toLowerCase();
+        if (!hay.includes(search)) continue;
+      }
+      entries.push({ catalogKey, config });
+    }
+
+    if (entries.length === 0) {
+      tab.showEmpty();
+      return;
+    }
+
+    const cards = entries.map(({ catalogKey, config }) => {
+      const state = manager?.store.getState(catalogKey);
+      const progress = manager?.store.getDownloadProgress?.(catalogKey);
+      const status = this.#variantStatusFor(state?.status, Boolean(progress));
+      const card = new TransformersModelCardView({
+        key: `tjs:${catalogKey}`,
+        catalogKey,
+        name: config.label,
+        hfId: config.modelId,
+        status,
+        progress: typeof progress?.progress === "number" ? Math.round(progress.progress * 100) : 0,
+      });
+      card.downloadAction.onSubmit(() => {
+        void runDownloadModel(this.#intents, { catalogKey }).promise.catch((err) => {
+          console.error(`[ai-config.manager] download ${catalogKey} failed:`, err);
+        });
+      });
+      card.cancelAction.onSubmit(() => {
+        void runCancelDownload(this.#intents, { catalogKey }).promise.catch((err) => {
+          console.error(`[ai-config.manager] cancel ${catalogKey} failed:`, err);
+        });
+      });
+      card.removeAction.onSubmit(() => {
+        void runDeleteLocalModel(this.#intents, { catalogKey }).promise.catch((err) => {
+          console.error(`[ai-config.manager] delete ${catalogKey} failed:`, err);
+        });
+      });
+      return card;
+    });
+
+    tab.grid.setChildren(cards);
+    tab.showGrid();
+  }
+
+  // ── Activation progress (live download progress) ─────────────────
+  //
+  // Live download progress is reflected via subscribing to
+  // `ModelManager.impl.store.onUpdate` in `#subscribeModelManager`.
+  // We don't subscribe to the `runActivationProgress` broadcast
+  // additionally — it observes the same state via a different surface
+  // and can starve the intent loop on rapid progress updates.
+
+  #wireActivationProgress(): void {
+    // intentionally empty
+  }
+
   // ── Refresh orchestration ────────────────────────────────────────
 
   async #refreshAll(): Promise<void> {
@@ -547,6 +872,8 @@ export class AiConfigManager {
       this.#refreshRemoteProviders(),
       this.#syncActivePicker("reasoning"),
       this.#syncActivePicker("embedding"),
+      this.#syncWebllmAccordion(),
+      this.#syncTransformersGrid(),
     ]);
   }
 
