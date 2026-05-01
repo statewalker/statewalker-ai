@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import initAiProviderCore from "../../src/index.js";
 import type { AiConfigView } from "../../src/internal/views/ai-config.view.js";
 import { ModelManager } from "../../src/public/adapters.js";
-import { runConfigureProvider, runListModels } from "../../src/public/intents.js";
+import { runConfigureProvider, runListModels, runListProviders } from "../../src/public/intents.js";
 
 const tjsCatalog: Record<string, ModelConfig> = {
   "tjs#smol": {
@@ -116,6 +116,78 @@ describe("AiConfigManager", () => {
     });
   });
 
+  describe("Add Provider dialog", () => {
+    it("dispatches runConfigureProvider when the Add button is clicked with a name filled", async () => {
+      const ctx: Record<string, unknown> = {};
+      const ws = getWorkspace(ctx);
+      ws.setFileSystem(new MemFilesApi(), "test");
+      initAiProviderCore(ctx);
+      await ws.open();
+
+      // Trigger the Add Provider flow from the empty state.
+      const layout = ws.requireAdapter(Layout);
+      const view = layout.getPanel("ai-config:main")?.content as AiConfigView;
+      view.empty.openAddProviderAction.submit();
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Find the dialog in the Dialogs adapter.
+      const { Dialogs } = await import("@statewalker/workbench-views");
+      const dialogs = ws.requireAdapter(Dialogs);
+      const dialog = dialogs.getAll().find((d) => d.key === "ai-config:add-provider-dialog");
+      expect(dialog).toBeDefined();
+
+      // Simulate user filling the form.
+      const body = dialog?.children[0] as never as {
+        nameField: { setValue: (v: string) => void };
+        apiKeyField: { setValue: (v: string) => void };
+        endpointField: { setValue: (v: string) => void };
+      };
+      body.nameField.setValue("my-provider");
+      body.apiKeyField.setValue("sk-test");
+      body.endpointField.setValue("https://example.com/v1");
+
+      // Click Add → onClick should dispatch runConfigureProvider.
+      const addButton = dialog?.buttons.find((b) => b.label === "Add");
+      expect(addButton).toBeDefined();
+      const result = addButton?.onClick?.();
+      expect(result).toBe(true); // dialog should close
+
+      // Wait for the async intent + persistence + view refresh.
+      await new Promise((r) => setTimeout(r, 30));
+
+      // The provider was persisted.
+      const providers = await runListProviders(ws.requireAdapter(Intents), { runtime: "remote" })
+        .promise;
+      const added = providers.find((p) => p.providerId === "openai-compatible");
+      expect(added).toBeDefined();
+      expect(added?.instanceId).toBe("my-provider");
+      expect(added?.label).toBe("my-provider");
+
+      // The view flipped from empty to configured.
+      expect(view.children).toContain(view.providersTabs);
+    });
+
+    it("keeps the dialog open (returns false) when the Name field is empty", async () => {
+      const ctx: Record<string, unknown> = {};
+      const ws = getWorkspace(ctx);
+      ws.setFileSystem(new MemFilesApi(), "test");
+      initAiProviderCore(ctx);
+      await ws.open();
+
+      const layout = ws.requireAdapter(Layout);
+      const view = layout.getPanel("ai-config:main")?.content as AiConfigView;
+      view.empty.openAddProviderAction.submit();
+      await new Promise((r) => setTimeout(r, 10));
+
+      const { Dialogs } = await import("@statewalker/workbench-views");
+      const dialogs = ws.requireAdapter(Dialogs);
+      const dialog = dialogs.getAll().find((d) => d.key === "ai-config:add-provider-dialog");
+      const addButton = dialog?.buttons.find((b) => b.label === "Add");
+      // No name typed → onClick returns false → overlay keeps the dialog open.
+      expect(addButton?.onClick?.()).toBe(false);
+    });
+  });
+
   describe("Settings menu", () => {
     it("registers a 'Settings' top-level menu with an 'AI Providers' item", async () => {
       const ctx: Record<string, unknown> = {};
@@ -130,6 +202,26 @@ describe("AiConfigManager", () => {
       const aiProviders = settings?.children.find((c) => c.actionKey === "ai-providers.menu");
       expect(aiProviders).toBeDefined();
       expect(aiProviders?.label).toBe("AI Providers");
+    });
+
+    it("the 'AI Providers' item is disabled until the workspace is opened", async () => {
+      const ctx: Record<string, unknown> = {};
+      const ws = getWorkspace(ctx);
+      ws.setFileSystem(new MemFilesApi(), "test");
+      initAiProviderCore(ctx);
+      const { MainMenu } = await import("@statewalker/workbench-views");
+      const mainMenu = ws.requireAdapter(MainMenu);
+      const findItem = () =>
+        mainMenu
+          .getAll()
+          .find((m) => m.actionKey === "settings")
+          ?.children.find((c) => c.actionKey === "ai-providers.menu");
+
+      expect(findItem()?.disabled).toBe(true);
+      await ws.open();
+      expect(findItem()?.disabled).toBe(false);
+      await ws.close();
+      expect(findItem()?.disabled).toBe(true);
     });
 
     it("removes the 'AI Providers' item when the activator's cleanup runs", async () => {

@@ -572,6 +572,14 @@ export class AiConfigManager {
     const body = new AddProviderDialogBodyView();
     const dialogs = this.#workspace.requireAdapter(Dialogs);
     let removeDialog: (() => void) | undefined;
+
+    // Clear any prior error on the Name field once the user starts typing.
+    body.nameField.onUpdate(() => {
+      if (body.nameField.value.trim() && body.nameField.errorMessage) {
+        body.nameField.errorMessage = undefined;
+      }
+    });
+
     const dialog = new DialogView({
       key: "ai-config:add-provider-dialog",
       size: "md",
@@ -585,15 +593,23 @@ export class AiConfigManager {
           variant: "default",
           onClick: () => {
             const name = body.nameField.value.trim();
-            if (!name) return false; // keep dialog open if name missing
+            if (!name) {
+              // Show validation feedback rather than silently keeping the
+              // dialog open with no signal — empty name is the most common
+              // way users get stuck on the form.
+              body.nameField.errorMessage = "Name is required";
+              return false;
+            }
+            const apiKey = body.apiKeyField.value.trim();
+            const baseURL = body.endpointField.value.trim();
             void runConfigureProvider(this.#intents, {
               providerId: "openai-compatible",
               instanceId: name,
               settings: {
                 providerName: "openai-compatible" as ProviderName,
                 label: name,
-                apiKey: body.apiKeyField.value || undefined,
-                baseURL: body.endpointField.value || undefined,
+                apiKey: apiKey || undefined,
+                baseURL: baseURL || undefined,
               },
             }).promise.then((result) => {
               if (!result.ok) {
@@ -937,16 +953,34 @@ export class AiConfigManager {
     }
     const settingsContainer = settings;
 
+    // The configurator depends on the workspace's SystemFiles, so the
+    // menu item is disabled until the workspace is opened.
     const item = new ActionView({
       key: "ai-providers.menu",
       label: "AI Providers",
       icon: "sparkles",
+      disabled: !this.#workspace.isOpened,
     });
     this.#register(
       item.onSubmit(() => {
-        void runOpen(this.#intents, undefined).promise.catch((err) => {
+        // Pass focus: "providers" so the open-handler observer resets
+        // the providers tab to "remote" — that gives a visible side
+        // effect even when the dock panel is already the focused tab.
+        void runOpen(this.#intents, { focus: "providers" }).promise.catch((err) => {
           console.error("[ai-config.manager] runOpen failed:", err);
         });
+      }),
+    );
+
+    // Toggle disabled state with workspace lifecycle.
+    this.#register(
+      this.#workspace.onLoad(() => {
+        item.disabled = false;
+      }),
+    );
+    this.#register(
+      this.#workspace.onUnload(() => {
+        item.disabled = true;
       }),
     );
 
