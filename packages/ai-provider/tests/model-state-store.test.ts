@@ -17,10 +17,7 @@ function createStore() {
   return new ModelStateStore({ "local:test": LOCAL_MODEL });
 }
 
-function makeProgress(
-  key: string,
-  overrides?: Partial<ActivationProgress>,
-): ActivationProgress {
+function makeProgress(key: string, overrides?: Partial<ActivationProgress>): ActivationProgress {
   return {
     modelKey: key,
     phase: "downloading",

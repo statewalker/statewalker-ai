@@ -1,5 +1,5 @@
 import { ActionView, type ColumnDescriptor, TableView } from "@statewalker/workbench-views";
-import type { ProviderDescriptor } from "../api/types.js";
+import type { ProviderDescriptor } from "../../public/types.js";
 
 /**
  * Provider-list panel — a TableView over `ProviderDescriptor[]` plus

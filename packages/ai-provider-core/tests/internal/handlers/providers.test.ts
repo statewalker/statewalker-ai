@@ -2,20 +2,20 @@ import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";
 import { beforeEach, describe, expect, it } from "vitest";
+import initAiProviderCore from "../../../src/index.js";
+import type {
+  ActiveEmbeddingModelImpl,
+  ActiveReasoningModelImpl,
+} from "../../../src/internal/adapters.impl.js";
+import { ActiveEmbeddingModel, ActiveReasoningModel } from "../../../src/public/adapters.js";
 import {
   handleActiveModelChanged,
   handleProvidersChanged,
   runConfigureProvider,
   runListProviders,
   runRemoveProvider,
-} from "../../src/api/intents.js";
-import type { ProviderDescriptor } from "../../src/api/types.js";
-import type {
-  ActiveEmbeddingModelImpl,
-  ActiveReasoningModelImpl,
-} from "../../src/composition/adapters.impl.js";
-import { ActiveEmbeddingModel, ActiveReasoningModel } from "../../src/composition/adapters.js";
-import initAiProviderCore from "../../src/index.js";
+} from "../../../src/public/intents.js";
+import type { ProviderDescriptor } from "../../../src/public/types.js";
 
 async function setup(): Promise<{ ws: Workspace; intents: Intents }> {
   const ctx: Record<string, unknown> = {};

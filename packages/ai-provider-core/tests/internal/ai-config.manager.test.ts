@@ -4,10 +4,10 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { Layout } from "@statewalker/workbench-views";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";
-import { runConfigureProvider, runListProviders } from "../../src/api/intents.js";
-import { ModelManager } from "../../src/composition/adapters.js";
 import initAiProviderCore from "../../src/index.js";
-import type { AiConfigView } from "../../src/views/ai-config.view.js";
+import type { AiConfigView } from "../../src/internal/views/ai-config.view.js";
+import { ModelManager } from "../../src/public/adapters.js";
+import { runConfigureProvider, runListProviders } from "../../src/public/intents.js";
 
 const tjsCatalog: Record<string, ModelConfig> = {
   "tjs#smol": {

@@ -1,6 +1,7 @@
 import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
+import { ActiveEmbeddingModel, ActiveReasoningModel } from "../public/adapters.js";
 import {
   handleActivationProgress,
   handleActiveModelChanged,
@@ -14,10 +15,9 @@ import {
   runListModels,
   runListProviders,
   runRemoveProvider,
-} from "../api/intents.js";
-import type { ModelDescriptor, ProviderDescriptor, ProviderName } from "../api/types.js";
-import type { AiConfigView } from "../views/ai-config.view.js";
-import { ActiveEmbeddingModel, ActiveReasoningModel } from "./adapters.js";
+} from "../public/intents.js";
+import type { ModelDescriptor, ProviderDescriptor, ProviderName } from "../public/types.js";
+import type { AiConfigView } from "./views/ai-config.view.js";
 
 /**
  * Wire `AiConfigView` to the intent surface + the active-model

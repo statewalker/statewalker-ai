@@ -75,11 +75,7 @@ export function modelKinds(config: ModelConfig): ModelKind[] {
 
 // ── Remote provider settings ───────────────────────────────────────────────
 
-export type ProviderName =
-  | "google"
-  | "anthropic"
-  | "openai"
-  | "openai-compatible";
+export type ProviderName = "google" | "anthropic" | "openai" | "openai-compatible";
 
 export const PROVIDER_NAMES: ProviderName[] = [
   "google",
@@ -89,10 +85,11 @@ export const PROVIDER_NAMES: ProviderName[] = [
 ];
 
 /** Canonical providers — the three with first-class SDK support. */
-export const CANONICAL_PROVIDER_NAMES: Exclude<
-  ProviderName,
-  "openai-compatible"
->[] = ["google", "anthropic", "openai"];
+export const CANONICAL_PROVIDER_NAMES: Exclude<ProviderName, "openai-compatible">[] = [
+  "google",
+  "anthropic",
+  "openai",
+];
 
 /**
  * Common settings for creating a remote AI provider.

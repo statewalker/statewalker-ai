@@ -36,9 +36,7 @@ export async function listModels(
   }
 }
 
-async function listAnthropic(
-  settings: RemoteProviderSettings,
-): Promise<DiscoveredModel[]> {
+async function listAnthropic(settings: RemoteProviderSettings): Promise<DiscoveredModel[]> {
   if (!settings.apiKey) throw new Error("anthropic requires settings.apiKey");
   const res = await fetch("https://api.anthropic.com/v1/models", {
     method: "GET",
@@ -52,10 +50,7 @@ async function listAnthropic(
     data?: Array<{ id?: string; display_name?: string }>;
   };
   return (json.data ?? [])
-    .filter(
-      (m): m is { id: string; display_name?: string } =>
-        typeof m.id === "string",
-    )
+    .filter((m): m is { id: string; display_name?: string } => typeof m.id === "string")
     .map((m) => ({ id: m.id, label: m.display_name ?? m.id }));
 }
 
@@ -78,9 +73,7 @@ async function listOpenAI(
     .map((m) => ({ id: m.id, label: m.id }));
 }
 
-async function listGoogle(
-  settings: RemoteProviderSettings,
-): Promise<DiscoveredModel[]> {
+async function listGoogle(settings: RemoteProviderSettings): Promise<DiscoveredModel[]> {
   if (!settings.apiKey) throw new Error("google requires settings.apiKey");
   const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(
     settings.apiKey,
@@ -95,13 +88,8 @@ async function listGoogle(
     }>;
   };
   return (json.models ?? [])
-    .filter((m) =>
-      (m.supportedGenerationMethods ?? []).includes("generateContent"),
-    )
-    .filter(
-      (m): m is { name: string; displayName?: string } =>
-        typeof m.name === "string",
-    )
+    .filter((m) => (m.supportedGenerationMethods ?? []).includes("generateContent"))
+    .filter((m): m is { name: string; displayName?: string } => typeof m.name === "string")
     .map((m) => {
       // Google returns names like "models/gemini-2.5-pro" — strip the prefix.
       const id = m.name.startsWith("models/") ? m.name.slice(7) : m.name;
@@ -117,7 +105,6 @@ async function assertOk(res: Response, provider: string): Promise<void> {
   } catch {
     body = "";
   }
-  const snippet =
-    body.length > MAX_ERROR_BODY ? `${body.slice(0, MAX_ERROR_BODY)}…` : body;
+  const snippet = body.length > MAX_ERROR_BODY ? `${body.slice(0, MAX_ERROR_BODY)}…` : body;
   throw new Error(`${provider} /models HTTP ${res.status}: ${snippet}`);
 }

@@ -2,8 +2,8 @@ import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import { DockPanelView, Layout } from "@statewalker/workbench-views";
 import type { Workspace } from "@statewalker/workspace-api";
-import { AiConfigView } from "../views/ai-config.view.js";
 import { createAiConfigManager } from "./ai-config.manager.js";
+import { AiConfigView } from "./views/ai-config.view.js";
 
 const PANEL_KEY = "ai-config:main";
 

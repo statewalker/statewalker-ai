@@ -3,17 +3,17 @@ import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";
-import { runListModels } from "../../src/api/intents.js";
+import initAiProviderCore from "../../../src/index.js";
 import type {
   ActiveEmbeddingModelImpl,
   ActiveReasoningModelImpl,
-} from "../../src/composition/adapters.impl.js";
+} from "../../../src/internal/adapters.impl.js";
 import {
   ActiveEmbeddingModel,
   ActiveReasoningModel,
   ModelManager,
-} from "../../src/composition/adapters.js";
-import initAiProviderCore from "../../src/index.js";
+} from "../../../src/public/adapters.js";
+import { runListModels } from "../../../src/public/intents.js";
 
 type CatalogEntry = ModelConfig;
 

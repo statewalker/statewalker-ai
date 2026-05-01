@@ -1,5 +1,5 @@
 import { ActionView, FormView, PickerView, TextFieldView } from "@statewalker/workbench-views";
-import type { ProviderName } from "../api/types.js";
+import type { ProviderName } from "../../public/types.js";
 
 const PROVIDER_PICKER_ITEMS: { key: ProviderName; label: string }[] = [
   { key: "anthropic", label: "Anthropic" },

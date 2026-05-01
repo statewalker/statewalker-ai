@@ -2,19 +2,23 @@ import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
 import {
+  ActiveEmbeddingModel,
+  ActiveReasoningModel,
+  ProviderSettingsStore,
+} from "../../public/adapters.js";
+import {
   handleConfigureProvider,
   handleListProviders,
   handleRemoveProvider,
   runActiveModelChanged,
   runProvidersChanged,
-} from "../../api/intents.js";
+} from "../../public/intents.js";
 import type {
   ConfigureProviderSettings,
   ProviderDescriptor,
   ProviderName,
-} from "../../api/types.js";
+} from "../../public/types.js";
 import type { ActiveEmbeddingModelImpl, ActiveReasoningModelImpl } from "../adapters.impl.js";
-import { ActiveEmbeddingModel, ActiveReasoningModel, ProviderSettingsStore } from "../adapters.js";
 
 /**
  * Internal storage shape for a configured provider. The
