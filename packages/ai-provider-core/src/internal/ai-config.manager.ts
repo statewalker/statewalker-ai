@@ -55,7 +55,11 @@ import type {
 } from "../public/types.js";
 import { AddProviderDialogBodyView } from "./views/add-provider-dialog.view.js";
 import { AiConfigView } from "./views/ai-config.view.js";
-import { engineBadgeVariant, engineRuntimeShortName } from "./views/providers.format.js";
+import {
+  connectionStatusIcon,
+  engineBadgeVariant,
+  engineRuntimeShortName,
+} from "./views/providers.format.js";
 import type { ConnectionStatus } from "./views/providers.types.js";
 import { RemoteModelCardView } from "./views/remote-model-card.view.js";
 import { RemoteProviderFormView } from "./views/remote-provider-form.view.js";
@@ -371,9 +375,11 @@ export class AiConfigManager {
 
     view.subTabs.tabs = snapshots.map((s) => {
       const sub = this.#subTabKey(s.descriptor);
+      const status = this.#connectionStatus.get(sub) ?? "untested";
       return {
         key: sub,
         label: s.settings.label,
+        icon: connectionStatusIcon(status),
         content: form,
       };
     });
@@ -384,6 +390,22 @@ export class AiConfigManager {
       view.subTabs.selectedKey = selected;
     }
     if (selected) this.#bindRemoteForm(selected);
+  }
+
+  /** Refresh just the icon on the sub-tab for `subTabKey` after its
+   *  cached connection status changes — avoids rebuilding the whole
+   *  tabs array, which would clear `selectedKey` mid-flow. */
+  #refreshSubTabIcon(subTabKey: string): void {
+    const tabs = this.view.remoteProviders.subTabs.tabs;
+    const idx = tabs.findIndex((t) => t.key === subTabKey);
+    if (idx < 0) return;
+    const status = this.#connectionStatus.get(subTabKey) ?? "untested";
+    const icon = connectionStatusIcon(status);
+    const current = tabs[idx];
+    if (!current || current.icon === icon) return;
+    const next = [...tabs];
+    next[idx] = { ...current, icon };
+    this.view.remoteProviders.subTabs.tabs = next;
   }
 
   #subTabKey(d: ProviderDescriptor): string {
@@ -509,6 +531,7 @@ export class AiConfigManager {
     if (this.#activeRemoteKey === subTabKey && this.#remoteForm) {
       this.#remoteForm.setConnectionStatus(status);
     }
+    this.#refreshSubTabIcon(subTabKey);
   }
 
   async #syncRemoteForm(): Promise<void> {

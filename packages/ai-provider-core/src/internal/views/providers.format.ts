@@ -1,5 +1,9 @@
 import type { ModelDescriptor, ModelRuntime } from "../../public/types.js";
-import type { RuntimeBadgeVariant, RuntimeShortName } from "./providers.types.js";
+import type {
+  ConnectionStatus,
+  RuntimeBadgeVariant,
+  RuntimeShortName,
+} from "./providers.types.js";
 
 export function runtimeShortName(runtime: ModelRuntime): RuntimeShortName {
   if (runtime === "remote") return "Remote";
@@ -21,4 +25,19 @@ export function engineRuntimeShortName(model: ModelDescriptor): RuntimeShortName
 
 export function engineBadgeVariant(model: ModelDescriptor): RuntimeBadgeVariant {
   return model.runtime === "remote" ? "informative" : "positive";
+}
+
+/** Lucide icon name to render on a remote-provider sub-tab to surface
+ *  the connection state. `undefined` means the tab has no icon. */
+export function connectionStatusIcon(status: ConnectionStatus): string | undefined {
+  switch (status) {
+    case "connected":
+      return "circle-check";
+    case "testing":
+      return "loader";
+    case "failed":
+      return "circle-x";
+    default:
+      return undefined;
+  }
 }
