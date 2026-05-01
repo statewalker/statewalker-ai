@@ -34,14 +34,26 @@ interface StoredProviderEntry {
   authToken?: string;
   baseURL?: string;
   headers?: Record<string, string>;
+  selectedModelIds?: string[];
+  enabled?: boolean;
+}
+
+/** Local engines stored under a separate `local#${engineId}` key prefix so
+ *  they don't appear in the remote-providers list. */
+const LOCAL_ENGINES = new Set(["tjs", "webllm", "llamacpp"]);
+
+function isLocalEngine(providerId: string): boolean {
+  return LOCAL_ENGINES.has(providerId);
 }
 
 /**
  * Build the ProviderSettingsStore key from providerId + optional
  * instanceId. Multi-instance providers (e.g. multiple OpenAI-compatible
  * endpoints) share the same providerId; the instanceId disambiguates.
+ * Local engines use the `local#${engineId}` prefix.
  */
 function storageKey(providerId: string, instanceId?: string): string {
+  if (isLocalEngine(providerId)) return `local#${providerId}`;
   return instanceId ? `${providerId}#${instanceId}` : providerId;
 }
 
@@ -70,6 +82,7 @@ async function listAllEntries(store: ProviderSettingsStore): Promise<StoredProvi
   const keys = await store.list();
   const out: StoredProviderEntry[] = [];
   for (const key of keys) {
+    if (key.startsWith("local#")) continue; // local engine settings are not "providers"
     const value = await store.get(key);
     if (isStoredEntry(value)) out.push(value);
   }
@@ -81,10 +94,16 @@ async function listAllDescriptors(store: ProviderSettingsStore): Promise<Provide
   return entries.map(entryToDescriptor);
 }
 
-function validateConfigureSettings(settings: ConfigureProviderSettings): string | undefined {
+function validateConfigureSettings(
+  settings: ConfigureProviderSettings,
+  providerId: string,
+): string | undefined {
   if (typeof settings !== "object" || settings === null) {
     return "settings must be an object";
   }
+  // For local engines we don't require providerName/label — the engine id
+  // is sufficient and labels come from the catalog.
+  if (isLocalEngine(providerId)) return undefined;
   if (typeof settings.providerName !== "string" || !settings.providerName) {
     return "settings.providerName is required";
   }
@@ -121,21 +140,31 @@ export function registerProviderHandlers(workspace: Workspace, intents: Intents)
     handleConfigureProvider(intents, (intent) => {
       void (async () => {
         try {
-          const error = validateConfigureSettings(intent.payload.settings);
+          const error = validateConfigureSettings(
+            intent.payload.settings,
+            intent.payload.providerId,
+          );
           if (error) {
             intent.resolve({ ok: false, error });
             return;
           }
+          const settings = intent.payload.settings;
           const entry: StoredProviderEntry = {
             providerId: intent.payload.providerId,
             instanceId: intent.payload.instanceId,
-            providerName: intent.payload.settings.providerName,
-            label: intent.payload.settings.label,
-            apiKey: intent.payload.settings.apiKey,
-            authToken: intent.payload.settings.authToken,
-            baseURL: intent.payload.settings.baseURL,
-            headers: intent.payload.settings.headers,
+            providerName: settings.providerName,
+            label: settings.label,
+            apiKey: settings.apiKey,
+            authToken: settings.authToken,
+            baseURL: settings.baseURL,
+            headers: settings.headers,
           };
+          if (settings.selectedModelIds !== undefined) {
+            entry.selectedModelIds = [...settings.selectedModelIds];
+          }
+          if (settings.enabled !== undefined) {
+            entry.enabled = settings.enabled;
+          }
           await store.set(storageKey(entry.providerId, entry.instanceId), entry);
           // Broadcast BEFORE resolve so awaiters of runConfigureProvider
           // observe the broadcast already happened by the time their await
