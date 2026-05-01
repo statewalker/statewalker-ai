@@ -121,6 +121,17 @@ export class AiConfigManager {
 
     this.#intents = this.#workspace.requireAdapter(Intents);
 
+    // Eagerly construct ModelManager so its workspace.onLoad subscription
+    // is registered BEFORE this manager's #initialLoad subscription.
+    // Otherwise our initial load fires first, calls runListModels which
+    // needs ModelManager.impl, but the adapter's _impl hasn't been
+    // populated yet (its own onLoad runs after ours).
+    try {
+      this.#workspace.requireAdapter(ModelManager);
+    } catch {
+      // ignore — engine packages may register the adapter later
+    }
+
     this.#wireActiveModels();
     this.#wireConfigurationGate();
     this.#wireRemoteSubTabs();
