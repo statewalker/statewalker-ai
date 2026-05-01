@@ -373,6 +373,13 @@ export class AiConfigManager {
     const form = this.#getOrCreateForm();
     view.setForm(form);
 
+    // The form lives in `view.formSlot` below the tab strip, NOT inside
+    // each TabDescriptor.content. Using `form` as the per-tab content
+    // would cause the renderer to draw it twice — once as the active
+    // tab's content, once in `formSlot`. A shared empty placeholder
+    // means the TabsView just renders the strip + an empty content
+    // panel; the form below stays singular.
+    const emptyContent = this.#tabContentPlaceholder();
     view.subTabs.tabs = snapshots.map((s) => {
       const sub = this.#subTabKey(s.descriptor);
       const status = this.#connectionStatus.get(sub) ?? "untested";
@@ -380,7 +387,7 @@ export class AiConfigManager {
         key: sub,
         label: s.settings.label,
         icon: connectionStatusIcon(status),
-        content: form,
+        content: emptyContent,
       };
     });
 
@@ -410,6 +417,18 @@ export class AiConfigManager {
 
   #subTabKey(d: ProviderDescriptor): string {
     return d.instanceId ? `${d.providerId}#${d.instanceId}` : d.providerId;
+  }
+
+  /** Single empty FlexView reused as every sub-tab's `content`. The
+   *  TabDescriptor type requires a content view; we don't want the
+   *  TabsView renderer to draw the form (the form lives below the tab
+   *  strip via `RemoteProvidersView.formSlot`). */
+  #placeholder: FlexView | undefined;
+  #tabContentPlaceholder(): FlexView {
+    if (!this.#placeholder) {
+      this.#placeholder = new FlexView({ key: "ai-config:remote:tab-placeholder" });
+    }
+    return this.#placeholder;
   }
 
   #snapshotByKey(key: string): RemoteProviderSnapshot | undefined {
