@@ -2,7 +2,12 @@ import type { ModelConfig, ModelKind } from "@statewalker/ai-provider";
 import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
-import { ActiveEmbeddingModel, ActiveReasoningModel, ModelManager } from "../../public/adapters.js";
+import {
+  ActiveEmbeddingModel,
+  ActiveReasoningModel,
+  ModelManager,
+  ProviderSettingsStore,
+} from "../../public/adapters.js";
 import { handleListModels } from "../../public/intents.js";
 import type { ListModelsPayload, ModelDescriptor } from "../../public/types.js";
 
@@ -41,40 +46,89 @@ function descriptorMatches(d: ModelDescriptor, filter: ListModelsPayload | undef
   return true;
 }
 
+interface StoredEntry {
+  providerId?: string;
+  instanceId?: string;
+  selectedModelIds?: string[];
+  enabled?: boolean;
+}
+
+function isStoredEntry(value: unknown): value is StoredEntry {
+  return Boolean(value) && typeof value === "object";
+}
+
+async function loadProviderCuration(store: ProviderSettingsStore): Promise<{
+  remoteSelected: Map<string, Set<string>>;
+  disabledLocalEngines: Set<string>;
+}> {
+  const remoteSelected = new Map<string, Set<string>>();
+  const disabledLocalEngines = new Set<string>();
+  const keys = await store.list();
+  for (const key of keys) {
+    const value = await store.get(key);
+    if (!isStoredEntry(value)) continue;
+    if (Array.isArray(value.selectedModelIds) && value.providerId) {
+      remoteSelected.set(value.providerId, new Set(value.selectedModelIds));
+    }
+    if (value.enabled === false && key.startsWith("local#") && value.providerId) {
+      disabledLocalEngines.add(value.providerId);
+    }
+  }
+  return { remoteSelected, disabledLocalEngines };
+}
+
 export function registerListModelsHandlers(workspace: Workspace, intents: Intents): () => void {
   const [register, cleanup] = newRegistry();
 
   register(
     handleListModels(intents, (intent) => {
-      try {
-        const manager = workspace.requireAdapter(ModelManager).impl;
-        const activeReasoning = workspace.requireAdapter(ActiveReasoningModel);
-        const activeEmbedding = workspace.requireAdapter(ActiveEmbeddingModel);
-        const reasoningKey = activeReasoning.catalogKey;
-        const embeddingKey = activeEmbedding.catalogKey;
+      void (async () => {
+        try {
+          const manager = workspace.requireAdapter(ModelManager).impl;
+          const activeReasoning = workspace.requireAdapter(ActiveReasoningModel);
+          const activeEmbedding = workspace.requireAdapter(ActiveEmbeddingModel);
+          const reasoningKey = activeReasoning.catalogKey;
+          const embeddingKey = activeEmbedding.catalogKey;
 
-        const descriptors: ModelDescriptor[] = [];
-        for (const [catalogKey, config] of Object.entries(manager.store.catalog)) {
-          const state = manager.store.getState(catalogKey);
-          descriptors.push({
-            catalogKey,
-            label: config.label,
-            providerId: providerIdFor(config),
-            instanceId: instanceIdFor(config),
-            runtime: config.runtime,
-            kinds: effectiveKinds(config),
-            status: state?.status ?? "not-downloaded",
-            sizeBytes: sizeBytesFor(config),
-            contextWindow: contextWindowFor(config),
-            isActiveReasoning: reasoningKey === catalogKey,
-            isActiveEmbedding: embeddingKey === catalogKey,
-          });
+          const store = workspace.requireAdapter(ProviderSettingsStore);
+          const { remoteSelected, disabledLocalEngines } = await loadProviderCuration(store);
+
+          const descriptors: ModelDescriptor[] = [];
+          for (const [catalogKey, config] of Object.entries(manager.store.catalog)) {
+            const state = manager.store.getState(catalogKey);
+            const providerId = providerIdFor(config);
+
+            // Curate remote models: if the provider has a selectedModelIds set,
+            // only include catalogKeys that match.
+            if (config.runtime === "remote") {
+              const curated = remoteSelected.get(providerId);
+              if (curated && curated.size > 0 && !curated.has(catalogKey)) continue;
+            }
+            // Gate local models by their engine's enabled flag.
+            if (config.runtime === "local" && disabledLocalEngines.has(providerId)) {
+              continue;
+            }
+
+            descriptors.push({
+              catalogKey,
+              label: config.label,
+              providerId,
+              instanceId: instanceIdFor(config),
+              runtime: config.runtime,
+              kinds: effectiveKinds(config),
+              status: state?.status ?? "not-downloaded",
+              sizeBytes: sizeBytesFor(config),
+              contextWindow: contextWindowFor(config),
+              isActiveReasoning: reasoningKey === catalogKey,
+              isActiveEmbedding: embeddingKey === catalogKey,
+            });
+          }
+
+          intent.resolve(descriptors.filter((d) => descriptorMatches(d, intent.payload)));
+        } catch (err) {
+          intent.reject(err);
         }
-
-        intent.resolve(descriptors.filter((d) => descriptorMatches(d, intent.payload)));
-      } catch (err) {
-        intent.reject(err);
-      }
+      })();
       return true;
     }),
   );

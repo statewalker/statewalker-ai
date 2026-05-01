@@ -81,7 +81,7 @@ export type { LocalModelConfig, RemoteProviderSettings };
 
 // ── Intent payload / result shapes ─────────────────────────────────────────
 
-/** Settings shape persisted for a configured remote provider. */
+/** Settings shape persisted for a configured provider. */
 export interface ConfigureProviderSettings {
   /** Provider type — drives default models / SDK selection. */
   providerName: ProviderName;
@@ -95,6 +95,18 @@ export interface ConfigureProviderSettings {
   baseURL?: string;
   /** Custom headers to include in requests. */
   headers?: Record<string, string>;
+  /**
+   * For remote providers, the curated set of catalog model ids the user
+   * has selected to surface in the active-models pickers. When undefined,
+   * every model the provider exposes is eligible.
+   */
+  selectedModelIds?: string[];
+  /**
+   * For local providers (WebLLM / Transformers.js), gates whether this
+   * provider's models are surfaced in `runListModels(...)` results. When
+   * undefined the default is `true`.
+   */
+  enabled?: boolean;
 }
 
 export interface ConfigureProviderPayload {
