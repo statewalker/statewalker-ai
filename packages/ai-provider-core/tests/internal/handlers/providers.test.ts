@@ -211,8 +211,15 @@ describe("ai-provider provider intents", () => {
       const { ws, intents } = await setup();
       await runConfigureProvider(intents, {
         providerId: "webllm",
-        settings: { providerName: "webllm", label: "webllm", enabled: false },
-      }).promise;
+        // For local engines the providerName is the engine id; the runtime
+        // type system models providerName as a remote-provider tag, so we
+        // cast through unknown for this local-engine test fixture.
+        settings: {
+          providerName: "webllm" as unknown as never as never,
+          label: "webllm",
+          enabled: false,
+        },
+      } as never).promise;
       const { ProviderSettingsStore } = await import("../../../src/public/adapters.js");
       const store = ws.requireAdapter(ProviderSettingsStore);
       const stored = (await store.get("local#webllm")) as { enabled?: boolean };

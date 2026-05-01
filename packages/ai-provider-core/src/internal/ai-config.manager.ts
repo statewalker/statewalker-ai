@@ -98,6 +98,9 @@ export class AiConfigManager {
   #remoteForm: RemoteProviderFormView | undefined;
   /** Disposers for the per-form bindings (cleared when the form rebinds). */
   #remoteFormDisposers: Array<() => void> = [];
+  /** Disposer returned by `Layout.publishPanel`; non-undefined while the
+   *  panel is currently published. */
+  #unpublishPanel: (() => void) | undefined;
 
   constructor(options: AiConfigManagerOptions) {
     this.#workspace = options.workspace;
@@ -105,19 +108,6 @@ export class AiConfigManager {
 
     this.view = new AiConfigView();
     this.view.showEmpty();
-
-    const layout = this.#workspace.requireAdapter(Layout);
-    this.#register(
-      layout.publishPanel(
-        new DockPanelView({
-          key: this.panelKey,
-          label: "AI",
-          icon: "sparkles",
-          area: "right",
-          content: this.view,
-        }),
-      ),
-    );
 
     this.#intents = this.#workspace.requireAdapter(Intents);
 
@@ -142,7 +132,20 @@ export class AiConfigManager {
     this.#wireOpenFocus();
     this.#wireKeyboardShortcut();
 
+    // Panel lifecycle:
+    //   - publish on workspace.onLoad (the AI configurator depends on the
+    //     workspace's SystemFiles for ProviderSettingsStore + ModelManager,
+    //     so the panel must NOT appear before the workspace is activated)
+    //   - unpublish on workspace.onUnload so it disappears when the
+    //     workspace closes (e.g. user switches workspace)
+    //   - also unpublish on manager close() so the activator's cleanup
+    //     tears the panel down regardless of workspace state
+    this.#register(this.#workspace.onLoad(() => this.#publishPanel()));
+    this.#register(this.#workspace.onUnload(() => this.#removePanel()));
+    this.#register(() => this.#removePanel());
+
     if (this.#workspace.isOpened) {
+      this.#publishPanel();
       void this.#initialLoad();
     } else {
       this.#register(this.#workspace.onLoad(() => void this.#initialLoad()));
@@ -151,6 +154,26 @@ export class AiConfigManager {
 
   close(): Promise<void> {
     return this.#cleanup();
+  }
+
+  #publishPanel(): void {
+    if (this.#unpublishPanel) return;
+    const layout = this.#workspace.requireAdapter(Layout);
+    this.#unpublishPanel = layout.publishPanel(
+      new DockPanelView({
+        key: this.panelKey,
+        label: "AI",
+        icon: "sparkles",
+        area: "right",
+        content: this.view,
+      }),
+    );
+  }
+
+  #removePanel(): void {
+    if (!this.#unpublishPanel) return;
+    this.#unpublishPanel();
+    this.#unpublishPanel = undefined;
   }
 
   // ── Active models ─────────────────────────────────────────────────

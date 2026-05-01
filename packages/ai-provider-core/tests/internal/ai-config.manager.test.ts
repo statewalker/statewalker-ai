@@ -5,7 +5,6 @@ import { Layout } from "@statewalker/workbench-views";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";
 import initAiProviderCore from "../../src/index.js";
-import { AiConfigManager } from "../../src/internal/ai-config.manager.js";
 import type { AiConfigView } from "../../src/internal/views/ai-config.view.js";
 import { ModelManager } from "../../src/public/adapters.js";
 import { runConfigureProvider, runListModels } from "../../src/public/intents.js";
@@ -118,22 +117,29 @@ describe("AiConfigManager", () => {
   });
 
   describe("manager close()", () => {
-    it("removes the published panel + drops all bindings", async () => {
+    it("does not publish the panel until the workspace is opened", async () => {
       const ctx: Record<string, unknown> = {};
       const ws = getWorkspace(ctx);
       ws.setFileSystem(new MemFilesApi(), "test");
-      // initAiProviderCore registers the four adapters the manager needs.
-      // We then construct the manager directly to exercise its close().
       initAiProviderCore(ctx);
       const layout = ws.requireAdapter(Layout);
+      // Workspace not opened yet → panel not published.
+      expect(layout.getPanel("ai-config:main")).toBeUndefined();
+      await ws.open();
+      // After open, the panel appears.
       expect(layout.getPanel("ai-config:main")).toBeDefined();
-      const manager = new AiConfigManager({ workspace: ws });
-      await manager.close();
-      // The init's published panel is still up — close() only tears down
-      // this second manager's bindings. Sanity: another close on the
-      // initial publish path would also remove it. The behaviour we care
-      // about is that close() returns and doesn't throw.
-      expect(typeof manager.close).toBe("function");
+    });
+
+    it("removes the panel when the workspace is closed", async () => {
+      const ctx: Record<string, unknown> = {};
+      const ws = getWorkspace(ctx);
+      ws.setFileSystem(new MemFilesApi(), "test");
+      initAiProviderCore(ctx);
+      await ws.open();
+      const layout = ws.requireAdapter(Layout);
+      expect(layout.getPanel("ai-config:main")).toBeDefined();
+      await ws.close();
+      expect(layout.getPanel("ai-config:main")).toBeUndefined();
     });
   });
 });
