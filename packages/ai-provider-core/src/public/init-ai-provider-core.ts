@@ -6,8 +6,8 @@ import {
   FilesBackedProviderSettingsStore,
   ModelManagerAdapter,
 } from "../internal/adapters.impl.js";
+import { AiConfigManager } from "../internal/ai-config.manager.js";
 import { registerIntentHandlers } from "../internal/handlers/register-handlers.js";
-import { mountConfigPanel } from "../internal/mount-config-panel.js";
 import {
   ActiveEmbeddingModel,
   ActiveReasoningModel,
@@ -19,15 +19,10 @@ import {
  * Activator for the AI provider fragment.
  *
  * Registers the four workspace-adapter tokens (ModelManager,
- * ProviderSettingsStore, ActiveReasoningModel, ActiveEmbeddingModel) on
- * the workspace, then mounts the configurator dock panel + the
- * intent-handler surface.
- *
- * Adapter construction is lazy — `requireAdapter(X)` builds the
- * concrete impl on first access. File-backed impls subscribe to
- * `workspace.onLoad` internally and only touch FilesApi after the
- * workspace is opened (typical pattern for fragments that depend on
- * the workspace's primary file system).
+ * ProviderSettingsStore, ActiveReasoningModel, ActiveEmbeddingModel),
+ * constructs the configurator manager (which publishes its own dock
+ * panel), and registers the intent-handler surface. The returned
+ * cleanup tears down all of the above.
  */
 export default function initAiProviderCore(ctx: Record<string, unknown>): () => void {
   const ws = getWorkspace(ctx);
@@ -38,7 +33,8 @@ export default function initAiProviderCore(ctx: Record<string, unknown>): () => 
     .setAdapter(ActiveReasoningModel, ActiveReasoningModelImpl)
     .setAdapter(ActiveEmbeddingModel, ActiveEmbeddingModelImpl);
 
-  register(mountConfigPanel(ws));
+  const manager = new AiConfigManager({ workspace: ws });
+  register(() => manager.close());
   register(registerIntentHandlers(ws));
 
   return cleanup;
