@@ -10,7 +10,7 @@ import {
   type ActiveReasoningModel,
   ModelManager,
   ProviderSettingsStore,
-} from "./adapters.js";
+} from "../public/adapters.js";
 
 /**
  * Concrete `ModelManager` adapter. The wrapped `ModelManagerImpl` from

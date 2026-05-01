@@ -87,17 +87,13 @@ describe("listModels", () => {
 
   describe("openai-compatible", () => {
     it("requires baseURL", async () => {
-      await expect(
-        listModels("openai-compatible", { apiKey: "key" }),
-      ).rejects.toThrow(/baseURL/);
+      await expect(listModels("openai-compatible", { apiKey: "key" })).rejects.toThrow(/baseURL/);
     });
 
     it("hits {baseURL}/models and omits Authorization when no apiKey", async () => {
       const fetchMock = vi
         .spyOn(globalThis, "fetch")
-        .mockResolvedValue(
-          fakeResponse({ json: { data: [{ id: "local-7b" }] } }),
-        );
+        .mockResolvedValue(fakeResponse({ json: { data: [{ id: "local-7b" }] } }));
 
       const result = await listModels("openai-compatible", {
         baseURL: "http://localhost:1234/v1",
@@ -117,9 +113,7 @@ describe("listModels", () => {
         apiKey: "k",
         baseURL: "https://api.groq.com/openai/v1/",
       });
-      expect(fetchMock.mock.calls[0]?.[0]).toBe(
-        "https://api.groq.com/openai/v1/models",
-      );
+      expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.groq.com/openai/v1/models");
     });
   });
 
@@ -148,9 +142,7 @@ describe("listModels", () => {
 
       const [url] = fetchMock.mock.calls[0] ?? [];
       expect(url).toMatch(/key=AIza-test$/);
-      expect(result).toEqual([
-        { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
-      ]);
+      expect(result).toEqual([{ id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }]);
     });
   });
 
@@ -160,16 +152,12 @@ describe("listModels", () => {
       vi.spyOn(globalThis, "fetch").mockResolvedValue(
         fakeResponse({ status: 401, ok: false, text: longBody }),
       );
-      await expect(listModels("openai", { apiKey: "bad" })).rejects.toThrow(
-        /HTTP 401.*x{512}…/,
-      );
+      await expect(listModels("openai", { apiKey: "bad" })).rejects.toThrow(/HTTP 401.*x{512}…/);
     });
 
     it("surfaces network failures", async () => {
       vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
-      await expect(listModels("openai", { apiKey: "k" })).rejects.toThrow(
-        "offline",
-      );
+      await expect(listModels("openai", { apiKey: "k" })).rejects.toThrow("offline");
     });
   });
 });

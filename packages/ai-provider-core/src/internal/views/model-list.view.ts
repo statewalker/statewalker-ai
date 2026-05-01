@@ -1,5 +1,5 @@
 import { ActionView, type ColumnDescriptor, TableView } from "@statewalker/workbench-views";
-import type { ModelDescriptor, ModelRole } from "../api/types.js";
+import type { ModelDescriptor, ModelRole } from "../../public/types.js";
 
 /**
  * Model-list panel — a TableView over `ModelDescriptor[]` plus action

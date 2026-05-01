@@ -1,12 +1,17 @@
-import initAiProviderCore from "./composition/ai-provider-core.js";
+import initAiProviderCore from "./public/init-ai-provider-core.js";
 
-export * from "./api/intents.js";
-export * from "./api/types.js";
-export { ModelManager } from "./composition/adapters.js";
+export {
+  ActiveEmbeddingModel,
+  ActiveReasoningModel,
+  ModelManager,
+  ProviderSettingsStore,
+} from "./public/adapters.js";
 export {
   detectAvailableEngines,
   type EngineAvailability,
   resetEngineDetectionCache,
-} from "./core/engine-detection.js";
+} from "./public/engine-detection.js";
+export * from "./public/intents.js";
+export * from "./public/types.js";
 export { initAiProviderCore };
 export default initAiProviderCore;

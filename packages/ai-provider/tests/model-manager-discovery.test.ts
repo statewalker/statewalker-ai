@@ -73,9 +73,7 @@ describe("ModelManager.importDiscoveredModels", () => {
     expect(store.getProviderSettings("anthropic")).toEqual({
       apiKey: "sk-ant",
     });
-    expect(store.getState("anthropic/claude-sonnet-4-20250514")?.status).toBe(
-      "not-downloaded",
-    );
+    expect(store.getState("anthropic/claude-sonnet-4-20250514")?.status).toBe("not-downloaded");
   });
 
   it("scopes openai-compatible entries with providerInstanceId", () => {
@@ -91,9 +89,7 @@ describe("ModelManager.importDiscoveredModels", () => {
       },
     );
 
-    expect(addedKeys).toEqual([
-      "openai-compatible:groq/llama-3.1-70b-versatile",
-    ]);
+    expect(addedKeys).toEqual(["openai-compatible:groq/llama-3.1-70b-versatile"]);
     const cfg = store.catalog[
       "openai-compatible:groq/llama-3.1-70b-versatile"
     ] as RemoteModelConfig;

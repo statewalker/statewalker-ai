@@ -22,12 +22,7 @@ export class ModelStateStore {
    * Provider settings keyed by `{provider}` for canonical providers, or
    * `{provider}:{instanceId}` for `openai-compatible` instances.
    */
-  private readonly _providerSettings = new Map<
-    string,
-    RemoteProviderSettings
-  >();
-  private _activeModelKey = "";
-  private _activeModelLabel = "";
+  private readonly _providerSettings = new Map<string, RemoteProviderSettings>();
   private readonly _listeners = new Set<() => void>();
 
   constructor(catalog: Record<string, ModelConfig>) {
@@ -35,8 +30,7 @@ export class ModelStateStore {
     for (const [key, config] of Object.entries(catalog)) {
       this._states.set(key, {
         config,
-        status:
-          config.runtime === "local" ? "not-downloaded" : "not-downloaded",
+        status: config.runtime === "local" ? "not-downloaded" : "not-downloaded",
       });
     }
   }
@@ -105,10 +99,7 @@ export class ModelStateStore {
     settings: RemoteProviderSettings,
     instanceId?: string,
   ): void {
-    this._providerSettings.set(
-      this.providerKey(provider, instanceId),
-      settings,
-    );
+    this._providerSettings.set(this.providerKey(provider, instanceId), settings);
     this.notify();
   }
 
@@ -117,24 +108,6 @@ export class ModelStateStore {
     if (this._providerSettings.delete(this.providerKey(provider, instanceId))) {
       this.notify();
     }
-  }
-
-  // ── Active model key ──────────────────────────────────────────────────
-
-  get activeModelKey(): string {
-    return this._activeModelKey;
-  }
-
-  get activeModelLabel(): string {
-    return this._activeModelLabel;
-  }
-
-  setActiveModelKey(key: string, label: string): void {
-    if (this._activeModelKey === key && this._activeModelLabel === label)
-      return;
-    this._activeModelKey = key;
-    this._activeModelLabel = label;
-    this.notify();
   }
 
   /** Get a snapshot of all model states. */
@@ -177,9 +150,7 @@ export class ModelStateStore {
     const model = this._activeModels.get(key);
     if (!model) {
       const state = this._states.get(key);
-      throw new Error(
-        `Model "${key}" is not ready (status: ${state?.status ?? "unknown"})`,
-      );
+      throw new Error(`Model "${key}" is not ready (status: ${state?.status ?? "unknown"})`);
     }
     return model;
   }

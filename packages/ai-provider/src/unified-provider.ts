@@ -1,9 +1,4 @@
-import type {
-  EmbeddingModelV3,
-  ImageModelV3,
-  LanguageModelV3,
-  ProviderV3,
-} from "@ai-sdk/provider";
+import type { EmbeddingModelV3, ImageModelV3, LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import { NoSuchModelError } from "@ai-sdk/provider";
 import type { ModelStateStore } from "./model-state-store.js";
 

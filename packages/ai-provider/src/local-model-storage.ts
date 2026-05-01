@@ -1,9 +1,5 @@
 import type { FileInfo, FilesApi } from "@statewalker/webrun-files";
-import type {
-  ActivationProgress,
-  EngineId,
-  LocalModelConfig,
-} from "./types.js";
+import type { ActivationProgress, EngineId, LocalModelConfig } from "./types.js";
 
 const METADATA_FILE = "model.json";
 const HF_CDN = "https://huggingface.co";
@@ -16,9 +12,7 @@ export type FileResolver = (
 ) => Promise<Array<{ name: string; size: number }>>;
 
 /** Predicate that decides whether a model directory contains valid weights. */
-export type WeightVerifier = (
-  entries: AsyncIterable<FileInfo>,
-) => Promise<boolean>;
+export type WeightVerifier = (entries: AsyncIterable<FileInfo>) => Promise<boolean>;
 
 export interface LocalModelStorageOptions {
   /** Root path for all model storage, default `/models`. */
@@ -45,10 +39,7 @@ export class LocalModelStorage {
   private readonly basePath: string;
   private readonly engine: EngineId | undefined;
 
-  constructor(
-    files: FilesApi,
-    optionsOrBasePath: LocalModelStorageOptions | string = {},
-  ) {
+  constructor(files: FilesApi, optionsOrBasePath: LocalModelStorageOptions | string = {}) {
     this.files = files;
     if (typeof optionsOrBasePath === "string") {
       this.basePath = optionsOrBasePath;
@@ -194,9 +185,7 @@ export class LocalModelStorage {
 
     // Save metadata
     const metaJson = JSON.stringify(config);
-    await this.files.write(`${dir}/${METADATA_FILE}`, [
-      new TextEncoder().encode(metaJson),
-    ]);
+    await this.files.write(`${dir}/${METADATA_FILE}`, [new TextEncoder().encode(metaJson)]);
   }
 
   /** Delete a model's files from storage. */
@@ -205,9 +194,7 @@ export class LocalModelStorage {
   }
 
   /** List all stored models by reading metadata files. */
-  async listStored(): Promise<
-    Array<{ modelId: string; config: LocalModelConfig }>
-  > {
+  async listStored(): Promise<Array<{ modelId: string; config: LocalModelConfig }>> {
     const results: Array<{ modelId: string; config: LocalModelConfig }> = [];
     if (!(await this.files.exists(this.basePath))) return results;
 

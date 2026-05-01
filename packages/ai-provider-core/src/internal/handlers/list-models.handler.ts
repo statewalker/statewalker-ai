@@ -2,9 +2,9 @@ import type { ModelConfig, ModelKind } from "@statewalker/ai-provider";
 import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
-import { handleListModels } from "../../api/intents.js";
-import type { ListModelsPayload, ModelDescriptor } from "../../api/types.js";
-import { ActiveEmbeddingModel, ActiveReasoningModel, ModelManager } from "../adapters.js";
+import { ActiveEmbeddingModel, ActiveReasoningModel, ModelManager } from "../../public/adapters.js";
+import { handleListModels } from "../../public/intents.js";
+import type { ListModelsPayload, ModelDescriptor } from "../../public/types.js";
 
 const DEFAULT_KINDS: ModelKind[] = ["reasoning"];
 

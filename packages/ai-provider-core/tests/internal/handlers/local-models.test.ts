@@ -3,15 +3,15 @@ import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";
+import initAiProviderCore from "../../../src/index.js";
+import { ModelManager } from "../../../src/public/adapters.js";
 import {
   handleActivationProgress,
   runCancelDownload,
   runDeleteLocalModel,
   runDownloadModel,
   runListStorages,
-} from "../../src/api/intents.js";
-import { ModelManager } from "../../src/composition/adapters.js";
-import initAiProviderCore from "../../src/index.js";
+} from "../../../src/public/intents.js";
 
 interface FakeModelManagerImpl {
   downloadCalls: string[];

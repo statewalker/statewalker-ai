@@ -1,15 +1,15 @@
 import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
+import { ModelManager } from "../../public/adapters.js";
 import {
   handleCancelDownload,
   handleDeleteLocalModel,
   handleDownloadModel,
   handleListStorages,
   runActivationProgress,
-} from "../../api/intents.js";
-import type { StorageInfo } from "../../api/types.js";
-import { ModelManager } from "../adapters.js";
+} from "../../public/intents.js";
+import type { StorageInfo } from "../../public/types.js";
 
 /**
  * Register the four local-model lifecycle intent handlers + the

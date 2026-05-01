@@ -14,9 +14,7 @@ describe("LocalModelStorage", () => {
       const files = new MemFilesApi();
       const storage = new LocalModelStorage(files);
       await files.mkdir("/models/test/model");
-      await files.write("/models/test/model/model.json", [
-        new TextEncoder().encode("{}"),
-      ]);
+      await files.write("/models/test/model/model.json", [new TextEncoder().encode("{}")]);
       expect(await storage.hasWeights("test/model")).toBe(false);
     });
 
@@ -69,9 +67,7 @@ describe("LocalModelStorage", () => {
         size: "100 MB",
         sizeBytes: 100000000,
       };
-      await files.write(`${dir}/model.json`, [
-        new TextEncoder().encode(JSON.stringify(meta)),
-      ]);
+      await files.write(`${dir}/model.json`, [new TextEncoder().encode(JSON.stringify(meta))]);
 
       const result = await storage.listStored();
       expect(result).toHaveLength(1);

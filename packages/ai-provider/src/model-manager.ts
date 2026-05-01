@@ -202,10 +202,7 @@ export class ModelManager {
    * For local models: delegates to LocalModelStorage.download() with progress tracking.
    * Supports resume from partial downloads via HTTP Range headers.
    */
-  async *download(
-    key: string,
-    signal?: AbortSignal,
-  ): AsyncGenerator<ActivationProgress> {
+  async *download(key: string, signal?: AbortSignal): AsyncGenerator<ActivationProgress> {
     const config = this.store.catalog[key];
     if (!config) {
       yield {
@@ -258,15 +255,10 @@ export class ModelManager {
     try {
       this.store.setStatus(key, "downloading");
 
-      for await (const progress of storage.download(
-        key,
-        config.modelId,
-        config,
-        {
-          fileResolver: registration?.fileResolver,
-          signal: ac.signal,
-        },
-      )) {
+      for await (const progress of storage.download(key, config.modelId, config, {
+        fileResolver: registration?.fileResolver,
+        signal: ac.signal,
+      })) {
         this.store.setDownloadProgress(key, progress);
         yield progress;
       }
@@ -320,9 +312,7 @@ export class ModelManager {
     selected: DiscoveredModel[],
     settings: RemoteProviderSettings,
   ): string[] {
-    const prefix = providerInstanceId
-      ? `${providerType}:${providerInstanceId}`
-      : providerType;
+    const prefix = providerInstanceId ? `${providerType}:${providerInstanceId}` : providerType;
     const catalog = this.store.catalog as Record<string, RemoteModelConfig>;
     const addedKeys: string[] = [];
     for (const entry of selected) {
@@ -343,11 +333,7 @@ export class ModelManager {
       this.store.addCatalogEntry(key, config);
       addedKeys.push(key);
     }
-    this.store.setProviderSettings(
-      providerType,
-      settings,
-      providerInstanceId ?? undefined,
-    );
+    this.store.setProviderSettings(providerType, settings, providerInstanceId ?? undefined);
     return addedKeys;
   }
 
@@ -366,9 +352,7 @@ export class ModelManager {
         return createOpenAI(settings);
       case "openai-compatible":
         if (!settings.baseURL) {
-          throw new Error(
-            "openai-compatible provider requires settings.baseURL",
-          );
+          throw new Error("openai-compatible provider requires settings.baseURL");
         }
         return createOpenAI(settings);
       default:
@@ -452,18 +436,13 @@ export class ModelManager {
       message: `Checking storage for ${config.label}...`,
     };
 
-    const hasWeights = await storage.hasWeights(
-      config.modelId,
-      registration.verifier,
-    );
+    const hasWeights = await storage.hasWeights(config.modelId, registration.verifier);
 
     if (!hasWeights) {
-      for await (const progress of storage.download(
-        key,
-        config.modelId,
-        config,
-        { fileResolver: registration.fileResolver, signal },
-      )) {
+      for await (const progress of storage.download(key, config.modelId, config, {
+        fileResolver: registration.fileResolver,
+        signal,
+      })) {
         yield progress;
       }
     }
@@ -490,9 +469,7 @@ export class ModelManager {
 
 function disposeModel(model: unknown): void {
   if (!model || typeof model !== "object") return;
-  const asyncDispose = (model as { [Symbol.asyncDispose]?: () => unknown })[
-    Symbol.asyncDispose
-  ];
+  const asyncDispose = (model as { [Symbol.asyncDispose]?: () => unknown })[Symbol.asyncDispose];
   if (typeof asyncDispose === "function") {
     void Promise.resolve(asyncDispose.call(model)).catch(() => {});
     return;

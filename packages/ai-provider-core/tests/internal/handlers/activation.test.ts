@@ -4,18 +4,18 @@ import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";
+import initAiProviderCore from "../../../src/index.js";
+import {
+  ActiveEmbeddingModel,
+  ActiveReasoningModel,
+  ModelManager,
+} from "../../../src/public/adapters.js";
 import {
   handleActiveModelChanged,
   runActivateModel,
   runDeactivateModel,
   runGetActiveModel,
-} from "../../src/api/intents.js";
-import {
-  ActiveEmbeddingModel,
-  ActiveReasoningModel,
-  ModelManager,
-} from "../../src/composition/adapters.js";
-import initAiProviderCore from "../../src/index.js";
+} from "../../../src/public/intents.js";
 
 interface FakeModelManagerImpl {
   store: {

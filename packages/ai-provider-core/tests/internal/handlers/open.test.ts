@@ -2,8 +2,8 @@ import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";
-import { runOpen } from "../../src/api/intents.js";
-import initAiProviderCore from "../../src/index.js";
+import initAiProviderCore from "../../../src/index.js";
+import { runOpen } from "../../../src/public/intents.js";
 
 describe("ai-provider:open intent", () => {
   it("resolves when dispatched after initAiProviderCore runs", async () => {

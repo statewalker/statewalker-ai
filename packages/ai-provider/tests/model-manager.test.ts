@@ -2,11 +2,7 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it, vi } from "vitest";
 import { ModelManager } from "../src/model-manager.js";
 import { ModelStateStore } from "../src/model-state-store.js";
-import type {
-  ActivationProgress,
-  LocalModelConfig,
-  ModelConfig,
-} from "../src/types.js";
+import type { ActivationProgress, LocalModelConfig, ModelConfig } from "../src/types.js";
 
 const REMOTE_MODEL: ModelConfig = {
   runtime: "remote",
@@ -26,10 +22,7 @@ const LOCAL_MODEL: LocalModelConfig = {
   sizeBytes: 100_000_000,
 };
 
-function createManager(
-  catalog: Record<string, ModelConfig>,
-  options?: { files?: MemFilesApi },
-) {
+function createManager(catalog: Record<string, ModelConfig>, options?: { files?: MemFilesApi }) {
   const store = new ModelStateStore(catalog);
   const manager = new ModelManager({ store, files: options?.files });
   return { store, manager };
@@ -188,19 +181,14 @@ describe("ModelManager", () => {
 
     it("allows download for partial status (resume)", async () => {
       const files = new MemFilesApi();
-      const { store, manager } = createManager(
-        { "local:test": LOCAL_MODEL },
-        { files },
-      );
+      const { store, manager } = createManager({ "local:test": LOCAL_MODEL }, { files });
       store.setStatus("local:test", "partial");
 
       // Mock fetch to return an empty file list so download completes quickly
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi
         .fn()
-        .mockResolvedValue(
-          new Response(JSON.stringify({ siblings: [] }), { status: 200 }),
-        );
+        .mockResolvedValue(new Response(JSON.stringify({ siblings: [] }), { status: 200 }));
       try {
         const events = await collectProgress(manager.download("local:test"));
         // Should have transitioned through downloading → downloaded
@@ -213,18 +201,13 @@ describe("ModelManager", () => {
 
     it("sets status to downloading during download", async () => {
       const files = new MemFilesApi();
-      const { store, manager } = createManager(
-        { "local:test": LOCAL_MODEL },
-        { files },
-      );
+      const { store, manager } = createManager({ "local:test": LOCAL_MODEL }, { files });
 
       // Mock fetch to return empty file list
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi
         .fn()
-        .mockResolvedValue(
-          new Response(JSON.stringify({ siblings: [] }), { status: 200 }),
-        );
+        .mockResolvedValue(new Response(JSON.stringify({ siblings: [] }), { status: 200 }));
       try {
         const statuses: string[] = [];
         store.onUpdate(() => {
@@ -242,41 +225,36 @@ describe("ModelManager", () => {
 
     it("sets status to partial on cancellation", async () => {
       const files = new MemFilesApi();
-      const { store, manager } = createManager(
-        { "local:test": LOCAL_MODEL },
-        { files },
-      );
+      const { store, manager } = createManager({ "local:test": LOCAL_MODEL }, { files });
 
       const ac = new AbortController();
       const originalFetch = globalThis.fetch;
       let fetchCount = 0;
       globalThis.fetch = vi
         .fn()
-        .mockImplementation(
-          async (_url: string, options?: { signal?: AbortSignal }) => {
-            fetchCount++;
-            if (fetchCount === 1) {
-              // resolveModelFiles — return one file
-              return new Response(
-                JSON.stringify({
-                  siblings: [{ rfilename: "model.onnx", size: 1000 }],
-                }),
-                { status: 200 },
-              );
-            }
-            // File download — stream one chunk, then hang until aborted
-            const signal = options?.signal;
-            const stream = new ReadableStream({
-              start(controller) {
-                controller.enqueue(new Uint8Array([1, 2, 3]));
-                signal?.addEventListener("abort", () => {
-                  controller.error(new DOMException("Aborted", "AbortError"));
-                });
-              },
-            });
-            return new Response(stream, { status: 200 });
-          },
-        );
+        .mockImplementation(async (_url: string, options?: { signal?: AbortSignal }) => {
+          fetchCount++;
+          if (fetchCount === 1) {
+            // resolveModelFiles — return one file
+            return new Response(
+              JSON.stringify({
+                siblings: [{ rfilename: "model.onnx", size: 1000 }],
+              }),
+              { status: 200 },
+            );
+          }
+          // File download — stream one chunk, then hang until aborted
+          const signal = options?.signal;
+          const stream = new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array([1, 2, 3]));
+              signal?.addEventListener("abort", () => {
+                controller.error(new DOMException("Aborted", "AbortError"));
+              });
+            },
+          });
+          return new Response(stream, { status: 200 });
+        });
 
       try {
         const gen = manager.download("local:test", ac.signal);
@@ -354,10 +332,7 @@ describe("ModelManager", () => {
 
     it("yields engine-specific error when no factory registered", async () => {
       const files = new MemFilesApi();
-      const { manager } = createManager(
-        { "webllm:test": WEBLLM_MODEL },
-        { files },
-      );
+      const { manager } = createManager({ "webllm:test": WEBLLM_MODEL }, { files });
       const events = await collectProgress(manager.activate("webllm:test"));
       expect(events.at(-1)?.phase).toBe("error");
       expect(events.at(-1)?.message).toContain("engine 'webllm'");
@@ -365,10 +340,7 @@ describe("ModelManager", () => {
 
     it("engine-namespaces storage paths", async () => {
       const files = new MemFilesApi();
-      const { manager } = createManager(
-        { "webllm:test": WEBLLM_MODEL },
-        { files },
-      );
+      const { manager } = createManager({ "webllm:test": WEBLLM_MODEL }, { files });
       manager.registerLocalFactory("webllm", {
         factory: vi.fn().mockResolvedValue({ provider: "webllm" }),
         fileResolver: async () => [{ name: "weights.bin", size: 4 }],
@@ -383,9 +355,7 @@ describe("ModelManager", () => {
       );
       try {
         await collectProgress(manager.activate("webllm:test"));
-        const stored = await files.stats(
-          "/models/webllm/mlc/test-model/weights.bin",
-        );
+        const stored = await files.stats("/models/webllm/mlc/test-model/weights.bin");
         expect(stored?.kind).toBe("file");
       } finally {
         globalThis.fetch = originalFetch;

@@ -5,15 +5,15 @@ import {
   ActiveReasoningModelImpl,
   FilesBackedProviderSettingsStore,
   ModelManagerAdapter,
-} from "./adapters.impl.js";
+} from "../internal/adapters.impl.js";
+import { registerIntentHandlers } from "../internal/handlers/register-handlers.js";
+import { mountConfigPanel } from "../internal/mount-config-panel.js";
 import {
   ActiveEmbeddingModel,
   ActiveReasoningModel,
   ModelManager,
   ProviderSettingsStore,
 } from "./adapters.js";
-import { registerIntentHandlers } from "./intent-handlers.js";
-import { mountConfigPanel } from "./mount-config-panel.js";
 
 /**
  * Activator for the AI provider fragment.

@@ -2,13 +2,13 @@ import { describe, expect, it } from "vitest";
 import pkg from "../package.json" with { type: "json" };
 
 describe("ai-provider-core layout", () => {
-  it("has src/api/, src/core/, src/composition/ resolvable", async () => {
+  it("has src/public/ and src/internal/ resolvable", async () => {
     await Promise.all([
-      import("../src/api/intents.js"),
-      import("../src/api/types.js"),
-      import("../src/core/engine-detection.js"),
-      import("../src/composition/adapters.js"),
-      import("../src/composition/ai-provider-core.js"),
+      import("../src/public/intents.js"),
+      import("../src/public/types.js"),
+      import("../src/public/engine-detection.js"),
+      import("../src/public/adapters.js"),
+      import("../src/public/init-ai-provider-core.js"),
     ]);
   });
 

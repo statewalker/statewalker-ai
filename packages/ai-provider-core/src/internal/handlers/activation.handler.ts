@@ -3,16 +3,16 @@ import type { ModelConfig } from "@statewalker/ai-provider";
 import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";
+import { ActiveEmbeddingModel, ActiveReasoningModel, ModelManager } from "../../public/adapters.js";
 import {
   handleActivateModel,
   handleDeactivateModel,
   handleGetActiveModel,
   handlePickModel,
   runActiveModelChanged,
-} from "../../api/intents.js";
-import type { ModelDescriptor, ModelRole } from "../../api/types.js";
+} from "../../public/intents.js";
+import type { ModelDescriptor, ModelRole } from "../../public/types.js";
 import type { ActiveEmbeddingModelImpl, ActiveReasoningModelImpl } from "../adapters.impl.js";
-import { ActiveEmbeddingModel, ActiveReasoningModel, ModelManager } from "../adapters.js";
 
 function providerIdFor(config: ModelConfig): string {
   return config.runtime === "remote" ? config.provider : config.engine;
