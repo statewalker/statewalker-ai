@@ -128,7 +128,7 @@ export class LocalModelStorage {
         yield {
           modelKey,
           phase: "downloading",
-          progress: totalBytes > 0 ? downloadedBytes / totalBytes : 0,
+          progress: totalBytes > 0 ? Math.min(1, downloadedBytes / totalBytes) : 0,
           bytesDownloaded: downloadedBytes,
           bytesTotal: totalBytes,
           message: `Skipped ${file.name} (already downloaded)`,
@@ -169,7 +169,7 @@ export class LocalModelStorage {
           yield {
             modelKey,
             phase: "downloading",
-            progress: totalBytes > 0 ? downloadedBytes / totalBytes : 0,
+            progress: totalBytes > 0 ? Math.min(1, downloadedBytes / totalBytes) : 0,
             bytesDownloaded: downloadedBytes,
             bytesTotal: totalBytes,
             message: `Downloading ${file.name}`,

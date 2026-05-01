@@ -59,14 +59,15 @@ export class TransformersModelCardView extends CardView {
       icon: "check",
       variant: "positive",
     });
+    const initialPercent = clampPercent(options.progress ?? 0);
     const progressBar = new ProgressBarView({
       key: `${options.key}:progress`,
-      value: options.progress ?? 0,
+      value: initialPercent,
       maxValue: 100,
     });
     const progressText = new TextView({
       key: `${options.key}:progress-text`,
-      text: `${Math.round(options.progress ?? 0)}%`,
+      text: `${Math.round(initialPercent)}%`,
     });
     const downloadAction = new ActionView({
       key: `${options.key}:download`,
@@ -168,7 +169,15 @@ export class TransformersModelCardView extends CardView {
   }
 
   setProgress(percent: number): void {
-    this.progressBar.value = percent;
-    this.progressText.text = `${Math.round(percent)}%`;
+    const clamped = clampPercent(percent);
+    this.progressBar.value = clamped;
+    this.progressText.text = `${Math.round(clamped)}%`;
   }
+}
+
+function clampPercent(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  if (value < 0) return 0;
+  if (value > 100) return 100;
+  return value;
 }
