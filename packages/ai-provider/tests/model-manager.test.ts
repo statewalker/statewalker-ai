@@ -338,6 +338,41 @@ describe("ModelManager", () => {
       expect(events.at(-1)?.message).toContain("engine 'webllm'");
     });
 
+    it("refreshLocalStatuses flips on-disk models to downloaded", async () => {
+      // Stale weights from a prior session must surface as "downloaded" when
+      // the workspace re-opens — without this, the UI keeps showing "Download"
+      // and the user is forced to re-download.
+      const files = new MemFilesApi();
+      const { store, manager } = createManager(
+        { "local:tjs": LOCAL_MODEL, "webllm:test": WEBLLM_MODEL },
+        { files },
+      );
+      manager.registerLocalFactory("tjs", { factory: vi.fn(), verifier: async () => true });
+      manager.registerLocalFactory("webllm", { factory: vi.fn(), verifier: async () => false });
+      // Seed a metadata file so hasWeights reaches the verifier for tjs.
+      await files.mkdir("/models/tjs/test/local-model");
+      await files.write("/models/tjs/test/local-model/model.json", [
+        new TextEncoder().encode("{}"),
+      ]);
+
+      await manager.refreshLocalStatuses();
+
+      expect(store.getState("local:tjs")?.status).toBe("downloaded");
+      expect(store.getState("webllm:test")?.status).toBe("not-downloaded");
+    });
+
+    it("refreshLocalStatuses leaves ready/downloading entries untouched", async () => {
+      const files = new MemFilesApi();
+      const { store, manager } = createManager({ "local:tjs": LOCAL_MODEL }, { files });
+      manager.registerLocalFactory("tjs", { factory: vi.fn(), verifier: async () => true });
+      store.setStatus("local:tjs", "ready");
+
+      await manager.refreshLocalStatuses();
+
+      // Ready means the model is loaded in memory — refresh must not clobber.
+      expect(store.getState("local:tjs")?.status).toBe("ready");
+    });
+
     it("engine-namespaces storage paths", async () => {
       const files = new MemFilesApi();
       const { manager } = createManager({ "webllm:test": WEBLLM_MODEL }, { files });

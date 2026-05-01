@@ -81,6 +81,47 @@ export class ModelManager {
     return this.engines.has(engine);
   }
 
+  /**
+   * Reconcile each local catalog entry's persisted state with what is
+   * actually on disk: if `hasWeights()` returns true, flip the store status
+   * to `"downloaded"` so the UI reflects an existing download (e.g. weights
+   * left over from a previous session).
+   *
+   * Skips entries whose current status is `"ready"` (the model is loaded in
+   * memory — overwriting would lose that), `"downloading"` (a transfer is
+   * in flight), or `"downloaded"` (already correct). Engines without a
+   * registered factory are skipped because we cannot consult their
+   * verifier — the matching engine package registers itself separately.
+   *
+   * Call after registering all engine factories. Without this scan, the
+   * store seeds every local entry as `"not-downloaded"` and stale weights
+   * on disk are invisible to the UI until the user explicitly downloads.
+   */
+  async refreshLocalStatuses(): Promise<void> {
+    if (!this.files) return;
+    const checks: Promise<void>[] = [];
+    for (const [key, config] of Object.entries(this.store.catalog)) {
+      if (config.runtime !== "local") continue;
+      const status = this.store.getState(key)?.status;
+      if (status === "ready" || status === "downloading" || status === "downloaded") continue;
+      const registration = this.engines.get(config.engine);
+      if (!registration) continue;
+      const storage = this.storageFor(config.engine);
+      if (!storage) continue;
+      checks.push(
+        storage
+          .hasWeights(config.modelId, registration.verifier)
+          .then((present) => {
+            if (present) this.store.setStatus(key, "downloaded");
+          })
+          .catch(() => {
+            // Best-effort scan; ignore per-entry errors.
+          }),
+      );
+    }
+    await Promise.all(checks);
+  }
+
   /** Get (or lazily build) the storage backend for an engine. */
   private storageFor(engine: EngineId): LocalModelStorage | undefined {
     if (!this.files) return undefined;
