@@ -185,4 +185,57 @@ describe("ai-provider provider intents", () => {
       expect(activeEmbedding.catalogKey).toBe("openai#text-embedding-3");
     });
   });
+
+  describe("configure-provider settings additive fields (selectedModelIds, enabled)", () => {
+    it("persists selectedModelIds for remote providers", async () => {
+      const { ws, intents } = await setup();
+      await runConfigureProvider(intents, {
+        providerId: "anthropic",
+        settings: {
+          providerName: "anthropic",
+          label: "Anthropic",
+          apiKey: "sk",
+          selectedModelIds: ["anthropic:claude-opus", "anthropic:claude-sonnet"],
+        },
+      }).promise;
+
+      const { ProviderSettingsStore } = await import("../../../src/public/adapters.js");
+      const store = ws.requireAdapter(ProviderSettingsStore);
+      const stored = (await store.get("anthropic")) as {
+        selectedModelIds?: string[];
+      };
+      expect(stored.selectedModelIds).toEqual(["anthropic:claude-opus", "anthropic:claude-sonnet"]);
+    });
+
+    it("persists local-provider enabled flag under the local#${engineId} key prefix", async () => {
+      const { ws, intents } = await setup();
+      await runConfigureProvider(intents, {
+        providerId: "webllm",
+        settings: { providerName: "webllm", label: "webllm", enabled: false },
+      }).promise;
+      const { ProviderSettingsStore } = await import("../../../src/public/adapters.js");
+      const store = ws.requireAdapter(ProviderSettingsStore);
+      const stored = (await store.get("local#webllm")) as { enabled?: boolean };
+      expect(stored.enabled).toBe(false);
+
+      // The local provider does not surface in the remote-providers list.
+      const list = await runListProviders(intents, { runtime: "remote" }).promise;
+      expect(list.find((p: ProviderDescriptor) => p.providerId === "webllm")).toBeUndefined();
+    });
+
+    it("does NOT write the new fields when the payload omits them (backwards compat)", async () => {
+      const { ws, intents } = await setup();
+      await runConfigureProvider(intents, {
+        providerId: "openai",
+        settings: { providerName: "openai", label: "OpenAI", apiKey: "sk", baseURL: "https://x" },
+      }).promise;
+      const { ProviderSettingsStore } = await import("../../../src/public/adapters.js");
+      const store = ws.requireAdapter(ProviderSettingsStore);
+      const stored = (await store.get("openai")) as Record<string, unknown>;
+      expect(stored.selectedModelIds).toBeUndefined();
+      expect(stored.enabled).toBeUndefined();
+      expect(stored.apiKey).toBe("sk");
+      expect(stored.baseURL).toBe("https://x");
+    });
+  });
 });

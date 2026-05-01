@@ -21,6 +21,7 @@ import {
   DialogView,
   DockPanelView,
   FlexView,
+  Keyboard,
   Layout,
   type PickerItem,
 } from "@statewalker/workbench-views";
@@ -32,6 +33,7 @@ import {
   ProviderSettingsStore,
 } from "../public/adapters.js";
 import {
+  handleOpen,
   runActivateModel,
   runCancelDownload,
   runConfigureProvider,
@@ -126,6 +128,8 @@ export class AiConfigManager {
     this.#wireWebllmTab();
     this.#wireTransformersTab();
     this.#wireActivationProgress();
+    this.#wireOpenFocus();
+    this.#wireKeyboardShortcut();
 
     if (this.#workspace.isOpened) {
       void this.#initialLoad();
@@ -850,6 +854,45 @@ export class AiConfigManager {
 
     tab.grid.setChildren(cards);
     tab.showGrid();
+  }
+
+  // ── runOpen({ focus }) observer ─────────────────────────────────
+
+  #wireOpenFocus(): void {
+    this.#register(
+      handleOpen(this.#intents, (intent) => {
+        const focus = intent.payload?.focus;
+        if (focus === "providers") {
+          this.view.providersTabs.selectedKey = "remote";
+        } else if (focus === "reasoning") {
+          this.view.activeModels.reasoningPicker.notify();
+        } else if (focus === "embedding") {
+          this.view.activeModels.embeddingPicker.notify();
+        }
+        // Don't claim the intent — the canonical handler in
+        // `internal/handlers/open.handler.ts` resolves it after focusing
+        // the panel. We're a passive observer.
+        return false;
+      }),
+    );
+  }
+
+  // ── Keyboard shortcut: Ctrl+M focuses the reasoning picker ───────
+
+  #wireKeyboardShortcut(): void {
+    try {
+      const keyboard = this.#workspace.requireAdapter(Keyboard);
+      this.#register(
+        keyboard.bind({
+          key: "Ctrl+M",
+          execute: () => {
+            this.view.activeModels.reasoningPicker.notify();
+          },
+        }),
+      );
+    } catch {
+      // Keyboard adapter may not be available in all contexts.
+    }
   }
 
   // ── Activation progress (live download progress) ─────────────────
