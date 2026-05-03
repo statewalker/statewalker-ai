@@ -68,18 +68,20 @@ describe("AgentRuntime", () => {
   });
 
   describe("FilesApi split", () => {
-    it("hides systemPath from the tools view", async () => {
+    it("hides systemPath from the tools view; systemFiles is rebased at systemPath", async () => {
       const files = new MemFilesApi();
       await writeText(files, "/.settings/secret.txt", "secret");
       await writeText(files, "/notes/x.md", "ok");
       const runtime = await buildRuntime({ files });
 
-      // tools view: system hidden
+      // tools view: paths are absolute on the original FS; system is hidden.
       expect(await runtime.files.exists("/.settings/secret.txt")).toBe(false);
       expect(await runtime.files.exists("/notes/x.md")).toBe(true);
 
-      // system view: full visibility
-      expect(await runtime.systemFiles.exists("/.settings/secret.txt")).toBe(true);
+      // system view is rebased at /.settings — paths are relative to it.
+      expect(await runtime.systemFiles.exists("/secret.txt")).toBe(true);
+      // The original full path does NOT resolve on the rebased view.
+      expect(await runtime.systemFiles.exists("/.settings/secret.txt")).toBe(false);
     });
 
     it("rejects writes from tools view into systemPath", async () => {
@@ -94,16 +96,18 @@ describe("AgentRuntime", () => {
       ).rejects.toThrow(/Path is hidden/);
     });
 
-    it("restricts tools view to userPath subtree when set", async () => {
+    it("rebases tools view at userPath subtree when set", async () => {
       const files = new MemFilesApi();
       await writeText(files, "/workspace/a.md", "in");
       await writeText(files, "/outside/b.md", "out");
       const runtime = await buildRuntime({ files, userPath: "/workspace" });
 
-      expect(await runtime.files.exists("/workspace/a.md")).toBe(true);
+      // tools view is rebased at /workspace — paths are relative.
+      expect(await runtime.files.exists("/a.md")).toBe(true);
+      // Paths outside the rebase do not resolve.
       expect(await runtime.files.exists("/outside/b.md")).toBe(false);
-      // system always sees both
-      expect(await runtime.systemFiles.exists("/outside/b.md")).toBe(true);
+      // The underlying FS still has the file (verify via the original ref).
+      expect(await files.exists("/outside/b.md")).toBe(true);
     });
   });
 

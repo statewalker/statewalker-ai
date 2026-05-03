@@ -54,10 +54,10 @@ export function combineFilters(...filters: PathFilter[]): PathFilter {
  * over `rootFiles` that hides the system path-tree and (optionally)
  * restricts visibility to a user subtree.
  *
- * The returned view is the one tools and skills receive via
- * `AgentContext.files`. Hidden paths are reported as not-existing (read /
- * list / stats / exists yield empty / false); writes / mkdir under hidden
- * paths reject with `"Path is hidden"`.
+ * @deprecated The tools view is now constructed inline in
+ *   `AgentRuntime#build()`: when `userPath === "/"`, a `FilteredFilesApi`
+ *   hides system paths from the root; otherwise a `CompositeFilesApi`
+ *   rebases at `userPath`. This helper is no longer used internally.
  */
 export function buildToolsView(
   rootFiles: FilesApi,
