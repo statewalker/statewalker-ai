@@ -18,18 +18,18 @@ describe("ai-provider-core layout", () => {
     expect((mod.default as (ctx: Record<string, unknown>) => unknown).length).toBe(1);
   });
 
-  it("declares the canonical main entry plus only ./views/* subpaths", () => {
+  it("declares main + ./adapters + ./intents + ./views/* subpaths", () => {
     const exports = (pkg as { exports: Record<string, unknown> }).exports;
     const keys = Object.keys(exports);
     expect(keys).toContain(".");
-    // Legacy non-view subpaths must not exist — consumers go through main.
-    for (const legacy of ["./init", "./intents", "./adapters", "./active-models", "./model-list"]) {
+    // Legacy subpaths that no longer exist.
+    for (const legacy of ["./init", "./active-models", "./model-list"]) {
       expect(keys).not.toContain(legacy);
     }
-    // Every other declared key must be a ./views/* subpath (formalizes the
-    // previously-implicit view imports used by chat.core / chat.app).
+    // Allowed shapes: main, ./adapters, ./intents, ./views/*.
+    const allowed = new Set(["./adapters", "./intents"]);
     for (const k of keys) {
-      if (k === ".") continue;
+      if (k === "." || allowed.has(k)) continue;
       expect(k.startsWith("./views/")).toBe(true);
     }
   });
