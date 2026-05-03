@@ -56,16 +56,21 @@ export function registerWebLLMProvider(
     fileResolver: resolveMlcFiles,
     verifier: verifyMlcWeights,
     /**
-     * WebLLM keeps weights in IndexedDB by default (the SW bridge to
-     * FilesApi is opt-in). Probe its cache via `hasModelInCache(...)` so
-     * `refreshLocalStatuses()` can surface previously-downloaded models
-     * after a reload.
+     * Probe FilesApi for the SW-bridged weight files. We don't rely on
+     * WebLLM's `hasModelInCache` because (a) it defaults to
+     * `prebuiltAppConfig` when called without an `appConfig` and our
+     * custom catalog entries are absent from the prebuilt list, so the
+     * lookup throws; and (b) the SW write-through populates FilesApi
+     * directly — making the on-disk files the single source of truth.
      */
-    engineHasWeights: async (config: LocalModelConfig): Promise<boolean> => {
+    engineHasWeights: async (
+      config: LocalModelConfig,
+      files,
+    ): Promise<boolean> => {
+      if (!files) return false;
+      const dir = `${basePath}/${config.modelId}`;
       try {
-        const webllm = await getWebLLMModule();
-        if (typeof webllm.hasModelInCache !== "function") return false;
-        return await webllm.hasModelInCache(config.modelId);
+        return verifyMlcWeights(files.list(dir, { recursive: true }));
       } catch {
         return false;
       }
