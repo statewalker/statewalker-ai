@@ -517,8 +517,9 @@ export class ModelManager {
       let wake: (() => void) | null = null;
       const onProgress = (progress: ActivationProgress): void => {
         queue.push(progress);
-        wake?.();
+        const w = wake;
         wake = null;
+        w?.();
       };
 
       let model: LanguageModelV3 | undefined;
@@ -530,14 +531,16 @@ export class ModelManager {
           (m) => {
             model = m;
             done = true;
-            wake?.();
+            const w = wake;
             wake = null;
+            w?.();
           },
           (e) => {
             factoryError = e;
             done = true;
-            wake?.();
+            const w = wake;
             wake = null;
+            w?.();
           },
         );
 
@@ -547,9 +550,21 @@ export class ModelManager {
           if (next) yield next;
         }
         if (done) break;
-        await new Promise<void>((resolve) => {
-          wake = resolve;
-        });
+        // Race the factory's completion against the next onProgress
+        // callback. The double-check inside the wake promise constructor
+        // handles the rare case where the factory finished between the
+        // outer `done` check and the wake assignment — without it, the
+        // wake would never fire and the loop would deadlock.
+        await Promise.race([
+          factoryPromise,
+          new Promise<void>((resolve) => {
+            if (done || queue.length > 0) {
+              resolve();
+              return;
+            }
+            wake = resolve;
+          }),
+        ]);
       }
       await factoryPromise;
       if (factoryError) throw factoryError;
