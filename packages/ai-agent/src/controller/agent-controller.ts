@@ -148,11 +148,23 @@ export class AgentController {
           yield* this.selectSkillsForFirstTurn(message, signal);
         }
 
-        yield* this.streamTurn(signal);
+        // Forward stream-turn events but hold `turn-finish` until after we
+        // generate the session title (when applicable), so consumers that
+        // persist the session on `turn-finish` capture the title.
+        let pendingFinish: LogMessage | undefined;
+        for await (const ev of this.streamTurn(signal)) {
+          if (ev.type === "turn-finish") {
+            pendingFinish = ev;
+            continue;
+          }
+          yield ev;
+        }
 
         if (isFirstTurn && !this.session.title) {
           this.session.title = await this.generateTitle(message.text, signal);
         }
+
+        if (pendingFinish) yield pendingFinish;
 
         this.session.stopStreaming();
       } catch (e) {
