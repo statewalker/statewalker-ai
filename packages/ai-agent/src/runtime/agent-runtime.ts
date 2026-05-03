@@ -1,7 +1,6 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
-import type { BudgetCompactionOptions, ToolFactory } from "../builder/agent-builder.js";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
 import { type CompactOptions, ContextCompactor } from "../context/context-compactor.js";
@@ -25,6 +24,7 @@ import type {
   AgentRuntimeErrorContext,
   AgentRuntimeErrorHandler,
   AgentRuntimeOptions,
+  BudgetCompactionOptions,
   ModelProviderInput,
   ToolInput,
 } from "./types.js";

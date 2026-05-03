@@ -1,430 +1,218 @@
 # @statewalker/ai-agent
 
-A TypeScript framework for building multi-turn AI agents with persistent state, tool registries, skills, MCP integration, and session management. Built on the [Vercel AI SDK](https://sdk.vercel.ai/), it provides a complete agent lifecycle — from construction via a fluent builder API to conversation execution, context management, and session persistence.
+A TypeScript library for building multi-turn AI agents with persistent state, tool/skill registries, MCP integration, and session management. Built on the [Vercel AI SDK](https://sdk.vercel.ai/).
 
-## Architecture Overview
+The package is framework-free (no workspace-api / workbench-views / shared-adapters dependencies) — it deals only with the agent loop, state tree, tools, models, and persistence. Application-level concerns (UI, intents, fragment activators) live in `@statewalker/ai-provider-core` and the consuming apps.
+
+## Three-tier API
 
 ```
-                          AgentBuilder
-                              |
-         .withProvider()  .withFilesApi()  .withTools()  .withSkillsFolder()
-                              |
-                          .build()
-                              |
-                   +----------+----------+
-                   |                     |
-              AgentController        AgentContext
-              (LLM loop)        (files, config, sessions)
-                   |
-    +--------------+--------------+
-    |              |              |
-  Inbox       ToolRegistry   SkillsModel
- (messages)   (tools + MCP)   (knowledge)
-    |              |
-  Session      Tool execution
-  (tree)       (file ops, sub-agents, custom)
+AgentRuntime   ─→   Agent (definition)   ─→   Session (runtime instance)
 ```
 
-## Packages and Sub-path Exports
+- **`AgentRuntime`** — project-level entry point. Owns providers, tools, skills, the FilesApi split (system view vs tools view), MCP clients, session storage. Built once; stays alive for the life of the host.
+- **`Agent`** — a *definition*: name, tools whitelist, skills whitelist, system prompt, default model, optional sub-agents. Cheap to construct; agents are loaded from `<systemPath>/agents/*.md` at `build()` time and can also be created programmatically.
+- **`Session`** — a *runtime instance* bound to one Agent. Owns the conversation tree, inbox, per-session tool/skill views, and the loop. Persisted by id under `<systemPath>/sessions/`.
+
+## Sub-path exports
 
 | Export Path | Description |
 |---|---|
-| `@statewalker/ai-agent` | Main entry: controller, provider, skills, context, MCP, state |
-| `@statewalker/ai-agent/builder` | `AgentBuilder`, `Agent`, `AgentManager`, `SubAgentTool` |
-| `@statewalker/ai-agent/tools` | 12 file-system tools + path utilities |
-| `@statewalker/ai-agent/config` | `ConfigManager`, `SecretsManager`, `AgentContext` |
-| `@statewalker/ai-agent/sessions` | `FilesSessionManager`, `SessionManager` interface |
-| `@statewalker/ai-agent/state` | `Session`, `Turn`, `Message`, `ToolCall`, `Inbox`, registries |
+| `@statewalker/ai-agent/runtime` | `AgentRuntime`, `Agent`, `Session`, runtime types and FilesApi helpers (`buildToolsView`, `hideUnder`, `insideSubtree`). The official entry point. |
+| `@statewalker/ai-agent` | Re-exports `state`, `controller`, `mcp`, `skills`, `context`, plus a few specific tool creators. |
+| `@statewalker/ai-agent/state` | `TreeNode`, `Session`, `Turn`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, the stream serializer (`serialize` / `deserialize`), tree factory. |
+| `@statewalker/ai-agent/models` | `ModelManager`, `UnifiedProvider`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. |
+| `@statewalker/ai-agent/config` | `ConfigManager`, `SecretsManager`, `AgentContext` interface. |
+| `@statewalker/ai-agent/sessions` | `SessionManager` interface, `FilesSessionManager` (used internally by the runtime). |
+| `@statewalker/ai-agent/tools` | File-system tools (`createFileTools`) and path utilities. |
 
-## Quick Start
+## Quick start
 
-```typescript
-import { AgentBuilder } from "@statewalker/ai-agent/builder";
+```ts
+import { AgentRuntime } from "@statewalker/ai-agent/runtime";
 import { createFileTools } from "@statewalker/ai-agent/tools";
 import { NodeFilesApi } from "@statewalker/webrun-files-node";
+import { createAnthropic } from "@ai-sdk/anthropic";
 
 const files = new NodeFilesApi({ rootDir: "/my/project" });
 
-const agent = await new AgentBuilder()
-  .withProvider("anthropic", process.env.ANTHROPIC_API_KEY)
-  .withModel("claude-sonnet-4-20250514")
-  .withFilesApi(files)
-  .withSystemFolder("/.settings")
-  .withExcludedPaths(".git", "node_modules")
-  .withTools((ctx) => createFileTools(ctx.files, {
-    excludedPrefixes: ["/.settings/", "/.git/", "/node_modules/"],
-  }))
-  .withSkillsFolder("/.settings/skills/")
-  .withSystemPrompt("You are a coding assistant.")
+const runtime = await new AgentRuntime({ files })
+  .addModelProvider(createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY }))
+  .setSystemPath(".settings/")
+  .addTools((ctx) => createFileTools(ctx.files))
   .build();
 
-agent.inbox.push({ role: "user", text: "List files in src/" });
+const assistant = runtime.createAgent({
+  name: "assistant",
+  defaultModel: "claude-sonnet-4-20250514",
+  systemPrompt: "You are a helpful assistant.",
+});
 
-for await (const event of agent.run()) {
-  if (event.type === "text-delta") process.stdout.write(event.text);
+const session = assistant.createSession({ title: "first chat" });
+session.send("List the markdown files in /docs.");
+
+for await (const log of session.run()) {
+  console.log(log.kind, log.content);
 }
+
+const id = await session.save();
+// later: const resumed = await runtime.loadSession(id);
 ```
 
-## Core Components
+## FilesApi split (system vs tools views)
 
-### AgentBuilder
+`AgentRuntime` builds two views over the root `FilesApi` you pass to its constructor:
 
-Fluent builder that assembles all agent components and produces an `Agent` instance. The `build()` method resolves everything in order:
+- **System view** — full visibility. Used internally by the runtime for config, secrets, agent definition loading, skill loading, and session persistence. Never exposed to tools.
+- **Tools view** — a [`FilteredFilesApi`](../../../webrun-files/packages/webrun-files-composite/) over the same root with the system path-tree hidden. Tools and skills receive this via `AgentContext.files`. Hidden paths are reported as not-existing (read/list/stats/exists return empty/false); writes/mkdir into hidden paths reject with `"Path is hidden"`.
 
-1. **Provider** from name + API key or pre-built `ProviderV3`
-2. **File system split** into system files and working files (see [Security Model](#file-system-security-model))
-3. **ConfigManager** and **SecretsManager** backed by system files
-4. **SessionManager** for conversation persistence
-5. **AgentContext** connecting all of the above
-6. **Tool factories** resolved with the context
-7. **Skills** loaded from folder and/or registered directly
-8. **MCP servers** connected and bridged into the tool registry
-9. **Sub-agent tools** registered for delegation
+Defaults: `setSystemPath("/.settings/")`, `setUserPath("/")`. The system path-tree contains:
 
-Builder methods: `withProvider()`, `withModel()`, `withFilesApi()`, `withSystemFolder()`, `withExcludedPaths()`, `withTools()`, `withSkills()`, `withSkillsFolder()`, `withMcpServers()`, `withMcpConfigFile()`, `withSubAgent()`, `withSessionManager()`, `withSystemPrompt()`, `withMaxSteps()`, `withSelectionStrategy()`.
+| Subject | Default path | Override |
+|---|---|---|
+| Agents folder | `<system>/agents/` | `setAgentsPath(path)` |
+| Skills folder | `<system>/skills/` | `setSkillsPath(path)` |
+| Sessions folder | `<system>/sessions/` | `setSessionsPath(path)` |
+| Config folder | `<system>/config/` | `setConfigPath(path)` |
 
-### AgentController
+If a tool needs broader access (e.g. read from `/.settings/`), it must be wired into the runtime via `addTools` and use the system view through manager-provided helpers — never through `AgentContext.files`.
 
-The core conversation loop. Takes messages from an `Inbox`, runs LLM turns via Vercel AI SDK's `streamText()`, executes tool calls, and updates the `Session` tree. Yields `LogMessage` events for streaming output.
+## Error handling
 
-```typescript
-interface AgentControllerConfig {
-  provider: ProviderV3;
-  model: string;
-  session?: Session;
-  inbox?: Inbox;
-  tools?: ToolRegistry;
-  skills?: SkillsModel;
+A single error handler routes errors from every runtime-internal source:
+
+```ts
+runtime.setErrorHandler((err, ctx) => {
+  // ctx?.path   — set when a FilteredFilesApi violation surfaces
+  // ctx?.server — set when an MCP server interaction fails
+  log.warn({ err, ctx });
+});
+```
+
+Default handler is `console.warn`. Errors thrown by build-phase configuration mistakes (no provider, system path covering root, etc.) are routed through the handler **and** rethrown — observers see the error and `await runtime.build()` still rejects.
+
+## API surface
+
+### `class AgentRuntime`
+
+#### Constructor
+
+```ts
+new AgentRuntime({ files: FilesApi, errorHandler?: AgentRuntimeErrorHandler })
+```
+
+#### Fluent setup (each returns `this`)
+
+| Method | Purpose |
+|---|---|
+| `setSystemPath(path)` | System path-tree root. Default `"/.settings"`. |
+| `setUserPath(path)` | Tools-visible root. Default `"/"`. |
+| `setSessionsPath(path)` | Override sessions storage path. |
+| `setConfigPath(path)` | Override config folder. |
+| `setSkillsPath(path)` | Override skills folder. |
+| `setAgentsPath(path)` | Override agents folder. |
+| `setToolsPath(path)` | Reserved for future on-disk tool loading. |
+| `addModelProvider(...providers)` | Register one or more `ProviderV3` or `ModelManager` instances. |
+| `addTools(...tools)` | Register tools (`ToolSet` or `ToolFactory`). |
+| `addSkills(...skills)` | Register skills programmatically. |
+| `setSelectionStrategy(strategy)` | Install a fixed message-selection strategy. Mutually exclusive with `setBudgetCompaction`. |
+| `setBudgetCompaction(opts)` | Install hierarchical selection + compaction. Mutually exclusive with `setSelectionStrategy`. |
+| `setMcpServers(config)` | Configure MCP servers inline. |
+| `setMcpConfigFile(path)` | Load MCP servers from a config file (system view). |
+| `setErrorHandler(handler)` | Replace the runtime-wide error handler. |
+
+#### Materialization
+
+- `build(): Promise<this>` — load skills + agent definitions from disk, resolve the provider union, connect MCP. Idempotent.
+
+#### Agent definitions
+
+- `createAgent(def: AgentDefinition): Agent`
+- `getAgent(name): Agent | undefined`
+- `agents(): Agent[]`
+
+#### Sessions
+
+- `loadSession(id): Promise<Session>`
+- `listSessions(): Promise<SessionMetadata[]>`
+- `deleteSession(id): Promise<boolean>`
+
+#### Read-only views
+
+- `files: FilesApi` (tools view)
+- `systemFiles: FilesApi` (system view)
+- `config`, `secrets`, `models`, `mcp`
+
+### `class Agent`
+
+A definition value. Use `runtime.createAgent({ ... })` rather than constructing directly.
+
+```ts
+interface AgentDefinition {
+  name: string;
+  tools?: string[];        // empty / undefined → all
+  skills?: string[];       // empty / undefined → none
   systemPrompt?: string;
-  maxSteps?: number;        // default: 10
-  select?: SelectionStrategy;
+  defaultModel?: string;
+  maxSteps?: number;
+  maxOutputTokens?: number;
 }
 ```
 
-The controller automatically registers three built-in tools: `list_tools`, `list_skills`, and `use_skills`.
+- `addSubAgent(child: Agent): this` — register a sub-agent. The runtime will expose it as a tool to this agent's sessions. *Not yet supported through the runtime API; throws when a Session is created.*
+- `setSelectionStrategy(strategy)` — per-agent override of the runtime-level strategy.
+- `createSession({ title?, sessionId? }): Session`
 
-### Agent
+### `class Session`
 
-Thin wrapper around `AgentController` + `AgentContext`:
+A runtime instance.
 
-- `run(signal?)` — runs the agent loop, yields `LogMessage` events
-- `save(title?)` — persists current session, returns session ID
-- `resume(id)` — loads a saved session and replaces the current conversation
-- `inbox` — push messages for the agent to process
-- `session` — the live conversation tree
+- `id: string`, `agent: Agent`, `state: SessionTreeNode`
+- `inbox`, `tools`, `skills` — per-session views
+- `send(text, opts?)` — push a user message into the inbox
+- `run(signal?): AsyncGenerator<LogMessage>` — drive the loop
+- `save({ title? }): Promise<string>` — persist
+- `close(): Promise<void>` — tear down
 
-### AgentManager
+## Migration from `AgentBuilder` (removed)
 
-Manages multiple agent sessions with auto-save on switch:
+The legacy `AgentBuilder` / `AgentManager` / `Agent` (wrapper) / `SubAgentTool` classes were removed. The mapping:
 
-```typescript
-const manager = new AgentManager(builder);
-const agent = await manager.create("My chat");
-
-// Later — switch sessions (auto-saves current)
-const resumed = await manager.resume(previousId);
-const sessions = await manager.list();
-await manager.delete(oldId);
-```
-
-## File System Security Model
-
-The `AgentBuilder` enforces a strict separation between **system files** and **working files**. When a `FilesApi` and system folder are configured, the builder creates two isolated views:
-
-### System Files (`AgentContext.systemFiles`)
-
-The full, unguarded file system. Used internally by `ConfigManager`, `SecretsManager`, and `SessionManager` to store agent configuration, API keys, credentials, and session data under the system folder (default: `/.settings/`).
-
-**Not exposed to tools or the LLM.**
-
-### Working Files (`AgentContext.files`)
-
-A guarded file system that **blocks write, remove, and move operations** targeting:
-- The system folder (e.g., `/.settings/`)
-- Any additional excluded paths (e.g., `.git/`, `node_modules/`)
-
-This is the file system passed to tool factories and used by the 12 built-in file tools. The LLM can read, write, edit, and search files — but cannot modify agent configuration, secrets, or session data.
-
-```
-Root FilesApi
-  |
-  +-- systemFiles (full access) --> ConfigManager, SecretsManager, SessionManager
-  |
-  +-- workingFiles (guarded)    --> Tool factories, file tools
-        |
-        +-- /.settings/  BLOCKED (write/remove/move denied)
-        +-- /.git/        BLOCKED
-        +-- /node_modules/ BLOCKED
-        +-- /src/          allowed
-        +-- /docs/         allowed
-```
-
-This split uses `CompositeFilesApi` from `@statewalker/webrun-files-composite` with path-prefix guards. A `PathExcludedError` is thrown if a tool attempts to write to a protected path.
-
-## State Tree
-
-Conversations are modeled as a tree of `TreeNode` instances (from `@statewalker/ai-agent-state`):
-
-```
-Session
-  +-- Turn 1
-  |     +-- user_message "What is X?"
-  |     +-- agent_message
-  |     |     +-- text "Here's X..."
-  |     |     +-- thinking "Let me reason..."
-  |     +-- tool_call (call_1)
-  |     |     +-- tool_request {callId, toolName, args}
-  |     |     +-- tool_response "Result..."
-  |     +-- error (if any)
-  +-- Turn 2
-        +-- ...
-```
-
-### Key State Classes
-
-| Class | Extends | Role |
-|---|---|---|
-| `Session` | `TreeNode` | Root node, manages turns and streaming state |
-| `Turn` | `TreeNode` | Single LLM interaction with messages, tool calls, usage stats |
-| `Message` | `TreeNode` | User, assistant, or thinking text with streaming delta support |
-| `ToolCall` | `TreeNode` | Tool invocation: request args + response result |
-| `Inbox` | `BaseClass` | Async message queue with `push()`/`take()` |
-| `ToolRegistry` | `BaseClass` | Named tool map with subscribe-on-change |
-| `SkillsModel` | `BaseClass` | Skill registration, selection, and activation |
-
-### Serialization
-
-Sessions serialize to markdown via `sessionToMarkdown()` / `markdownToSession()`. Tool requests and responses are encoded as fenced code blocks (`llm:tool-params`, `llm:tool-response`).
-
-## Tools
-
-### Built-in File Tools (12)
-
-Created via `createFileTools(files, { excludedPrefixes })`:
-
-| Tool | Description |
+| Legacy | New |
 |---|---|
-| `read_file` | Read text files (max 50K chars, range support, rejects binary) |
-| `write_file` | Write/create files with auto-directory creation |
-| `edit_file` | Single find-and-replace with optional `replace_all` |
-| `multi_edit` | Atomic batch of find-and-replace edits |
-| `delete_file` | Remove files or directories recursively |
-| `move_file` | Move or rename files |
-| `list_files` | Directory listing with glob patterns (`*`, `**`, `?`) |
-| `search_files` | Regex search across file contents |
-| `grep` | Advanced search with context lines, output modes, pagination |
-| `file_info` | File metadata (size, kind, last modified) |
-| `create_directory` | Create directories with parents |
-| `get_current_time` | Current date/time with timezone support |
+| `new AgentBuilder().withProvider(p).withFilesApi(f).withTools(t).build()` | `await new AgentRuntime({ files: f }).addModelProvider(p).addTools(t).build()` |
+| `withProvider(p)` / `withModelManager(m)` | `addModelProvider(p)` / `addModelProvider(m)` (auto-detected) |
+| `withModel(model)` | per-Agent: `runtime.createAgent({ defaultModel: model })` |
+| `withFilesApi(f)` | constructor option |
+| `withSystemFolder(path)` | `setSystemPath(path)` |
+| `withExcludedPaths(...)` | pre-wrap the `FilesApi` with `FilteredFilesApi` before passing it in |
+| `withTools(t)` | `addTools(t)` |
+| `withSkills(s)` / `withSkillsFolder(path)` | `addSkills(...s)` + `setSkillsPath(path)` |
+| `withMcpServers(cfg)` / `withMcpConfigFile(path)` | `setMcpServers(cfg)` / `setMcpConfigFile(path)` |
+| `new AgentManager(builder).create(title)` | `runtime.createAgent({ name }).createSession({ title })` |
+| `manager.resume(id)` | `runtime.loadSession(id)` |
+| `agent.run(signal)` | `session.run(signal)` |
+| `agent.inbox.push({ role: "user", text })` | `session.send(text)` |
+| `agent.save(title)` | `session.save({ title })` |
+| `withSubAgent(name, factory)` | `agentDef.addSubAgent(other)` *(runtime support pending)* |
 
-All file tools validate paths against the excluded-prefix filter before operating. Protected paths throw `PathExcludedError`.
+The `SessionManager` interface and `Agent` wrapper class no longer exist — sessions are returned directly from `agent.createSession()` / `runtime.loadSession()`.
 
-### Built-in Agent Tools (3)
+## Skill markdown format
 
-Automatically registered by `AgentController`:
+Skills are markdown files under `<systemPath>/skills/` with key=value frontmatter:
 
-| Tool | Description |
-|---|---|
-| `list_tools` | Returns descriptions and parameter schemas for all registered tools |
-| `list_skills` | Returns available skill names and descriptions |
-| `use_skills` | Uses the LLM to select relevant skills from a prompt, then activates them |
-
-### Custom Tools
-
-Register static tools or factories that receive `AgentContext`:
-
-```typescript
-builder
-  .withTools({ my_tool: tool({ ... }) })           // static ToolSet
-  .withTools((ctx) => ({                            // factory with context
-    search_docs: tool({
-      description: "Search project docs",
-      inputSchema: z.object({ query: z.string() }),
-      execute: async ({ query }) => {
-        // ctx.files, ctx.config, ctx.secrets available
-      },
-    }),
-  }));
 ```
-
-### Sub-Agent Tools
-
-Register child agents as tools for delegation:
-
-```typescript
-builder.withSubAgent("researcher", (parent) =>
-  new AgentBuilder()
-    .withProvider(parent.provider)
-    .withModel(parent.model)
-    .withFilesApi(parent.files)
-    .withSystemPrompt("You are a research assistant.")
-);
-```
-
-When the LLM calls the sub-agent tool, a fresh child agent is built, runs to completion, and returns its final text. Sub-agents do not receive their own sub-agent tools (prevents infinite recursion).
-
-## Skills
-
-Skills are reusable knowledge blocks (markdown files with frontmatter) that extend the system prompt:
-
-```markdown
 ---
-name: code-review
-description: Reviews code for quality and correctness
+name=analyze-csv
+description=Read a CSV and produce a summary statistics report.
 ---
-When reviewing code, check for:
-- Logic errors and edge cases
-- Security vulnerabilities (OWASP top 10)
-- Performance bottlenecks
-...
+
+(skill body — instructions for the LLM when this skill is selected)
 ```
 
-Skills are loaded from a folder (`withSkillsFolder()`) or registered directly (`withSkills()`). The agent can dynamically select relevant skills via the `use_skills` tool.
-
-## MCP Integration
-
-Connect to Model Context Protocol servers:
-
-```typescript
-builder.withMcpServers({
-  "my-server": { url: "http://localhost:3000/mcp", type: "http" },
-});
-```
-
-`McpClientManager` handles connections, and `bridgeMcpTools()` syncs MCP-provided tools into the `ToolRegistry`, automatically updating when the MCP server's tool list changes.
-
-## Configuration and Secrets
-
-### ConfigManager
-
-Generic JSON configuration loader/saver backed by `FilesApi`. Supports optional Zod schema validation:
-
-```typescript
-const data = await ctx.config.load("settings.json", mySchema);
-await ctx.config.save("settings.json", { theme: "dark" });
-```
-
-### SecretsManager
-
-API key and credentials management:
-
-```typescript
-const key = await ctx.secrets.getApiKey();          // reads /key.json
-await ctx.secrets.saveApiKey({ apiKey, provider, models });
-const creds = await ctx.secrets.getCredentials("github"); // reads /credentials/github.json
-```
-
-## Session Persistence
-
-`FilesSessionManager` stores sessions as markdown files in a folder-per-session layout with a JSON index:
-
-```
-/.settings/sessions/
-  +-- index.json                    # {sessions: SessionMetadata[]}
-  +-- 7192837465012/
-  |     +-- 7192837465012.md        # treeToMarkdown(session)
-  +-- 7192837465013/
-        +-- 7192837465013.md
-```
-
-Session IDs are Snowflake IDs. The index auto-rebuilds from directory scanning if missing.
-
-## Context Selection Strategies
-
-Three built-in strategies for managing context window usage:
-
-| Strategy | Description |
-|---|---|
-| `selectAll` | All turns sent verbatim (simple, grows unbounded) |
-| `selectWithCompaction` | Older turns summarized via LLM, recent N turns kept verbatim. Summaries cached on Turn nodes. |
-| `selectHierarchical` | Token-budget-driven tree-growing compaction. Old turns get wrapped under `TurnGroup` parent nodes carrying a single subject-structured summary. Groups can themselves be promoted under deeper parents; unbounded depth. Pinning, tool-result elision, and expand-on-pin all built in. |
-
-```typescript
-import { selectWithCompaction, createContentSummarizer } from "@statewalker/ai-agent";
-
-builder.withSelectionStrategy(
-  selectWithCompaction({
-    summarizer: createContentSummarizer({ model: languageModel }),
-    maxRecentTurns: 4,
-  })
-);
-```
-
-### Budget compaction (hierarchical)
-
-Preferred strategy for long-running sessions. Opts in via a single builder call:
-
-```typescript
-import { createHierarchicalSummarizer } from "@statewalker/ai-agent";
-
-builder.withBudgetCompaction({
-  budgetTokens: 120_000,                             // ~70% of 200k context
-  summarizer: createHierarchicalSummarizer({         // two prompts (depth-1 / depth-k)
-    model: languageModel,                            // or: { depth1, depthK }
-  }),
-  // Optional — defaults shown:
-  keepRecentTurns: 4,
-  groupSize: 6,
-  depthPromoteThreshold: 4,
-  // estimator / pinPolicy / elisionPolicy default to the package defaults.
-});
-```
-
-What happens:
-- Before each `streamText`, `ContextCompactor.compact(session, ...)` runs. If the session exceeds `budgetTokens`, older turns are wrapped under `TurnGroup` nodes whose `node.content` holds the LLM-generated summary prose (readable in markdown dumps) and whose `node.props.sections` hold structured `{ title, body, refs }` entries.
-- Raw turns are never dropped — groups are non-destructive overlays. A `TurnGroup` can be expanded back via `TreeNode.ungroup(wrapper)`.
-- The hierarchical selector emits one synthetic `user`-role message per group, tagged `[group:{stamp}]`. The model can cite those ids in its reply.
-- Pinning forces expansion: any group containing a pinned descendant (latest user message, latest stateful tool output, `props.pinned: true`) is rendered as raw turns instead of a summary.
-- Over-budget projections demote deepest non-pinned expansions first.
-- Oversized `tool_response` bodies are elided at projection time (never mutating the tree); pre-registered stateful tools (`list_tools`, `list_skills`, `use_skills`) are never elided.
-- If no compaction can bring the session under budget after `maxPassesPerCompact` passes (default 8), a `context-thrash` LogMessage event is emitted and compaction returns best-effort.
-
-## Provider Support
-
-Built-in factory for three providers:
-
-| Provider | Package | Embeddings |
-|---|---|---|
-| Anthropic | `@ai-sdk/anthropic` | Not supported |
-| OpenAI | `@ai-sdk/openai` | Supported |
-| Google | `@ai-sdk/google` | Supported |
-
-```typescript
-builder.withProvider("anthropic", apiKey);
-// or
-builder.withProvider(customProviderInstance);
-```
-
-`verifyModelAccess()` validates API key and model availability with a minimal test call.
-
-## Event Stream
-
-`Agent.run()` yields `LogMessage` events for real-time UI rendering:
-
-| Event Type | Fields | Description |
-|---|---|---|
-| `text-delta` | `turnId`, `text` | Incremental text from the LLM |
-| `reasoning` | `turnId`, `text` | Thinking/reasoning text |
-| `tool-call` | `turnId`, `toolCallId`, `toolName`, `args` | Tool invocation started |
-| `tool-result` | `turnId`, `toolCallId`, `toolName`, `result` | Tool execution completed |
-| `step-finish` | `turnId`, `finishReason` | LLM step finished |
-| `error` | `turnId`, `message` | Error occurred |
-
-## Dependencies
-
-| Package | Role |
-|---|---|
-| `ai` | Vercel AI SDK core (`streamText`, `tool`, `ToolSet`) |
-| `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/openai` | LLM provider adapters |
-| `@ai-sdk/mcp` | MCP client creation |
-| `@modelcontextprotocol/sdk` | MCP transport (HTTP/SSE) |
-| `@statewalker/ai-agent-state` | TreeNode, BaseClass, serialization |
-| `@statewalker/webrun-files` | FilesApi interface |
-| `@statewalker/webrun-files-composite` | CompositeFilesApi with mount points and guards |
-| `@repo/ids` | Snowflake ID generation |
-| `@repo/shared` | Shared model adapters |
-| `zod` | Schema validation |
+`name` and `description` are required. Additional keys are passed through as metadata.
 
 ## License
 
-MIT
+MIT.

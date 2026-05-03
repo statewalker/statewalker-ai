@@ -1,10 +1,30 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
-import type { BudgetCompactionOptions, ToolFactory } from "../builder/agent-builder.js";
+import type { AgentContext } from "../config/types.js";
+import type { HierarchicalSummarizer } from "../context/hierarchical-summarizer.js";
+import type { PinPolicy } from "../context/pin-policy.js";
 import type { SelectionStrategy } from "../context/select-messages.js";
+import type { TokenEstimator } from "../context/token-estimator.js";
+import type { ToolElisionPolicy } from "../context/tool-elision.js";
 import type { ModelManager } from "../models/model-manager.js";
 import type { SkillInfo } from "../skills/skill-types.js";
+
+/** Per-call options for the hierarchical context compactor. */
+export interface BudgetCompactionOptions {
+  budgetTokens: number;
+  summarizer: HierarchicalSummarizer;
+  keepRecentTurns?: number;
+  groupSize?: number;
+  depthPromoteThreshold?: number;
+  maxPassesPerCompact?: number;
+  estimator?: TokenEstimator;
+  pinPolicy?: PinPolicy;
+  elisionPolicy?: ToolElisionPolicy;
+}
+
+/** Factory invoked at `build()` to materialise tools from the live context. */
+export type ToolFactory = (ctx: AgentContext) => ToolSet | Promise<ToolSet>;
 
 /**
  * Optional context for a routed runtime error.
