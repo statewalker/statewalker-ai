@@ -1,5 +1,6 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
+import { CompositeFilesApi, FilteredFilesApi } from "@statewalker/webrun-files-composite";
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
@@ -17,7 +18,7 @@ import type { SessionMetadata } from "../sessions/types.js";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 import { Agent } from "./agent.js";
-import { buildToolsView } from "./files-split.js";
+import { combineFilters, hideUnder } from "./files-split.js";
 import { Session } from "./session.js";
 import type {
   AgentDefinition,
@@ -276,11 +277,34 @@ export class AgentRuntime {
     }
 
     // 2. Build the two FilesApi views.
-    this._systemFiles = this._rootFiles;
-    this._toolsFiles = buildToolsView(this._rootFiles, this._systemPath, this._userPath);
+    //    System view is rooted at systemPath: a path like "/sessions" on
+    //    systemFiles resolves to "<systemPath>/sessions" on rootFiles.
+    this._systemFiles = new CompositeFilesApi(this._rootFiles, this._systemPath);
 
-    // 3. Config + Secrets.
-    this._config = new ConfigManager(this._systemFiles, this._configPath ?? this._systemPath);
+    //    Tools view: when userPath is "/", tools see the root with system
+    //    folders hidden via FilteredFilesApi. When userPath is a subtree,
+    //    tools see that subtree as their root via CompositeFilesApi —
+    //    everything outside (including systemPath) is naturally invisible.
+    if (this._userPath === "/") {
+      const hidePaths = [this._systemPath];
+      // Per-subject paths that may live OUTSIDE systemPath via overrides
+      // also need to be hidden from tools.
+      for (const p of [this._sessionsPath, this._skillsPath, this._agentsPath, this._configPath]) {
+        if (p && !isUnderSystem(p, this._systemPath)) hidePaths.push(p);
+      }
+      this._toolsFiles = new FilteredFilesApi(
+        this._rootFiles,
+        combineFilters(...hidePaths.map(hideUnder)),
+      );
+    } else {
+      this._toolsFiles = new CompositeFilesApi(this._rootFiles, this._userPath);
+    }
+
+    // 3. Config + Secrets — paths are relative to systemFiles' root.
+    this._config = new ConfigManager(
+      this._systemFiles,
+      toSystemRelative(this._configPath, this._systemPath, "/"),
+    );
     this._secrets = new SecretsManager(this._config);
 
     // 4. Resolve provider — first explicit ProviderV3 wins; else fall back
@@ -301,10 +325,10 @@ export class AgentRuntime {
       throw err;
     }
 
-    // 5. Sessions storage.
+    // 5. Sessions storage — paths are relative to systemFiles' root.
     this._sessions = new FilesSessionManager(
       this._systemFiles,
-      this._sessionsPath ?? joinPath(this._systemPath, "sessions"),
+      toSystemRelative(this._sessionsPath, this._systemPath, "/sessions"),
     );
 
     // 6. Resolve tools.
@@ -315,9 +339,9 @@ export class AgentRuntime {
     }
     this._resolvedTools = tools;
 
-    // 7. Resolve skills (manual + folder).
+    // 7. Resolve skills (manual + folder) — relative to systemFiles' root.
     const skills: SkillInfo[] = [...this._skills];
-    const skillsPath = this._skillsPath ?? joinPath(this._systemPath, "skills");
+    const skillsPath = toSystemRelative(this._skillsPath, this._systemPath, "/skills");
     if (await this._systemFiles.exists(skillsPath)) {
       for await (const entry of this._systemFiles.list(skillsPath)) {
         if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
@@ -353,8 +377,8 @@ export class AgentRuntime {
       }
     }
 
-    // 9. Agent definitions from disk (optional).
-    const agentsPath = this._agentsPath ?? joinPath(this._systemPath, "agents");
+    // 9. Agent definitions from disk (optional) — relative to systemFiles.
+    const agentsPath = toSystemRelative(this._agentsPath, this._systemPath, "/agents");
     if (await this._systemFiles.exists(agentsPath)) {
       for await (const entry of this._systemFiles.list(agentsPath)) {
         if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
@@ -592,8 +616,38 @@ function normalizeFolderPath(path: string): string {
   return p;
 }
 
-function joinPath(base: string, sub: string): string {
-  return `${base === "/" ? "" : base}/${sub.replace(/^\//, "")}`;
+/**
+ * `true` if `subPath` is the same as `systemPath` or lives under it.
+ * Used to decide whether a per-subject override needs to be hidden from
+ * the tools view (overrides outside systemPath are reachable via the
+ * root and must be filtered out explicitly).
+ */
+function isUnderSystem(subPath: string, systemPath: string): boolean {
+  if (subPath === systemPath) return true;
+  return subPath.startsWith(`${systemPath}/`);
+}
+
+/**
+ * Translate an absolute per-subject path into a path relative to
+ * systemFiles' root (which is `systemPath` after the `CompositeFilesApi`
+ * rebase). If the override lives outside `systemPath`, return it
+ * unchanged — system code passes it to the *underlying* `rootFiles` via
+ * the system view (which delegates outside the rebase to the same
+ * backend, just through the composite's mount logic).
+ *
+ * `defaultRelative` is used when the override is undefined.
+ */
+function toSystemRelative(
+  override: string | undefined,
+  systemPath: string,
+  defaultRelative: string,
+): string {
+  if (override === undefined) return defaultRelative;
+  if (override === systemPath) return "/";
+  if (override.startsWith(`${systemPath}/`)) {
+    return override.slice(systemPath.length);
+  }
+  return override;
 }
 
 async function readFile(files: FilesApi, path: string): Promise<string> {
