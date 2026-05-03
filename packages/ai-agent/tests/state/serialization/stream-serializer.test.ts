@@ -112,4 +112,46 @@ describe("stream serializer", () => {
     const out = await collect(deserialize([md]));
     expect(out).toEqual([{ props: { id: "n1" }, content: "hello" }]);
   });
+
+  it("parses legacy `key: value` props (backward compat for sessions saved by older serializer)", async () => {
+    // Verbatim block format written by the pre-stream-serializer code.
+    // Mixes ISO timestamps and JSON values (containing `:` without trailing
+    // space) inside the prop block.
+    const md = [
+      "---",
+      "id: 0KE1FB3Z00400",
+      "type: session",
+      "updatedAt: 2026-04-17T15:07:50.354Z",
+      "",
+      "---",
+      "id: 0KE1FB3ZM0400",
+      "model: gemini-flash-latest",
+      "parentId: 0KE1FB3Z00400",
+      'usage: {"input":6550,"output":95,"totalTokens":6645,"cacheRead":3965}',
+      "type: turn",
+      "",
+      "",
+    ].join("\n");
+
+    const out = await collect(deserialize([md]));
+    expect(out).toHaveLength(2);
+    expect(out[0]).toEqual({
+      props: {
+        id: "0KE1FB3Z00400",
+        type: "session",
+        updatedAt: "2026-04-17T15:07:50.354Z",
+      },
+      content: "",
+    });
+    expect(out[1]).toEqual({
+      props: {
+        id: "0KE1FB3ZM0400",
+        model: "gemini-flash-latest",
+        parentId: "0KE1FB3Z00400",
+        usage: '{"input":6550,"output":95,"totalTokens":6645,"cacheRead":3965}',
+        type: "turn",
+      },
+      content: "",
+    });
+  });
 });
