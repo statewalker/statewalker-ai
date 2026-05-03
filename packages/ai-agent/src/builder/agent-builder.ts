@@ -50,6 +50,12 @@ interface McpServerConfig {
   type?: "http" | "sse" | "stdio";
 }
 
+export type AgentBuilderErrorHandler = (error: Error) => void;
+
+const defaultBuilderErrorHandler: AgentBuilderErrorHandler = (error) => {
+  console.warn("[AgentBuilder]", error);
+};
+
 export class AgentBuilder {
   private _provider?: ProviderV3;
   private _model = "";
@@ -73,6 +79,20 @@ export class AgentBuilder {
   private _selectionStrategy?: SelectionStrategy;
   private _modelManager?: ModelManager;
   private _budgetCompaction?: BudgetCompactionOptions;
+  private _errorHandler: AgentBuilderErrorHandler = defaultBuilderErrorHandler;
+
+  /**
+   * Install an error handler for the build phase. Defaults to `console.warn`.
+   * Invoked at sites that previously logged or silently swallowed an error
+   * (e.g. malformed skill files in `loadSkillsFolder`). For unrecoverable
+   * configuration errors (missing provider, missing FilesApi) the handler
+   * is invoked **before** the throw — observers see the error AND the
+   * `await build()` promise still rejects.
+   */
+  setErrorHandler(handler: AgentBuilderErrorHandler): this {
+    this._errorHandler = handler;
+    return this;
+  }
 
   // --- Provider ---
 
@@ -318,14 +338,18 @@ export class AgentBuilder {
     if (this._modelManager) {
       return new UnifiedProvider(this._modelManager.store);
     }
-    throw new Error(
+    const err = new Error(
       "Provider not configured. Use .withProvider(provider) or .withModelManager(manager)",
     );
+    this._errorHandler(err);
+    throw err;
   }
 
   private splitFilesApi(): { systemFiles: FilesApi; workingFiles: FilesApi } {
     if (!this._filesApi) {
-      throw new Error("FilesApi not configured. Use .withFilesApi(files)");
+      const err = new Error("FilesApi not configured. Use .withFilesApi(files)");
+      this._errorHandler(err);
+      throw err;
     }
 
     const systemFiles = this._filesApi;
@@ -366,8 +390,8 @@ export class AgentBuilder {
         );
         const skill = parseSkillMarkdown(text, entry.path);
         if (skill) controller.skills.register(skill);
-      } catch {
-        // Skip unparseable skill files
+      } catch (err) {
+        this._errorHandler(err as Error);
       }
     }
   }
