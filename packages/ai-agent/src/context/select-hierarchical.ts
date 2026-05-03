@@ -1,8 +1,8 @@
-import type { TreeNode } from "@statewalker/ai-agent-state";
 import type { ModelMessage } from "ai";
 import { NodeType } from "../state/node-types.js";
 import type { Session } from "../state/session.js";
 import type { ToolCall } from "../state/tool-call.js";
+import type { TreeNode } from "../state/tree-node.js";
 import type { Turn } from "../state/turn.js";
 import type { TurnGroup } from "../state/turn-group.js";
 import type { PinPolicy } from "./pin-policy.js";

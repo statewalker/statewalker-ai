@@ -1,6 +1,6 @@
-import { TreeNode } from "@statewalker/ai-agent-state";
 import type { JSONValue } from "ai";
 import { NodeType } from "./node-types.js";
+import { TreeNode } from "./tree-node.js";
 
 export class ToolCall extends TreeNode {
   get callId(): string {

@@ -1,7 +1,7 @@
-import type { TreeNode } from "@statewalker/ai-agent-state";
 import { NodeType } from "../state/node-types.js";
 import type { Session } from "../state/session.js";
 import type { ToolCall } from "../state/tool-call.js";
+import type { TreeNode } from "../state/tree-node.js";
 
 /**
  * Predicate describing whether a given node is "pinned" — must never be

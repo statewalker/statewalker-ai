@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { newNodeFactory } from "../../src/node-factory.js";
-import { toFlatStream } from "../../src/serialization/to-flat-stream.js";
+import { toFlatStream } from "../../../src/state/serialization/to-flat-stream.js";
+import { newNodeFactory } from "../../../src/state/tree-node-factory.js";
 
 const factory = newNodeFactory({});
 
@@ -27,7 +27,10 @@ describe("toFlatStream (full)", () => {
     const { session } = makeTree();
     const nodes = [...toFlatStream(session)];
     for (let i = 1; i < nodes.length; i++) {
-      expect(nodes[i - 1]?.id < nodes[i]?.id).toBe(true);
+      const prev = nodes[i - 1];
+      const cur = nodes[i];
+      if (!prev || !cur) throw new Error("unreachable");
+      expect(prev.id < cur.id).toBe(true);
     }
   });
 

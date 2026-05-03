@@ -1,6 +1,6 @@
 import type { TreeNode } from "../tree-node.js";
 import { wrapTree } from "../tree-node.js";
-import type { NodeFactory, TreeEntry } from "../types.js";
+import type { NodeFactory, TreeEntry } from "../tree-types.js";
 
 /**
  * Reconstruct a `TreeNode` tree from a structural `TreeEntry` JSON object.

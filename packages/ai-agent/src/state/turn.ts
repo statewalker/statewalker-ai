@@ -1,9 +1,9 @@
-import { TreeNode } from "@statewalker/ai-agent-state";
 import type { ModelMessage } from "ai";
 import type { LogMessage } from "./log-message.js";
 import type { Message } from "./message.js";
 import { NodeType } from "./node-types.js";
 import type { ToolCall } from "./tool-call.js";
+import { TreeNode } from "./tree-node.js";
 
 export interface Usage {
   input: number;

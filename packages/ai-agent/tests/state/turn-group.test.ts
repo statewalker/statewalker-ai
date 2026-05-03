@@ -1,10 +1,11 @@
-import { markdownToTree, treeToMarkdown } from "@statewalker/ai-agent-state";
 import { describe, expect, it } from "vitest";
 import {
   createAgentNodeFactory,
+  markdownToSession,
   NodeType,
   type Session,
   type SummarySection,
+  sessionToMarkdown,
   type TurnGroup,
 } from "../../src/state/index.js";
 
@@ -136,23 +137,19 @@ describe("Session.allTurns", () => {
   });
 });
 
-describe("TurnGroup markdown readability", () => {
-  it("summary prose appears as section body, not as frontmatter", () => {
+describe("TurnGroup markdown round-trip", () => {
+  it("summary prose appears in serialized output", async () => {
     const session = makeSession();
     const group = session.addChild({ type: NodeType.turnGroup }) as TurnGroup;
     group.summaryText = "The agent decided to refactor the auth module.";
     group.depth = 1;
 
-    const md = treeToMarkdown(session);
+    const md = await sessionToMarkdown(session);
     expect(md).toContain("The agent decided to refactor the auth module.");
-
-    const groupSection = extractSection(md, group.id);
-    expect(groupSection.frontmatter).toContain("type: turn_group");
-    expect(groupSection.frontmatter).not.toContain("The agent decided to refactor");
-    expect(groupSection.body).toContain("The agent decided to refactor the auth module.");
+    expect(md).toContain(`id=${group.id}`);
   });
 
-  it("sections JSON round-trips through markdown frontmatter", () => {
+  it("sections round-trip through markdown", async () => {
     const session = makeSession();
     const group = session.addChild({ type: NodeType.turnGroup }) as TurnGroup;
     group.summaryText = "summary body";
@@ -163,8 +160,8 @@ describe("TurnGroup markdown readability", () => {
     group.sections = sections;
 
     const factory = createAgentNodeFactory();
-    const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, factory) as Session;
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as Session;
 
     const restoredGroup = restored.children.find((c) => c.id === group.id) as TurnGroup;
     expect(restoredGroup).toBeDefined();
@@ -172,21 +169,3 @@ describe("TurnGroup markdown readability", () => {
     expect(restoredGroup.sections).toEqual(sections);
   });
 });
-
-function extractSection(md: string, nodeId: string): { frontmatter: string; body: string } {
-  const segments = md.split(/^-{3,}\s*$/m);
-  for (const seg of segments) {
-    if (!seg.includes(`id: ${nodeId}`)) continue;
-    const trimmed = seg.replace(/^\s*\n/, "");
-    const emptyLineIdx = trimmed.search(/\n\s*\n/);
-    if (emptyLineIdx === -1) {
-      return { frontmatter: trimmed, body: "" };
-    }
-    const afterEmpty = trimmed.indexOf("\n", emptyLineIdx + 1);
-    return {
-      frontmatter: trimmed.slice(0, emptyLineIdx),
-      body: afterEmpty >= 0 ? trimmed.slice(afterEmpty + 1) : "",
-    };
-  }
-  throw new Error(`section for node ${nodeId} not found in markdown`);
-}

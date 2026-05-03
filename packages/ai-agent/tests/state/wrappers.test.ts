@@ -1,4 +1,3 @@
-import { applyFlat, jsonToTree, toFlatStream, treeToJson } from "@statewalker/ai-agent-state";
 import { describe, expect, it, vi } from "vitest";
 import {
   createAgentNodeFactory,
@@ -8,6 +7,12 @@ import {
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
+import {
+  applyFlat,
+  jsonToTree,
+  toFlatStream,
+  treeToJson,
+} from "../../src/state/serialization/index.js";
 
 const factory = createAgentNodeFactory();
 

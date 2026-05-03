@@ -1,4 +1,3 @@
-import type { NodeFactory } from "@statewalker/ai-agent-state";
 import { SnowflakeId } from "@statewalker/shared-ids";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
@@ -6,6 +5,7 @@ import { createAgentNodeFactory } from "../state/node-factory.js";
 import { NodeType } from "../state/node-types.js";
 import { Session } from "../state/session.js";
 import { markdownToSession, sessionToMarkdown } from "../state/session-serialization.js";
+import type { NodeFactory } from "../state/tree-types.js";
 import type { SessionManager, SessionMetadata } from "./types.js";
 
 interface IndexData {
@@ -50,7 +50,7 @@ export class FilesSessionManager implements SessionManager {
       type: NodeType.session,
       props: { title: meta.title },
     }) as Session;
-    const markdown = sessionToMarkdown(session);
+    const markdown = await sessionToMarkdown(session);
     await writeText(this.files, `${this.sessionsDir}/${id}/${id}.md`, markdown);
 
     return id;
@@ -58,7 +58,7 @@ export class FilesSessionManager implements SessionManager {
 
   async save(id: string, session: Session): Promise<void> {
     const sessionDir = `${this.sessionsDir}/${id}`;
-    const markdown = sessionToMarkdown(session);
+    const markdown = await sessionToMarkdown(session);
 
     // Extract large attachments
     const { text, attachments } = this.extractAttachments(markdown, id);
@@ -94,7 +94,7 @@ export class FilesSessionManager implements SessionManager {
     // Re-inject attachments
     const rehydrated = await this.rehydrateAttachments(text, sessionDir);
 
-    const root = markdownToSession(rehydrated, this.factory);
+    const root = await markdownToSession(rehydrated, this.factory);
     if (root instanceof Session) return root;
     // Wrap in Session if the factory returned a plain TreeNode
     const session = this.factory({ type: NodeType.session }) as Session;

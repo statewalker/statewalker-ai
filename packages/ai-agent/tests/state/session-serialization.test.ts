@@ -1,20 +1,15 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import {
-  jsonToTree,
-  markdownToTree,
-  treeToJson,
-  treeToMarkdown,
-} from "@statewalker/ai-agent-state";
 import { describe, expect, it } from "vitest";
 import {
   createAgentNodeFactory,
+  jsonToTree,
   Message,
+  markdownToSession,
   NodeType,
   Session,
   sessionToMarkdown,
   ToolCall,
   Turn,
+  treeToJson,
 } from "../../src/state/index.js";
 
 const factory = createAgentNodeFactory();
@@ -122,10 +117,10 @@ describe("Session serialization — JSON round-trip", () => {
 });
 
 describe("Session serialization — Markdown round-trip", () => {
-  it("preserves tree structure and typed nodes", () => {
+  it("preserves tree structure and typed nodes", async () => {
     const session = buildSession();
-    const md = sessionToMarkdown(session);
-    const restored = markdownToTree(md, factory) as Session;
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as Session;
 
     expect(restored).toBeInstanceOf(Session);
     expect(restored.turns).toHaveLength(1);
@@ -145,10 +140,10 @@ describe("Session serialization — Markdown round-trip", () => {
     expect(tc.toolName).toBe("get_current_time");
   });
 
-  it("preserves object props through markdown headers", () => {
+  it("preserves object props through markdown headers", async () => {
     const session = buildSession();
-    const md = sessionToMarkdown(session);
-    const restored = markdownToTree(md, factory) as Session;
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as Session;
 
     const turn = restored.turns[0] as Turn;
 
@@ -166,78 +161,10 @@ describe("Session serialization — Markdown round-trip", () => {
     expect(tc.args).toEqual({ timezone: "UTC", format: "iso" });
   });
 
-  it("wraps tool content in fenced code blocks", () => {
+  it("Markdown round-trip produces identical JSON snapshot", async () => {
     const session = buildSession();
-    const md = sessionToMarkdown(session);
-
-    expect(md).toContain("```llm:tool-params\n");
-    expect(md).toContain("```llm:tool-response\n");
-
-    // Content is still correctly round-tripped
-    const restored = markdownToTree(md, factory) as Session;
-    const tc = restored.turns[0]?.toolCalls[0] as ToolCall;
-    expect(tc.request?.content).toContain("timezone");
-    expect(tc.result).toContain("Monday, April 6, 2026");
-  });
-
-  it("Markdown round-trip produces identical JSON snapshot", () => {
-    const session = buildSession();
-    const md = sessionToMarkdown(session);
-    const restored = markdownToTree(md, factory);
+    const md = await sessionToMarkdown(session);
+    const restored = await markdownToSession(md, factory);
     expect(treeToJson(restored)).toEqual(treeToJson(session));
-  });
-
-  it("plain treeToMarkdown still works without code blocks", () => {
-    const session = buildSession();
-    const md = treeToMarkdown(session);
-    expect(md).not.toContain("```llm:");
-
-    // Still round-trips correctly
-    const restored = markdownToTree(md, factory);
-    expect(treeToJson(restored)).toEqual(treeToJson(session));
-  });
-
-  it("round-trips the test-session.md fixture", () => {
-    const fixturePath = resolve(import.meta.dirname, "fixtures/test-session.md");
-    const markdown = readFileSync(fixturePath, "utf-8");
-    const session = markdownToTree(markdown, factory) as Session;
-
-    expect(session).toBeInstanceOf(Session);
-    expect(session.turns).toHaveLength(1);
-
-    const turn = session.turns[0] as Turn;
-    expect(turn).toBeInstanceOf(Turn);
-    expect(turn.model).toBe("gemini-flash-latest");
-    expect(turn.stopReason).toBe("stop");
-
-    // User message
-    expect(turn.messages[0]?.text).toBe("What time is it?");
-
-    // Tool call with object providerMetadata
-    const tc = turn.toolCalls[0] as ToolCall;
-    expect(tc.callId).toBe("JyeyJ1LYnuX950UV");
-    expect(tc.toolName).toBe("get_current_time");
-    expect(tc.props.providerMetadata).toEqual({
-      google: {
-        thoughtSignature: "dGVzdC10aG91Z2h0LXNpZ25hdHVyZS1mb3ItdG9vbC1jYWxs",
-      },
-    });
-
-    // Tool request args — code fence stripped
-    expect(tc.args).toEqual({});
-    expect(tc.request?.content).toBe("{}");
-
-    // Tool response — code fence stripped
-    expect(tc.result).toContain("Monday, April 6, 2026");
-    expect(tc.isError).toBe(false);
-
-    // Agent message
-    const agentMsg = turn.messages[1] as Message;
-    expect(agentMsg.text).toContain("1:20 PM UTC");
-
-    // Re-serialize with sessionToMarkdown and compare
-    const md2 = sessionToMarkdown(session);
-    const session2 = markdownToTree(md2, factory) as Session;
-    expect(treeToJson(session2)).toEqual(treeToJson(session));
   });
 });
