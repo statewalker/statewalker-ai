@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@statewalker/ai-provider-core": "workspace:*",
-    "@statewalker/ai-provider-llamacpp": "workspace:*",
+    "@statewalker/ai-provider-node": "workspace:*",
     "@statewalker/workspace-api": "catalog:"
   },
   "devDependencies": {

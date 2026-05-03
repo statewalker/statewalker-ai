@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./state": "./src/state/index.ts",
+    "./models": "./src/models/index.ts",
     "./config": "./src/config/index.ts",
     "./sessions": "./src/sessions/index.ts",
     "./builder": "./src/builder/index.ts",
@@ -26,10 +27,12 @@
     "format": "biome format --write ."
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/google": "catalog:",
     "@ai-sdk/mcp": "catalog:",
+    "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@modelcontextprotocol/sdk": "catalog:",
-    "@statewalker/ai-provider": "workspace:*",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-ids": "catalog:",
     "@statewalker/webrun-files": "catalog:",

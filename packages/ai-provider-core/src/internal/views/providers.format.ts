@@ -1,9 +1,5 @@
 import type { ModelDescriptor, ModelRuntime } from "../../public/types.js";
-import type {
-  ConnectionStatus,
-  RuntimeBadgeVariant,
-  RuntimeShortName,
-} from "./providers.types.js";
+import type { ConnectionStatus, RuntimeBadgeVariant, RuntimeShortName } from "./providers.types.js";
 
 export function runtimeShortName(runtime: ModelRuntime): RuntimeShortName {
   if (runtime === "remote") return "Remote";

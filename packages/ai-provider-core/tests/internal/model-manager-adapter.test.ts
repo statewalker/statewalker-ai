@@ -1,4 +1,4 @@
-import { ModelManager as ModelManagerImpl } from "@statewalker/ai-provider";
+import { ModelManager as ModelManagerImpl } from "@statewalker/ai-agent/models";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace } from "@statewalker/workspace-api";
 import { describe, expect, it } from "vitest";

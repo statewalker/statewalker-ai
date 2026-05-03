@@ -1,6 +1,4 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
-import type { ModelManager } from "@statewalker/ai-provider";
-import { UnifiedProvider } from "@statewalker/ai-provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import {
   CompositeFilesApi,
@@ -21,6 +19,8 @@ import { createDefaultElisionPolicy, type ToolElisionPolicy } from "../context/t
 import { AgentController, type AgentControllerConfig } from "../controller/agent-controller.js";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
 import { McpClientManager } from "../mcp/mcp-client-manager.js";
+import type { ModelManager } from "../models/model-manager.js";
+import { UnifiedProvider } from "../models/unified-provider.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
 import type { SessionManager } from "../sessions/types.js";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";

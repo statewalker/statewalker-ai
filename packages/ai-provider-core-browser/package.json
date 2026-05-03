@@ -17,9 +17,8 @@
     "lint:check": "biome check ."
   },
   "dependencies": {
+    "@statewalker/ai-provider-browser": "workspace:*",
     "@statewalker/ai-provider-core": "workspace:*",
-    "@statewalker/ai-provider-local": "workspace:*",
-    "@statewalker/ai-provider-webllm": "workspace:*",
     "@statewalker/workspace-api": "catalog:"
   },
   "devDependencies": {

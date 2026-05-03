@@ -3,10 +3,10 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace } from "@statewalker/workspace-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const registerLlamaCppProvider = vi.fn();
+const registerNodeProviders = vi.fn();
 
-vi.mock("@statewalker/ai-provider-llamacpp", () => ({
-  registerLlamaCppProvider: (...args: unknown[]) => registerLlamaCppProvider(...args),
+vi.mock("@statewalker/ai-provider-node", () => ({
+  registerNodeProviders: (...args: unknown[]) => registerNodeProviders(...args),
 }));
 
 const { default: initAiProviderCoreNode } = await import("../src/ai-provider-core-node.js");
@@ -18,7 +18,7 @@ class MockModelManager extends ModelManager {
 
 describe("initAiProviderCoreNode", () => {
   beforeEach(() => {
-    registerLlamaCppProvider.mockClear();
+    registerNodeProviders.mockClear();
   });
 
   it("default export is a single-ctx function", () => {
@@ -41,7 +41,7 @@ describe("initAiProviderCoreNode", () => {
 
     initAiProviderCoreNode(ctx);
 
-    expect(registerLlamaCppProvider).not.toHaveBeenCalled();
+    expect(registerNodeProviders).not.toHaveBeenCalled();
   });
 
   it("registers llamacpp once the workspace opens (rootDir + manager from ctx)", async () => {
@@ -54,8 +54,8 @@ describe("initAiProviderCoreNode", () => {
     initAiProviderCoreNode(ctx);
     await ws.open();
 
-    expect(registerLlamaCppProvider).toHaveBeenCalledTimes(1);
-    expect(registerLlamaCppProvider).toHaveBeenCalledWith(fakeImpl, {
+    expect(registerNodeProviders).toHaveBeenCalledTimes(1);
+    expect(registerNodeProviders).toHaveBeenCalledWith(fakeImpl, {
       rootDir: "/tmp/test-llamacpp",
     });
   });
@@ -68,6 +68,6 @@ describe("initAiProviderCoreNode", () => {
     initAiProviderCoreNode(ctx);
     await ws.open();
 
-    expect(registerLlamaCppProvider).not.toHaveBeenCalled();
+    expect(registerNodeProviders).not.toHaveBeenCalled();
   });
 });
