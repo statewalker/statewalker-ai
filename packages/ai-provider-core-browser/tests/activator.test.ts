@@ -4,14 +4,10 @@ import { getWorkspace } from "@statewalker/workspace-api";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { default as initAiProviderCoreBrowser } from "../src/ai-provider-core-browser.js";
 
-const registerLocalProvider = vi.fn();
-const registerWebLLMProvider = vi.fn();
+const registerBrowserProviders = vi.fn();
 
-vi.mock("@statewalker/ai-provider-local", () => ({
-  registerLocalProvider: (...args: unknown[]) => registerLocalProvider(...args),
-}));
-vi.mock("@statewalker/ai-provider-webllm", () => ({
-  registerWebLLMProvider: (...args: unknown[]) => registerWebLLMProvider(...args),
+vi.mock("@statewalker/ai-provider-browser", () => ({
+  registerBrowserProviders: (...args: unknown[]) => registerBrowserProviders(...args),
 }));
 
 const fakeImpl = { tag: "fake-manager-impl", refreshLocalStatuses: vi.fn() };
@@ -21,8 +17,7 @@ class MockModelManager extends ModelManager {
 
 describe("initAiProviderCoreBrowser", () => {
   beforeEach(() => {
-    registerLocalProvider.mockClear();
-    registerWebLLMProvider.mockClear();
+    registerBrowserProviders.mockClear();
   });
 
   it("default export is a single-ctx function", () => {
@@ -43,8 +38,7 @@ describe("initAiProviderCoreBrowser", () => {
 
     initAiProviderCoreBrowser(ctx);
 
-    expect(registerLocalProvider).not.toHaveBeenCalled();
-    expect(registerWebLLMProvider).not.toHaveBeenCalled();
+    expect(registerBrowserProviders).not.toHaveBeenCalled();
   });
 
   it("registers engines on the manager once the workspace opens", async () => {
@@ -55,9 +49,7 @@ describe("initAiProviderCoreBrowser", () => {
     initAiProviderCoreBrowser(ctx);
     await ws.open();
 
-    expect(registerLocalProvider).toHaveBeenCalledTimes(1);
-    expect(registerLocalProvider).toHaveBeenCalledWith(fakeImpl);
-    expect(registerWebLLMProvider).toHaveBeenCalledTimes(1);
-    expect(registerWebLLMProvider).toHaveBeenCalledWith(fakeImpl);
+    expect(registerBrowserProviders).toHaveBeenCalledTimes(1);
+    expect(registerBrowserProviders).toHaveBeenCalledWith(fakeImpl);
   });
 });

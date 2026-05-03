@@ -1,4 +1,4 @@
-import type { ModelConfig, ModelKind } from "@statewalker/ai-provider";
+import type { ModelConfig, ModelKind } from "@statewalker/ai-agent/models";
 import type { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import type { Workspace } from "@statewalker/workspace-api";

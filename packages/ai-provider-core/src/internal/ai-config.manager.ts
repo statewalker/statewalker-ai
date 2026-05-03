@@ -1,4 +1,7 @@
-import type { LocalModelConfig, ModelManager as ModelManagerImpl } from "@statewalker/ai-provider";
+import type {
+  LocalModelConfig,
+  ModelManager as ModelManagerImpl,
+} from "@statewalker/ai-agent/models";
 import { onChange as onChangeRaw } from "@statewalker/shared-baseclass";
 
 /**

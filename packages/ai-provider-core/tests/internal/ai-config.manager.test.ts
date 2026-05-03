@@ -1,4 +1,4 @@
-import type { ModelConfig } from "@statewalker/ai-provider";
+import type { ModelConfig } from "@statewalker/ai-agent/models";
 import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { Layout } from "@statewalker/workbench-views";

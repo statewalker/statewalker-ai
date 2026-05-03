@@ -1,5 +1,5 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
-import type { ModelManager as ModelManagerImpl } from "@statewalker/ai-provider";
+import type { ModelManager as ModelManagerImpl } from "@statewalker/ai-agent/models";
 
 // biome-ignore lint/suspicious/noExplicitAny: token constructors are heterogeneous
 type AnyCtor = abstract new (...args: any[]) => unknown;

@@ -3,7 +3,7 @@ import {
   createDefaultCatalog,
   ModelManager as ModelManagerImpl,
   ModelStateStore,
-} from "@statewalker/ai-provider";
+} from "@statewalker/ai-agent/models";
 import { SystemFiles, type Workspace } from "@statewalker/workspace-api";
 import {
   type ActiveEmbeddingModel,

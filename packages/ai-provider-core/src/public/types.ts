@@ -6,7 +6,7 @@ import type {
   ModelStatus,
   ProviderName,
   RemoteProviderSettings,
-} from "@statewalker/ai-provider";
+} from "@statewalker/ai-agent/models";
 
 export type { ActivationProgress, ModelKind, ModelRuntime, ModelStatus, ProviderName };
 

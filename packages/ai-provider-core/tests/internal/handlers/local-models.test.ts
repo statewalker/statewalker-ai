@@ -1,4 +1,4 @@
-import type { ActivationProgress } from "@statewalker/ai-provider";
+import type { ActivationProgress } from "@statewalker/ai-agent/models";
 import { Intents } from "@statewalker/shared-intents";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { getWorkspace, type Workspace } from "@statewalker/workspace-api";

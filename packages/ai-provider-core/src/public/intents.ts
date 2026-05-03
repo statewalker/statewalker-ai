@@ -73,7 +73,7 @@ export const [runActiveModelChanged, handleActiveModelChanged] = newIntent<
 
 // ── Local-model lifecycle (G2) ─────────────────────────────────────────────
 
-import type { ActivationProgress } from "@statewalker/ai-provider";
+import type { ActivationProgress } from "@statewalker/ai-agent/models";
 import type {
   CancelDownloadPayload,
   DeleteLocalModelPayload,

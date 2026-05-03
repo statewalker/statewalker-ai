@@ -1,4 +1,4 @@
-import type { EngineId } from "@statewalker/ai-provider";
+import type { EngineId } from "@statewalker/ai-agent/models";
 
 export type EngineAvailability = Record<EngineId, boolean>;
 

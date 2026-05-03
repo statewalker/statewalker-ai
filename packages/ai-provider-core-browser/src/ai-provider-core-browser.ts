@@ -1,6 +1,5 @@
+import { registerBrowserProviders } from "@statewalker/ai-provider-browser";
 import { ModelManager } from "@statewalker/ai-provider-core";
-import { registerLocalProvider } from "@statewalker/ai-provider-local";
-import { registerWebLLMProvider } from "@statewalker/ai-provider-webllm";
 import { getWorkspace } from "@statewalker/workspace-api";
 
 /**
@@ -23,8 +22,7 @@ export default function initAiProviderCoreBrowser(ctx: Record<string, unknown>):
   ws.requireAdapter(ModelManager);
   return ws.onLoad(() => {
     const manager = ws.requireAdapter(ModelManager).impl;
-    registerLocalProvider(manager);
-    registerWebLLMProvider(manager);
+    registerBrowserProviders(manager);
     // Reconcile catalog statuses with weights already on disk so previously
     // downloaded models surface as "Ready" in the UI without needing a
     // re-download. Runs after both engines are registered so each engine's

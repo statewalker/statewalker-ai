@@ -1,5 +1,5 @@
 import { ModelManager } from "@statewalker/ai-provider-core";
-import { registerLlamaCppProvider } from "@statewalker/ai-provider-llamacpp";
+import { registerNodeProviders } from "@statewalker/ai-provider-node";
 import { getWorkspace } from "@statewalker/workspace-api";
 
 /**
@@ -23,15 +23,13 @@ import { getWorkspace } from "@statewalker/workspace-api";
  *
  * Returns the unsubscriber from `onLoad` so the host can dispose.
  */
-export default function initAiProviderCoreNode(
-  ctx: Record<string, unknown>,
-): () => void {
+export default function initAiProviderCoreNode(ctx: Record<string, unknown>): () => void {
   const ws = getWorkspace(ctx);
   ws.requireAdapter(ModelManager);
   return ws.onLoad(() => {
     const manager = ws.requireAdapter(ModelManager).impl;
     const rootDir = ctx.aiProviderLlamaCppRootDir as string | undefined;
     if (!rootDir) return;
-    registerLlamaCppProvider(manager, { rootDir });
+    registerNodeProviders(manager, { rootDir });
   });
 }

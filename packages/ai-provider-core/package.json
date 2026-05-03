@@ -4,7 +4,19 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./views/active-models": "./src/internal/views/active-models.view.ts",
+    "./views/add-provider-dialog": "./src/internal/views/add-provider-dialog.view.ts",
+    "./views/ai-config": "./src/internal/views/ai-config.view.ts",
+    "./views/model-picker": "./src/internal/views/model-picker.view.ts",
+    "./views/providers-tabs": "./src/internal/views/providers-tabs.view.ts",
+    "./views/remote-model-card": "./src/internal/views/remote-model-card.view.ts",
+    "./views/remote-provider-form": "./src/internal/views/remote-provider-form.view.ts",
+    "./views/remote-providers": "./src/internal/views/remote-providers.view.ts",
+    "./views/transformers-model-card": "./src/internal/views/transformers-model-card.view.ts",
+    "./views/transformers-tab": "./src/internal/views/transformers-tab.view.ts",
+    "./views/webllm-model-card": "./src/internal/views/webllm-model-card.view.ts",
+    "./views/webllm-tab": "./src/internal/views/webllm-tab.view.ts"
   },
   "files": [
     "src/**"
@@ -18,13 +30,13 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
-    "@statewalker/workbench-views": "catalog:",
-    "@statewalker/ai-provider": "workspace:*",
-    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/ai-agent": "workspace:*",
     "@statewalker/shared-adapters": "catalog:",
-    "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-intents": "catalog:",
+    "@statewalker/shared-registry": "catalog:",
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/workbench-views": "catalog:",
     "@statewalker/workspace-api": "catalog:"
   },
   "devDependencies": {
