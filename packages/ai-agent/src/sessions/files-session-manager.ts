@@ -20,12 +20,18 @@ export class FilesSessionManager implements SessionManager {
 
   constructor(
     private files: FilesApi,
-    basePath = "/",
+    /**
+     * The sessions storage directory itself (NOT a parent). Each session is
+     * stored under `${sessionsDir}/<id>/<id>.md` plus a shared
+     * `${sessionsDir}/index.json`.
+     */
+    sessionsDir = "/sessions",
     factory?: NodeFactory,
   ) {
     this.factory = factory ?? createAgentNodeFactory();
-    const prefix = basePath === "/" ? "" : basePath;
-    this.sessionsDir = `${prefix}/sessions`;
+    // Normalize: ensure leading slash, no trailing slash.
+    const normalized = sessionsDir.replace(/\/+$/, "") || "/";
+    this.sessionsDir = normalized.startsWith("/") ? normalized : `/${normalized}`;
     this.indexFile = `${this.sessionsDir}/index.json`;
   }
 
