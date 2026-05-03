@@ -112,7 +112,6 @@ export function registerWebLLMProvider(
                 : undefined,
             },
           ],
-          cacheBackend: "cache",
         },
         initProgressCallback: (report: { progress: number; text: string }) => {
           onProgress({
@@ -136,7 +135,17 @@ export function registerWebLLMProvider(
       });
 
       signal?.throwIfAborted();
-      await engine.reload(modelId);
+      // biome-ignore lint/suspicious/noConsole: diagnostic for "loading stuck" bug
+      console.log(`[webllm] engine.reload(${modelId}) starting`);
+      try {
+        await engine.reload(modelId);
+        // biome-ignore lint/suspicious/noConsole: diagnostic for "loading stuck" bug
+        console.log(`[webllm] engine.reload(${modelId}) returned`);
+      } catch (e) {
+        // biome-ignore lint/suspicious/noConsole: diagnostic for "loading stuck" bug
+        console.error(`[webllm] engine.reload(${modelId}) threw`, e);
+        throw e;
+      }
 
       onProgress({
         modelKey: modelId,
