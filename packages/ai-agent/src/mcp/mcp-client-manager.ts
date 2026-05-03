@@ -9,6 +9,17 @@ export interface McpServerConfig {
   headers?: Record<string, string>;
 }
 
+/** Context for a routed error — typically the server it relates to. */
+export interface McpErrorContext {
+  server?: string;
+}
+
+export type McpErrorHandler = (error: Error, ctx?: McpErrorContext) => void;
+
+const defaultErrorHandler: McpErrorHandler = (error, ctx) => {
+  console.warn("[McpClientManager]", ctx?.server ?? "", error);
+};
+
 type McpClientEntry = {
   name: string;
   config: McpServerConfig;
@@ -19,6 +30,7 @@ export class McpClientManager extends BaseClass {
   private clients: McpClientEntry[] = [];
   private _tools: ToolSet = {};
   private _desiredConfigs: Record<string, McpServerConfig> = {};
+  private _errorHandler: McpErrorHandler = defaultErrorHandler;
 
   #revision = 0;
 
@@ -29,6 +41,18 @@ export class McpClientManager extends BaseClass {
   /** Fires only when revision changes (user-initiated modifications). */
   onRevisionChange(cb: () => void): () => void {
     return onChange(this.onUpdate, cb, () => this.#revision);
+  }
+
+  /**
+   * Install an error handler. Defaults to `console.warn`. The handler is
+   * invoked at every site that previously logged or silently swallowed an
+   * error — connection failures, MCP client uncaught errors, close-time
+   * errors. Existing throw/continue semantics are preserved (nothing throws
+   * that did not throw before).
+   */
+  setErrorHandler(handler: McpErrorHandler): this {
+    this._errorHandler = handler;
+    return this;
   }
 
   private bumpRevision(): void {
@@ -45,7 +69,7 @@ export class McpClientManager extends BaseClass {
     this.notify();
     this.doConnect(servers)
       .then(() => this.notify())
-      .catch((err) => console.error("MCP connectAll error:", err));
+      .catch((err) => this._errorHandler(err as Error));
   }
 
   /**
@@ -80,10 +104,12 @@ export class McpClientManager extends BaseClass {
         const client = await createMCPClient({
           transport,
           name,
-          onUncaughtError: (err) => console.error(`MCP [${name}]:`, err),
+          onUncaughtError: (err) => this._errorHandler(err as Error, { server: name }),
         });
         if (signal?.aborted) {
-          await client.close().catch(() => {});
+          await client
+            .close()
+            .catch((err: unknown) => this._errorHandler(err as Error, { server: name }));
           break;
         }
         const tools = await client.tools();
@@ -91,7 +117,7 @@ export class McpClientManager extends BaseClass {
         this.clients.push({ name, config, client });
       } catch (err) {
         if (signal?.aborted) break;
-        console.error(`MCP [${name}]: failed to connect:`, err);
+        this._errorHandler(err as Error, { server: name });
       }
     }
   }
@@ -113,11 +139,11 @@ export class McpClientManager extends BaseClass {
   }
 
   async closeAll(): Promise<void> {
-    for (const { client } of this.clients) {
+    for (const { name, client } of this.clients) {
       try {
         await client.close();
-      } catch {
-        // ignore close errors
+      } catch (err) {
+        this._errorHandler(err as Error, { server: name });
       }
     }
     this.clients = [];
