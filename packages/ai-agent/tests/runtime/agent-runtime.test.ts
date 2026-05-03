@@ -161,6 +161,49 @@ describe("AgentRuntime", () => {
       // the BaseClass notify fired — observable via subscription count.
       expect(session.inbox).toBeDefined();
     });
+
+    it("agent without explicit `skills` field receives ALL runtime skills", async () => {
+      // Mirrors the tools default: undefined `tools`/`skills` means "all".
+      // Regression — previously, omitting `skills` registered NONE.
+      const runtime = new AgentRuntime({ files: new MemFilesApi() })
+        .addModelProvider(mockProvider())
+        .addSkills(
+          { name: "alpha", description: "first", content: "alpha body" },
+          { name: "beta", description: "second", content: "beta body" },
+        );
+      await runtime.build();
+
+      const agent = runtime.createAgent({ name: "noskills-default" }); // no skills field
+      const session = agent.createSession();
+      const sessionSkillNames = session.skills.available.map((s) => s.name).sort();
+      expect(sessionSkillNames).toEqual(["alpha", "beta"]);
+    });
+
+    it("agent with explicit `skills: []` receives NO skills", async () => {
+      const runtime = new AgentRuntime({ files: new MemFilesApi() })
+        .addModelProvider(mockProvider())
+        .addSkills({ name: "alpha", description: "x", content: "y" });
+      await runtime.build();
+
+      const agent = runtime.createAgent({ name: "noskills-explicit", skills: [] });
+      const session = agent.createSession();
+      expect(session.skills.available).toEqual([]);
+    });
+
+    it("agent with `skills: ['alpha']` receives only that skill", async () => {
+      const runtime = new AgentRuntime({ files: new MemFilesApi() })
+        .addModelProvider(mockProvider())
+        .addSkills(
+          { name: "alpha", description: "a", content: "a" },
+          { name: "beta", description: "b", content: "b" },
+        );
+      await runtime.build();
+
+      const agent = runtime.createAgent({ name: "noskills-allowlist", skills: ["alpha"] });
+      const session = agent.createSession();
+      const names = session.skills.available.map((s) => s.name);
+      expect(names).toEqual(["alpha"]);
+    });
   });
 
   describe("setErrorHandler", () => {

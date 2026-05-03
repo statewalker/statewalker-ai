@@ -90,13 +90,14 @@ export class Session {
       }
     }
 
-    // Per-session skill view.
+    // Per-session skill view: filter by allowed names if declared, else
+    // pass through all runtime skills. Mirrors the tools logic above —
+    // an undefined `skills` field on the agent definition means "all
+    // skills" (matching the prior session-level intent), NOT "no skills".
     const allowedSkills = def.skills;
-    if (allowedSkills && allowedSkills.length > 0) {
-      for (const skill of runtime.resolvedSkills) {
-        if (allowedSkills.includes(skill.name)) {
-          this._controller.skills.register(skill);
-        }
+    for (const skill of runtime.resolvedSkills) {
+      if (!allowedSkills || allowedSkills.includes(skill.name)) {
+        this._controller.skills.register(skill);
       }
     }
 
