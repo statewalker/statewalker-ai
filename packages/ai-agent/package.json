@@ -29,14 +29,13 @@
     "@ai-sdk/mcp": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@modelcontextprotocol/sdk": "catalog:",
-    "@statewalker/shared-ids": "catalog:",
-    "@statewalker/ai-agent-state": "workspace:*",
     "@statewalker/ai-provider": "workspace:*",
+    "@statewalker/shared-baseclass": "catalog:",
+    "@statewalker/shared-ids": "catalog:",
     "@statewalker/webrun-files": "catalog:",
     "@statewalker/webrun-files-composite": "catalog:",
     "ai": "catalog:",
-    "zod": "catalog:",
-    "@statewalker/shared-baseclass": "catalog:"
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",

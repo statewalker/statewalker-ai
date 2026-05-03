@@ -1,13 +1,11 @@
 import {
   createAgentNodeFactory,
+  markdownToSession,
   NodeType,
   type Session,
+  sessionToMarkdown,
   type Turn,
 } from "@statewalker/ai-agent";
-import {
-  markdownToTree,
-  treeToMarkdown,
-} from "@statewalker/ai-agent-state";
 import { describe, expect, it } from "vitest";
 
 const factory = createAgentNodeFactory();
@@ -33,19 +31,19 @@ function buildConversation() {
   return { session };
 }
 
-describe("markdownToTree", () => {
-  it("reconstructs tree from markdown", () => {
+describe("markdownToSession", () => {
+  it("reconstructs tree from markdown", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, factory) as Session;
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as Session;
     expect(restored.id).toBe(session.id);
     expect(restored.turns).toHaveLength(2);
   });
 
-  it("preserves full conversation structure", () => {
+  it("preserves full conversation structure", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, factory) as Session;
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as Session;
 
     const t1 = restored.turns[0] as Turn;
     expect(t1.turnNumber).toBe(1);
@@ -61,20 +59,20 @@ describe("markdownToTree", () => {
     expect(t2.messages[0]?.text).toBe("The file contains a JSON object.");
   });
 
-  it("preserves IDs and parent refs", () => {
+  it("preserves IDs and parent refs", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, factory);
+    const md = await sessionToMarkdown(session);
+    const restored = await markdownToSession(md, factory);
     expect(restored.id).toBe(session.id);
     expect(restored.children[0]?.parent).toBe(restored);
   });
 });
 
 describe("markdown round-trip", () => {
-  it("round-trip preserves props", () => {
+  it("round-trip preserves props", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    const restored = markdownToTree(md, factory) as Session;
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as Session;
 
     const t1 = restored.turns[0] as Turn;
     expect(t1.props.turnNumber).toBe(1);
@@ -82,11 +80,11 @@ describe("markdown round-trip", () => {
     expect(t1.props.model).toBe("claude-sonnet-4-20250514");
   });
 
-  it("double round-trip produces same markdown", () => {
+  it("double round-trip produces same markdown", async () => {
     const { session } = buildConversation();
-    const md1 = treeToMarkdown(session);
-    const restored = markdownToTree(md1, factory);
-    const md2 = treeToMarkdown(restored);
+    const md1 = await sessionToMarkdown(session);
+    const restored = await markdownToSession(md1, factory);
+    const md2 = await sessionToMarkdown(restored);
     expect(md2).toBe(md1);
   });
 });

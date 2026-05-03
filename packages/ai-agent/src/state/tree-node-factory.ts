@@ -1,6 +1,6 @@
 import { SnowflakeId } from "@statewalker/shared-ids";
 import { TreeNode } from "./tree-node.js";
-import type { NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
+import type { NewEntryOptions, NodeFactory, TreeEntry } from "./tree-types.js";
 
 /**
  * Create a node factory from a type → constructor index.

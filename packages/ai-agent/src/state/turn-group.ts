@@ -1,5 +1,5 @@
-import { TreeNode } from "@statewalker/ai-agent-state";
 import { NodeType } from "./node-types.js";
+import { TreeNode } from "./tree-node.js";
 import type { Turn } from "./turn.js";
 
 /**

@@ -1,5 +1,5 @@
 import type { TreeNode } from "../tree-node.js";
-import type { TreeEntry } from "../types.js";
+import type { TreeEntry } from "../tree-types.js";
 
 /**
  * Serialize a `TreeNode` tree to a structural `TreeEntry` JSON object.

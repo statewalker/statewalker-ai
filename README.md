@@ -6,8 +6,7 @@ AI agent and provider stack for the statewalker ecosystem. Published as the `@st
 
 | Package | Description |
 | --- | --- |
-| [`@statewalker/ai-agent`](packages/ai-agent) | Agent loop, builder, session models, MCP client, Vercel AI SDK tool wiring. |
-| [`@statewalker/ai-agent-state`](packages/ai-agent-state) | Reactive tree infrastructure for agent session state. |
+| [`@statewalker/ai-agent`](packages/ai-agent) | Agent loop, builder, session models, MCP client, Vercel AI SDK tool wiring. Includes the reactive tree infrastructure (TreeNode, factory, serialization) under `./state`. |
 | [`@statewalker/ai-agent-tests`](packages/ai-agent-tests) | Dev-only cross-implementation test harness for the agent loop. |
 | [`@statewalker/ai-provider`](packages/ai-provider) | Provider abstraction plus remote provider adapters (Anthropic, OpenAI, Google). |
 | [`@statewalker/ai-provider-core`](packages/ai-provider-core) | Provider lifecycle, active-models controller, UI wiring for the model picker. |

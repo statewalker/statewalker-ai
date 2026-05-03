@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { newNodeFactory } from "../src/node-factory.js";
-import { treeToJson } from "../src/serialization/tree-to-json.js";
-import type { TreeNode } from "../src/tree-node.js";
+import { treeToJson } from "../../src/state/serialization/tree-to-json.js";
+import type { TreeNode } from "../../src/state/tree-node.js";
+import { newNodeFactory } from "../../src/state/tree-node-factory.js";
 
 const factory = newNodeFactory({});
 

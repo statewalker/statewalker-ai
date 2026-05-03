@@ -1,6 +1,6 @@
-import { TreeNode } from "@statewalker/ai-agent-state";
 import type { LogMessage } from "./log-message.js";
 import { NodeType } from "./node-types.js";
+import { TreeNode } from "./tree-node.js";
 import type { Turn } from "./turn.js";
 
 export class Session extends TreeNode {

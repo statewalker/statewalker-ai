@@ -1,6 +1,6 @@
 import { BaseClass } from "@statewalker/shared-baseclass";
 import { extractTime } from "@statewalker/shared-ids";
-import type { GroupWrapperFactory, NewEntryOptions, NodeFactory, TreeEntry } from "./types.js";
+import type { GroupWrapperFactory, NewEntryOptions, NodeFactory, TreeEntry } from "./tree-types.js";
 
 /** Default factory — creates plain TreeNode for any data. */
 const defaultFactory: NodeFactory = ((data: TreeEntry | NewEntryOptions) =>

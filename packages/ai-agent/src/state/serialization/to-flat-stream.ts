@@ -1,6 +1,6 @@
 import { extractTime } from "@statewalker/shared-ids";
 import type { TreeNode } from "../tree-node.js";
-import type { FlatTreeEntry } from "../types.js";
+import type { FlatTreeEntry } from "../tree-types.js";
 
 /**
  * Emit a `FlatTreeEntry` stream from a tree in document order (depth-first

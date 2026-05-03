@@ -1,13 +1,10 @@
-import {
-  type NodeFactory,
-  newNodeFactory,
-  type TreeEntry,
-  type TreeNode,
-} from "@statewalker/ai-agent-state";
 import { Message } from "./message.js";
 import { NodeType } from "./node-types.js";
 import { Session } from "./session.js";
 import { ToolCall } from "./tool-call.js";
+import type { TreeNode } from "./tree-node.js";
+import { newNodeFactory } from "./tree-node-factory.js";
+import type { NodeFactory, TreeEntry } from "./tree-types.js";
 import { Turn } from "./turn.js";
 import { TurnGroup } from "./turn-group.js";
 

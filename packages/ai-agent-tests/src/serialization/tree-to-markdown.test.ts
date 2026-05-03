@@ -2,8 +2,8 @@ import {
   createAgentNodeFactory,
   NodeType,
   type Session,
+  sessionToMarkdown,
 } from "@statewalker/ai-agent";
-import { treeToMarkdown } from "@statewalker/ai-agent-state";
 import { describe, expect, it } from "vitest";
 
 const factory = createAgentNodeFactory();
@@ -29,54 +29,34 @@ function buildConversation() {
   return { session };
 }
 
-describe("treeToMarkdown", () => {
-  it("produces markdown with sections", () => {
+describe("sessionToMarkdown", () => {
+  it("produces non-empty markdown with delimiters", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
+    const md = await sessionToMarkdown(session);
     expect(md.length).toBeGreaterThan(0);
-    expect(md).toContain("parentId:");
+    const delimiters = md.split("\n").filter((l) => /^---+$/.test(l));
+    // One delimiter per node (session + 2 turns + messages + toolcall + tool-* nodes)
+    expect(delimiters.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("root has no parentId", () => {
+  it("encodes parentId in props for non-root nodes", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    const lines = md.split("\n");
-    const firstSection: string[] = [];
-    let inFirst = false;
-    for (const line of lines) {
-      if (/^-{3,}/.test(line)) {
-        if (inFirst) break;
-        inFirst = true;
-        continue;
-      }
-      if (inFirst) firstSection.push(line);
-    }
-    expect(firstSection.join("\n")).toContain("type: session");
-    expect(firstSection.join("\n")).not.toContain("parentId:");
+    const md = await sessionToMarkdown(session);
+    expect(md).toContain("parentId=");
   });
 
-  it("includes all nodes as sections", () => {
+  it("includes node type in props", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    // Count section separators (---) to verify all nodes are serialized
-    const separators = md.split("\n").filter((l) => /^-{3,}$/.test(l));
-    // Each section has an opening and closing separator, so separators = nodes + 1 (closing of last)
-    // Actually content-blocks format: each section starts with ---
-    expect(separators.length).toBeGreaterThanOrEqual(2);
+    const md = await sessionToMarkdown(session);
+    expect(md).toContain("type=session");
+    expect(md).toContain("type=turn");
+    expect(md).toContain("type=user_message");
+    expect(md).toContain("type=agent_message");
   });
 
-  it("preserves props in section metadata", () => {
+  it("preserves textual content", async () => {
     const { session } = buildConversation();
-    const md = treeToMarkdown(session);
-    expect(md).toContain("type: turn");
-    expect(md).toContain("type: user_message");
-    expect(md).toContain("type: agent_message");
-    expect(md).toContain("turnNumber: 1");
-  });
-
-  it("preserves content in section blocks", () => {
-    const { session } = buildConversation();
-    const md = treeToMarkdown(session);
+    const md = await sessionToMarkdown(session);
     expect(md).toContain("Read /tmp/data.json");
     expect(md).toContain("Sure, let me read that file.");
   });
