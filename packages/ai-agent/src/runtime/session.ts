@@ -1,5 +1,4 @@
 import { SnowflakeId } from "@statewalker/shared-ids";
-import { SubAgentTool } from "../builder/sub-agent-tool.js";
 import { AgentController } from "../controller/agent-controller.js";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
 import type { Inbox } from "../state/inbox.js";
@@ -101,21 +100,17 @@ export class Session {
       }
     }
 
-    // Sub-agents — register each child Agent as a tool. The SubAgentTool
-    // class is reused as an internal helper here.
-    for (const child of agent.subAgents) {
-      const ctx = this._controllerContext();
-      const factoryCompat = (parent: typeof ctx) => {
-        // This sub-agent path is a stop-gap until sub-agents move fully
-        // into the runtime. It builds an AgentBuilder under the hood.
-        // TODO: replace with a runtime-native sub-agent invocation.
-        void parent;
-        throw new Error(
-          `Sub-agent "${child.name}" cannot be invoked from runtime-API sessions yet — TODO: runtime-native sub-agent wiring`,
-        );
-      };
-      const tool = new SubAgentTool(child.name, factoryCompat, ctx);
-      this._controller.tools.register(child.name, tool.asTool());
+    // Sub-agents — TODO: runtime-native sub-agent invocation. The legacy
+    // SubAgentTool class lived in src/builder/ and depended on AgentBuilder
+    // to materialise the child agent on demand. Now that builder/ is gone,
+    // we need a runtime-native equivalent: register each child Agent as a
+    // tool whose execute body calls `child.createSession().run()` and
+    // streams the result back. Until consumers actually use sub-agents
+    // through the runtime API, registering one throws at construction.
+    if (agent.subAgents.length > 0) {
+      throw new Error(
+        `Sub-agents not supported yet on runtime API (agent "${agent.name}" declared ${agent.subAgents.length})`,
+      );
     }
 
     // MCP tools — sync into this session's tool registry.
@@ -178,31 +173,5 @@ export class Session {
     this._closed = true;
     this._mcpUnsubscribe?.();
     this._mcpUnsubscribe = undefined;
-  }
-
-  // ─── Internal ────────────────────────────────────────────────────────
-
-  private _controllerContext(): import("../config/types.js").AgentContext {
-    return {
-      files: this._runtime.files,
-      systemFiles: this._runtime.systemFiles,
-      config: this._runtime.config,
-      secrets: this._runtime.secrets,
-      sessions: {
-        // The legacy SessionManager interface — sub-agents that depend on
-        // it get a thin shim backed by the runtime's own session storage.
-        create: async () => {
-          throw new Error("Session.context.sessions.create: not supported in runtime API");
-        },
-        load: (id) => this._runtime.loadSession(id).then((s) => s.state),
-        save: (id, sess) => this._runtime.saveSession(id, sess),
-        list: () => this._runtime.listSessions(),
-        delete: (id) => this._runtime.deleteSession(id),
-        exists: () => Promise.resolve(false),
-      },
-      provider: this._runtime.provider,
-      model: this.agent.definition.defaultModel ?? "",
-      modelManager: this._runtime.models,
-    };
   }
 }
