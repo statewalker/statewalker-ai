@@ -1,7 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import {
   type FileResolver,
@@ -32,6 +32,13 @@ export interface LocalEngineRegistration {
   fileResolver?: FileResolver;
   /** Custom weight-presence verifier (defaults to ONNX file check). */
   verifier?: WeightVerifier;
+  /**
+   * Engine-owned weight-presence check. When provided, takes precedence
+   * over the FilesApi-backed `LocalModelStorage.hasWeights(verifier)`
+   * path. Use this for engines that store weights outside FilesApi —
+   * e.g. WebLLM keeps shards in IndexedDB by default.
+   */
+  engineHasWeights?: (config: LocalModelConfig) => Promise<boolean>;
 }
 
 /**
@@ -98,7 +105,6 @@ export class ModelManager {
    * on disk are invisible to the UI until the user explicitly downloads.
    */
   async refreshLocalStatuses(): Promise<void> {
-    if (!this.files) return;
     const checks: Promise<void>[] = [];
     for (const [key, config] of Object.entries(this.store.catalog)) {
       if (config.runtime !== "local") continue;
@@ -106,11 +112,15 @@ export class ModelManager {
       if (status === "ready" || status === "downloading" || status === "downloaded") continue;
       const registration = this.engines.get(config.engine);
       if (!registration) continue;
-      const storage = this.storageFor(config.engine);
-      if (!storage) continue;
+      const presence: Promise<boolean> = registration.engineHasWeights
+        ? registration.engineHasWeights(config)
+        : (async () => {
+            const storage = this.storageFor(config.engine);
+            if (!storage) return false;
+            return storage.hasWeights(config.modelId, registration.verifier);
+          })();
       checks.push(
-        storage
-          .hasWeights(config.modelId, registration.verifier)
+        presence
           .then((present) => {
             if (present) this.store.setStatus(key, "downloaded");
           })
@@ -477,9 +487,17 @@ export class ModelManager {
       message: `Checking storage for ${config.label}...`,
     };
 
-    const hasWeights = await storage.hasWeights(config.modelId, registration.verifier);
+    // Engine-owned check (e.g. WebLLM IDB) takes precedence over the
+    // FilesApi-backed default — engines that don't write to FilesApi need
+    // to short-circuit the download path themselves.
+    const hasWeights = registration.engineHasWeights
+      ? await registration.engineHasWeights(config)
+      : await storage.hasWeights(config.modelId, registration.verifier);
 
-    if (!hasWeights) {
+    if (!hasWeights && !registration.engineHasWeights) {
+      // Only run the FilesApi-backed download for engines that use FilesApi.
+      // Engines with a custom `engineHasWeights` are expected to handle
+      // their own weight fetching inside the factory.
       for await (const progress of storage.download(key, config.modelId, config, {
         fileResolver: registration.fileResolver,
         signal,
@@ -489,13 +507,53 @@ export class ModelManager {
     }
 
     try {
-      const model = await registration.factory(
-        config.modelId,
-        config,
-        storage.files,
-        () => {},
-        signal,
-      );
+      // Bridge the factory's push-style `onProgress` callback into our
+      // pull-style async generator. Each callback enqueues a progress event
+      // and wakes the loop, which yields any queued events alongside the
+      // factory promise. Without this, factory-phase progress (e.g.
+      // WebLLM's `engine.reload` shard loading) is invisible to callers and
+      // the UI appears stuck on the last download/checking event.
+      const queue: ActivationProgress[] = [];
+      let wake: (() => void) | null = null;
+      const onProgress = (progress: ActivationProgress): void => {
+        queue.push(progress);
+        wake?.();
+        wake = null;
+      };
+
+      let model: LanguageModelV3 | undefined;
+      let factoryError: unknown;
+      let done = false;
+      const factoryPromise = registration
+        .factory(config.modelId, config, storage.files, onProgress, signal)
+        .then(
+          (m) => {
+            model = m;
+            done = true;
+            wake?.();
+            wake = null;
+          },
+          (e) => {
+            factoryError = e;
+            done = true;
+            wake?.();
+            wake = null;
+          },
+        );
+
+      while (true) {
+        while (queue.length > 0) {
+          const next = queue.shift();
+          if (next) yield next;
+        }
+        if (done) break;
+        await new Promise<void>((resolve) => {
+          wake = resolve;
+        });
+      }
+      await factoryPromise;
+      if (factoryError) throw factoryError;
+      if (!model) throw new Error("factory resolved without a model");
 
       this.store.setActiveModel(key, model);
       this.store.setStatus(key, "ready");

@@ -39,6 +39,21 @@ export function registerWebLLMProvider(manager: ModelManager): void {
   manager.registerLocalFactory("webllm", {
     fileResolver: resolveMlcFiles,
     verifier: verifyMlcWeights,
+    /**
+     * WebLLM keeps weights in IndexedDB by default (the SW bridge to
+     * FilesApi is opt-in). Probe its cache via `hasModelInCache(...)` so
+     * `refreshLocalStatuses()` can surface previously-downloaded models
+     * after a reload.
+     */
+    engineHasWeights: async (config: LocalModelConfig): Promise<boolean> => {
+      try {
+        const webllm = await getWebLLMModule();
+        if (typeof webllm.hasModelInCache !== "function") return false;
+        return await webllm.hasModelInCache(config.modelId);
+      } catch {
+        return false;
+      }
+    },
     factory: async (
       modelId: string,
       config: LocalModelConfig,
