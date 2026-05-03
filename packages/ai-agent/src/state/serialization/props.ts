@@ -32,7 +32,7 @@ export function parseProps(text: string): Record<string, string> {
   const props: Record<string, string> = {};
   for (const line of text.split("\n")) {
     if (line === "") continue;
-    // Find first unescaped `=`
+    // Current format: first unescaped `=`.
     let eqIdx = -1;
     for (let i = 0; i < line.length; i++) {
       if (line[i] === "=" && (i === 0 || line[i - 1] !== "\\")) {
@@ -40,10 +40,22 @@ export function parseProps(text: string): Record<string, string> {
         break;
       }
     }
-    if (eqIdx <= 0) continue;
-    const key = line.slice(0, eqIdx);
-    const value = unescapeValue(line.slice(eqIdx + 1));
-    props[key] = value;
+    if (eqIdx > 0) {
+      const key = line.slice(0, eqIdx);
+      const value = unescapeValue(line.slice(eqIdx + 1));
+      props[key] = value;
+      continue;
+    }
+    // Legacy format (pre-stream-serializer): `key: value`. Values were
+    // not escaped — taken verbatim. The required trailing space after `:`
+    // disambiguates from `:`s inside ISO timestamps and JSON values
+    // (which never have a trailing space).
+    const colonIdx = line.indexOf(": ");
+    if (colonIdx > 0) {
+      const key = line.slice(0, colonIdx);
+      const value = line.slice(colonIdx + 2);
+      props[key] = value;
+    }
   }
   return props;
 }
