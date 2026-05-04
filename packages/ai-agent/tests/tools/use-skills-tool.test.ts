@@ -58,7 +58,7 @@ describe("createUseSkillsTool", () => {
     });
 
     mockGenerateText.mockResolvedValue({
-      output: { selected: ["file-ops"] },
+      text: '{"selected": ["file-ops"]}',
     });
 
     const useTool = createUseSkillsTool({
@@ -90,7 +90,7 @@ describe("createUseSkillsTool", () => {
     });
 
     mockGenerateText.mockResolvedValue({
-      output: { selected: ["skill-a"] },
+      text: '{"selected": ["skill-a"]}',
     });
 
     const useTool = createUseSkillsTool({
@@ -129,7 +129,7 @@ describe("createUseSkillsTool", () => {
     });
 
     mockGenerateText.mockResolvedValue({
-      output: { selected: ["real", "hallucinated"] },
+      text: '{"selected": ["real", "hallucinated"]}',
     });
 
     const useTool = createUseSkillsTool({
@@ -140,8 +140,72 @@ describe("createUseSkillsTool", () => {
 
     const result = await executeTool(useTool, "test");
 
-    // Only the real skill is selected (SkillsModel.select ignores unknowns)
+    // Only the real skill is selected (filtered against availableNames)
     expect(result.content).toHaveLength(1);
     expect(result.content[0]?.name).toBe("real");
+  });
+
+  it("accepts a bare JSON array (common from local models)", async () => {
+    const skills = new SkillsModel();
+    skills.register({ name: "search", description: "Search", content: "S" });
+    skills.register({
+      name: "browse-notes",
+      description: "Browse notes",
+      content: "B",
+    });
+
+    // This is exactly what Qwen3.5-2B (transformers.js) produces —
+    // a bare array instead of `{"selected": [...]}`.
+    mockGenerateText.mockResolvedValue({
+      text: '["search","browse-notes"]',
+    });
+
+    const useTool = createUseSkillsTool({
+      skills,
+      provider: fakeProvider(),
+      model: "m",
+    });
+
+    const result = await executeTool(useTool, "test");
+
+    expect(result.selected).toEqual(["search", "browse-notes"]);
+  });
+
+  it("extracts the array even when the model wraps it in prose", async () => {
+    const skills = new SkillsModel();
+    skills.register({ name: "search", description: "S", content: "S" });
+
+    mockGenerateText.mockResolvedValue({
+      text: 'Here are the relevant skills: ["search"]. Hope this helps!',
+    });
+
+    const useTool = createUseSkillsTool({
+      skills,
+      provider: fakeProvider(),
+      model: "m",
+    });
+
+    const result = await executeTool(useTool, "test");
+
+    expect(result.selected).toEqual(["search"]);
+  });
+
+  it("returns no selection when parsing fails", async () => {
+    const skills = new SkillsModel();
+    skills.register({ name: "search", description: "S", content: "S" });
+
+    mockGenerateText.mockResolvedValue({
+      text: "I don't know which skills are relevant.",
+    });
+
+    const useTool = createUseSkillsTool({
+      skills,
+      provider: fakeProvider(),
+      model: "m",
+    });
+
+    const result = await executeTool(useTool, "test");
+
+    expect(result.selected).toEqual([]);
   });
 });
