@@ -62,16 +62,43 @@ export function registerWebLLMProvider(
      * custom catalog entries are absent from the prebuilt list, so the
      * lookup throws; and (b) the SW write-through populates FilesApi
      * directly — making the on-disk files the single source of truth.
+     *
+     * Logs every probe so users can correlate "Not downloaded" status
+     * after a reload with the actual on-disk state.
      */
-    engineHasWeights: async (
-      config: LocalModelConfig,
-      files,
-    ): Promise<boolean> => {
-      if (!files) return false;
+    engineHasWeights: async (config: LocalModelConfig, files): Promise<boolean> => {
+      if (!files) {
+        console.warn("[webllm] engineHasWeights: no FilesApi configured");
+        return false;
+      }
       const dir = `${basePath}/${config.modelId}`;
       try {
-        return verifyMlcWeights(files.list(dir, { recursive: true }));
-      } catch {
+        const found: { name: string; kind: string }[] = [];
+        let hasConfig = false;
+        let hasCache = false;
+        let hasShard = false;
+        for await (const entry of files.list(dir, { recursive: true })) {
+          found.push({ name: entry.name, kind: entry.kind });
+          if (entry.kind !== "file") continue;
+          if (entry.name === "mlc-chat-config.json") hasConfig = true;
+          else if (entry.name === "ndarray-cache.json") hasCache = true;
+          else if (entry.name.startsWith("params_shard_") && entry.name.endsWith(".bin")) {
+            hasShard = true;
+          }
+        }
+        const present = hasConfig && hasCache && hasShard;
+        console.log("[webllm] engineHasWeights", {
+          dir,
+          modelId: config.modelId,
+          present,
+          hasConfig,
+          hasCache,
+          hasShard,
+          fileCount: found.length,
+        });
+        return present;
+      } catch (error) {
+        console.warn("[webllm] engineHasWeights probe failed", dir, error);
         return false;
       }
     },
@@ -127,22 +154,18 @@ export function registerWebLLMProvider(
       // first set of fetches and tees the bytes to FilesApi as they
       // stream past. Without this, the first activation downloads
       // straight to WebLLM's IDB cache and weights never appear on disk.
-      await registerWebLLMUrlMapping(
-        modelUrlPrefix(modelId),
-        `${basePath}/${modelId}/`,
-      ).catch(() => {
-        /* ignored — SW not available is not fatal */
-      });
+      await registerWebLLMUrlMapping(modelUrlPrefix(modelId), `${basePath}/${modelId}/`).catch(
+        () => {
+          /* ignored — SW not available is not fatal */
+        },
+      );
 
       signal?.throwIfAborted();
-      // biome-ignore lint/suspicious/noConsole: diagnostic for "loading stuck" bug
       console.log(`[webllm] engine.reload(${modelId}) starting`);
       try {
         await engine.reload(modelId);
-        // biome-ignore lint/suspicious/noConsole: diagnostic for "loading stuck" bug
         console.log(`[webllm] engine.reload(${modelId}) returned`);
       } catch (e) {
-        // biome-ignore lint/suspicious/noConsole: diagnostic for "loading stuck" bug
         console.error(`[webllm] engine.reload(${modelId}) threw`, e);
         throw e;
       }
