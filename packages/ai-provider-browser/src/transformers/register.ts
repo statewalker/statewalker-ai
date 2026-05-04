@@ -8,12 +8,77 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import { LocalLanguageModel } from "./language-model.js";
 import { createPipeline } from "./loader.js";
 
+export interface RegisterLocalProviderOptions {
+  /**
+   * Base path under the workspace `FilesApi` where weight files are
+   * persisted by the Service Worker bridge. Defaults to `/models/tjs`.
+   * Apps wiring a system folder (e.g. chat-mini's `/.settings`) should
+   * point this at `/.settings/models/tjs` so weights live alongside
+   * other workspace artifacts instead of at the workspace root.
+   */
+  basePath?: string;
+}
+
 /**
- * Register the local model provider with a ModelManager.
- * This enables activation of `runtime: "local"` models via transformers.js.
+ * Register the transformers.js local-model provider with a ModelManager.
+ * Activates `runtime: "local", engine: "tjs"` catalog entries via
+ * @huggingface/transformers and probes `${basePath}/${modelId}` for
+ * cached weight files so previously-downloaded models surface as
+ * `downloaded` after a reload.
  */
-export function registerLocalProvider(manager: ModelManager): void {
+export function registerLocalProvider(
+  manager: ModelManager,
+  options: RegisterLocalProviderOptions = {},
+): void {
+  const basePath = (options.basePath ?? "/models/tjs").replace(/\/+$/, "");
   manager.registerLocalFactory("tjs", {
+    /**
+     * Probe FilesApi for ONNX files written by the SW bridge during
+     * the first activation. We don't rely on
+     * `LocalModelStorage.hasWeights` because that requires a metadata
+     * file that's only written when bytes go through
+     * `LocalModelStorage.download` — but for browser-side activation
+     * the bytes flow through transformers.js + the SW write-through
+     * directly, never via `download`. The on-disk `config.json` plus
+     * at least one `.onnx` weight file is the right "downloaded"
+     * signal.
+     */
+    engineHasWeights: async (
+      config: LocalModelConfig,
+      files: FilesApi | undefined,
+    ): Promise<boolean> => {
+      if (!files) {
+        console.warn("[tjs] engineHasWeights: no FilesApi configured");
+        return false;
+      }
+      const dir = `${basePath}/${config.modelId}`;
+      try {
+        let hasConfig = false;
+        let hasOnnx = false;
+        let fileCount = 0;
+        for await (const entry of files.list(dir, { recursive: true })) {
+          if (entry.kind !== "file") continue;
+          fileCount += 1;
+          if (entry.name === "config.json") hasConfig = true;
+          else if (entry.name.endsWith(".onnx") || entry.name.includes(".onnx_data")) {
+            hasOnnx = true;
+          }
+        }
+        const present = hasConfig && hasOnnx;
+        console.log("[tjs] engineHasWeights", {
+          dir,
+          modelId: config.modelId,
+          present,
+          hasConfig,
+          hasOnnx,
+          fileCount,
+        });
+        return present;
+      } catch (error) {
+        console.warn("[tjs] engineHasWeights probe failed", dir, error);
+        return false;
+      }
+    },
     factory: async (
       modelId: string,
       config: LocalModelConfig,
@@ -21,7 +86,7 @@ export function registerLocalProvider(manager: ModelManager): void {
       _onProgress: (progress: ActivationProgress) => void,
       _signal?: AbortSignal,
     ): Promise<LanguageModelV3> => {
-      const { pipeline, tjs } = await createPipeline(modelId, config.dtype, files, "/models/tjs");
+      const { pipeline, tjs } = await createPipeline(modelId, config.dtype, files, basePath);
       return new LocalLanguageModel(modelId, pipeline, tjs, config.maxNewTokens);
     },
   });
