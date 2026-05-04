@@ -9,6 +9,7 @@ import { WebLLMLanguageModel } from "./language-model.js";
 import { getWebLLMModule, type MLCEngine } from "./loader.js";
 import { resolveMlcFiles, verifyMlcWeights } from "./mlc-resolver.js";
 import { registerWebLLMUrlMapping } from "./sw-bridge.js";
+import { syncWeightsFromCache } from "./sync-weights.js";
 
 const MLC_BASE_URL_PREFIX = "https://huggingface.co/";
 
@@ -105,7 +106,7 @@ export function registerWebLLMProvider(
     factory: async (
       modelId: string,
       config: LocalModelConfig,
-      _files: FilesApi,
+      files: FilesApi,
       onProgress: (progress: ActivationProgress) => void,
       signal?: AbortSignal,
     ): Promise<LanguageModelV3> => {
@@ -169,6 +170,16 @@ export function registerWebLLMProvider(
         console.error(`[webllm] engine.reload(${modelId}) threw`, e);
         throw e;
       }
+
+      // Sync any artifacts WebLLM served from its Cache API into our
+      // FilesApi. The SW bridge only catches *network fetches*, so a
+      // model that was already cached (in this session, in a prior
+      // session, or by another app on the same origin) reloads
+      // straight from Cache API without ever hitting the SW —
+      // leaving the workspace folder empty even when the model is
+      // perfectly active in memory. Best-effort: failures don't
+      // block activation.
+      await syncWeightsFromCache(modelId, config, files, basePath, signal);
 
       onProgress({
         modelKey: modelId,
