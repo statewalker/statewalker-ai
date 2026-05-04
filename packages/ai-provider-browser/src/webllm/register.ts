@@ -26,6 +26,18 @@ function isEmbeddingModel(config: LocalModelConfig): boolean {
   );
 }
 
+export interface RegisterWebLLMProviderOptions {
+  /**
+   * Base path under the workspace `FilesApi` where weight files are
+   * persisted by the Service Worker bridge. Defaults to
+   * `/models/webllm`. The bridge writes to `${basePath}/${modelId}/...`
+   * for each registered URL mapping. If you want weights to live under
+   * a system folder (e.g. `/.settings/models/webllm`), set this to that
+   * folder — it must already be writable on the active `FilesApi`.
+   */
+  basePath?: string;
+}
+
 /**
  * Register WebLLM as the `"webllm"` engine on the given `ModelManager`.
  * Installs the factory, an MLC-aware file resolver, and a weight verifier
@@ -35,7 +47,11 @@ function isEmbeddingModel(config: LocalModelConfig): boolean {
  * Requires `@mlc-ai/web-llm` to be installed at activation time (not at
  * import time — this function is safe to call in any environment).
  */
-export function registerWebLLMProvider(manager: ModelManager): void {
+export function registerWebLLMProvider(
+  manager: ModelManager,
+  options: RegisterWebLLMProviderOptions = {},
+): void {
+  const basePath = (options.basePath ?? "/models/webllm").replace(/\/+$/, "");
   manager.registerLocalFactory("webllm", {
     fileResolver: resolveMlcFiles,
     verifier: verifyMlcWeights,
@@ -103,18 +119,19 @@ export function registerWebLLMProvider(manager: ModelManager): void {
         },
       });
 
+      // Register the URL mapping BEFORE reload so the SW intercepts the
+      // first set of fetches and tees the bytes to FilesApi as they
+      // stream past. Without this, the first activation downloads
+      // straight to WebLLM's IDB cache and weights never appear on disk.
+      await registerWebLLMUrlMapping(
+        modelUrlPrefix(modelId),
+        `${basePath}/${modelId}/`,
+      ).catch(() => {
+        /* ignored — SW not available is not fatal */
+      });
+
       signal?.throwIfAborted();
       await engine.reload(modelId);
-
-      // Register a bridge mapping so subsequent reloads served from
-      // FilesApi (the first reload above streams through the SW too when
-      // active — in that case it's a network miss that populates the
-      // FilesApi cache at the same time).
-      await registerWebLLMUrlMapping(modelUrlPrefix(modelId), `/models/webllm/${modelId}/`).catch(
-        () => {
-          /* ignored — SW not available is not fatal */
-        },
-      );
 
       onProgress({
         modelKey: modelId,
