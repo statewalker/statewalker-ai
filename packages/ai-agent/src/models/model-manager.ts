@@ -35,10 +35,19 @@ export interface LocalEngineRegistration {
   /**
    * Engine-owned weight-presence check. When provided, takes precedence
    * over the FilesApi-backed `LocalModelStorage.hasWeights(verifier)`
-   * path. Use this for engines that store weights outside FilesApi —
-   * e.g. WebLLM keeps shards in IndexedDB by default.
+   * path. Use this when the default check (which requires a metadata
+   * file written by `LocalModelStorage.download`) is wrong for your
+   * engine — for example WebLLM streams weights directly into a
+   * Service-Worker-bridged FilesApi without going through
+   * `LocalModelStorage.download`, so the metadata file never exists.
+   *
+   * The `files` argument is the FilesApi configured on the
+   * `ModelManager` (or `undefined` if no files were configured).
    */
-  engineHasWeights?: (config: LocalModelConfig) => Promise<boolean>;
+  engineHasWeights?: (
+    config: LocalModelConfig,
+    files: FilesApi | undefined,
+  ) => Promise<boolean>;
 }
 
 /**
@@ -113,7 +122,7 @@ export class ModelManager {
       const registration = this.engines.get(config.engine);
       if (!registration) continue;
       const presence: Promise<boolean> = registration.engineHasWeights
-        ? registration.engineHasWeights(config)
+        ? registration.engineHasWeights(config, this.files)
         : (async () => {
             const storage = this.storageFor(config.engine);
             if (!storage) return false;
@@ -487,11 +496,12 @@ export class ModelManager {
       message: `Checking storage for ${config.label}...`,
     };
 
-    // Engine-owned check (e.g. WebLLM IDB) takes precedence over the
-    // FilesApi-backed default — engines that don't write to FilesApi need
-    // to short-circuit the download path themselves.
+    // Engine-owned check (e.g. WebLLM via SW-bridged FilesApi) takes
+    // precedence over the FilesApi-backed default — engines that don't
+    // write through `LocalModelStorage.download` need to short-circuit
+    // the download path themselves.
     const hasWeights = registration.engineHasWeights
-      ? await registration.engineHasWeights(config)
+      ? await registration.engineHasWeights(config, this.files)
       : await storage.hasWeights(config.modelId, registration.verifier);
 
     if (!hasWeights && !registration.engineHasWeights) {
