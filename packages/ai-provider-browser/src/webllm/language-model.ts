@@ -110,12 +110,17 @@ function buildParams(
     }
   }
 
-  // Structured output (JSON mode / schema)
+  // Structured output (JSON mode / schema). WebLLM's
+  // `GrammarCompiler.CompileJSONSchema` is a C++ embind binding that
+  // expects `std::string` — passing the raw JS schema object throws
+  // `BindingError: Cannot pass non-string to std::string`. Always
+  // serialize before handing it across.
   if (options.responseFormat?.type === "json") {
     if (options.responseFormat.schema) {
+      const schema = options.responseFormat.schema;
       params.response_format = {
         type: "json_object",
-        schema: options.responseFormat.schema,
+        schema: typeof schema === "string" ? schema : JSON.stringify(schema),
       };
     } else {
       params.response_format = { type: "json_object" };
