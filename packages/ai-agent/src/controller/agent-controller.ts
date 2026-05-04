@@ -267,8 +267,16 @@ export class AgentController {
       }
     } catch (e) {
       if (isAbortError(e, signal)) throw e;
-      const msg = turn.recordError(e);
-      yield { type: "error", turnId: turn.id, message: msg };
+      // Skill selection is a best-effort optimization. Many local
+      // models can't produce valid structured output reliably (no
+      // grammar-constrained generation in transformers.js, smaller
+      // WebLLM models also struggle), and the conversation continues
+      // perfectly fine without any skills selected — the agent has
+      // access to all skills via the `use_skills` tool regardless.
+      // Treating this as a turn-level error surfaced a red banner in
+      // the chat for what is purely a heuristic miss; demote to a
+      // console warning instead.
+      console.warn("[agent] skill selection failed; continuing without preselected skills", e);
     }
   }
 
