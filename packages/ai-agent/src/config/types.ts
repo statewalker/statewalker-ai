@@ -1,6 +1,6 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
-import type { ModelManager } from "@statewalker/ai-provider";
 import type { FilesApi } from "@statewalker/webrun-files";
+import type { ModelManager } from "../models/model-manager.js";
 import type { SessionManager } from "../sessions/types.js";
 import type { ConfigManager } from "./config-manager.js";
 import type { SecretsManager } from "./secrets-manager.js";
