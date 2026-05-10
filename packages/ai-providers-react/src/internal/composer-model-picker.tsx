@@ -1,25 +1,14 @@
 import {
-  createDefaultCatalog,
-  type ModelConfig,
+  createDefaultCatalog, type ModelConfig
 } from "@statewalker/ai-agent/models";
-import { Intents } from "@statewalker/shared-intents";
+import { Commands } from "@statewalker/shared-commands";
 import { type ReactElement, useMemo } from "react";
 import { useAdapterValue } from "@statewalker/core-react";
 import {
-  type CanonicalProviderName,
-  canonicalLabel,
-  listConfiguredProviders,
-  Providers,
-  type ProvidersConfig,
-  runOpenProviderConfig,
-  runSelectActiveModel,
+  OpenProviderConfigCommand, Providers, SelectActiveModelCommand, canonicalLabel, listConfiguredProviders, type CanonicalProviderName, type ProvidersConfig
 } from "@statewalker/ai-providers";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue
 } from "@statewalker/shadcn-react";
 import { useAdapter } from "@statewalker/core-react";
 
@@ -75,7 +64,7 @@ function flatChoicesFor(config: ProvidersConfig): FlatChoice[] {
  * settings dialog (free-text input), not here.
  */
 export function ComposerModelPicker(): ReactElement {
-  const intents = useAdapter(Intents);
+  const intents = useAdapter(Commands);
   const config = useAdapterValue(Providers, (p) => p.config);
 
   const choices = useMemo(() => flatChoicesFor(config), [config]);
@@ -91,7 +80,7 @@ export function ComposerModelPicker(): ReactElement {
         type="button"
         className="rounded-md border border-dashed border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent"
         onClick={() => {
-          runOpenProviderConfig(intents);
+          intents.call(OpenProviderConfigCommand, undefined);
         }}
       >
         Configure providers…
@@ -104,13 +93,13 @@ export function ComposerModelPicker(): ReactElement {
       value={activeValue || NO_MODELS_VALUE}
       onValueChange={(next) => {
         if (next === CONFIGURE_VALUE) {
-          runOpenProviderConfig(intents);
+          intents.call(OpenProviderConfigCommand, undefined);
           return;
         }
         if (next === NO_MODELS_VALUE) return;
         const [providerId, modelId] = next.split("::");
         if (!providerId || !modelId) return;
-        runSelectActiveModel(intents, { providerId, modelId });
+        intents.call(SelectActiveModelCommand, { providerId, modelId });
       }}
     >
       <SelectTrigger className="h-8 min-w-[10rem] border-0 bg-transparent px-2 text-xs hover:bg-accent">

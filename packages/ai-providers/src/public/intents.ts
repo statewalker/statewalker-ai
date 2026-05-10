@@ -1,4 +1,4 @@
-import { newIntent } from "@statewalker/shared-intents";
+import { defineCommand } from "@statewalker/shared-commands";
 
 export interface SelectActiveModelPayload {
   /**
@@ -16,17 +16,13 @@ export interface SelectActiveModelPayload {
  * The providers fragment's manager handles this by writing through
  * to `ActiveModel`.
  */
-export const [runSelectActiveModel, handleSelectActiveModel] = newIntent<
-  SelectActiveModelPayload,
-  void
->("providers:select-active-model");
+export const SelectActiveModelCommand = defineCommand<SelectActiveModelPayload,
+  void>("providers:select-active-model", () => {});
 
 /**
  * Open the providers configuration surface. Default handler (when
  * the settings fragment is not loaded) is a no-op; Wave 4.3 wires
  * this to the settings dialog.
  */
-export const [runOpenProviderConfig, handleOpenProviderConfig] = newIntent<
-  void,
-  void
->("providers:open-config");
+export const OpenProviderConfigCommand = defineCommand<void,
+  void>("providers:open-config", () => {});

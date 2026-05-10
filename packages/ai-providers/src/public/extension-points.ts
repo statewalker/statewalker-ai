@@ -1,4 +1,4 @@
-import { newSlot } from "@statewalker/shared-slots";
+import { defineSlot } from "@statewalker/shared-slots";
 import type { ProviderDescriptor } from "./types.js";
 
 /**
@@ -10,8 +10,7 @@ import type { ProviderDescriptor } from "./types.js";
  * editing chat-mini core.
  *
  * Consumers (the agent-runtime resolver, the model picker, the
- * provider-config UI) read the slot via `observeRemoteProviders`
- * or `slots.getSnapshot("providers:remote")`.
+ * provider-config UI) read the slot via the `Slots` bus's
+ * `observe` / `getSnapshot` against `remoteProvidersSlot`.
  */
-export const [provideRemoteProvider, observeRemoteProviders] =
-  newSlot<ProviderDescriptor>("providers:remote");
+export const remoteProvidersSlot = defineSlot<ProviderDescriptor>("providers:remote");
