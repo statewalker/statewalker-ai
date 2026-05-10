@@ -1,10 +1,10 @@
-import { newRegistry } from "@statewalker/shared-registry";
-import { getWorkspace } from "@statewalker/workspace-api";
-import { ViewRegistry } from "@statewalker/core-react";
 import {
   PROVIDERS_MODEL_PICKER_VIEW_KEY,
   PROVIDERS_SETTINGS_TAB_VIEW_KEY,
 } from "@statewalker/ai-providers";
+import { newViewRegistry } from "@statewalker/core-react";
+import { newRegistry } from "@statewalker/shared-registry";
+import { getWorkspace } from "@statewalker/workspace-api";
 import { ComposerModelPicker } from "../internal/composer-model-picker.js";
 import { ProviderConfigPanel } from "../internal/provider-config-panel.js";
 
@@ -12,18 +12,18 @@ import { ProviderConfigPanel } from "../internal/provider-config-panel.js";
  * Renderer-fragment init for the providers UI. Pairs with
  * `@statewalker/ai-providers` (logic).
  *
- * Wave 4.3 bound `<ProviderConfigPanel>` to the viewKey the
- * providers logic fragment contributes to `settings:tabs`.
- * Wave 7.1 adds the `ComposerModelPicker` binding for the
- * `chat:composer-actions` contribution — same slot-pattern-C
- * shape: providers/ logic contributes the action descriptor,
- * providers-views/ binds the React component here.
+ * Binds `<ProviderConfigPanel>` to the viewKey the providers logic
+ * fragment contributes to `settings:tabs`, and binds the
+ * `ComposerModelPicker` for the `chat:composer-actions` contribution
+ * — same slot-pattern-C shape: logic-side contributes the action
+ * descriptor; this renderer binds the React component into the
+ * `core:views` slot.
  */
-export default function initProvidersViews(
+export default function initProvidersReact(
   ctx: Record<string, unknown>,
 ): () => Promise<void> {
   const workspace = getWorkspace(ctx);
-  const registry = workspace.requireAdapter(ViewRegistry);
+  const registry = newViewRegistry(workspace);
 
   const [register, cleanup] = newRegistry();
   register(
