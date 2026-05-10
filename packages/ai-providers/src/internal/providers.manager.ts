@@ -1,23 +1,20 @@
-import { Intents } from "@statewalker/shared-intents";
-import { newRegistry } from "@statewalker/shared-registry";
-import { Slots } from "@statewalker/shared-slots";
-import type { Workspace } from "@statewalker/workspace-api";
+import { provideComposerAction } from "@repo/chat-mini.chat";
 import {
   ActiveModel,
   type ActiveModelValue,
   AgentRuntimeAdapter,
 } from "@statewalker/ai-agent-runtime";
-import { provideComposerAction } from "@repo/chat-mini.chat";
 import { provideSettingsTab } from "@statewalker/settings";
+import { Intents } from "@statewalker/shared-intents";
+import { newRegistry } from "@statewalker/shared-registry";
+import { Slots } from "@statewalker/shared-slots";
+import type { Workspace } from "@statewalker/workspace-api";
 import {
   PROVIDERS_MODEL_PICKER_VIEW_KEY,
   PROVIDERS_SETTINGS_TAB_VIEW_KEY,
 } from "../public/constants.js";
 import { provideRemoteProvider } from "../public/extension-points.js";
-import {
-  handleSelectActiveModel,
-  type SelectActiveModelPayload,
-} from "../public/intents.js";
+import { handleSelectActiveModel, type SelectActiveModelPayload } from "../public/intents.js";
 import { Providers } from "../public/providers.adapter.js";
 import {
   emptyProvidersConfig,
@@ -90,8 +87,9 @@ export class ProvidersManager {
 
     register(
       handleSelectActiveModel(this.intents, (intent) => {
-        this._applyActiveSelection(intent.payload);
-        intent.resolve();
+        void this._persistActiveSelection(intent.payload)
+          .then(() => intent.resolve())
+          .catch((err) => intent.reject(err));
         return true;
       }),
     );
@@ -139,10 +137,7 @@ export class ProvidersManager {
     if (this._isLoaded) return;
     this._isLoaded = true;
     try {
-      const config = await loadProvidersConfig(
-        this.workspace.files,
-        this.systemFolder,
-      );
+      const config = await loadProvidersConfig(this.workspace.files, this.systemFolder);
       this._applyConfig(config);
     } catch (error) {
       this.adapter._setState({
@@ -178,10 +173,7 @@ export class ProvidersManager {
 
   private async _reload(): Promise<void> {
     if (!this._isLoaded) return;
-    const config = await loadProvidersConfig(
-      this.workspace.files,
-      this.systemFolder,
-    );
+    const config = await loadProvidersConfig(this.workspace.files, this.systemFolder);
     this._applyConfig(config);
   }
 
@@ -202,6 +194,18 @@ export class ProvidersManager {
     this._applyActiveSelection(config.active);
   }
 
+  private async _persistActiveSelection(selection: SelectActiveModelPayload): Promise<void> {
+    if (!this._isLoaded) {
+      this._applyActiveSelection(selection);
+      return;
+    }
+    const next: ProvidersConfig = {
+      ...this.providers.config,
+      active: { providerId: selection.providerId, modelId: selection.modelId },
+    };
+    await this._saveProviders(next);
+  }
+
   private _applyActiveSelection(
     selection: SelectActiveModelPayload | ProvidersConfig["active"],
   ): void {
@@ -213,8 +217,7 @@ export class ProvidersManager {
     );
     if (!resolved) {
       const noProviders =
-        this.slots.getSnapshot<ProviderDescriptor>("providers:remote")
-          .length === 0;
+        this.slots.getSnapshot<ProviderDescriptor>("providers:remote").length === 0;
       this.adapter._setState({
         status: noProviders ? "no-providers" : "no-active-model",
       });
