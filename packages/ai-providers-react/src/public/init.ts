@@ -2,8 +2,9 @@ import {
   PROVIDERS_MODEL_PICKER_VIEW_KEY,
   PROVIDERS_SETTINGS_TAB_VIEW_KEY,
 } from "@statewalker/ai-providers";
-import { newViewRegistry } from "@statewalker/core-react";
+import { coreViewsSlot, type ViewComponent } from "@statewalker/core-react";
 import { newRegistry } from "@statewalker/shared-registry";
+import { Slots } from "@statewalker/shared-slots";
 import { getWorkspace } from "@statewalker/workspace";
 import { ComposerModelPicker } from "../internal/composer-model-picker.js";
 import { ProviderConfigPanel } from "../internal/provider-config-panel.js";
@@ -23,19 +24,21 @@ export default function initProvidersReact(
   ctx: Record<string, unknown>,
 ): () => Promise<void> {
   const workspace = getWorkspace(ctx);
-  const registry = newViewRegistry(workspace);
+  const slots = workspace.requireAdapter(Slots);
 
   const [register, cleanup] = newRegistry();
   register(
-    registry.register(
+    slots.register(
+      coreViewsSlot,
       PROVIDERS_SETTINGS_TAB_VIEW_KEY,
-      ProviderConfigPanel as unknown as Parameters<typeof registry.register>[1],
+      ProviderConfigPanel as unknown as ViewComponent,
     ),
   );
   register(
-    registry.register(
+    slots.register(
+      coreViewsSlot,
       PROVIDERS_MODEL_PICKER_VIEW_KEY,
-      ComposerModelPicker as unknown as Parameters<typeof registry.register>[1],
+      ComposerModelPicker as unknown as ViewComponent,
     ),
   );
   return cleanup;
