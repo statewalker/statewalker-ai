@@ -1,26 +1,20 @@
-import { provideComposerAction } from "@repo/chat-mini.chat";
+import { composerActionsSlot } from "@repo/chat-mini.chat";
 import {
-  ActiveModel,
-  type ActiveModelValue,
-  AgentRuntimeAdapter,
+  ActiveModel, AgentRuntimeAdapter, type ActiveModelValue
 } from "@statewalker/ai-agent-runtime";
-import { provideSettingsTab } from "@statewalker/settings";
-import { Intents } from "@statewalker/shared-intents";
+import { settingsTabSlot } from "@statewalker/settings";
+import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import type { Workspace } from "@statewalker/workspace";
 import {
-  PROVIDERS_MODEL_PICKER_VIEW_KEY,
-  PROVIDERS_SETTINGS_TAB_VIEW_KEY,
+  PROVIDERS_MODEL_PICKER_VIEW_KEY, PROVIDERS_SETTINGS_TAB_VIEW_KEY
 } from "../public/constants.js";
-import { provideRemoteProvider } from "../public/extension-points.js";
-import { handleSelectActiveModel, type SelectActiveModelPayload } from "../public/intents.js";
+import { remoteProvidersSlot } from "../public/extension-points.js";
+import { SelectActiveModelCommand, type SelectActiveModelPayload } from "../public/intents.js";
 import { Providers } from "../public/providers.adapter.js";
 import {
-  emptyProvidersConfig,
-  loadProvidersConfig,
-  type ProvidersConfig,
-  saveProvidersConfig,
+  emptyProvidersConfig, loadProvidersConfig, saveProvidersConfig, type ProvidersConfig
 } from "../public/providers-store.js";
 import type { ProviderDescriptor } from "../public/types.js";
 import { buildAnthropicDescriptor } from "./builtins/anthropic.js";
@@ -54,7 +48,7 @@ export interface ProvidersManagerOptions {
  */
 export class ProvidersManager {
   private readonly workspace: Workspace;
-  private readonly intents: Intents;
+  private readonly intents: Commands;
   private readonly slots: Slots;
   private readonly providers: Providers;
   private readonly activeModel: ActiveModel;
@@ -70,7 +64,7 @@ export class ProvidersManager {
   constructor(opts: ProvidersManagerOptions) {
     this.workspace = opts.workspace;
     this.systemFolder = opts.systemFolder ?? ".settings";
-    this.intents = opts.workspace.requireAdapter(Intents);
+    this.intents = opts.workspace.requireAdapter(Commands);
     this.slots = opts.workspace.requireAdapter(Slots);
     this.providers = opts.workspace.requireAdapter(Providers);
     this.activeModel = opts.workspace.requireAdapter(ActiveModel);
@@ -86,20 +80,20 @@ export class ProvidersManager {
     this._cleanup = cleanup;
 
     register(
-      handleSelectActiveModel(this.intents, (intent) => {
-        void this._persistActiveSelection(intent.payload)
-          .then(() => intent.resolve())
-          .catch((err) => intent.reject(err));
+      this.intents.listen(SelectActiveModelCommand, (cmd) => {
+        void this._persistActiveSelection(cmd.payload)
+          .then(() => cmd.resolve())
+          .catch((err) => cmd.reject(err));
         return true;
       }),
     );
 
     // Lifetime-scoped contribution: the providers tab is always
     // available in the settings dialog regardless of workspace
-    // state. The tab content (rendered via ViewRegistry) handles
-    // the not-yet-loaded case itself.
+    // state. The tab content (rendered via the core:views slot)
+    // handles the not-yet-loaded case itself.
     register(
-      provideSettingsTab(this.slots, {
+      this.slots.provide(settingsTabSlot, {
         id: "providers",
         title: "Providers",
         viewKey: PROVIDERS_SETTINGS_TAB_VIEW_KEY,
@@ -112,7 +106,7 @@ export class ProvidersManager {
     // in providers-views) handles the empty / unconfigured cases
     // by surfacing a "Configure providers…" affordance.
     register(
-      provideComposerAction(this.slots, {
+      this.slots.provide(composerActionsSlot, {
         id: "providers:model-picker",
         viewKey: PROVIDERS_MODEL_PICKER_VIEW_KEY,
         position: "leading",
@@ -187,7 +181,7 @@ export class ProvidersManager {
 
     const descriptors = buildDescriptors(config);
     for (const desc of descriptors) {
-      this._slotCleanup.push(provideRemoteProvider(this.slots, desc));
+      this._slotCleanup.push(this.slots.provide(remoteProvidersSlot, desc));
     }
 
     this.providers._setConfig(config);
@@ -211,13 +205,13 @@ export class ProvidersManager {
   ): void {
     const { providerId, modelId } = selection;
     const resolved = resolveActive(
-      this.slots.getSnapshot<ProviderDescriptor>("providers:remote").slice(),
+      this.slots.getSnapshot(remoteProvidersSlot).slice(),
       providerId,
       modelId,
     );
     if (!resolved) {
       const noProviders =
-        this.slots.getSnapshot<ProviderDescriptor>("providers:remote").length === 0;
+        this.slots.getSnapshot(remoteProvidersSlot).length === 0;
       this.adapter._setState({
         status: noProviders ? "no-providers" : "no-active-model",
       });

@@ -4,17 +4,12 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import {
-  type CustomProvider,
-  newCustomProviderId,
+  newCustomProviderId, type CustomProvider
 } from "@statewalker/ai-providers";
 import {
-  Button,
-  Card,
-  CardContent,
-  Input,
-  Label,
+  Button, Card, CardContent, Input, Label
 } from "@statewalker/shadcn-react";
-import { type TestResult, testCustomConnection } from "./test-connection.js";
+import { testCustomConnection, type TestResult } from "./test-connection.js";
 
 const schema = z.object({
   name: z.string().trim().min(1, "Name is required"),

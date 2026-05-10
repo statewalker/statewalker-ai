@@ -1,24 +1,19 @@
-import { Intents } from "@statewalker/shared-intents";
+import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import type { Workspace } from "@statewalker/workspace";
 import { ActiveModel } from "../public/active-model.js";
 import {
-  observeAgentMcpConnections,
-  observeAgentSkills,
-  observeAgentTools,
+  agentMcpConnectionsSlot, agentSkillsSlot, agentToolsSlot
 } from "../public/extension-points.js";
-import { handleRebuildAgent } from "../public/intents.js";
+import { RebuildAgentCommand } from "../public/intents.js";
 import {
-  AgentRuntimeAdapter,
-  type RuntimeState,
+  AgentRuntimeAdapter, type RuntimeState
 } from "../public/runtime-state.js";
 import type {
-  AgentMcpConnection,
-  AgentSkillContribution,
-  AgentToolContribution,
+  AgentMcpConnection, AgentSkillContribution, AgentToolContribution
 } from "../public/types.js";
-import { type BuildRuntimeInput, buildRuntime } from "./build-runtime.js";
+import { buildRuntime, type BuildRuntimeInput } from "./build-runtime.js";
 
 const AGENT_NAME = "chat";
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant with access to tools for interacting with the local file system.
@@ -59,7 +54,7 @@ export interface AgentRuntimeManagerOptions {
  */
 export class AgentRuntimeManager {
   private readonly workspace: Workspace;
-  private readonly intents: Intents;
+  private readonly intents: Commands;
   private readonly slots: Slots;
   private readonly activeModel: ActiveModel;
   private readonly adapter: AgentRuntimeAdapter;
@@ -83,7 +78,7 @@ export class AgentRuntimeManager {
     this.workspace = opts.workspace;
     this.systemFolder = opts.systemFolder ?? "/.settings";
     this._buildRuntime = opts.buildRuntime ?? buildRuntime;
-    this.intents = opts.workspace.requireAdapter(Intents);
+    this.intents = opts.workspace.requireAdapter(Commands);
     this.slots = opts.workspace.requireAdapter(Slots);
     this.activeModel = opts.workspace.requireAdapter(ActiveModel);
     this.adapter = opts.workspace.requireAdapter(AgentRuntimeAdapter);
@@ -94,9 +89,9 @@ export class AgentRuntimeManager {
     // Lifetime-scoped intent handler. Survives onUnload cycles so
     // late-arriving `runRebuildAgent` calls just no-op while closed.
     register(
-      handleRebuildAgent(this.intents, (intent) => {
+      this.intents.listen(RebuildAgentCommand, (cmd) => {
         this._scheduleRebuild();
-        intent.resolve();
+        cmd.resolve();
         return true;
       }),
     );
@@ -128,15 +123,15 @@ export class AgentRuntimeManager {
     this._generation += 1;
 
     this._cycleCleanup.push(
-      observeAgentTools(this.slots, (vs) => {
+      this.slots.observe(agentToolsSlot, (vs) => {
         this._toolsSnap = vs;
         this._scheduleRebuild();
       }),
-      observeAgentSkills(this.slots, (vs) => {
+      this.slots.observe(agentSkillsSlot, (vs) => {
         this._skillsSnap = vs;
         this._scheduleRebuild();
       }),
-      observeAgentMcpConnections(this.slots, (vs) => {
+      this.slots.observe(agentMcpConnectionsSlot, (vs) => {
         this._mcpSnap = vs;
         this._scheduleRebuild();
       }),

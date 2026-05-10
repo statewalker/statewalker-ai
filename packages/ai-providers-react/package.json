@@ -23,7 +23,7 @@
     "@statewalker/ai-agent": "workspace:*",
     "@statewalker/ai-providers": "workspace:*",
     "@statewalker/core-react": "workspace:*",
-    "@statewalker/shared-intents": "catalog:",
+    "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "workspace:*",
     "@statewalker/workspace": "workspace:*",

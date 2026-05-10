@@ -5,9 +5,7 @@ import { Workspace } from "@statewalker/workspace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActiveModel } from "../public/active-model.js";
 import {
-  provideAgentMcpConnection,
-  provideAgentSkill,
-  provideAgentTool,
+  agentMcpConnectionsSlot, agentSkillsSlot, agentToolsSlot
 } from "../public/extension-points.js";
 import { AgentRuntimeAdapter } from "../public/runtime-state.js";
 import type { ActiveModelValue } from "../public/types.js";
@@ -136,12 +134,12 @@ describe("AgentRuntimeManager", () => {
     // the cumulative snapshots.
     const toolFactory = (): import("ai").ToolSet =>
       ({}) as import("ai").ToolSet;
-    provideAgentTool(slots, toolFactory);
+    slots.provide(agentToolsSlot, toolFactory);
     await vi.runAllTimersAsync();
     expect(buildSpy).toHaveBeenCalledTimes(2);
     expect(buildSpy.mock.calls[1]?.[0].tools).toHaveLength(1);
 
-    provideAgentSkill(slots, {
+    slots.provide(agentSkillsSlot, {
       name: "demo",
       description: "demo",
       content: "# demo skill",
@@ -150,7 +148,7 @@ describe("AgentRuntimeManager", () => {
     expect(buildSpy).toHaveBeenCalledTimes(3);
     expect(buildSpy.mock.calls[2]?.[0].skills).toHaveLength(1);
 
-    provideAgentMcpConnection(slots, {
+    slots.provide(agentMcpConnectionsSlot, {
       id: "fs",
       config: {
         command: "node",
@@ -185,7 +183,7 @@ describe("AgentRuntimeManager", () => {
     expect(buildSpy).toHaveBeenCalledTimes(1);
 
     await ws.close();
-    provideAgentTool(slots, () => ({}) as import("ai").ToolSet);
+    slots.provide(agentToolsSlot, () => ({}) as import("ai").ToolSet);
     await vi.runAllTimersAsync();
     // Still 1 — the manager unsubscribed on onUnload.
     expect(buildSpy).toHaveBeenCalledTimes(1);

@@ -4,11 +4,10 @@ import { useEffect, useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import type {
-  CanonicalCredentials,
-  CanonicalProviderName,
+  CanonicalCredentials, CanonicalProviderName
 } from "@statewalker/ai-providers";
 import { Button, Input, Label } from "@statewalker/shadcn-react";
-import { type TestResult, testCanonicalConnection } from "./test-connection.js";
+import { testCanonicalConnection, type TestResult } from "./test-connection.js";
 
 const schema = z.object({
   apiKey: z.string().trim().min(1, "API key is required"),

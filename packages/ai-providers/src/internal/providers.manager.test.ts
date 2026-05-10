@@ -1,3 +1,4 @@
+import { remoteProvidersSlot } from "../public/extension-points.js";
 import { Slots } from "@statewalker/shared-slots";
 import { writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
@@ -6,10 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActiveModel, AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime";
 import { Providers } from "../public/providers.adapter.js";
 import {
-  emptyProvidersConfig,
-  type ProvidersConfig,
+  emptyProvidersConfig, type ProvidersConfig
 } from "../public/providers-store.js";
-import type { ProviderDescriptor } from "../public/types.js";
+
 import { ProvidersManager } from "./providers.manager.js";
 
 async function writeProvidersJson(
@@ -60,7 +60,7 @@ describe("ProvidersManager", () => {
     await vi.runAllTimersAsync();
 
     const descriptors =
-      slots.getSnapshot<ProviderDescriptor>("providers:remote");
+      slots.getSnapshot(remoteProvidersSlot);
     expect(descriptors.map((d) => d.id).sort()).toEqual([
       "anthropic",
       "openai",
@@ -86,13 +86,13 @@ describe("ProvidersManager", () => {
     await ws.open();
     await vi.runAllTimersAsync();
     expect(
-      slots.getSnapshot<ProviderDescriptor>("providers:remote").length,
+      slots.getSnapshot(remoteProvidersSlot).length,
     ).toBe(1);
 
     // Unload — slot must clear.
     await ws.close();
     expect(
-      slots.getSnapshot<ProviderDescriptor>("providers:remote").length,
+      slots.getSnapshot(remoteProvidersSlot).length,
     ).toBe(0);
 
     // Edit providers.json off-cycle to add Anthropic; cycle 2 picks it up.
@@ -107,7 +107,7 @@ describe("ProvidersManager", () => {
     await ws.open();
     await vi.runAllTimersAsync();
     expect(
-      slots.getSnapshot<ProviderDescriptor>("providers:remote").length,
+      slots.getSnapshot(remoteProvidersSlot).length,
     ).toBe(2);
 
     await manager.close();
