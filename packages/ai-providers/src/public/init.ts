@@ -1,5 +1,5 @@
 import { newRegistry } from "@statewalker/shared-registry";
-import { getWorkspace } from "@statewalker/workspace-api";
+import { getWorkspace } from "@statewalker/workspace";
 import { ProvidersManager } from "../internal/providers.manager.js";
 import { Providers } from "./providers.adapter.js";
 

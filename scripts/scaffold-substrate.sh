@@ -43,7 +43,7 @@ mk_logic_pkg() {
     "@statewalker/shared-intents": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "catalog:",
-    "@statewalker/workspace-api": "catalog:"
+    "@statewalker/workspace": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",
@@ -151,7 +151,7 @@ mk_react_pkg() {
     "@statewalker/shared-intents": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "catalog:",
-    "@statewalker/workspace-api": "catalog:"
+    "@statewalker/workspace": "catalog:"
   },
   "peerDependencies": {
     "react": ">=18",

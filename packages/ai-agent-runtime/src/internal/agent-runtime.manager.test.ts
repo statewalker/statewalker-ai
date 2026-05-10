@@ -1,7 +1,7 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { Agent, AgentRuntime } from "@statewalker/ai-agent/runtime";
 import { Slots } from "@statewalker/shared-slots";
-import { Workspace } from "@statewalker/workspace-api";
+import { Workspace } from "@statewalker/workspace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActiveModel } from "../public/active-model.js";
 import {

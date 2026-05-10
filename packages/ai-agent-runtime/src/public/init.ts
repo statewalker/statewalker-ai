@@ -1,5 +1,5 @@
 import { newRegistry } from "@statewalker/shared-registry";
-import { getWorkspace } from "@statewalker/workspace-api";
+import { getWorkspace } from "@statewalker/workspace";
 import { AgentRuntimeManager } from "../internal/agent-runtime.manager.js";
 import { ActiveModel } from "./active-model.js";
 import { AgentRuntimeAdapter } from "./runtime-state.js";

@@ -4,7 +4,7 @@ import {
 } from "@statewalker/ai-providers";
 import { newViewRegistry } from "@statewalker/core-react";
 import { newRegistry } from "@statewalker/shared-registry";
-import { getWorkspace } from "@statewalker/workspace-api";
+import { getWorkspace } from "@statewalker/workspace";
 import { ComposerModelPicker } from "../internal/composer-model-picker.js";
 import { ProviderConfigPanel } from "../internal/provider-config-panel.js";
 

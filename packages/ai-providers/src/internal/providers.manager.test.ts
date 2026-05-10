@@ -1,7 +1,7 @@
 import { Slots } from "@statewalker/shared-slots";
 import { writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
-import { Workspace } from "@statewalker/workspace-api";
+import { Workspace } from "@statewalker/workspace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ActiveModel, AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime";
 import { Providers } from "../public/providers.adapter.js";
