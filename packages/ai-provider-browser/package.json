@@ -26,10 +26,14 @@
     "@statewalker/webrun-files": "catalog:"
   },
   "peerDependencies": {
-    "@huggingface/transformers": "*",
-    "@mlc-ai/web-llm": "^0.2.82"
+    "@browser-ai/transformers-js": "^2.2.2",
+    "@huggingface/transformers": "^4.2.0",
+    "@mlc-ai/web-llm": "^0.2.83"
   },
   "peerDependenciesMeta": {
+    "@browser-ai/transformers-js": {
+      "optional": true
+    },
     "@huggingface/transformers": {
       "optional": true
     },
@@ -38,6 +42,7 @@
     }
   },
   "devDependencies": {
+    "@browser-ai/transformers-js": "catalog:",
     "@huggingface/transformers": "catalog:",
     "@mlc-ai/web-llm": "catalog:",
     "tsdown": "catalog:",

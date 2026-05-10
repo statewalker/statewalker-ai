@@ -9,7 +9,8 @@ catalog:
   "@ai-sdk/openai": ^3.0.53
   "@ai-sdk/provider": ^3.0.8
   "@biomejs/biome": ^2.4.12
-  "@huggingface/transformers": ^4.1.0
+  "@browser-ai/transformers-js": ^2.2.2
+  "@huggingface/transformers": ^4.2.0
   "@mlc-ai/web-llm": ^0.2.82
   "@modelcontextprotocol/sdk": ^1.29.0
   "@statewalker/content-blocks": ^0.1.0

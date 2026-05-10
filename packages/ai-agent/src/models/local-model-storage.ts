@@ -159,36 +159,88 @@ export class LocalModelStorage {
         );
       }
 
-      const reader = response.body?.getReader();
-      if (!reader) {
+      const body = response.body;
+      if (!body) {
         throw new Error(`No response body for ${file.name}`);
       }
 
-      // Stream chunks to FilesApi
-      const chunks: Uint8Array[] = [];
-      try {
-        for (;;) {
-          signal?.throwIfAborted();
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-          downloadedBytes += value.byteLength;
+      async function* writeToFile(
+        files: FilesApi,
+        path: string,
+        chunks: AsyncGenerator<Uint8Array>,
+      ): AsyncGenerator<Uint8Array> {
+        type Item = Uint8Array | { done: true } | { error: unknown };
+        const queue: Item[] = [];
+        let resume: (() => void) | null = null;
+        const push = (item: Item) => {
+          queue.push(item);
+          const r = resume;
+          resume = null;
+          r?.();
+        };
 
-          yield {
-            modelKey,
-            phase: "downloading",
-            progress: totalBytes > 0 ? Math.min(1, downloadedBytes / totalBytes) : 0,
-            bytesDownloaded: downloadedBytes,
-            bytesTotal: totalBytes,
-            message: `Downloading ${file.name}`,
-          };
+        const writePromise = files
+          .write(
+            path,
+            (async function* () {
+              for await (const chunk of chunks) {
+                yield chunk;
+                push(chunk);
+              }
+            })(),
+          )
+          .then(
+            () => push({ done: true }),
+            (error: unknown) => push({ error }),
+          );
+
+        while (true) {
+          if (queue.length === 0) {
+            await new Promise<void>((r) => {
+              resume = r;
+            });
+            continue;
+          }
+          const item = queue.shift() as Item;
+          if (item instanceof Uint8Array) {
+            yield item;
+          } else if ("done" in item) {
+            await writePromise;
+            return;
+          } else {
+            throw item.error;
+          }
         }
-      } finally {
-        reader.releaseLock();
       }
 
-      // Write complete file to FilesApi
-      await this.files.write(localPath, chunks);
+      async function* toStream(
+        stream: ReadableStream<Uint8Array>,
+        signal?: AbortSignal,
+      ): AsyncGenerator<Uint8Array> {
+        const reader = stream.getReader();
+        try {
+          for (;;) {
+            signal?.throwIfAborted();
+            const { done, value } = await reader.read();
+            if (done) break;
+            yield value;
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      }
+
+      for await (const block of writeToFile(this.files, localPath, toStream(body, signal))) {
+        downloadedBytes += block.byteLength;
+        yield {
+          modelKey,
+          phase: "downloading",
+          progress: totalBytes > 0 ? Math.min(1, downloadedBytes / totalBytes) : 0,
+          bytesDownloaded: downloadedBytes,
+          bytesTotal: totalBytes,
+          message: `Downloading ${file.name}`,
+        };
+      }
     }
 
     // Save metadata

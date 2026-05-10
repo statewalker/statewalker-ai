@@ -32,7 +32,7 @@ export interface LocalModelConfig {
   label: string;
   /** Model family, e.g. "SmolLM2", "Qwen 3.5" */
   family: string;
-  /** Quantization dtype for transformers.js, e.g. "q4f16" */
+  /** Quantization dtype for transformers.js, e.g. "q4" */
   dtype: string;
   /** Human-readable download size, e.g. "1.2 GB" */
   size: string;
