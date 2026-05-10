@@ -1,12 +1,13 @@
 import type { LanguageModelV3 } from "@ai-sdk/provider";
+import { type TransformersJSModelSettings, transformersJS } from "@browser-ai/transformers-js";
 import type {
   ActivationProgress,
   LocalModelConfig,
   ModelManager,
 } from "@statewalker/ai-agent/models";
 import type { FilesApi } from "@statewalker/webrun-files";
-import { LocalLanguageModel } from "./language-model.js";
-import { createPipeline } from "./loader.js";
+
+type TjsDtype = NonNullable<TransformersJSModelSettings["dtype"]>;
 
 export interface RegisterLocalProviderOptions {
   /**
@@ -21,10 +22,11 @@ export interface RegisterLocalProviderOptions {
 
 /**
  * Register the transformers.js local-model provider with a ModelManager.
- * Activates `runtime: "local", engine: "tjs"` catalog entries via
- * @huggingface/transformers and probes `${basePath}/${modelId}` for
- * cached weight files so previously-downloaded models surface as
- * `downloaded` after a reload.
+ * Activates `runtime: "local", engine: "tjs"` catalog entries through
+ * `@browser-ai/transformers-js` (the official Vercel AI SDK adapter for
+ * transformers.js) and probes `${basePath}/${modelId}` for cached weight
+ * files so previously-downloaded models surface as `downloaded` after a
+ * reload.
  */
 export function registerLocalProvider(
   manager: ModelManager,
@@ -82,12 +84,44 @@ export function registerLocalProvider(
     factory: async (
       modelId: string,
       config: LocalModelConfig,
-      files: FilesApi,
-      _onProgress: (progress: ActivationProgress) => void,
+      _files: FilesApi,
+      onProgress: (progress: ActivationProgress) => void,
       _signal?: AbortSignal,
     ): Promise<LanguageModelV3> => {
-      const { pipeline, tjs } = await createPipeline(modelId, config.dtype, files, basePath);
-      return new LocalLanguageModel(modelId, pipeline, tjs, config.maxNewTokens);
+      const dtype = config.dtype as TjsDtype;
+      const errors: Array<{ device: string; error: unknown }> = [];
+      // WASM-only by default. WebGPU on the current onnxruntime-web build
+      // reliably throws `safeint.h Integer overflow` for these models —
+      // sometimes during the adapter's 1-token warmup, sometimes only on
+      // the first real generation (warmup is too short to surface the
+      // overflow). Once the model is committed to WebGPU we can't catch
+      // the late failure at the factory boundary, so we never pick WebGPU.
+      // Re-add `"webgpu"` to the head of this array if the upstream EP is
+      // fixed and worth the speed-up.
+      for (const device of ["wasm"] as const) {
+        const model = transformersJS(modelId, { device, dtype });
+        try {
+          await model.createSessionWithProgress((progress) => {
+            onProgress({
+              modelKey: modelId,
+              phase: "downloading",
+              progress,
+              message: `Loading ${modelId} on ${device}: ${Math.round(progress * 100)}%`,
+            });
+          });
+          return model;
+        } catch (error) {
+          console.warn(`[tjs] init failed on ${device} for ${modelId}`, error);
+          errors.push({ device, error });
+        }
+      }
+      const detail = errors
+        .map(
+          ({ device, error }) =>
+            `${device}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+        .join("; ");
+      throw new Error(`Could not initialize ${modelId} on any device — ${detail}`);
     },
   });
 }
