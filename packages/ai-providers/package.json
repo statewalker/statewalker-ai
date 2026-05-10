@@ -5,10 +5,6 @@
   "type": "module",
   "description": "AI providers fragment: provider config storage, ActiveModel adapter, provider:* intents.",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git"
-  },
   "exports": {
     ".": "./src/index.ts",
     "./fragment": "./src/fragment.ts"
@@ -16,23 +12,28 @@
   "files": ["src"],
   "scripts": {
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write .",
     "format": "biome format --write ."
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/google": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "@ai-sdk/provider": "catalog:",
+    "@repo/chat-mini.chat": "workspace:*",
     "@statewalker/ai-agent": "workspace:*",
+    "@statewalker/ai-agent-runtime": "workspace:*",
+    "@statewalker/settings": "workspace:*",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-intents": "catalog:",
     "@statewalker/shared-registry": "catalog:",
-    "@statewalker/shared-slots": "catalog:",
-    "@statewalker/workspace-api": "catalog:"
+    "@statewalker/shared-slots": "workspace:*",
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/webrun-files-mem": "catalog:",
+    "@statewalker/workspace-api": "workspace:*"
   },
-  "devDependencies": {
-    "typescript": "catalog:",
-    "vitest": "catalog:"
-  },
+  "devDependencies": {"typescript": "catalog:", "vitest": "catalog:"},
   "sideEffects": false,
   "publishConfig": {"access": "public"}
 }

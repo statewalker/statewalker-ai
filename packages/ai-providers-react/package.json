@@ -5,10 +5,6 @@
   "type": "module",
   "description": "AI providers renderer fragment: provider config dialog, model picker UI.",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git"
-  },
   "exports": {
     ".": "./src/index.ts",
     "./fragment": "./src/fragment.ts",
@@ -17,24 +13,25 @@
   "files": ["src"],
   "scripts": {
     "test": "vitest run --passWithNoTests",
-    "test:watch": "vitest --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write .",
     "format": "biome format --write ."
   },
   "dependencies": {
+    "@hookform/resolvers": "^5.0.1",
+    "@statewalker/shadcn-react": "workspace:*",
     "@statewalker/ai-agent": "workspace:*",
     "@statewalker/ai-providers": "workspace:*",
-    "@statewalker/shared-baseclass": "catalog:",
+    "@statewalker/core-react": "workspace:*",
     "@statewalker/shared-intents": "catalog:",
     "@statewalker/shared-registry": "catalog:",
-    "@statewalker/shared-slots": "catalog:",
-    "@statewalker/workspace-api": "catalog:"
+    "@statewalker/shared-slots": "workspace:*",
+    "@statewalker/workspace-api": "workspace:*",
+    "lucide-react": "catalog:",
+    "react-hook-form": "^7.54.3",
+    "zod": "catalog:"
   },
-  "peerDependencies": {
-    "react": ">=18",
-    "react-dom": ">=18"
-  },
+  "peerDependencies": {"react": ">=18", "react-dom": ">=18"},
   "devDependencies": {
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
