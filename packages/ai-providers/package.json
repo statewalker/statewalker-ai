@@ -31,7 +31,7 @@
     "@statewalker/shared-slots": "workspace:*",
     "@statewalker/webrun-files": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
-    "@statewalker/workspace-api": "workspace:*"
+    "@statewalker/workspace": "workspace:*"
   },
   "devDependencies": {"typescript": "catalog:", "vitest": "catalog:"},
   "sideEffects": false,

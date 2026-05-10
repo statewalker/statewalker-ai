@@ -8,7 +8,7 @@ import { provideSettingsTab } from "@statewalker/settings";
 import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
-import type { Workspace } from "@statewalker/workspace-api";
+import type { Workspace } from "@statewalker/workspace";
 import {
   PROVIDERS_MODEL_PICKER_VIEW_KEY,
   PROVIDERS_SETTINGS_TAB_VIEW_KEY,

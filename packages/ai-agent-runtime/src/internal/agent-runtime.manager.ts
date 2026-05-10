@@ -1,7 +1,7 @@
 import { Intents } from "@statewalker/shared-intents";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
-import type { Workspace } from "@statewalker/workspace-api";
+import type { Workspace } from "@statewalker/workspace";
 import { ActiveModel } from "../public/active-model.js";
 import {
   observeAgentMcpConnections,

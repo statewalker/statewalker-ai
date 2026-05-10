@@ -25,7 +25,7 @@
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "workspace:*",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/workspace-api": "workspace:*"
+    "@statewalker/workspace": "workspace:*"
   },
   "devDependencies": {"typescript": "catalog:", "vitest": "catalog:"},
   "sideEffects": false,
