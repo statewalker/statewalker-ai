@@ -22,7 +22,6 @@ catalog:
   "@statewalker/webrun-files": ^0.7.0
   "@statewalker/webrun-files-composite": ^0.8.0
   "@statewalker/webrun-files-mem": ^0.7.2
-  "@statewalker/workbench-views": ^0.1.0
   "@types/node": ^25.6.0
   "@vitest/coverage-v8": ^4.1.4
   ai: ^6.0.168
