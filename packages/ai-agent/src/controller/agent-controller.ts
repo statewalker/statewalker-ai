@@ -1,7 +1,7 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import { generateText, stepCountIs, streamText } from "ai";
 import type { CompactOptions, ContextCompactor } from "../context/context-compactor.js";
-import { selectAll, type SelectionStrategy } from "../context/select-messages.js";
+import { type SelectionStrategy, selectAll } from "../context/select-messages.js";
 import { Inbox, type InboxMessage } from "../state/inbox.js";
 import type { LogMessage, TurnFinishKind } from "../state/log-message.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";

@@ -1,4 +1,5 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { EmbeddingModelV3, ImageModelV3, LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
+import { NoSuchModelError } from "@ai-sdk/provider";
 import type {
   ActivationProgress,
   ModelConfig,
@@ -12,8 +13,13 @@ import type {
  * Observable data model for model catalog, states, and active model instances.
  * Pure state container — no external API calls, no I/O.
  * Controllers subscribe via `onUpdate()` to react to state changes.
+ *
+ * Also implements `ProviderV3` so it can be passed directly to
+ * `AgentRuntime.addModelProvider()`. Only `languageModel` is supported;
+ * `embeddingModel` and `imageModel` throw `NoSuchModelError`.
  */
-export class ModelStateStore {
+export class ModelStateStore implements ProviderV3 {
+  readonly specificationVersion = "v3" as const;
   private readonly _catalog: Record<string, ModelConfig>;
   private readonly _states = new Map<string, ModelState>();
   private readonly _activeModels = new Map<string, LanguageModelV3>();
@@ -145,14 +151,31 @@ export class ModelStateStore {
   /**
    * Get a LanguageModelV3 for an already-activated model.
    * Throws if the model is not active.
+   *
+   * Implements `ProviderV3.languageModel`.
    */
-  getLanguageModel(key: string): LanguageModelV3 {
+  languageModel(key: string): LanguageModelV3 {
     const model = this._activeModels.get(key);
     if (!model) {
       const state = this._states.get(key);
       throw new Error(`Model "${key}" is not ready (status: ${state?.status ?? "unknown"})`);
     }
     return model;
+  }
+
+  /** @deprecated Use {@link languageModel} instead — kept as an alias for backward compatibility. */
+  getLanguageModel(key: string): LanguageModelV3 {
+    return this.languageModel(key);
+  }
+
+  /** ProviderV3 conformance — embedding models are not supported. */
+  embeddingModel(modelId: string): EmbeddingModelV3 {
+    throw new NoSuchModelError({ modelId, modelType: "embeddingModel" });
+  }
+
+  /** ProviderV3 conformance — image models are not supported. */
+  imageModel(modelId: string): ImageModelV3 {
+    throw new NoSuchModelError({ modelId, modelType: "imageModel" });
   }
 
   /** Return the active model instance or `undefined` without throwing. */

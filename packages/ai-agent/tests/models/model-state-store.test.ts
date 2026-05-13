@@ -1,3 +1,4 @@
+import { NoSuchModelError, type ProviderV3 } from "@ai-sdk/provider";
 import { describe, expect, it, vi } from "vitest";
 import { ModelStateStore } from "../../src/models/model-state-store.js";
 import type { ActivationProgress, ModelConfig } from "../../src/models/types.js";
@@ -134,5 +135,45 @@ describe("ModelStateStore — downloading/partial statuses", () => {
 
     store.setStatus("local:test", "downloaded");
     expect(store.getState("local:test")?.status).toBe("downloaded");
+  });
+});
+
+describe("ModelStateStore as ProviderV3", () => {
+  it("is assignable to ProviderV3", () => {
+    const store = createStore();
+    const provider: ProviderV3 = store;
+    expect(provider.specificationVersion).toBe("v3");
+  });
+
+  it("embeddingModel throws NoSuchModelError", () => {
+    const store = createStore();
+    expect(() => store.embeddingModel("any-id")).toThrow(NoSuchModelError);
+    try {
+      store.embeddingModel("foo");
+    } catch (e) {
+      expect((e as NoSuchModelError).modelType).toBe("embeddingModel");
+      expect((e as NoSuchModelError).modelId).toBe("foo");
+    }
+  });
+
+  it("imageModel throws NoSuchModelError", () => {
+    const store = createStore();
+    expect(() => store.imageModel("any-id")).toThrow(NoSuchModelError);
+    try {
+      store.imageModel("bar");
+    } catch (e) {
+      expect((e as NoSuchModelError).modelType).toBe("imageModel");
+      expect((e as NoSuchModelError).modelId).toBe("bar");
+    }
+  });
+
+  it("languageModel and getLanguageModel return the same instance", () => {
+    const store = createStore();
+    const fakeModel = { specificationVersion: "v3" } as unknown as Parameters<
+      ModelStateStore["setActiveModel"]
+    >[1];
+    store.setActiveModel("local:test", fakeModel);
+    expect(store.languageModel("local:test")).toBe(fakeModel);
+    expect(store.getLanguageModel("local:test")).toBe(fakeModel);
   });
 });

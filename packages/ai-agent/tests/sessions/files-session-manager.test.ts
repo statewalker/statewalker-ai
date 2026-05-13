@@ -2,7 +2,6 @@ import { tryReadText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FilesSessionManager } from "../../src/sessions/files-session-manager.js";
-import type { SessionManager } from "../../src/sessions/types.js";
 import {
   createAgentNodeFactory,
   NodeType,
@@ -39,7 +38,7 @@ function buildPopulatedSession(): Session {
 
 describe("FilesSessionManager", () => {
   let files: MemFilesApi;
-  let manager: SessionManager;
+  let manager: FilesSessionManager;
 
   beforeEach(() => {
     files = new MemFilesApi();

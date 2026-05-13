@@ -21,9 +21,8 @@ AgentRuntime   ─→   Agent (definition)   ─→   Session (runtime instance)
 | `@statewalker/ai-agent/runtime` | `AgentRuntime`, `Agent`, `Session`, runtime types and FilesApi helpers (`buildToolsView`, `hideUnder`, `insideSubtree`). The official entry point. |
 | `@statewalker/ai-agent` | Re-exports `state`, `controller`, `mcp`, `skills`, `context`, plus a few specific tool creators. |
 | `@statewalker/ai-agent/state` | `TreeNode`, `Session`, `Turn`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, the stream serializer (`serialize` / `deserialize`), tree factory. |
-| `@statewalker/ai-agent/models` | `ModelManager`, `UnifiedProvider`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. |
+| `@statewalker/ai-agent/models` | `ModelManager`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. `ModelStateStore` implements `ProviderV3` directly; use `ModelManager#provider` to pass it to `addModelProvider()`. |
 | `@statewalker/ai-agent/config` | `ConfigManager`, `SecretsManager`, `AgentContext` interface. |
-| `@statewalker/ai-agent/sessions` | `SessionManager` interface, `FilesSessionManager` (used internally by the runtime). |
 | `@statewalker/ai-agent/tools` | File-system tools (`createFileTools`) and path utilities. |
 
 ## Quick start
@@ -112,7 +111,7 @@ new AgentRuntime({ files: FilesApi, errorHandler?: AgentRuntimeErrorHandler })
 | `setSkillsPath(path)` | Override skills folder. |
 | `setAgentsPath(path)` | Override agents folder. |
 | `setToolsPath(path)` | Reserved for future on-disk tool loading. |
-| `addModelProvider(...providers)` | Register one or more `ProviderV3` or `ModelManager` instances. |
+| `addModelProvider(...providers)` | Register one or more `ProviderV3` instances. Callers holding a `ModelManager` pass `modelManager.provider`. |
 | `addTools(...tools)` | Register tools (`ToolSet` or `ToolFactory`). |
 | `addSkills(...skills)` | Register skills programmatically. |
 | `setSelectionStrategy(strategy)` | Install a fixed message-selection strategy. Mutually exclusive with `setBudgetCompaction`. |
@@ -181,7 +180,7 @@ The legacy `AgentBuilder` / `AgentManager` / `Agent` (wrapper) / `SubAgentTool` 
 | Legacy | New |
 |---|---|
 | `new AgentBuilder().withProvider(p).withFilesApi(f).withTools(t).build()` | `await new AgentRuntime({ files: f }).addModelProvider(p).addTools(t).build()` |
-| `withProvider(p)` / `withModelManager(m)` | `addModelProvider(p)` / `addModelProvider(m)` (auto-detected) |
+| `withProvider(p)` / `withModelManager(m)` | `addModelProvider(p)` / `addModelProvider(m.provider)` |
 | `withModel(model)` | per-Agent: `runtime.createAgent({ defaultModel: model })` |
 | `withFilesApi(f)` | constructor option |
 | `withSystemFolder(path)` | `setSystemPath(path)` |

@@ -8,7 +8,6 @@
     "./state": "./src/state/index.ts",
     "./models": "./src/models/index.ts",
     "./config": "./src/config/index.ts",
-    "./sessions": "./src/sessions/index.ts",
     "./runtime": "./src/runtime/index.ts",
     "./tools": "./src/tools/index.ts"
   },

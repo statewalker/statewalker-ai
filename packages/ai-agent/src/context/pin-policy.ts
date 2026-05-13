@@ -120,3 +120,17 @@ export function createDefaultPinPolicy(options: DefaultPinPolicyOptions = {}): P
     shouldPin,
   };
 }
+
+/**
+ * Walk a subtree and return whether the policy pins the node itself or any
+ * descendant. Used by the hierarchical selector to force `TurnGroup`
+ * expansion and by the compactor to skip pinned-containing runs when
+ * forming new groups.
+ */
+export function containsPinned(node: TreeNode, pin: PinPolicy): boolean {
+  if (pin.shouldPin(node)) return true;
+  for (const child of node.children) {
+    if (containsPinned(child, pin)) return true;
+  }
+  return false;
+}

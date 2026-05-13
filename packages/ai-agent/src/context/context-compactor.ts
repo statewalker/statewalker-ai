@@ -8,7 +8,7 @@ import type { Turn } from "../state/turn.js";
 import type { TurnGroup } from "../state/turn-group.js";
 import { LEGACY_STAMP, newStamp } from "./compaction-stamp.js";
 import type { HierarchicalSummarizer } from "./hierarchical-summarizer.js";
-import type { PinPolicy } from "./pin-policy.js";
+import { containsPinned, type PinPolicy } from "./pin-policy.js";
 import type { TokenEstimator } from "./token-estimator.js";
 import { elideToolResponse, type ToolElisionPolicy } from "./tool-elision.js";
 
@@ -188,7 +188,7 @@ async function formDepth1Group(
       runEnd = -1;
       continue;
     }
-    if (containsPinnedDescendant(child, options.pinPolicy)) {
+    if (containsPinned(child, options.pinPolicy)) {
       // Close any in-progress run and skip.
       if (runStart >= 0 && runEnd - runStart > 0) {
         break;
@@ -372,12 +372,4 @@ function estimateTurn(
     }
   }
   return total;
-}
-
-function containsPinnedDescendant(node: TreeNode, pin: PinPolicy): boolean {
-  if (pin.shouldPin(node)) return true;
-  for (const child of node.children) {
-    if (containsPinnedDescendant(child, pin)) return true;
-  }
-  return false;
 }
