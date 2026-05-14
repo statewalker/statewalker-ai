@@ -1,5 +1,4 @@
 export * from "./context/index.js";
-export * from "./controller/index.js";
 export * from "./mcp/index.js";
 export * from "./skills/index.js";
 export * from "./state/index.js";

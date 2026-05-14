@@ -36,12 +36,11 @@ The underlying typed node primitive. Implementation detail of the state tree —
 
 ### Agent loop
 
-**TurnDriver** (deepening opportunity #2):
-Advances a `SessionState` by one **Turn** given one inbox message. Owns the per-turn lifecycle: open Turn, optional first-turn skill selection, ContextWindow build, `streamText` invocation, stream-part routing, finish classification, error recording. Stateless across turns; takes the tree per call.
+**TurnDriver**:
+Advances a `SessionState` by one **Turn** given one inbox message. Owns the per-turn lifecycle: open Turn, optional first-turn skill selection, ContextWindow build, `streamText` invocation, stream-part routing, finish classification, error recording. Stateless across calls — `state` is passed per invocation. One instance per `Session`; constructed by `runtime/Session` ctor.
 _Avoid_: agent controller, turn runner
 
-**AgentController** (scheduled for removal in opportunity #2):
-Legacy orchestrator that mixed the inbox loop, per-turn lifecycle, skill selection, title generation, and stream-part routing in one class. Being decomposed into `Session.run()` (inbox loop + first-turn title) and `TurnDriver` (per-turn work).
+**Session.run** is the session-scope orchestrator. It drains the **Inbox**, delegates each message to `TurnDriver.drive()`, and buffers `turn-finish` events on the first turn so the title generated via `generateText` is already set when consumers persist on `turn-finish`.
 
 ### Context shaping
 

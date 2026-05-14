@@ -1,15 +1,19 @@
 import { SnowflakeId } from "@statewalker/shared-ids";
-import { AgentController } from "../controller/agent-controller.js";
+import { generateText } from "ai";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
-import type { Inbox } from "../state/inbox.js";
+import { Inbox } from "../state/inbox.js";
 import type { LogMessage } from "../state/log-message.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";
 import { NodeType } from "../state/node-types.js";
 import type { Session as SessionNode } from "../state/session.js";
-import type { SkillsModel } from "../state/skills-model.js";
-import type { ToolRegistry } from "../state/tool-registry.js";
+import { SkillsModel } from "../state/skills-model.js";
+import { ToolRegistry } from "../state/tool-registry.js";
+import { createListSkillsTool } from "../tools/list-skills-tool.js";
+import { createListToolsTool } from "../tools/list-tools-tool.js";
+import { createUseSkillsTool } from "../tools/use-skills-tool.js";
 import type { Agent } from "./agent.js";
 import type { AgentRuntime } from "./agent-runtime.js";
+import { TurnDriver } from "./turn-driver.js";
 
 const idGen = new SnowflakeId();
 
@@ -35,8 +39,12 @@ export class Session {
   readonly id: string;
   readonly agent: Agent;
   readonly state: SessionNode;
+  readonly inbox: Inbox;
+  readonly tools: ToolRegistry;
+  readonly skills: SkillsModel;
   private readonly _runtime: AgentRuntime;
-  private readonly _controller: AgentController;
+  private readonly _turnDriver: TurnDriver;
+  private readonly _model: string;
   private _mcpUnsubscribe?: () => void;
   private _closed = false;
 
@@ -65,49 +73,52 @@ export class Session {
       });
     }
 
-    // Build the controller config from runtime + agent.
-    const def = agent.definition;
-    const contextWindow = runtime.contextDefaults({
-      ...(def.systemPrompt !== undefined && { systemPromptTemplate: def.systemPrompt }),
-      ...(agent.selectionStrategy !== undefined && { selectStrategy: agent.selectionStrategy }),
-    });
-    this._controller = new AgentController({
-      provider: runtime.provider,
-      model: def.defaultModel ?? "",
-      session: this.state,
-      contextWindow,
-      maxSteps: def.maxSteps,
-      maxOutputTokens: def.maxOutputTokens,
-    });
+    this.inbox = new Inbox();
+    this.tools = new ToolRegistry();
+    this.skills = new SkillsModel();
 
     // Per-session tool view: filter the runtime-level tools by the Agent's
     // declared tool names (or all if none declared).
+    const def = agent.definition;
     const allowedTools = def.tools;
-    const runtimeTools = runtime.resolvedTools;
-    for (const [name, tool] of Object.entries(runtimeTools)) {
+    for (const [name, tool] of Object.entries(runtime.resolvedTools)) {
       if (!allowedTools || allowedTools.includes(name)) {
-        this._controller.tools.register(name, tool);
+        this.tools.register(name, tool);
       }
     }
 
     // Per-session skill view: filter by allowed names if declared, else
-    // pass through all runtime skills. Mirrors the tools logic above —
-    // an undefined `skills` field on the agent definition means "all
-    // skills" (matching the prior session-level intent), NOT "no skills".
+    // pass through all runtime skills. An undefined `skills` field means
+    // "all skills" (NOT "no skills").
     const allowedSkills = def.skills;
     for (const skill of runtime.resolvedSkills) {
       if (!allowedSkills || allowedSkills.includes(skill.name)) {
-        this._controller.skills.register(skill);
+        this.skills.register(skill);
       }
+    }
+
+    // Register built-in tools (list_tools always; list_skills + use_skills
+    // when any skills are available). Done once at construction, not
+    // lazily on first run() — registry membership is session-scoped.
+    this._model = def.defaultModel ?? "";
+    this.tools.register("list_tools", createListToolsTool(this.tools));
+    if (this.skills.size > 0) {
+      this.tools.register("list_skills", createListSkillsTool(this.skills));
+      this.tools.register(
+        "use_skills",
+        createUseSkillsTool({
+          skills: this.skills,
+          provider: runtime.provider,
+          model: this._model,
+        }),
+      );
     }
 
     // Sub-agents — TODO: runtime-native sub-agent invocation. The legacy
     // SubAgentTool class lived in src/builder/ and depended on AgentBuilder
     // to materialise the child agent on demand. Now that builder/ is gone,
-    // we need a runtime-native equivalent: register each child Agent as a
-    // tool whose execute body calls `child.createSession().run()` and
-    // streams the result back. Until consumers actually use sub-agents
-    // through the runtime API, registering one throws at construction.
+    // we need a runtime-native equivalent. Until consumers actually use
+    // sub-agents through the runtime API, registering one throws here.
     if (agent.subAgents.length > 0) {
       throw new Error(
         `Sub-agents not supported yet on runtime API (agent "${agent.name}" declared ${agent.subAgents.length})`,
@@ -117,23 +128,24 @@ export class Session {
     // MCP tools — sync into this session's tool registry.
     const mcp = runtime.mcp;
     if (mcp) {
-      this._mcpUnsubscribe = bridgeMcpTools(mcp, this._controller.tools);
+      this._mcpUnsubscribe = bridgeMcpTools(mcp, this.tools);
     }
-  }
 
-  /** Per-session inbox. Push user/system messages here. */
-  get inbox(): Inbox {
-    return this._controller.inbox;
-  }
-
-  /** Per-session tool registry (filtered view of the runtime's tools). */
-  get tools(): ToolRegistry {
-    return this._controller.tools;
-  }
-
-  /** Per-session skill registry (filtered view of the runtime's skills). */
-  get skills(): SkillsModel {
-    return this._controller.skills;
+    // Build the per-session ContextWindow from runtime defaults + agent
+    // overrides, then the TurnDriver that advances state one Turn per call.
+    const contextWindow = runtime.contextDefaults({
+      ...(def.systemPrompt !== undefined && { systemPromptTemplate: def.systemPrompt }),
+      ...(agent.selectionStrategy !== undefined && { selectStrategy: agent.selectionStrategy }),
+    });
+    this._turnDriver = new TurnDriver({
+      provider: runtime.provider,
+      model: this._model,
+      contextWindow,
+      tools: this.tools,
+      skills: this.skills,
+      ...(def.maxSteps !== undefined && { maxSteps: def.maxSteps }),
+      ...(def.maxOutputTokens !== undefined && { maxOutputTokens: def.maxOutputTokens }),
+    });
   }
 
   /**
@@ -141,16 +153,40 @@ export class Session {
    * Equivalent to `session.inbox.push({ role: "user", text })`.
    */
   send(text: string, opts?: { source?: string }): void {
-    this._controller.inbox.push({ role: "user", text, source: opts?.source });
+    this.inbox.push({ role: "user", text, source: opts?.source });
   }
 
   /**
-   * Run the agent loop. Resolves when the loop completes or the signal
-   * aborts. Yields {@link LogMessage}s as the loop progresses.
+   * Run the agent loop. Drains the {@link Inbox} and delegates each message
+   * to the {@link TurnDriver}. On the first turn, generates a session title
+   * via `generateText` before forwarding the buffered `turn-finish` event,
+   * so consumers persisting on `turn-finish` see `state.title` populated.
+   * Resolves when the inbox closes or the signal aborts.
    */
   async *run(signal?: AbortSignal): AsyncGenerator<LogMessage> {
     if (this._closed) throw new Error("Session: closed");
-    yield* this._controller.run(signal);
+    for (;;) {
+      const message = await this.inbox.take(signal);
+      if (!message) break;
+
+      const isFirstTurn = this.state.turns.length === 0;
+      let pendingFinish: LogMessage | undefined;
+      for await (const ev of this._turnDriver.drive(this.state, message, signal)) {
+        if (ev.type === "turn-finish") {
+          pendingFinish = ev;
+          continue;
+        }
+        yield ev;
+      }
+      if (isFirstTurn && !this.state.title) {
+        try {
+          this.state.title = await this.generateTitle(message.text, signal);
+        } catch {
+          // Title generation is best-effort — do not propagate errors.
+        }
+      }
+      if (pendingFinish) yield pendingFinish;
+    }
   }
 
   /**
@@ -166,13 +202,31 @@ export class Session {
   }
 
   /**
-   * Tear down: cancel pending tool calls, disconnect MCP bridge, close
-   * the session. Idempotent.
+   * Tear down: disconnect MCP bridge, close the session. Idempotent.
    */
   async close(): Promise<void> {
     if (this._closed) return;
     this._closed = true;
     this._mcpUnsubscribe?.();
     this._mcpUnsubscribe = undefined;
+  }
+
+  /**
+   * Generate a short title for the session based on the user's first
+   * message. Runs a lightweight LLM call; swallows errors silently.
+   */
+  private async generateTitle(userText: string, signal?: AbortSignal): Promise<string | undefined> {
+    try {
+      const { text } = await generateText({
+        model: this._runtime.provider.languageModel(this._model),
+        system:
+          "Generate a short title (max 6 words) for a conversation that starts with the following user message. Reply with the title only, no quotes or punctuation at the end.",
+        messages: [{ role: "user", content: userText }],
+        abortSignal: signal,
+      });
+      return text.trim();
+    } catch {
+      return undefined;
+    }
   }
 }
