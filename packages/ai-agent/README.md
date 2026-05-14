@@ -14,6 +14,8 @@ AgentRuntime   ─→   Agent (definition)   ─→   Session (runtime instance)
 - **`Agent`** — a *definition*: name, tools whitelist, skills whitelist, system prompt, default model, optional sub-agents. Cheap to construct; agents are loaded from `<systemPath>/agents/*.md` at `build()` time and can also be created programmatically.
 - **`Session`** — a *runtime instance* bound to one Agent. Owns the conversation tree, inbox, per-session tool/skill views, and the loop. Persisted by id under `<systemPath>/sessions/`.
 
+Each Session owns one **`ContextWindow`** — the module that, given the current conversation tree and active skills, produces `{ system, messages }` for the next model call. It orchestrates compaction, selection, elision, pin policy, and system-prompt assembly behind one interface, so the agent loop's per-turn code is `build → streamText → process`. Configured runtime-wide via `setSelectionStrategy` / `setBudgetCompaction`; per-agent overrides flow through the agent's `selectionStrategy` and `systemPrompt`.
+
 ## Sub-path exports
 
 | Export Path | Description |
@@ -114,8 +116,8 @@ new AgentRuntime({ files: FilesApi, errorHandler?: AgentRuntimeErrorHandler })
 | `addModelProvider(...providers)` | Register one or more `ProviderV3` instances. Callers holding a `ModelManager` pass `modelManager.provider`. |
 | `addTools(...tools)` | Register tools (`ToolSet` or `ToolFactory`). |
 | `addSkills(...skills)` | Register skills programmatically. |
-| `setSelectionStrategy(strategy)` | Install a fixed message-selection strategy. Mutually exclusive with `setBudgetCompaction`. |
-| `setBudgetCompaction(opts)` | Install hierarchical selection + compaction. Mutually exclusive with `setSelectionStrategy`. |
+| `setSelectionStrategy(strategy)` | Install a fixed message-selection strategy. Mutually exclusive with `setBudgetCompaction`. Configures the `ContextWindow` factory used by every Session. |
+| `setBudgetCompaction(opts)` | Install hierarchical selection + compaction. Mutually exclusive with `setSelectionStrategy`. Configures the `ContextWindow` factory used by every Session. |
 | `setMcpServers(config)` | Configure MCP servers inline. |
 | `setMcpConfigFile(path)` | Load MCP servers from a config file (system view). |
 | `setErrorHandler(handler)` | Replace the runtime-wide error handler. |

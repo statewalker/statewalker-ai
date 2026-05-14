@@ -67,17 +67,17 @@ export class Session {
 
     // Build the controller config from runtime + agent.
     const def = agent.definition;
-    const budget = runtime.budgetCompactionOptions;
+    const contextWindow = runtime.contextDefaults({
+      ...(def.systemPrompt !== undefined && { systemPromptTemplate: def.systemPrompt }),
+      ...(agent.selectionStrategy !== undefined && { selectStrategy: agent.selectionStrategy }),
+    });
     this._controller = new AgentController({
       provider: runtime.provider,
       model: def.defaultModel ?? "",
       session: this.state,
-      systemPrompt: def.systemPrompt,
+      contextWindow,
       maxSteps: def.maxSteps,
       maxOutputTokens: def.maxOutputTokens,
-      select: agent.selectionStrategy ?? budget?.select ?? runtime.selectionStrategy,
-      compactor: budget?.compactor,
-      compactOptions: budget?.compactOptions,
     });
 
     // Per-session tool view: filter the runtime-level tools by the Agent's

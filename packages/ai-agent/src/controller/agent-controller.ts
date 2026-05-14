@@ -1,7 +1,6 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import { generateText, stepCountIs, streamText } from "ai";
-import type { CompactOptions, ContextCompactor } from "../context/context-compactor.js";
-import { type SelectionStrategy, selectAll } from "../context/select-messages.js";
+import type { ContextWindow } from "../context/context-window.js";
 import { Inbox, type InboxMessage } from "../state/inbox.js";
 import type { LogMessage, TurnFinishKind } from "../state/log-message.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";
@@ -14,42 +13,23 @@ import { createListSkillsTool } from "../tools/list-skills-tool.js";
 import { createListToolsTool } from "../tools/list-tools-tool.js";
 import { createUseSkillsTool } from "../tools/use-skills-tool.js";
 
-const SKILLS_INSTRUCTION = `## Skills
-You have access to specialized skills. Use the \`use_skills\` tool to search
-and activate skills relevant to the current task. Once activated, skills
-persist across turns until you reset them.
-- Search: use_skills({ prompt: "describe the problem" })`;
-
-export const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant.
-
-## Tool Usage
-Use tools when their descriptions match the current goal. When a request is ambiguous, pick the most likely interpretation and act. If results are empty, try an alternative approach before giving up.
-
-## Response Format
-Provide concise, actionable answers.`;
-
 export const DEFAULT_MAX_STEPS = 10;
 
 export interface AgentControllerConfig {
   provider: ProviderV3;
   model: string;
+  /**
+   * Owns context shaping for each turn — compaction, selection, elision,
+   * system-prompt assembly. Constructed once per Session by the runtime.
+   */
+  contextWindow: ContextWindow;
   session?: Session;
   inbox?: Inbox;
   tools?: ToolRegistry;
   skills?: SkillsModel;
-  systemPrompt?: string;
   maxSteps?: number;
   /** Cap per-step model output length. Omit to use provider default. */
   maxOutputTokens?: number;
-  select?: SelectionStrategy;
-  /**
-   * Optional hierarchical context compactor. When set, `compact(...)` runs
-   * before each `streamText` call on the session, using `compactOptions`.
-   * `context-thrash` events produced by the compactor are propagated into
-   * the controller's LogMessage stream.
-   */
-  compactor?: ContextCompactor;
-  compactOptions?: Omit<CompactOptions, "eventSink">;
 }
 
 /**
@@ -65,14 +45,11 @@ export class AgentController {
   readonly inbox: Inbox;
   readonly tools: ToolRegistry;
   readonly skills: SkillsModel;
+  readonly contextWindow: ContextWindow;
   provider: ProviderV3;
   model: string;
-  systemPrompt: string;
   maxSteps: number;
   maxOutputTokens?: number;
-  select: SelectionStrategy;
-  compactor?: ContextCompactor;
-  compactOptions?: Omit<CompactOptions, "eventSink">;
 
   /** The Turn currently being streamed. Set by run(); read by helpers. */
   #currentTurn: Turn | null = null;
@@ -81,12 +58,9 @@ export class AgentController {
   constructor(config: AgentControllerConfig) {
     this.provider = config.provider;
     this.model = config.model;
-    this.systemPrompt = config.systemPrompt ?? DEFAULT_SYSTEM_PROMPT;
+    this.contextWindow = config.contextWindow;
     this.maxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
     this.maxOutputTokens = config.maxOutputTokens;
-    this.select = config.select ?? selectAll;
-    this.compactor = config.compactor;
-    this.compactOptions = config.compactOptions;
 
     this.inbox = config.inbox ?? new Inbox();
     this.tools = config.tools ?? new ToolRegistry();
@@ -187,20 +161,12 @@ export class AgentController {
     const turn = this.#requireTurn();
     let sawContent = false;
     try {
-      // Run hierarchical compaction before projection, if configured.
-      if (this.compactor && this.compactOptions) {
-        const thrashEvents: LogMessage[] = [];
-        await this.compactor.compact(this.session, {
-          ...this.compactOptions,
-          eventSink: (e) => thrashEvents.push(e),
-        });
-        for (const e of thrashEvents) yield e;
-      }
-      const messages = await this.select(this.session);
+      const ctx = await this.contextWindow.build(this.session, { skills: this.skills });
+      for (const e of ctx.events) yield e;
       const result = streamText({
         model: this.provider.languageModel(this.model),
-        system: this.buildSystemPrompt(),
-        messages,
+        system: ctx.system,
+        messages: ctx.messages,
         tools: this.tools.toToolSet(),
         stopWhen: stepCountIs(this.maxSteps),
         abortSignal: signal,
@@ -278,22 +244,6 @@ export class AgentController {
       // console warning instead.
       console.warn("[agent] skill selection failed; continuing without preselected skills", e);
     }
-  }
-
-  buildSystemPrompt(): string {
-    let prompt = this.systemPrompt;
-
-    if (this.skills.available.length > 0) {
-      prompt += `\n\n${SKILLS_INSTRUCTION}`;
-    }
-
-    const selected = this.skills.selected;
-    if (selected.length > 0) {
-      const blocks = selected.map((s) => `### ${s.name}\n${s.content}`).join("\n\n");
-      prompt += `\n\n## Active Skills\n${blocks}`;
-    }
-
-    return prompt;
   }
 
   /**

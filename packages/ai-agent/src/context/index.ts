@@ -1,6 +1,7 @@
 export * from "./compaction-stamp.js";
 export * from "./content-summarizer.js";
 export * from "./context-compactor.js";
+export * from "./context-window.js";
 export * from "./hierarchical-summarizer.js";
 export * from "./pin-policy.js";
 export * from "./select-hierarchical.js";
