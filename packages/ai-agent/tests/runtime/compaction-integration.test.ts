@@ -6,16 +6,15 @@ import { createDefaultPinPolicy } from "../../src/context/pin-policy.js";
 import { selectHierarchical } from "../../src/context/select-hierarchical.js";
 import { createTokenEstimator } from "../../src/context/token-estimator.js";
 import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
-import { AgentController } from "../../src/controller/agent-controller.js";
-import { Inbox } from "../../src/state/inbox.js";
+import { TurnDriver } from "../../src/runtime/turn-driver.js";
 import {
   createAgentNodeFactory,
   NodeType,
   type Session,
+  SkillsModel,
+  ToolRegistry,
   type TurnGroup,
 } from "../../src/state/index.js";
-import { SkillsModel } from "../../src/state/skills-model.js";
-import { ToolRegistry } from "../../src/state/tool-registry.js";
 
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
@@ -34,7 +33,6 @@ beforeEach(() => {
   mockStreamText.mockReset();
   mockStreamText.mockImplementation(() => ({
     fullStream: (async function* () {
-      // Emit a trivial step-finish so the turn records a stopReason.
       yield {
         type: "finish-step",
         finishReason: "stop",
@@ -45,28 +43,25 @@ beforeEach(() => {
   }));
 });
 
-function makeSession(): Session {
+function makeState(): Session {
   const factory = createAgentNodeFactory();
   return factory({ type: NodeType.session }) as Session;
 }
 
 function stubSummarizer(): HierarchicalSummarizer {
-  const summarize = vi.fn(async () => ({
-    content: "synthetic summary",
-  }));
+  const summarize = vi.fn(async () => ({ content: "synthetic summary" }));
   return { summarize };
 }
 
-describe("AgentController with budget compaction", () => {
+describe("TurnDriver with budget compaction", () => {
   it("triggers at least one group formation as turns accumulate heavy content", async () => {
-    const session = makeSession();
-    // Seed the session with 8 heavy pre-existing turns so the compactor
-    // has work to do on the first real inbox message.
+    const state = makeState();
+    // Seed with 8 heavy pre-existing turns so the compactor has work on
+    // the first driven turn.
     for (let i = 0; i < 8; i++) {
-      const t = session.addTurn();
+      const t = state.addTurn();
       t.addUserMessage(`prior user ${i}`);
-      const m = t.addAgentMessage();
-      m.appendDelta("a".repeat(800));
+      t.addAgentMessage().appendDelta("a".repeat(800));
     }
 
     const estimator = createTokenEstimator();
@@ -95,33 +90,24 @@ describe("AgentController with budget compaction", () => {
         estimator,
       }),
     });
-    const controller = new AgentController({
+    const driver = new TurnDriver({
       provider,
       model: "test",
       contextWindow,
-      session,
-      inbox: new Inbox(),
       tools: new ToolRegistry(),
       skills: new SkillsModel(),
     });
 
-    // Push one user message; the controller should compact before streaming.
-    controller.inbox.push({ role: "user", text: "do thing" });
-    const abort = new AbortController();
-
     const events = [];
-    for await (const ev of controller.run(abort.signal)) {
+    for await (const ev of driver.drive(state, { role: "user", text: "do thing" })) {
       events.push(ev);
-      if (ev.type === "turn-finish") abort.abort();
     }
 
-    // At least one TurnGroup must have been created in the session root.
-    const groups = session.children.filter((c) => c.type === NodeType.turnGroup) as TurnGroup[];
+    const groups = state.children.filter((c) => c.type === NodeType.turnGroup) as TurnGroup[];
     expect(groups.length).toBeGreaterThanOrEqual(1);
     expect(
       (summarizer.summarize as ReturnType<typeof vi.fn>).mock.calls.length,
     ).toBeGreaterThanOrEqual(1);
-    // Controller loop did not crash — at least one turn-finish was yielded.
     expect(events.some((e) => e.type === "turn-finish")).toBe(true);
   });
 });
