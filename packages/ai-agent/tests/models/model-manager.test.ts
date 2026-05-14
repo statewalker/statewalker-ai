@@ -1,3 +1,4 @@
+import type { ProviderV3 } from "@ai-sdk/provider";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it, vi } from "vitest";
 import { ModelManager } from "../../src/models/model-manager.js";
@@ -395,6 +396,15 @@ describe("ModelManager", () => {
       } finally {
         globalThis.fetch = originalFetch;
       }
+    });
+  });
+
+  describe("provider getter", () => {
+    it("returns the underlying ModelStateStore typed as ProviderV3", () => {
+      const { manager, store } = createManager({ "remote:test": REMOTE_MODEL });
+      const provider: ProviderV3 = manager.provider;
+      expect(provider).toBe(store);
+      expect(provider.specificationVersion).toBe("v3");
     });
   });
 });

@@ -30,5 +30,4 @@ export {
   modelKinds,
   PROVIDER_NAMES,
 } from "./types.js";
-export { UnifiedProvider } from "./unified-provider.js";
 export { verifyModelAccess } from "./verify-model.js";

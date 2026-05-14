@@ -6,13 +6,13 @@ import { NodeType } from "../state/node-types.js";
 import { Session } from "../state/session.js";
 import { markdownToSession, sessionToMarkdown } from "../state/session-serialization.js";
 import type { NodeFactory } from "../state/tree-types.js";
-import type { SessionManager, SessionMetadata } from "./types.js";
+import type { SessionMetadata } from "./metadata.js";
 
 interface IndexData {
   sessions: SessionMetadata[];
 }
 
-export class FilesSessionManager implements SessionManager {
+export class FilesSessionManager {
   private idGen = new SnowflakeId();
   private factory: NodeFactory;
   private sessionsDir: string;

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createDefaultPinPolicy, createPinPolicy } from "../../src/context/pin-policy.js";
+import {
+  containsPinned,
+  createDefaultPinPolicy,
+  createPinPolicy,
+} from "../../src/context/pin-policy.js";
 import {
   createAgentNodeFactory,
   NodeType,
@@ -95,5 +99,56 @@ describe("createDefaultPinPolicy", () => {
     policy.prepare?.(session);
     expect(policy.shouldPin(myStateful)).toBe(true);
     expect(policy.shouldPin(listSkills)).toBe(false);
+  });
+});
+
+describe("containsPinned", () => {
+  it("returns true when the input node itself is pinned (short-circuit)", () => {
+    const session = makeSession();
+    const turn = session.addTurn();
+    turn.addUserMessage("hello");
+
+    const pinTurn = createPinPolicy({
+      predicates: [(n) => n.type === NodeType.turn],
+    });
+    expect(containsPinned(turn, pinTurn)).toBe(true);
+  });
+
+  it("returns true when a descendant deep in the subtree is pinned", () => {
+    const session = makeSession();
+    const turn = session.addTurn();
+    const userMsg = turn.addUserMessage("hello");
+
+    const pinUserMessages = createPinPolicy({
+      predicates: [(n) => n.id === userMsg.id],
+    });
+    expect(containsPinned(session, pinUserMessages)).toBe(true);
+    expect(containsPinned(turn, pinUserMessages)).toBe(true);
+  });
+
+  it("returns false when no node in the subtree is pinned", () => {
+    const session = makeSession();
+    const turn = session.addTurn();
+    turn.addUserMessage("hello");
+
+    const pinNothing = createPinPolicy({ predicates: [() => false] });
+    expect(containsPinned(session, pinNothing)).toBe(false);
+  });
+
+  it("returns true when a default-policy pin lives inside a turn", () => {
+    const session = makeSession();
+    const t1 = session.addTurn();
+    t1.addUserMessage("first");
+    const t2 = session.addTurn();
+    t2.addUserMessage("second");
+
+    const policy = createDefaultPinPolicy();
+    policy.prepare?.(session);
+
+    // The latest user message lives under t2, so containsPinned should
+    // return true for t2 and the session, but not for t1.
+    expect(containsPinned(t2, policy)).toBe(true);
+    expect(containsPinned(session, policy)).toBe(true);
+    expect(containsPinned(t1, policy)).toBe(false);
   });
 });

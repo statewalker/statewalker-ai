@@ -1,7 +1,6 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
-import type { ModelManager } from "../models/model-manager.js";
-import type { SessionManager } from "../sessions/types.js";
+import type { FilesSessionManager } from "../sessions/files-session-manager.js";
 import type { ConfigManager } from "./config-manager.js";
 import type { SecretsManager } from "./secrets-manager.js";
 
@@ -15,11 +14,9 @@ export interface AgentContext {
   /** API key and credentials access. */
   secrets: SecretsManager;
   /** Session persistence. */
-  sessions: SessionManager;
+  sessions: FilesSessionManager;
   /** AI provider instance. */
   provider: ProviderV3;
   /** Model identifier. */
   model: string;
-  /** Optional model manager for activation, progress, and lifecycle. */
-  modelManager?: ModelManager;
 }

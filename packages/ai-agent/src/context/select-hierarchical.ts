@@ -5,7 +5,7 @@ import type { ToolCall } from "../state/tool-call.js";
 import type { TreeNode } from "../state/tree-node.js";
 import type { Turn } from "../state/turn.js";
 import type { TurnGroup } from "../state/turn-group.js";
-import type { PinPolicy } from "./pin-policy.js";
+import { containsPinned, type PinPolicy } from "./pin-policy.js";
 import type { SelectionStrategy } from "./select-messages.js";
 import type { TokenEstimator } from "./token-estimator.js";
 import { elideToolResponse, type ToolElisionPolicy } from "./tool-elision.js";
@@ -89,7 +89,7 @@ type PlanNode =
 function buildPlanNode(node: TreeNode, pin: PinPolicy, _inTail: boolean): PlanNode {
   if (node.type === NodeType.turnGroup) {
     const group = node as TurnGroup;
-    const hasPinned = containsPinnedDescendant(group, pin);
+    const hasPinned = containsPinned(group, pin);
     if (hasPinned) {
       const children: PlanNode[] = [];
       for (const c of group.children) {
@@ -243,14 +243,4 @@ function walkDemotable(list: PlanNode[], depth: number, out: DemotableEntry[]): 
 
 function replacePlanEntry(list: PlanNode[], index: number, replacement: PlanNode): void {
   list[index] = replacement;
-}
-
-// ── Helpers ─────────────────────────────────────────────────
-
-function containsPinnedDescendant(node: TreeNode, pin: PinPolicy): boolean {
-  if (pin.shouldPin(node)) return true;
-  for (const child of node.children) {
-    if (containsPinnedDescendant(child, pin)) return true;
-  }
-  return false;
 }

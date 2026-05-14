@@ -7,7 +7,6 @@ import type { PinPolicy } from "../context/pin-policy.js";
 import type { SelectionStrategy } from "../context/select-messages.js";
 import type { TokenEstimator } from "../context/token-estimator.js";
 import type { ToolElisionPolicy } from "../context/tool-elision.js";
-import type { ModelManager } from "../models/model-manager.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 
 /** Per-call options for the hierarchical context compactor. */
@@ -52,8 +51,11 @@ export interface AgentRuntimeOptions {
   errorHandler?: AgentRuntimeErrorHandler;
 }
 
-/** Provider supplied via {@link AgentRuntime#addModelProvider}. */
-export type ModelProviderInput = ProviderV3 | ModelManager;
+/**
+ * Provider supplied via {@link AgentRuntime#addModelProvider}.
+ * Callers holding a `ModelManager` pass `modelManager.provider`.
+ */
+export type ModelProviderInput = ProviderV3;
 
 /** Tool input accepted by {@link AgentRuntime#addTools}. */
 export type ToolInput = ToolSet | ToolFactory;

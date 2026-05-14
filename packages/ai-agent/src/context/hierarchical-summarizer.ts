@@ -5,7 +5,9 @@ import type { ToolCall } from "../state/tool-call.js";
 import type { Turn } from "../state/turn.js";
 import type { SummarySection, TurnGroup } from "../state/turn-group.js";
 import {
-  createDefaultElisionPolicy, elideToolResponse, type ToolElisionPolicy
+  createDefaultElisionPolicy,
+  elideToolResponse,
+  type ToolElisionPolicy,
 } from "./tool-elision.js";
 
 export interface SummaryOutput {

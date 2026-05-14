@@ -44,10 +44,7 @@ export interface LocalEngineRegistration {
    * The `files` argument is the FilesApi configured on the
    * `ModelManager` (or `undefined` if no files were configured).
    */
-  engineHasWeights?: (
-    config: LocalModelConfig,
-    files: FilesApi | undefined,
-  ) => Promise<boolean>;
+  engineHasWeights?: (config: LocalModelConfig, files: FilesApi | undefined) => Promise<boolean>;
 }
 
 /**
@@ -74,6 +71,14 @@ export class ModelManager {
     this.store = options.store;
     this.files = options.files;
     this.basePath = options.modelStoragePath ?? "/models";
+  }
+
+  /**
+   * The `ProviderV3` face of this manager — its underlying
+   * {@link ModelStateStore}. Pass to `AgentRuntime.addModelProvider()`.
+   */
+  get provider(): ProviderV3 {
+    return this.store;
   }
 
   /**

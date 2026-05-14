@@ -11,10 +11,8 @@ import type { SelectionStrategy } from "../context/select-messages.js";
 import { createTokenEstimator } from "../context/token-estimator.js";
 import { createDefaultElisionPolicy } from "../context/tool-elision.js";
 import { McpClientManager, type McpServerConfig } from "../mcp/mcp-client-manager.js";
-import type { ModelManager } from "../models/model-manager.js";
-import { UnifiedProvider } from "../models/unified-provider.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
-import type { SessionMetadata } from "../sessions/types.js";
+import type { SessionMetadata } from "../sessions/metadata.js";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 import { Agent } from "./agent.js";
@@ -105,7 +103,6 @@ export class AgentRuntime {
   private _config?: ConfigManager;
   private _secrets?: SecretsManager;
   private _provider?: ProviderV3;
-  private _modelManager?: ModelManager;
   private _resolvedTools?: ToolSet;
   private _resolvedSkills?: SkillInfo[];
   private _sessions?: FilesSessionManager;
@@ -179,8 +176,7 @@ export class AgentRuntime {
    * `build()` the runtime constructs a single composite provider whose
    * model list is the union of all registered providers.
    *
-   * `ModelManager` instances are accepted as a convenience: the manager is
-   * wrapped in a {@link UnifiedProvider} internally.
+   * Callers holding a `ModelManager` pass `modelManager.provider`.
    */
   addModelProvider(...providers: ModelProviderInput[]): this {
     this._providers.push(...providers);
@@ -307,23 +303,15 @@ export class AgentRuntime {
     );
     this._secrets = new SecretsManager(this._config);
 
-    // 4. Resolve provider — first explicit ProviderV3 wins; else fall back
-    //    to a UnifiedProvider over a registered ModelManager.
-    const explicitProviders = this._providers.filter(isProviderV3);
-    const modelManagers = this._providers.filter((p): p is ModelManager => !isProviderV3(p));
-    if (explicitProviders.length > 0) {
-      this._provider = explicitProviders[0];
-      // TODO: union of multiple providers — for now first wins.
-    } else if (modelManagers.length > 0) {
-      const first = modelManagers[0];
-      if (!first) throw new Error("unreachable");
-      this._modelManager = first;
-      this._provider = new UnifiedProvider(first.store);
-    } else {
+    // 4. Resolve provider — first registered provider wins.
+    // TODO: union of multiple providers — for now first wins.
+    const first = this._providers[0];
+    if (!first) {
       const err = new Error("AgentRuntime: no model provider configured. Use .addModelProvider()");
       this._errorHandler(err);
       throw err;
     }
+    this._provider = first;
 
     // 5. Sessions storage — paths are relative to systemFiles' root.
     this._sessions = new FilesSessionManager(
@@ -487,10 +475,6 @@ export class AgentRuntime {
     return this._secrets;
   }
 
-  get models(): ModelManager | undefined {
-    return this._modelManager;
-  }
-
   get mcp(): McpClientManager | undefined {
     return this._mcp;
   }
@@ -599,16 +583,11 @@ export class AgentRuntime {
       sessions: this._sessions,
       provider: this._provider,
       model: "",
-      modelManager: this._modelManager,
     };
   }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
-
-function isProviderV3(p: ModelProviderInput): p is ProviderV3 {
-  return typeof (p as ProviderV3).languageModel === "function";
-}
 
 function normalizeFolderPath(path: string): string {
   let p = path.startsWith("/") ? path : `/${path}`;
