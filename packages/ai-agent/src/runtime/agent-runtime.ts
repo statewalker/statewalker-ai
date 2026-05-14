@@ -4,7 +4,7 @@ import { CompositeFilesApi, FilteredFilesApi } from "@statewalker/webrun-files-c
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
-import { type CompactOptions, ContextCompactor } from "../context/context-compactor.js";
+import { ContextWindow } from "../context/context-window.js";
 import { createDefaultPinPolicy } from "../context/pin-policy.js";
 import { selectHierarchical } from "../context/select-hierarchical.js";
 import type { SelectionStrategy } from "../context/select-messages.js";
@@ -504,41 +504,67 @@ export class AgentRuntime {
     return this._selectionStrategy;
   }
 
-  /** @internal */
-  get budgetCompactionOptions():
-    | {
-        select: SelectionStrategy;
-        compactor: ContextCompactor;
-        compactOptions: Omit<CompactOptions, "eventSink">;
-      }
-    | undefined {
-    if (!this._budgetCompaction) return undefined;
+  /**
+   * Return a factory that builds a per-session {@link ContextWindow} from
+   * the runtime-wide defaults (selection strategy, budget compaction, etc.).
+   * Per-agent overrides are applied by `runtime/Session` on top of the
+   * factory output.
+   *
+   * @internal
+   */
+  contextDefaults(opts: {
+    systemPromptTemplate?: string;
+    selectStrategy?: SelectionStrategy;
+  }): ContextWindow {
+    this._assertBuilt();
+    if (!this._provider) throw new Error("unreachable");
+
     const bc = this._budgetCompaction;
-    const estimator = bc.estimator ?? createTokenEstimator();
-    const pinPolicy = bc.pinPolicy ?? createDefaultPinPolicy();
-    const elisionPolicy = bc.elisionPolicy ?? createDefaultElisionPolicy();
-    const keepRecentTurns = bc.keepRecentTurns ?? 4;
-    return {
-      select: selectHierarchical({
+    if (bc) {
+      const estimator = bc.estimator ?? createTokenEstimator();
+      const pinPolicy = bc.pinPolicy ?? createDefaultPinPolicy();
+      const elisionPolicy = bc.elisionPolicy ?? createDefaultElisionPolicy();
+      const keepRecentTurns = bc.keepRecentTurns ?? 4;
+      const defaultSelect = selectHierarchical({
         budgetTokens: bc.budgetTokens,
         keepRecentTurns,
         pinPolicy,
         elisionPolicy,
         estimator,
-      }),
-      compactor: new ContextCompactor(),
-      compactOptions: {
-        budgetTokens: bc.budgetTokens,
+      });
+      return new ContextWindow({
+        provider: this._provider,
+        model: "",
+        selectStrategy: opts.selectStrategy ?? defaultSelect,
+        ...(opts.systemPromptTemplate !== undefined && {
+          systemPromptTemplate: opts.systemPromptTemplate,
+        }),
+        estimator,
+        pinPolicy,
+        elisionPolicy,
         summarizer: bc.summarizer,
-        estimator,
-        pinPolicy,
-        elisionPolicy,
+        budgetTokens: bc.budgetTokens,
         keepRecentTurns,
-        groupSize: bc.groupSize,
-        depthPromoteThreshold: bc.depthPromoteThreshold,
-        maxPassesPerCompact: bc.maxPassesPerCompact,
-      } satisfies Omit<CompactOptions, "eventSink">,
-    };
+        ...(bc.groupSize !== undefined && { groupSize: bc.groupSize }),
+        ...(bc.depthPromoteThreshold !== undefined && {
+          depthPromoteThreshold: bc.depthPromoteThreshold,
+        }),
+        ...(bc.maxPassesPerCompact !== undefined && {
+          maxPassesPerCompact: bc.maxPassesPerCompact,
+        }),
+      });
+    }
+
+    return new ContextWindow({
+      provider: this._provider,
+      model: "",
+      ...(opts.selectStrategy !== undefined && { selectStrategy: opts.selectStrategy }),
+      ...(this._selectionStrategy !== undefined &&
+        opts.selectStrategy === undefined && { selectStrategy: this._selectionStrategy }),
+      ...(opts.systemPromptTemplate !== undefined && {
+        systemPromptTemplate: opts.systemPromptTemplate,
+      }),
+    });
   }
 
   /** @internal */

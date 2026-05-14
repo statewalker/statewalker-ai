@@ -1,5 +1,6 @@
+import type { ProviderV3 } from "@ai-sdk/provider";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ContextCompactor } from "../../src/context/context-compactor.js";
+import { ContextWindow } from "../../src/context/context-window.js";
 import type { HierarchicalSummarizer } from "../../src/context/hierarchical-summarizer.js";
 import { createDefaultPinPolicy } from "../../src/context/pin-policy.js";
 import { selectHierarchical } from "../../src/context/select-hierarchical.js";
@@ -73,32 +74,35 @@ describe("AgentController with budget compaction", () => {
     const elisionPolicy = createDefaultElisionPolicy();
     const summarizer = stubSummarizer();
 
-    const controller = new AgentController({
-      provider: { languageModel: vi.fn() } as never,
+    const provider = { languageModel: vi.fn() } as unknown as ProviderV3;
+    const contextWindow = new ContextWindow({
+      provider,
       model: "test",
-      systemPrompt: "x",
-      session,
-      inbox: new Inbox(),
-      tools: new ToolRegistry(),
-      skills: new SkillsModel(),
-      compactor: new ContextCompactor(),
-      compactOptions: {
-        budgetTokens: 300,
-        summarizer,
-        estimator,
-        pinPolicy,
-        elisionPolicy,
-        keepRecentTurns: 2,
-        groupSize: 4,
-        depthPromoteThreshold: 4,
-      },
-      select: selectHierarchical({
+      systemPromptTemplate: "x",
+      summarizer,
+      estimator,
+      pinPolicy,
+      elisionPolicy,
+      budgetTokens: 300,
+      keepRecentTurns: 2,
+      groupSize: 4,
+      depthPromoteThreshold: 4,
+      selectStrategy: selectHierarchical({
         budgetTokens: 300,
         keepRecentTurns: 2,
         pinPolicy,
         elisionPolicy,
         estimator,
       }),
+    });
+    const controller = new AgentController({
+      provider,
+      model: "test",
+      contextWindow,
+      session,
+      inbox: new Inbox(),
+      tools: new ToolRegistry(),
+      skills: new SkillsModel(),
     });
 
     // Push one user message; the controller should compact before streaming.

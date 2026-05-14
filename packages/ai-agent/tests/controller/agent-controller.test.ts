@@ -1,4 +1,6 @@
+import type { ProviderV3 } from "@ai-sdk/provider";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { ContextWindow } from "../../src/context/context-window.js";
 import { AgentController } from "../../src/controller/agent-controller.js";
 import { Inbox } from "../../src/state/inbox.js";
 import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
@@ -59,15 +61,20 @@ function makeController(overrides?: {
   inbox?: Inbox;
   skills?: SkillsModel;
   tools?: ToolRegistry;
-  systemPrompt?: string;
+  systemPromptTemplate?: string;
   maxSteps?: number;
 }): AgentController {
+  const provider = { languageModel: vi.fn() } as unknown as ProviderV3;
   return new AgentController({
     session: overrides?.session ?? makeSession(),
     inbox: overrides?.inbox ?? new Inbox(),
-    provider: { languageModel: vi.fn() } as never,
+    provider,
     model: "test",
-    systemPrompt: overrides?.systemPrompt ?? "Base",
+    contextWindow: new ContextWindow({
+      provider,
+      model: "test",
+      systemPromptTemplate: overrides?.systemPromptTemplate ?? "Base",
+    }),
     tools: overrides?.tools ?? new ToolRegistry(),
     skills: overrides?.skills ?? new SkillsModel(),
     maxSteps: overrides?.maxSteps,
@@ -81,36 +88,7 @@ async function collect(gen: AsyncGenerator<LogMessage>): Promise<LogMessage[]> {
 }
 
 describe("AgentController", () => {
-  describe("buildSystemPrompt", () => {
-    it("returns base prompt when no skills available", () => {
-      const controller = makeController({ systemPrompt: "Base prompt" });
-      expect(controller.buildSystemPrompt()).toBe("Base prompt");
-    });
-
-    it("appends skills instruction when skills are available", () => {
-      const skills = new SkillsModel();
-      skills.register({ name: "s1", description: "Skill 1", content: "C1" });
-      const controller = makeController({ skills });
-      const prompt = controller.buildSystemPrompt();
-      expect(prompt).toContain("## Skills");
-      expect(prompt).toContain("use_skills");
-    });
-
-    it("includes selected skill content", () => {
-      const skills = new SkillsModel();
-      skills.register({
-        name: "file-ops",
-        description: "File ops",
-        content: "Read and write files.",
-      });
-      skills.select(["file-ops"]);
-      const controller = makeController({ skills });
-      const prompt = controller.buildSystemPrompt();
-      expect(prompt).toContain("## Active Skills");
-      expect(prompt).toContain("### file-ops");
-      expect(prompt).toContain("Read and write files.");
-    });
-  });
+  // System-prompt assembly moved to `tests/context/context-window.test.ts`.
 
   describe("run — turn persistence", () => {
     it("creates one Turn per inbox message and persists user text into it", async () => {

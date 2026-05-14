@@ -45,8 +45,8 @@ Legacy orchestrator that mixed the inbox loop, per-turn lifecycle, skill selecti
 
 ### Context shaping
 
-**ContextWindow** (deepening opportunity #1):
-The module that, given the current conversation tree, produces `{ system, messages, events }` for one model call. Internally orchestrates compaction, selection, elision, pin policy, summarisation, and system-prompt assembly. Mutates the tree (compaction artifacts persist); returns a projected snapshot.
+**ContextWindow**:
+The module that, given the current `SessionState` and the active `SkillsModel`, produces `{ system, messages, events, stats }` for one model call. Internally orchestrates compaction, selection, elision, pin policy, summarisation, and system-prompt assembly. Mutates the tree (compaction artifacts persist); returns a projected snapshot. One instance per Session — constructed by `runtime/Session` from runtime defaults plus per-agent overrides.
 _Avoid_: context builder, context manager, prompt builder
 
 **compaction**:
