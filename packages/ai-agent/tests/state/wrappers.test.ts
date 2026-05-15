@@ -3,7 +3,7 @@ import {
   createAgentNodeFactory,
   Message,
   NodeType,
-  Session,
+  SessionState,
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
@@ -17,7 +17,7 @@ import {
 const factory = createAgentNodeFactory();
 
 function buildConversation() {
-  const session = factory({ type: NodeType.session }) as Session;
+  const session = factory({ type: NodeType.session }) as SessionState;
 
   const turn1 = session.addTurn({ turnNumber: 1 });
   turn1.addUserMessage("Read /tmp/data.json");
@@ -44,7 +44,7 @@ function buildConversation() {
   return { session, turn1, turn2, agentMsg, thinking, toolCall, agentMsg2 };
 }
 
-describe("Session", () => {
+describe("SessionState", () => {
   it("lists turns", () => {
     const { session } = buildConversation();
     expect(session.turns).toHaveLength(2);
@@ -159,9 +159,9 @@ describe("JSON round-trip", () => {
   it("preserves full conversation", () => {
     const { session } = buildConversation();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, factory) as Session;
+    const restored = jsonToTree(json, factory) as SessionState;
 
-    expect(restored).toBeInstanceOf(Session);
+    expect(restored).toBeInstanceOf(SessionState);
     expect(restored.turns).toHaveLength(2);
 
     const t1 = restored.turns[0] as Turn;
@@ -181,16 +181,16 @@ describe("JSON round-trip", () => {
 describe("Flat stream round-trip", () => {
   it("preserves conversation via toFlatStream → applyFlat", () => {
     const { session } = buildConversation();
-    const clone = applyFlat(undefined, toFlatStream(session), factory) as Session;
+    const clone = applyFlat(undefined, toFlatStream(session), factory) as SessionState;
 
-    expect(clone).toBeInstanceOf(Session);
+    expect(clone).toBeInstanceOf(SessionState);
     expect(clone.turns).toHaveLength(2);
     expect(clone.turns[0]?.messages[0]?.text).toBe("Read /tmp/data.json");
   });
 
   it("incremental sync", () => {
     const { session } = buildConversation();
-    const clone = applyFlat(undefined, toFlatStream(session), factory) as Session;
+    const clone = applyFlat(undefined, toFlatStream(session), factory) as SessionState;
 
     // Use last id in clone as sync cursor
     let lastId = clone.id;

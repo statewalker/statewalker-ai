@@ -1,17 +1,17 @@
 import type { ModelMessage } from "ai";
-import type { Session } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import type { ContentSummarizer } from "./content-summarizer.js";
 
 /**
  * Builds a ModelMessage[] prompt from the session tree.
  */
-export type SelectionStrategy = (session: Session) => Promise<ModelMessage[]>;
+export type SelectionStrategy = (session: SessionState) => Promise<ModelMessage[]>;
 
 // ---------------------------------------------------------------------------
 // Default strategy: all turns, newest last
 // ---------------------------------------------------------------------------
 
-export async function selectAll(session: Session): Promise<ModelMessage[]> {
+export async function selectAll(session: SessionState): Promise<ModelMessage[]> {
   const result: ModelMessage[] = [];
   for (const turn of session.turns) {
     result.push(...turn.toModelMessages());
@@ -30,7 +30,7 @@ export function selectWithCompaction(options: {
 }): SelectionStrategy {
   const maxRecent = options.maxRecentTurns ?? 4;
 
-  return async (session: Session) => {
+  return async (session: SessionState) => {
     const turns = session.turns;
     const cutoff = Math.max(0, turns.length - maxRecent);
 

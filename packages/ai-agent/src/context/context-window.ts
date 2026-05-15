@@ -1,7 +1,7 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { ModelMessage } from "ai";
 import type { LogMessage } from "../state/log-message.js";
-import type { Session } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import type { SkillsModel } from "../state/skills-model.js";
 import { type CompactOptions, ContextCompactor } from "./context-compactor.js";
 import type { HierarchicalSummarizer } from "./hierarchical-summarizer.js";
@@ -139,7 +139,7 @@ export class ContextWindow {
    * 3. Build the system prompt from the template + active skills.
    * 4. Run the selection strategy to project to `ModelMessage[]`.
    */
-  async build(state: Session, opts: { skills: SkillsModel }): Promise<ContextWindowResult> {
+  async build(state: SessionState, opts: { skills: SkillsModel }): Promise<ContextWindowResult> {
     this.pinPolicy.prepare?.(state);
 
     const events: LogMessage[] = [];

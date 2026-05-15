@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
+import { createAgentNodeFactory, type SessionState } from "../../src/state/index.js";
 import { NodeType } from "../../src/state/node-types.js";
 import type { Turn } from "../../src/state/turn.js";
 
-function makeSession(): Session {
+function makeSessionState(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: "session" }) as Session;
+  return factory({ type: "session" }) as SessionState;
 }
 
 function makeTurn(): Turn {
-  return makeSession().addTurn();
+  return makeSessionState().addTurn();
 }
 
 describe("Turn stream handlers", () => {

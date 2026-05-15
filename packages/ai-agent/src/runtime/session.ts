@@ -5,7 +5,7 @@ import { Inbox } from "../state/inbox.js";
 import type { LogMessage } from "../state/log-message.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";
 import { NodeType } from "../state/node-types.js";
-import type { Session as SessionNode } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import { SkillsModel } from "../state/skills-model.js";
 import { ToolRegistry } from "../state/tool-registry.js";
 import { createListSkillsTool } from "../tools/list-skills-tool.js";
@@ -38,7 +38,7 @@ const idGen = new SnowflakeId();
 export class Session {
   readonly id: string;
   readonly agent: Agent;
-  readonly state: SessionNode;
+  readonly state: SessionState;
   readonly inbox: Inbox;
   readonly tools: ToolRegistry;
   readonly skills: SkillsModel;
@@ -53,7 +53,7 @@ export class Session {
     agent: Agent,
     runtime: AgentRuntime,
     sessionId?: string,
-    existingTree?: SessionNode,
+    existingTree?: SessionState,
     title?: string,
   ) {
     this.agent = agent;
@@ -66,7 +66,7 @@ export class Session {
       existingTree.data.id = this.id;
     } else {
       const factory = createAgentNodeFactory();
-      this.state = factory<SessionNode>({
+      this.state = factory<SessionState>({
         type: NodeType.session,
         id: this.id,
         props: title ? { title } : {},

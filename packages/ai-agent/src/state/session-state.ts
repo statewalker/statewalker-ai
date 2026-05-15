@@ -3,7 +3,15 @@ import { NodeType } from "./node-types.js";
 import { TreeNode } from "./tree-node.js";
 import type { Turn } from "./turn.js";
 
-export class Session extends TreeNode {
+/**
+ * The persistable state of one Session — the tree of `Turn`s, `Message`s,
+ * `ToolCall`s, and `TurnGroup`s. Pure data; a typed view over `TreeNode`.
+ *
+ * The runtime-side {@link import("../runtime/session.js").Session} holds an
+ * instance as its `.state` field; it is the orchestrator that drives the
+ * model loop. This class is just the data.
+ */
+export class SessionState extends TreeNode {
   isStreaming = false;
   error = "";
 
@@ -17,8 +25,8 @@ export class Session extends TreeNode {
   }
 
   /**
-   * Direct `Turn` children only (non-recursive). Preserves the invariant used
-   * by `AgentController`: one inbox message → one new turn at the root's end.
+   * Direct `Turn` children only (non-recursive). One inbox message → one
+   * new turn at the root's end (invariant of the agent loop).
    */
   get turns(): Turn[] {
     return this.childrenOfType(NodeType.turn) as Turn[];
@@ -90,3 +98,10 @@ function collectTurns(node: TreeNode, out: Turn[]): void {
     }
   }
 }
+
+/**
+ * @deprecated Renamed to {@link SessionState}. The alias is kept for one
+ * cycle to let external consumers migrate; it will be removed in a future
+ * change. Update imports to `SessionState`.
+ */
+export { SessionState as Session };

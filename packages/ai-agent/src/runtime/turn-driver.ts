@@ -3,7 +3,7 @@ import { stepCountIs, streamText } from "ai";
 import type { ContextWindow } from "../context/context-window.js";
 import type { InboxMessage } from "../state/inbox.js";
 import type { LogMessage, TurnFinishKind } from "../state/log-message.js";
-import type { Session } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import type { SkillsModel } from "../state/skills-model.js";
 import type { ToolRegistry } from "../state/tool-registry.js";
 import type { Turn } from "../state/turn.js";
@@ -23,7 +23,7 @@ export interface TurnDriverOptions {
 }
 
 /**
- * Advances a {@link Session} state tree by exactly one {@link Turn} per
+ * Advances a {@link SessionState} tree by exactly one {@link Turn} per
  * `drive()` call. Owns the per-turn lifecycle: open Turn, optional
  * first-turn skill selection, `ContextWindow.build()`, `streamText()`,
  * stream-part routing, finish classification, error recording, close Turn.
@@ -60,7 +60,7 @@ export class TurnDriver {
    * Invariant: exactly one Turn is appended to `state` per call.
    */
   async *drive(
-    state: Session,
+    state: SessionState,
     message: InboxMessage,
     signal?: AbortSignal,
   ): AsyncGenerator<LogMessage> {

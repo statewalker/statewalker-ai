@@ -1,5 +1,5 @@
 import { NodeType } from "../state/node-types.js";
-import type { Session } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import type { ToolCall } from "../state/tool-call.js";
 import type { TreeNode } from "../state/tree-node.js";
 
@@ -14,7 +14,7 @@ export interface PinPolicy {
    * A one-time preparation the policy may run over the session before each
    * selection pass (e.g. scan for the latest user message). Optional.
    */
-  prepare?(session: Session): void;
+  prepare?(session: SessionState): void;
   shouldPin(node: TreeNode): boolean;
 }
 
@@ -22,7 +22,7 @@ export type PinPredicate = (node: TreeNode) => boolean;
 
 export interface CreatePinPolicyOptions {
   predicates: PinPredicate[];
-  prepare?(session: Session): void;
+  prepare?(session: SessionState): void;
 }
 
 /**
@@ -70,7 +70,7 @@ export function createDefaultPinPolicy(options: DefaultPinPolicyOptions = {}): P
   let pinnedLatestUserMessage: TreeNode | undefined;
   const pinnedLatestStatefulCalls = new Map<string, TreeNode>();
 
-  const prepare = (session: Session): void => {
+  const prepare = (session: SessionState): void => {
     pinnedLatestUserMessage = undefined;
     pinnedLatestStatefulCalls.clear();
 

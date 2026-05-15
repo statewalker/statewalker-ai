@@ -1,6 +1,6 @@
 import { Message } from "./message.js";
 import { NodeType } from "./node-types.js";
-import { Session } from "./session.js";
+import { SessionState } from "./session-state.js";
 import { ToolCall } from "./tool-call.js";
 import type { TreeNode } from "./tree-node.js";
 import { newNodeFactory } from "./tree-node-factory.js";
@@ -9,7 +9,7 @@ import { Turn } from "./turn.js";
 import { TurnGroup } from "./turn-group.js";
 
 const AGENT_TYPES: Record<string, new (data: TreeEntry, factory: NodeFactory) => TreeNode> = {
-  [NodeType.session]: Session,
+  [NodeType.session]: SessionState,
   [NodeType.turn]: Turn,
   [NodeType.turnGroup]: TurnGroup,
   [NodeType.userMessage]: Message,

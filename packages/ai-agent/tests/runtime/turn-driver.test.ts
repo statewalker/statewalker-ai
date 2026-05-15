@@ -6,7 +6,7 @@ import type { InboxMessage } from "../../src/state/inbox.js";
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   SkillsModel,
   ToolRegistry,
 } from "../../src/state/index.js";
@@ -44,9 +44,9 @@ function scriptStream(
   })();
 }
 
-function makeState(): Session {
+function makeState(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
 function makeDriver(overrides?: {
@@ -136,7 +136,7 @@ describe("TurnDriver.drive — ContextWindow event forwarding", () => {
 describe("TurnDriver.drive — finishReason classification", () => {
   async function runOnce(
     parts: Array<Record<string, unknown>>,
-  ): Promise<{ state: Session; logs: LogMessage[] }> {
+  ): Promise<{ state: SessionState; logs: LogMessage[] }> {
     const state = makeState();
     mockStreamText.mockImplementation(() => ({ fullStream: scriptStream(parts) }));
     const driver = makeDriver();
