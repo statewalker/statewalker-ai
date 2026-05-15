@@ -3,8 +3,8 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
 import { createAgentNodeFactory } from "../state/node-factory.js";
 import { NodeType } from "../state/node-types.js";
-import { Session } from "../state/session.js";
 import { markdownToSession, sessionToMarkdown } from "../state/session-serialization.js";
+import { SessionState } from "../state/session-state.js";
 import type { NodeFactory } from "../state/tree-types.js";
 import type { SessionMetadata } from "./metadata.js";
 
@@ -55,14 +55,14 @@ export class FilesSessionManager {
     const session = this.factory({
       type: NodeType.session,
       props: { title: meta.title },
-    }) as Session;
+    }) as SessionState;
     const markdown = await sessionToMarkdown(session);
     await writeText(this.files, `${this.sessionsDir}/${id}/${id}.md`, markdown);
 
     return id;
   }
 
-  async save(id: string, session: Session): Promise<void> {
+  async save(id: string, session: SessionState): Promise<void> {
     const sessionDir = `${this.sessionsDir}/${id}`;
     const markdown = await sessionToMarkdown(session);
 
@@ -93,7 +93,7 @@ export class FilesSessionManager {
     await this.saveIndex(index);
   }
 
-  async load(id: string): Promise<Session> {
+  async load(id: string): Promise<SessionState> {
     const sessionDir = `${this.sessionsDir}/${id}`;
     const text = await readText(this.files, `${sessionDir}/${id}.md`);
 
@@ -101,9 +101,9 @@ export class FilesSessionManager {
     const rehydrated = await this.rehydrateAttachments(text, sessionDir);
 
     const root = await markdownToSession(rehydrated, this.factory);
-    if (root instanceof Session) return root;
-    // Wrap in Session if the factory returned a plain TreeNode
-    const session = this.factory({ type: NodeType.session }) as Session;
+    if (root instanceof SessionState) return root;
+    // Wrap in SessionState if the factory returned a plain TreeNode
+    const session = this.factory({ type: NodeType.session }) as SessionState;
     for (const child of root.children) {
       session.addChild(child.data);
     }

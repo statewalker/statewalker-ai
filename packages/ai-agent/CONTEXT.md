@@ -18,9 +18,9 @@ A *runtime instance* bound to one Agent. Owns the conversation tree, inbox, per-
 
 ### Conversation state
 
-**SessionState** (currently exposed as `state/Session`, scheduled for rename in #3):
-The persisted state of one Session — the tree of Turns, Messages, ToolCalls, and TurnGroups. Pure data; a typed view over `TreeNode`. The runtime Session holds it as `.state`.
-_Avoid_: ConversationTree, SessionNode (existing alias used to disambiguate)
+**SessionState**:
+The persisted state of one Session — the tree of Turns, Messages, ToolCalls, and TurnGroups. Pure data; a typed view over `TreeNode`. Lives at `state/session-state.ts`. The runtime Session holds it as `.state`.
+_Avoid_: ConversationTree, SessionNode. The deprecated `Session` alias is re-exported from `@statewalker/ai-agent/state` for one cycle to let external consumers migrate; new code SHOULD use `SessionState` directly.
 
 **Turn**:
 One inbox-message exchange — opens with a user message, accumulates agent messages, tool calls, and tool results, closes when streaming finishes. Exactly one Turn per inbox message (invariant of the agent loop).
@@ -120,5 +120,5 @@ Resolves the runtime's `SkillInfo[]` from a `FilesApi` skills folder plus any ma
 
 ## Flagged ambiguities
 
-- **Session** is used at two layers: `state/Session` (a typed `TreeNode`) and `runtime/Session` (the orchestrator wrapping it). Resolved in opportunity #3 by renaming the state-side to **SessionState** and moving runtime-Session wiring out of its constructor into `Agent.createSession()`.
+- The state-side `Session` was renamed to **SessionState** in opportunity #3; a `@deprecated` `Session` alias remains for one cycle to keep external consumers compiling. Wiring relocation into `Agent.createSession()` is deferred to opportunity #4.
 - "context" alone is ambiguous — could mean `AgentContext` (the DI bag passed to tool factories) or the **ContextWindow** (the model-call inputs). Prefer the full term.

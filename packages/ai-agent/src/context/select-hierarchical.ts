@@ -1,6 +1,6 @@
 import type { ModelMessage } from "ai";
 import { NodeType } from "../state/node-types.js";
-import type { Session } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import type { ToolCall } from "../state/tool-call.js";
 import type { TreeNode } from "../state/tree-node.js";
 import type { Turn } from "../state/turn.js";
@@ -37,7 +37,7 @@ export interface SelectHierarchicalOptions {
  * estimate fits. Pin-forced expansions are never collapsed.
  */
 export function selectHierarchical(options: SelectHierarchicalOptions): SelectionStrategy {
-  return async (session: Session) => {
+  return async (session: SessionState) => {
     options.pinPolicy.prepare?.(session);
 
     // Build expansion plan: one entry per direct child of the session plus

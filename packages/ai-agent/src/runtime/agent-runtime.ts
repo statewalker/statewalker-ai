@@ -573,7 +573,10 @@ export class AgentRuntime {
   }
 
   /** @internal */
-  saveSession(sessionId: string, tree: import("../state/session.js").Session): Promise<void> {
+  saveSession(
+    sessionId: string,
+    tree: import("../state/session-state.js").SessionState,
+  ): Promise<void> {
     return this._requireSessions().save(sessionId, tree);
   }
 

@@ -1,7 +1,7 @@
 import type { LogMessage } from "../state/log-message.js";
 import type { Message } from "../state/message.js";
 import { NodeType } from "../state/node-types.js";
-import type { Session } from "../state/session.js";
+import type { SessionState } from "../state/session-state.js";
 import type { ToolCall } from "../state/tool-call.js";
 import type { TreeNode } from "../state/tree-node.js";
 import type { Turn } from "../state/turn.js";
@@ -46,7 +46,7 @@ export interface CompactResult {
  * wrappers; it never drops data.
  */
 export class ContextCompactor {
-  async compact(session: Session, options: CompactOptions): Promise<CompactResult> {
+  async compact(session: SessionState, options: CompactOptions): Promise<CompactResult> {
     const keepRecent = options.keepRecentTurns ?? DEFAULT_KEEP_RECENT_TURNS;
     const groupSize = options.groupSize ?? DEFAULT_GROUP_SIZE;
     const promoteThreshold = options.depthPromoteThreshold ?? DEFAULT_DEPTH_PROMOTE_THRESHOLD;
@@ -130,7 +130,7 @@ export class ContextCompactor {
  * is the concatenation of those legacy summaries. Marks the group with
  * `stamp = LEGACY_STAMP`. No LLM is called.
  */
-function migrateLegacySummaries(session: Session, keepRecentTurns: number): boolean {
+function migrateLegacySummaries(session: SessionState, keepRecentTurns: number): boolean {
   const directChildren = session.children;
   const cutoff = Math.max(0, directChildren.length - keepRecentTurns);
   let fromIdx = -1;
@@ -167,7 +167,7 @@ function migrateLegacySummaries(session: Session, keepRecentTurns: number): bool
 // ── Step 2: depth-1 grouping ────────────────────────────────
 
 async function formDepth1Group(
-  session: Session,
+  session: SessionState,
   groupSize: number,
   keepRecentTurns: number,
   options: CompactOptions,
@@ -237,7 +237,7 @@ async function formDepth1Group(
 // ── Step 3: depth promotion ─────────────────────────────────
 
 async function promoteGroups(
-  session: Session,
+  session: SessionState,
   threshold: number,
   keepRecentTurns: number,
   options: CompactOptions,
@@ -322,7 +322,7 @@ async function promoteGroups(
  * estimating the final ModelMessage[] projection.
  */
 function estimateSession(
-  session: Session,
+  session: SessionState,
   estimator: TokenEstimator,
   elisionPolicy: ToolElisionPolicy | undefined,
 ): number {
