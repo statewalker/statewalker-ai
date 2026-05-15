@@ -15,7 +15,7 @@ import {
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   type TurnGroup,
 } from "../../src/state/index.js";
 
@@ -25,9 +25,9 @@ beforeEach(() => {
   mockGenerate.mockReset();
 });
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
 describe("renderDepth1Input", () => {

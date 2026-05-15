@@ -7,16 +7,16 @@ import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   type TurnGroup,
 } from "../../src/state/index.js";
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
-function addTurnPair(session: Session, userText: string, agentText: string) {
+function addTurnPair(session: SessionState, userText: string, agentText: string) {
   const turn = session.addTurn();
   turn.addUserMessage(userText);
   turn.addAgentMessage().appendDelta(agentText);

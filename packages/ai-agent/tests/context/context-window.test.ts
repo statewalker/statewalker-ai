@@ -16,23 +16,23 @@ import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   SkillsModel,
 } from "../../src/state/index.js";
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
-function addTurnPair(session: Session, userText: string, agentText: string) {
+function addTurnPair(session: SessionState, userText: string, agentText: string) {
   const turn = session.addTurn();
   turn.addUserMessage(userText);
   turn.addAgentMessage().appendDelta(agentText);
   return turn;
 }
 
-function addHeavyTurn(session: Session, load: number, label = "q") {
+function addHeavyTurn(session: SessionState, load: number, label = "q") {
   const turn = session.addTurn();
   turn.addUserMessage(label);
   turn.addAgentMessage().appendDelta("a".repeat(load));

@@ -5,15 +5,15 @@ import { FilesSessionManager } from "../../src/sessions/files-session-manager.js
 import {
   createAgentNodeFactory,
   NodeType,
-  Session,
+  SessionState,
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
 
 const factory = createAgentNodeFactory();
 
-function buildPopulatedSession(): Session {
-  const session = factory<Session>({ type: NodeType.session });
+function buildPopulatedSession(): SessionState {
+  const session = factory<SessionState>({ type: NodeType.session });
   session.update({ title: "Test chat" });
 
   const turn = session.addTurn({ turnNumber: 1 });
@@ -78,7 +78,7 @@ describe("FilesSessionManager", () => {
       await manager.save(id, session);
       const loaded = await manager.load(id);
 
-      expect(loaded).toBeInstanceOf(Session);
+      expect(loaded).toBeInstanceOf(SessionState);
       expect(loaded.turns).toHaveLength(1);
 
       const turn = loaded.turns[0] as Turn;
@@ -229,8 +229,8 @@ describe("FilesSessionManager", () => {
   describe("index auto-rebuild", () => {
     it("rebuilds index from folder scan when index is missing", async () => {
       // Create some sessions (which writes the index)
-      const id1 = await manager.create("Session A");
-      const id2 = await manager.create("Session B");
+      const id1 = await manager.create("SessionState A");
+      const id2 = await manager.create("SessionState B");
 
       // Delete the index file directly
       await files.remove("/sessions/index.json");
@@ -250,7 +250,7 @@ describe("FilesSessionManager", () => {
   describe("multi-turn session", () => {
     it("round-trips a session with multiple turns", async () => {
       const id = await manager.create();
-      const session = factory<Session>({ type: NodeType.session });
+      const session = factory<SessionState>({ type: NodeType.session });
 
       // Turn 1
       const turn1 = session.addTurn({ turnNumber: 1 });

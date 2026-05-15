@@ -3,7 +3,7 @@ import {
   createAgentNodeFactory,
   Message,
   NodeType,
-  Session,
+  SessionState,
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
@@ -14,10 +14,10 @@ const factory = createAgentNodeFactory();
 describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
   it("replicates a complex interleaved conversation", () => {
     // ── Create session1 (empty) ──────────────────────────────
-    const session1 = factory({ type: NodeType.session }) as Session;
+    const session1 = factory({ type: NodeType.session }) as SessionState;
 
     // ── Create session2 as a copy of session1 ────────────────
-    const session2 = applyFlat(undefined, toFlatStream(session1), factory) as Session;
+    const session2 = applyFlat(undefined, toFlatStream(session1), factory) as SessionState;
 
     // ── Subscribe session2 to session1 updates ───────────────
     let lastSyncId = session2.id;
@@ -116,7 +116,7 @@ describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
     expect(treeToJson(session2)).toEqual(treeToJson(session1));
 
     // 2. Same turns
-    expect(session2).toBeInstanceOf(Session);
+    expect(session2).toBeInstanceOf(SessionState);
     expect(session2.turns).toHaveLength(3);
 
     // 3. Turn 1

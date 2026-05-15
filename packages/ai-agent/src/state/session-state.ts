@@ -98,10 +98,3 @@ function collectTurns(node: TreeNode, out: Turn[]): void {
     }
   }
 }
-
-/**
- * @deprecated Renamed to {@link SessionState}. The alias is kept for one
- * cycle to let external consumers migrate; it will be removed in a future
- * change. Update imports to `SessionState`.
- */
-export { SessionState as Session };

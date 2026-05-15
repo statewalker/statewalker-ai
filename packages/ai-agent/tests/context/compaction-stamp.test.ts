@@ -3,13 +3,13 @@ import { isStampStale, LEGACY_STAMP, newStamp } from "../../src/context/compacti
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   type TurnGroup,
 } from "../../src/state/index.js";
 
 function makeGroup(stamp?: string): TurnGroup {
   const factory = createAgentNodeFactory();
-  const session = factory({ type: NodeType.session }) as Session;
+  const session = factory({ type: NodeType.session }) as SessionState;
   const group = session.addChild({ type: NodeType.turnGroup }) as TurnGroup;
   if (stamp !== undefined) group.stamp = stamp;
   return group;

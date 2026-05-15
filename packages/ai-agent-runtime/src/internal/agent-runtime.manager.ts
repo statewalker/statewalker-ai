@@ -231,8 +231,8 @@ export class AgentRuntimeManager {
 
 function dedupeMcp(
   contributions: readonly AgentMcpConnection[],
-): Record<string, import("@statewalker/ai-agent").McpServerConfig> {
-  const out: Record<string, import("@statewalker/ai-agent").McpServerConfig> =
+): Record<string, import("@statewalker/ai-agent/runtime").McpServerConfig> {
+  const out: Record<string, import("@statewalker/ai-agent/runtime").McpServerConfig> =
     {};
   for (const c of contributions) out[c.id] = c.config; // last-wins
   return out;
