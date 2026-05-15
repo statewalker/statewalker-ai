@@ -90,14 +90,16 @@ Manages local-engine model lifecycle: registration, download, verification, acti
 **FilesApi split**:
 The `AgentRuntime` builds two views over the root `FilesApi`: a **system view** (full visibility — config, secrets, agents, skills, sessions) and a **tools view** (system path-tree hidden via `FilteredFilesApi`). Tools and skills receive the tools view through `AgentContext.files`.
 
-**FilesSplit** (deepening opportunity #4):
-The module that, given a root `FilesApi` and the system/user path geometry, returns `{ systemFiles, toolsFiles, paths }`. Owns the geometry validation and the path-normalisation helpers (`normalizeFolderPath`, `isUnderSystem`, `toSystemRelative`). Tested in isolation; AgentRuntime calls it once during `build()`.
+**FilesSplit**:
+Free function `buildFilesSplit(rootFiles, opts)` returning `{ systemFiles, toolsFiles, paths }`. Owns the geometry validation and the path-normalisation helpers (`normalizeFolderPath`, `isUnderSystem`, `toSystemRelative`). Tested in isolation; `AgentRuntime` calls it once during `build()`.
 
-**AgentCatalog** (deepening opportunity #4):
-Registry of `Agent` definitions — owns the name → `Agent` map, dup-name validation, and disk loading from `<agentsPath>/*.md`. Replaces the inline `_agents` Map + `createAgent`/`getAgent`/`agents()` + the agent-loading step inside `AgentRuntime.build()`.
+**AgentCatalog**:
+Registry of `Agent` definitions — owns the name → `Agent` map, dup-name validation, and disk loading from `<agentsPath>/*.md`. `AgentRuntime.createAgent / getAgent / agents` delegate to it.
 
-**SkillsLoader** (deepening opportunity #4):
-Resolves the runtime's `SkillInfo[]` from a `FilesApi` skills folder plus any manually-registered skills. Owns the markdown-walk + parse loop.
+**SkillsLoader**:
+Resolves the runtime's `SkillInfo[]` from a `FilesApi` skills folder plus any manually-registered skills. Owns the markdown-walk + parse loop. `AgentRuntime.build()` invokes it once.
+
+**Agent.createSession()** is the wiring site (relocated from `runtime/Session` ctor in opportunity #4): builds the per-session inbox / tools / skills, filters by Agent definition, registers built-in tools, throws on sub-agents, bridges MCP, builds the `ContextWindow` + `TurnDriver`, and constructs the slim `Session`. `Session` itself is now a thin data class taking a pre-built bag of dependencies — no longer reaches into `AgentRuntime`.
 
 ## Relationships
 

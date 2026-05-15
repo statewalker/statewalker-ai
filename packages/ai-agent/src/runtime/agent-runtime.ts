@@ -1,6 +1,5 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
-import { CompositeFilesApi, FilteredFilesApi } from "@statewalker/webrun-files-composite";
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
 import { SecretsManager } from "../config/secrets-manager.js";
@@ -13,11 +12,12 @@ import { createDefaultElisionPolicy } from "../context/tool-elision.js";
 import { McpClientManager, type McpServerConfig } from "../mcp/mcp-client-manager.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
 import type { SessionMetadata } from "../sessions/metadata.js";
-import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 import { Agent } from "./agent.js";
-import { combineFilters, hideUnder } from "./files-split.js";
-import { Session } from "./session.js";
+import { AgentCatalog } from "./agent-catalog.js";
+import { buildFilesSplit, normalizeFolderPath, type ResolvedPaths } from "./files-split.js";
+import type { Session } from "./session.js";
+import { SkillsLoader } from "./skills-loader.js";
 import type {
   AgentDefinition,
   AgentRuntimeErrorContext,
@@ -100,6 +100,7 @@ export class AgentRuntime {
   private _built = false;
   private _systemFiles?: FilesApi;
   private _toolsFiles?: FilesApi;
+  private _paths?: ResolvedPaths;
   private _config?: ConfigManager;
   private _secrets?: SecretsManager;
   private _provider?: ProviderV3;
@@ -108,7 +109,7 @@ export class AgentRuntime {
   private _sessions?: FilesSessionManager;
   private _mcp?: McpClientManager;
 
-  private readonly _agents = new Map<string, Agent>();
+  private readonly _agentCatalog = new AgentCatalog();
 
   /** Construct a new `AgentRuntime`. Use the fluent setters then call `build()`. */
   constructor(opts: AgentRuntimeOptions) {
@@ -262,128 +263,99 @@ export class AgentRuntime {
    */
   async build(): Promise<this> {
     if (this._built) return this;
+    const split = this._buildSplit();
+    this._systemFiles = split.systemFiles;
+    this._toolsFiles = split.toolsFiles;
+    this._paths = split.paths;
+    this._config = new ConfigManager(this._systemFiles, this._paths.config);
+    this._secrets = new SecretsManager(this._config);
+    this._provider = this._resolveProvider();
+    this._sessions = new FilesSessionManager(this._systemFiles, this._paths.sessions);
+    this._resolvedTools = await this._resolveTools();
+    this._resolvedSkills = await new SkillsLoader().load(
+      this._systemFiles,
+      this._paths.skills,
+      this._skills,
+      this._errorHandler,
+    );
+    this._mcp = await this._startMcp();
+    await this._agentCatalog.loadFromDisk(
+      this._systemFiles,
+      this._paths.agents,
+      this,
+      this._errorHandler,
+    );
+    this._built = true;
+    return this;
+  }
 
-    // 1. Sanity-check the path geometry.
-    if (this._systemPath === "/" && this._userPath === "/") {
-      const err = new Error(
-        "AgentRuntime: setSystemPath('/') with default userPath would hide every path from tools",
-      );
-      this._errorHandler(err, { path: "/" });
+  /** Build the FilesApi split, routing geometry errors through the handler. */
+  private _buildSplit(): ReturnType<typeof buildFilesSplit> {
+    try {
+      return buildFilesSplit(this._rootFiles, {
+        systemPath: this._systemPath,
+        userPath: this._userPath,
+        overrides: {
+          ...(this._sessionsPath !== undefined && { sessions: this._sessionsPath }),
+          ...(this._skillsPath !== undefined && { skills: this._skillsPath }),
+          ...(this._agentsPath !== undefined && { agents: this._agentsPath }),
+          ...(this._configPath !== undefined && { config: this._configPath }),
+        },
+      });
+    } catch (err) {
+      this._errorHandler(err as Error, { path: "/" });
       throw err;
     }
+  }
 
-    // 2. Build the two FilesApi views.
-    //    System view is rooted at systemPath: a path like "/sessions" on
-    //    systemFiles resolves to "<systemPath>/sessions" on rootFiles.
-    this._systemFiles = new CompositeFilesApi(this._rootFiles, this._systemPath);
-
-    //    Tools view: when userPath is "/", tools see the root with system
-    //    folders hidden via FilteredFilesApi. When userPath is a subtree,
-    //    tools see that subtree as their root via CompositeFilesApi —
-    //    everything outside (including systemPath) is naturally invisible.
-    if (this._userPath === "/") {
-      const hidePaths = [this._systemPath];
-      // Per-subject paths that may live OUTSIDE systemPath via overrides
-      // also need to be hidden from tools.
-      for (const p of [this._sessionsPath, this._skillsPath, this._agentsPath, this._configPath]) {
-        if (p && !isUnderSystem(p, this._systemPath)) hidePaths.push(p);
-      }
-      this._toolsFiles = new FilteredFilesApi(
-        this._rootFiles,
-        combineFilters(...hidePaths.map(hideUnder)),
-      );
-    } else {
-      this._toolsFiles = new CompositeFilesApi(this._rootFiles, this._userPath);
-    }
-
-    // 3. Config + Secrets — paths are relative to systemFiles' root.
-    this._config = new ConfigManager(
-      this._systemFiles,
-      toSystemRelative(this._configPath, this._systemPath, "/"),
-    );
-    this._secrets = new SecretsManager(this._config);
-
-    // 4. Resolve provider — first registered provider wins.
-    // TODO: union of multiple providers — for now first wins.
+  /** First registered provider wins. TODO: union of multiple providers. */
+  private _resolveProvider(): ProviderV3 {
     const first = this._providers[0];
     if (!first) {
       const err = new Error("AgentRuntime: no model provider configured. Use .addModelProvider()");
       this._errorHandler(err);
       throw err;
     }
-    this._provider = first;
+    return first;
+  }
 
-    // 5. Sessions storage — paths are relative to systemFiles' root.
-    this._sessions = new FilesSessionManager(
-      this._systemFiles,
-      toSystemRelative(this._sessionsPath, this._systemPath, "/sessions"),
-    );
-
-    // 6. Resolve tools.
+  /** Walk `_toolInputs`, calling factory inputs with the agent context. */
+  private async _resolveTools(): Promise<ToolSet> {
     const tools: ToolSet = {};
     for (const input of this._toolInputs) {
       const set = typeof input === "function" ? await input(this._buildAgentContext()) : input;
       Object.assign(tools, set);
     }
-    this._resolvedTools = tools;
+    return tools;
+  }
 
-    // 7. Resolve skills (manual + folder) — relative to systemFiles' root.
-    const skills: SkillInfo[] = [...this._skills];
-    const skillsPath = toSystemRelative(this._skillsPath, this._systemPath, "/skills");
-    if (await this._systemFiles.exists(skillsPath)) {
-      for await (const entry of this._systemFiles.list(skillsPath)) {
-        if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
-        try {
-          const text = await readFile(this._systemFiles, entry.path);
-          const skill = parseSkillMarkdown(text, entry.path);
-          if (skill) skills.push(skill);
-        } catch (err) {
-          this._errorHandler(err as Error, { path: entry.path });
-        }
+  /**
+   * Connect MCP servers when configured. Returns the manager (or undefined
+   * when neither inline servers nor a config file was set).
+   */
+  private async _startMcp(): Promise<McpClientManager | undefined> {
+    if (!this._mcpServers && !this._mcpConfigFile) return undefined;
+    const mcp = new McpClientManager().setErrorHandler((e, c) =>
+      this._errorHandler(e as Error, c as AgentRuntimeErrorContext),
+    );
+    let serverConfigs = this._mcpServers;
+    if (this._mcpConfigFile) {
+      try {
+        const cfg = await this._requireConfig().load<{
+          servers: Record<string, McpServerConfig>;
+        }>(this._mcpConfigFile);
+        if (cfg?.servers) serverConfigs = { ...serverConfigs, ...cfg.servers };
+      } catch (err) {
+        this._errorHandler(err as Error, { path: this._mcpConfigFile });
       }
     }
-    this._resolvedSkills = skills;
+    if (serverConfigs) await mcp.loadServers(serverConfigs);
+    return mcp;
+  }
 
-    // 8. MCP.
-    if (this._mcpServers || this._mcpConfigFile) {
-      this._mcp = new McpClientManager().setErrorHandler((e, c) =>
-        this._errorHandler(e as Error, c as AgentRuntimeErrorContext),
-      );
-      let serverConfigs = this._mcpServers;
-      if (this._mcpConfigFile) {
-        try {
-          const cfg = await this._config.load<{ servers: Record<string, McpServerConfig> }>(
-            this._mcpConfigFile,
-          );
-          if (cfg?.servers) serverConfigs = { ...serverConfigs, ...cfg.servers };
-        } catch (err) {
-          this._errorHandler(err as Error, { path: this._mcpConfigFile });
-        }
-      }
-      if (serverConfigs) {
-        await this._mcp.loadServers(serverConfigs);
-      }
-    }
-
-    // 9. Agent definitions from disk (optional) — relative to systemFiles.
-    const agentsPath = toSystemRelative(this._agentsPath, this._systemPath, "/agents");
-    if (await this._systemFiles.exists(agentsPath)) {
-      for await (const entry of this._systemFiles.list(agentsPath)) {
-        if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
-        try {
-          const text = await readFile(this._systemFiles, entry.path);
-          const def = parseAgentMarkdown(text, entry.name.replace(/\.md$/, ""));
-          if (def && !this._agents.has(def.name)) {
-            this._agents.set(def.name, new Agent(def, this));
-          }
-        } catch (err) {
-          this._errorHandler(err as Error, { path: entry.path });
-        }
-      }
-    }
-
-    this._built = true;
-    return this;
+  private _requireConfig(): ConfigManager {
+    if (!this._config) throw new Error("unreachable");
+    return this._config;
   }
 
   // ─── Agent definitions ─────────────────────────────────────────────────
@@ -402,37 +374,39 @@ export class AgentRuntime {
    * ```
    */
   createAgent(def: AgentDefinition): Agent {
-    if (this._agents.has(def.name)) {
-      throw new Error(`AgentRuntime: agent already registered: ${def.name}`);
-    }
-    const agent = new Agent(def, this);
-    this._agents.set(def.name, agent);
-    return agent;
+    return this._agentCatalog.register(def, this);
   }
 
   /** Return a registered Agent by name, or `undefined`. */
   getAgent(name: string): Agent | undefined {
-    return this._agents.get(name);
+    return this._agentCatalog.get(name);
   }
 
   /** Return all registered Agents. */
   agents(): Agent[] {
-    return [...this._agents.values()];
+    return this._agentCatalog.all();
   }
 
   // ─── Sessions ──────────────────────────────────────────────────────────
 
-  /** Resume an existing session by id. */
+  /**
+   * Resume an existing session by id.
+   *
+   * The agent name is not yet persisted as a structured field, so the
+   * session is bound to a synthetic `__resumed__` Agent unless the caller
+   * has previously registered an agent with the matching name via
+   * {@link AgentRuntime#createAgent}. Once the persistence format records
+   * the agent name, this resolution becomes deterministic.
+   */
   async loadSession(sessionId: string): Promise<Session> {
     this._assertBuilt();
-    const tree = await this._requireSessions().load(sessionId);
-    // Resumed sessions don't have a bound Agent definition unless the
-    // caller threads one through. Use a synthetic "default" agent if no
-    // matching one was registered. The caller can rebind via Session#bind
-    // (not implemented here yet — TODO when it surfaces a real use case).
-    const def: AgentDefinition = { name: "__resumed__" };
-    const agent = new Agent(def, this);
-    return new Session(agent, this, sessionId, tree);
+    const existingState = await this._requireSessions().load(sessionId);
+    // Best-effort: if the persisted state's `agent` prop is a known agent,
+    // bind the resumed Session to it. Otherwise fall back to a synthetic.
+    const persistedAgentName = (existingState.props?.agent as string | undefined) ?? undefined;
+    const known = persistedAgentName ? this._agentCatalog.get(persistedAgentName) : undefined;
+    const agent = known ?? new Agent({ name: "__resumed__" }, this);
+    return agent.createSession({ sessionId, existingState });
   }
 
   /** List session metadata (id, title, updatedAt) — newest first. */
@@ -614,74 +588,4 @@ export class AgentRuntime {
       model: "",
     };
   }
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────────
-
-function normalizeFolderPath(path: string): string {
-  let p = path.startsWith("/") ? path : `/${path}`;
-  if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
-  return p;
-}
-
-/**
- * `true` if `subPath` is the same as `systemPath` or lives under it.
- * Used to decide whether a per-subject override needs to be hidden from
- * the tools view (overrides outside systemPath are reachable via the
- * root and must be filtered out explicitly).
- */
-function isUnderSystem(subPath: string, systemPath: string): boolean {
-  if (subPath === systemPath) return true;
-  return subPath.startsWith(`${systemPath}/`);
-}
-
-/**
- * Translate an absolute per-subject path into a path relative to
- * systemFiles' root (which is `systemPath` after the `CompositeFilesApi`
- * rebase). If the override lives outside `systemPath`, return it
- * unchanged — system code passes it to the *underlying* `rootFiles` via
- * the system view (which delegates outside the rebase to the same
- * backend, just through the composite's mount logic).
- *
- * `defaultRelative` is used when the override is undefined.
- */
-function toSystemRelative(
-  override: string | undefined,
-  systemPath: string,
-  defaultRelative: string,
-): string {
-  if (override === undefined) return defaultRelative;
-  if (override === systemPath) return "/";
-  if (override.startsWith(`${systemPath}/`)) {
-    return override.slice(systemPath.length);
-  }
-  return override;
-}
-
-async function readFile(files: FilesApi, path: string): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of files.read(path)) chunks.push(chunk);
-  const total = chunks.reduce((acc, c) => acc + c.byteLength, 0);
-  const merged = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    merged.set(c, off);
-    off += c.byteLength;
-  }
-  return new TextDecoder().decode(merged);
-}
-
-/**
- * Parse an Agent definition file (markdown with key=value frontmatter
- * delimited by `---` lines). Falls back to no definition if the file is
- * not recognizable as such — the caller treats `null` as "skip".
- */
-function parseAgentMarkdown(text: string, fallbackName: string): AgentDefinition | null {
-  // Reuse the skill markdown layout (frontmatter parser + body) but the
-  // shape is intentionally similar — both are key/value config files.
-  const parsed = parseSkillMarkdown(text, fallbackName);
-  if (!parsed) return null;
-  const def: AgentDefinition = { name: parsed.name ?? fallbackName };
-  if (parsed.description) def.systemPrompt = parsed.content ?? parsed.description;
-  return def;
 }
