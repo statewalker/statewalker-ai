@@ -1,17 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   createAgentNodeFactory,
-  markdownToSession,
   NodeType,
-  type Session,
+  type SessionState,
   type SummarySection,
-  sessionToMarkdown,
   type TurnGroup,
 } from "../../src/state/index.js";
+import { markdownToSession, sessionToMarkdown } from "../../src/state/session-serialization.js";
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
 describe("TurnGroup accessors", () => {
@@ -106,7 +105,7 @@ describe("TurnGroup derived accessors", () => {
   });
 });
 
-describe("Session.allTurns", () => {
+describe("SessionState.allTurns", () => {
   it("descends into nested groups and preserves document order", () => {
     const session = makeSession();
     const t0 = session.addTurn();
@@ -161,7 +160,7 @@ describe("TurnGroup markdown round-trip", () => {
 
     const factory = createAgentNodeFactory();
     const md = await sessionToMarkdown(session);
-    const restored = (await markdownToSession(md, factory)) as Session;
+    const restored = (await markdownToSession(md, factory)) as SessionState;
 
     const restoredGroup = restored.children.find((c) => c.id === group.id) as TurnGroup;
     expect(restoredGroup).toBeDefined();

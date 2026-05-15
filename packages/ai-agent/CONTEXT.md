@@ -20,7 +20,7 @@ A *runtime instance* bound to one Agent. Owns the conversation tree, inbox, per-
 
 **SessionState**:
 The persisted state of one Session — the tree of Turns, Messages, ToolCalls, and TurnGroups. Pure data; a typed view over `TreeNode`. Lives at `state/session-state.ts`. The runtime Session holds it as `.state`.
-_Avoid_: ConversationTree, SessionNode. The deprecated `Session` alias is re-exported from `@statewalker/ai-agent/state` for one cycle to let external consumers migrate; new code SHOULD use `SessionState` directly.
+_Avoid_: ConversationTree, SessionNode.
 
 **Turn**:
 One inbox-message exchange — opens with a user message, accumulates agent messages, tool calls, and tool results, closes when streaming finishes. Exactly one Turn per inbox message (invariant of the agent loop).

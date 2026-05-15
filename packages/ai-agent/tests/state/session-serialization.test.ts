@@ -1,22 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   createAgentNodeFactory,
-  jsonToTree,
   Message,
-  markdownToSession,
   NodeType,
-  Session,
-  sessionToMarkdown,
+  SessionState,
   ToolCall,
   Turn,
-  treeToJson,
 } from "../../src/state/index.js";
+import { jsonToTree, treeToJson } from "../../src/state/serialization/index.js";
+import { markdownToSession, sessionToMarkdown } from "../../src/state/session-serialization.js";
 
 const factory = createAgentNodeFactory();
 
 /** Build a realistic session with object props for round-trip testing. */
-function buildSession(): Session {
-  const session = factory<Session>({ type: NodeType.session });
+function buildSession(): SessionState {
+  const session = factory<SessionState>({ type: NodeType.session });
 
   const turn = session.addTurn({ turnNumber: 1 });
   turn.addUserMessage("What time is it?");
@@ -56,13 +54,13 @@ function buildSession(): Session {
   return session;
 }
 
-describe("Session serialization — JSON round-trip", () => {
+describe("SessionState serialization — JSON round-trip", () => {
   it("preserves tree structure and typed nodes", () => {
     const session = buildSession();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, factory) as Session;
+    const restored = jsonToTree(json, factory) as SessionState;
 
-    expect(restored).toBeInstanceOf(Session);
+    expect(restored).toBeInstanceOf(SessionState);
     expect(restored.turns).toHaveLength(1);
 
     const turn = restored.turns[0] as Turn;
@@ -86,7 +84,7 @@ describe("Session serialization — JSON round-trip", () => {
   it("preserves object props (usage, providerMetadata, args)", () => {
     const session = buildSession();
     const json = treeToJson(session);
-    const restored = jsonToTree(json, factory) as Session;
+    const restored = jsonToTree(json, factory) as SessionState;
 
     const turn = restored.turns[0] as Turn;
     expect(turn.usage).toEqual({ input: 150, output: 80, cacheRead: 20 });
@@ -116,13 +114,13 @@ describe("Session serialization — JSON round-trip", () => {
   });
 });
 
-describe("Session serialization — Markdown round-trip", () => {
+describe("SessionState serialization — Markdown round-trip", () => {
   it("preserves tree structure and typed nodes", async () => {
     const session = buildSession();
     const md = await sessionToMarkdown(session);
-    const restored = (await markdownToSession(md, factory)) as Session;
+    const restored = (await markdownToSession(md, factory)) as SessionState;
 
-    expect(restored).toBeInstanceOf(Session);
+    expect(restored).toBeInstanceOf(SessionState);
     expect(restored.turns).toHaveLength(1);
 
     const turn = restored.turns[0] as Turn;
@@ -143,7 +141,7 @@ describe("Session serialization — Markdown round-trip", () => {
   it("preserves object props through markdown headers", async () => {
     const session = buildSession();
     const md = await sessionToMarkdown(session);
-    const restored = (await markdownToSession(md, factory)) as Session;
+    const restored = (await markdownToSession(md, factory)) as SessionState;
 
     const turn = restored.turns[0] as Turn;
 

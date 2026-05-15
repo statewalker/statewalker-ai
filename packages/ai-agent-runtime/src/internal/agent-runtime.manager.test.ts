@@ -153,7 +153,7 @@ describe("AgentRuntimeManager", () => {
       config: {
         command: "node",
         args: [],
-      } as unknown as import("@statewalker/ai-agent").McpServerConfig,
+      } as unknown as import("@statewalker/ai-agent/runtime").McpServerConfig,
     });
     await vi.runAllTimersAsync();
     expect(buildSpy).toHaveBeenCalledTimes(4);

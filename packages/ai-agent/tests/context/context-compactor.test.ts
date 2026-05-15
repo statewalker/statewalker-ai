@@ -10,17 +10,17 @@ import { createDefaultElisionPolicy } from "../../src/context/tool-elision.js";
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   type TurnGroup,
 } from "../../src/state/index.js";
 import type { LogMessage } from "../../src/state/log-message.js";
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
-function addTurnWithLoad(session: Session, load: number, userText = "q") {
+function addTurnWithLoad(session: SessionState, load: number, userText = "q") {
   const t = session.addTurn();
   t.addUserMessage(userText);
   const msg = t.addAgentMessage();

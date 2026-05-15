@@ -21,11 +21,11 @@ Each Session owns one **`ContextWindow`** — the module that, given the current
 | Export Path | Description |
 |---|---|
 | `@statewalker/ai-agent/runtime` | `AgentRuntime`, `Agent`, `Session`, runtime types and FilesApi helpers (`buildToolsView`, `hideUnder`, `insideSubtree`). The official entry point. |
-| `@statewalker/ai-agent` | Re-exports `state`, `controller`, `mcp`, `skills`, `context`, plus a few specific tool creators. |
-| `@statewalker/ai-agent/state` | `TreeNode`, `SessionState` (with `Session` as a `@deprecated` alias), `Turn`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, the stream serializer (`serialize` / `deserialize`), tree factory. |
+| `@statewalker/ai-agent/state` | `TreeNode`, `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, `NodeType`, `LogMessage`, `createAgentNodeFactory`, tree types. Explicit per-symbol exports; serialization helpers live at `/state/serialization` and `/state/session-serialization` (deep import) — they are not part of the published surface. |
 | `@statewalker/ai-agent/models` | `ModelManager`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. `ModelStateStore` implements `ProviderV3` directly; use `ModelManager#provider` to pass it to `addModelProvider()`. |
-| `@statewalker/ai-agent/config` | `ConfigManager`, `SecretsManager`, `AgentContext` interface. |
 | `@statewalker/ai-agent/tools` | File-system tools (`createFileTools`) and path utilities. |
+
+The bare `@statewalker/ai-agent` root is intentionally empty — go through one of the sub-paths above. Internal modules (`context`, `mcp`, `skills`, `config`, `sessions`) are no longer reachable; they're implementation detail. The `Session` deprecated alias previously re-exported from `/state` was removed; use `SessionState` directly.
 
 ## Quick start
 

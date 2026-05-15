@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { selectAll } from "../../src/context/select-messages.js";
-import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
+import { createAgentNodeFactory, type SessionState } from "../../src/state/index.js";
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: "session" }) as Session;
+  return factory({ type: "session" }) as SessionState;
 }
 
 describe("selectAll", () => {

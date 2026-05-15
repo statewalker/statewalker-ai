@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ContentSummarizer } from "../../src/context/content-summarizer.js";
 import { selectWithCompaction } from "../../src/context/select-messages.js";
-import { createAgentNodeFactory, type Session } from "../../src/state/index.js";
+import { createAgentNodeFactory, type SessionState } from "../../src/state/index.js";
 
-function makeSession(): Session {
+function makeSession(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: "session" }) as Session;
+  return factory({ type: "session" }) as SessionState;
 }
 
-function addTurnPair(session: Session, userText: string, agentText: string) {
+function addTurnPair(session: SessionState, userText: string, agentText: string) {
   const turn = session.addTurn();
   turn.addUserMessage(userText);
   turn.addAgentMessage().appendDelta(agentText);

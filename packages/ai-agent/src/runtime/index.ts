@@ -6,6 +6,7 @@ export {
   hideUnder,
   insideSubtree,
 } from "./files-split.js";
+export type { McpServerConfig } from "../mcp/mcp-client-manager.js";
 export { Session } from "./session.js";
 export type {
   AgentDefinition,

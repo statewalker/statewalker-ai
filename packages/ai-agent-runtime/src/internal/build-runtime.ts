@@ -1,5 +1,5 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
-import type { McpServerConfig } from "@statewalker/ai-agent";
+import type { McpServerConfig } from "@statewalker/ai-agent/runtime";
 import {
   AgentRuntime,
   type SkillInfo,

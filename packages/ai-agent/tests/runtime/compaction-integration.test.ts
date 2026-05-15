@@ -10,7 +10,7 @@ import { TurnDriver } from "../../src/runtime/turn-driver.js";
 import {
   createAgentNodeFactory,
   NodeType,
-  type Session,
+  type SessionState,
   SkillsModel,
   ToolRegistry,
   type TurnGroup,
@@ -43,9 +43,9 @@ beforeEach(() => {
   }));
 });
 
-function makeState(): Session {
+function makeState(): SessionState {
   const factory = createAgentNodeFactory();
-  return factory({ type: NodeType.session }) as Session;
+  return factory({ type: NodeType.session }) as SessionState;
 }
 
 function stubSummarizer(): HierarchicalSummarizer {
