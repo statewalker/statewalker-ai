@@ -1,3 +1,4 @@
+export { capabilitiesFor } from "../internal/capabilities.js";
 export * from "./catalog.js";
 export * from "./commands.js";
 export * from "./constants.js";
