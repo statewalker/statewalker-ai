@@ -1,19 +1,24 @@
-import { defineCommand } from "@statewalker/shared-commands";
+import { Command, passthrough } from "@statewalker/shared-commands";
 
 /** Opens the Models List dialog. */
-export const SelectModelCommand = defineCommand<void, void>("models-config:select-model", () => {});
+export const SelectModelCommand = Command.silent("models-config:select-model")
+  .input(passthrough<void>())
+  .output(passthrough<void>())
+  .build();
 
 /** Opens the Remote Connections dialog. */
-export const ManageRemoteConnectionsCommand = defineCommand<void, void>(
+export const ManageRemoteConnectionsCommand = Command.silent(
   "models-config:manage-remote-connections",
-  () => {},
-);
+)
+  .input(passthrough<void>())
+  .output(passthrough<void>())
+  .build();
 
 /** Opens the Local Models dialog. */
-export const ManageLocalModelsCommand = defineCommand<void, void>(
-  "models-config:manage-local-models",
-  () => {},
-);
+export const ManageLocalModelsCommand = Command.silent("models-config:manage-local-models")
+  .input(passthrough<void>())
+  .output(passthrough<void>())
+  .build();
 
 export interface RefreshConnectionModelsPayload {
   connectionId: string;
@@ -24,7 +29,9 @@ export interface RefreshConnectionModelsPayload {
  * fragment's listener writes the result into
  * `Connection.discoveredModels` and `discoveredAt`.
  */
-export const RefreshConnectionModelsCommand = defineCommand<RefreshConnectionModelsPayload, void>(
+export const RefreshConnectionModelsCommand = Command.silent(
   "models-config:refresh-connection-models",
-  () => {},
-);
+)
+  .input(passthrough<RefreshConnectionModelsPayload>())
+  .output(passthrough<void>())
+  .build();
