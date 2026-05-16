@@ -55,23 +55,25 @@ function buildChoices(connections: Connection[], starred: StarredRef[]): ChoiceR
  */
 export function ComposerStarredPicker(): ReactElement {
   const commands = useAdapter(Commands);
-  const data = useAdapterValue(Providers, (p) => ({
-    connections: p.config.connections,
-    starred: p.config.starred,
-    active: p.config.active,
-  }));
+  // Read the stable `config` reference directly — a fresh-object
+  // selector returns a new shape on every render and triggers
+  // useSyncExternalStore's infinite-update guard. `config` itself
+  // is reference-equal between Providers notifications, so it's a
+  // safe snapshot.
+  const config = useAdapterValue(Providers, (p) => p.config);
+  const { connections, starred, active } = config;
 
   const choices = useMemo(
-    () => buildChoices(data.connections, data.starred),
-    [data.connections, data.starred],
+    () => buildChoices(connections, starred),
+    [connections, starred],
   );
   const activeValue =
-    data.active.providerId && data.active.modelId
-      ? `${data.active.providerId}::${data.active.modelId}`
+    active.providerId && active.modelId
+      ? `${active.providerId}::${active.modelId}`
       : "";
 
   // No connections at all — direct CTA to configure.
-  if (data.connections.length === 0) {
+  if (connections.length === 0) {
     return (
       <button
         type="button"
