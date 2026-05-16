@@ -1,64 +1,93 @@
-import {
-  type FilesApi,
-  tryReadText,
-  writeText,
-} from "@statewalker/webrun-files";
+import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const PROVIDERS_FILENAME = "providers.json";
 
-/**
- * Canonical provider names. These are first-party Vercel-AI-SDK providers
- * with stable model catalogs. Each is configured with just an API key.
- */
-export type CanonicalProviderName = "openai" | "anthropic" | "google";
-export const CANONICAL_PROVIDERS: readonly CanonicalProviderName[] = [
-  "openai",
-  "anthropic",
-  "google",
-];
+/** Connection type. Matches the canonical Vercel-AI-SDK providers
+ * plus the generic OpenAI-compatible escape hatch for proxies and
+ * self-hosted endpoints. */
+export type ConnectionType = "openai" | "anthropic" | "google" | "openai-compatible";
 
-export interface CanonicalCredentials {
-  apiKey: string;
+/** A model's functional role tag. Resolved by a curated table; not
+ * derived from server responses. Models with no match default to
+ * `["text"]`. */
+export type Capability = "text" | "embedding" | "image";
+
+/** Discovered model entry cached on a Connection by the refresh flow. */
+export interface DiscoveredModel {
+  id: string;
+  label: string;
+  capabilities?: Capability[];
 }
 
-/** A user-defined OpenAI-compatible endpoint. */
-export interface CustomProvider {
-  id: string; // local unique id
-  name: string; // display name
-  baseURL: string;
+/** A header forwarded on every outgoing call for a Connection. */
+export interface ConnectionHeader {
+  name: string;
+  value: string;
+}
+
+/** A remote model-provider endpoint. Multiple Connections of the
+ * same canonical `type` are allowed (e.g. work + personal OpenAI). */
+export interface Connection {
+  /** Stable id. For migrated canonical entries this is the type
+   * name (`"openai"`, `"anthropic"`, `"google"`) to preserve
+   * `active.providerId`. New entries get a generated id. */
+  id: string;
+  type: ConnectionType;
+  /** Display label. */
+  name: string;
+  /** Optional URL override. Required for `openai-compatible`;
+   * optional for canonical types (used when routing through a
+   * proxy). */
+  url?: string;
   apiKey: string;
+  headers?: ConnectionHeader[];
+  /** Cached `/v1/models` response. Populated by the refresh flow
+   * in `models-config`. */
+  discoveredModels?: DiscoveredModel[];
+  /** Unix-ms timestamp of the last successful refresh. */
+  discoveredAt?: number;
+}
+
+/** A starred model — a quick-access pair shown in the chat composer. */
+export interface StarredRef {
+  connectionId: string;
+  modelId: string;
+}
+
+/** A downloaded local model. */
+export interface LocalModelRef {
+  /** Catalog key (e.g. `"local:smollm2-360m"`). */
+  key: string;
+  /** Unix-ms timestamp of download completion. */
+  downloadedAt: number;
 }
 
 export interface ProvidersConfig {
   schemaVersion: typeof SCHEMA_VERSION;
-  remote: Partial<Record<CanonicalProviderName, CanonicalCredentials>>;
-  custom: CustomProvider[];
-  active: {
-    /**
-     * Provider id: a `CanonicalProviderName`, a custom-provider `id`, or
-     * the literal string `"local"` for a WebLLM model.
-     */
-    providerId?: string;
-    /**
-     * Model id for the active provider. For `providerId === "local"` this
-     * is the WebLLM catalog key (e.g., `webllm:llama-3.2-3b`).
-     */
-    modelId?: string;
-  };
-  /** Local model state (informational; does not auto-activate). */
+  connections: Connection[];
+  starred: StarredRef[];
   local: {
-    /** Last activated catalog key — pre-selects the row in the UI. */
+    downloaded: LocalModelRef[];
+    /** Last activated local-model catalog key — pre-selects the
+     * row in the Local Models dialog. */
     lastActivatedKey?: string;
+  };
+  active: {
+    /** Connection id, or the literal `"local"` for a local model. */
+    providerId?: string;
+    /** Model id within the chosen provider; for `"local"` this is
+     * the catalog key (e.g. `"local:smollm2-360m"`). */
+    modelId?: string;
   };
 }
 
 export const emptyProvidersConfig: ProvidersConfig = {
   schemaVersion: SCHEMA_VERSION,
-  remote: {},
-  custom: [],
+  connections: [],
+  starred: [],
+  local: { downloaded: [] },
   active: {},
-  local: {},
 };
 
 function configPath(systemFolder: string): string {
@@ -66,181 +95,38 @@ function configPath(systemFolder: string): string {
   return `/${trimmed}/${PROVIDERS_FILENAME}`;
 }
 
+// ── Legacy shapes (read-only, for migration) ─────────────────────
+
 interface V1Config {
   schemaVersion?: number;
-  remote?: Record<
-    string,
-    { apiKey?: string; baseURL?: string | null } | undefined
-  >;
+  remote?: Record<string, { apiKey?: string; baseURL?: string | null } | undefined>;
   active?: { reasoning?: string };
+}
+
+interface V2OrV3Custom {
+  id: string;
+  name: string;
+  baseURL: string;
+  apiKey: string;
 }
 
 interface V2Config {
   schemaVersion: 2;
-  remote?: ProvidersConfig["remote"];
-  custom?: CustomProvider[];
-  active?: ProvidersConfig["active"];
+  remote?: Partial<Record<"openai" | "anthropic" | "google", { apiKey: string }>>;
+  custom?: V2OrV3Custom[];
+  active?: { providerId?: string; modelId?: string };
 }
 
-function migrateFromV1(parsed: V1Config): ProvidersConfig {
-  const remote: ProvidersConfig["remote"] = {};
-  const custom: CustomProvider[] = [];
-  for (const [name, cred] of Object.entries(parsed.remote ?? {})) {
-    if (!cred?.apiKey) continue;
-    if (name === "openai" || name === "anthropic" || name === "google") {
-      remote[name] = { apiKey: cred.apiKey };
-    } else if (name === "openai-compatible" && cred.baseURL) {
-      // Promote the single legacy OpenAI-compatible entry to a named custom
-      // provider so the user can rename it later.
-      custom.push({
-        id: `custom-${Date.now()}`,
-        name: "OpenAI-compatible",
-        baseURL: cred.baseURL,
-        apiKey: cred.apiKey,
-      });
-    }
-  }
-  // V1 had `active.reasoning = "<modelId>"` without a provider id. We
-  // can't reliably infer the provider, so drop the active selection on
-  // migration — the user re-picks once.
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    remote,
-    custom,
-    active: {},
-    local: {},
-  };
+interface V3Config {
+  schemaVersion: 3;
+  remote?: Partial<Record<"openai" | "anthropic" | "google", { apiKey: string }>>;
+  custom?: V2OrV3Custom[];
+  active?: { providerId?: string; modelId?: string };
+  local?: { lastActivatedKey?: string };
 }
 
-function migrateFromV2(parsed: V2Config): ProvidersConfig {
-  return {
-    schemaVersion: SCHEMA_VERSION,
-    remote: parsed.remote ?? {},
-    custom: parsed.custom ?? [],
-    active: parsed.active ?? {},
-    local: {},
-  };
-}
-
-export async function loadProvidersConfig(
-  files: FilesApi,
-  systemFolder: string,
-): Promise<ProvidersConfig> {
-  const text = await tryReadText(files, configPath(systemFolder));
-  if (text === undefined) {
-    return {
-      ...emptyProvidersConfig,
-      remote: {},
-      custom: [],
-      active: {},
-      local: {},
-    };
-  }
-  try {
-    const parsed = JSON.parse(text) as {
-      schemaVersion?: number;
-      [key: string]: unknown;
-    };
-    const version: number = parsed.schemaVersion ?? 1;
-    if (version === 1) {
-      return migrateFromV1(parsed as V1Config);
-    }
-    if (version === 2) {
-      return migrateFromV2(parsed as V2Config);
-    }
-    const v3 = parsed as Partial<ProvidersConfig>;
-    return {
-      schemaVersion: SCHEMA_VERSION,
-      remote: v3.remote ?? {},
-      custom: v3.custom ?? [],
-      active: v3.active ?? {},
-      local: v3.local ?? {},
-    };
-  } catch {
-    return {
-      ...emptyProvidersConfig,
-      remote: {},
-      custom: [],
-      active: {},
-      local: {},
-    };
-  }
-}
-
-export async function saveProvidersConfig(
-  files: FilesApi,
-  systemFolder: string,
-  config: ProvidersConfig,
-): Promise<void> {
-  const path = configPath(systemFolder);
-  const json = JSON.stringify(
-    {
-      schemaVersion: SCHEMA_VERSION,
-      remote: config.remote,
-      custom: config.custom,
-      active: config.active,
-      local: config.local,
-    },
-    null,
-    2,
-  );
-  await writeText(files, path, json);
-}
-
-/** All configured providers (canonical with apiKey + all custom entries). */
-export interface ConfiguredProvider {
-  id: string; // canonical name OR custom id
-  kind: "canonical" | "custom";
-  /** Display name. */
-  label: string;
-  /** Canonical name for `createRemoteProvider` (always one of the four). */
-  providerName: CanonicalProviderName | "openai-compatible";
-  apiKey: string;
-  baseURL: string | undefined;
-}
-
-export function listConfiguredProviders(
-  config: ProvidersConfig,
-): ConfiguredProvider[] {
-  const out: ConfiguredProvider[] = [];
-  for (const name of CANONICAL_PROVIDERS) {
-    const cred = config.remote[name];
-    if (cred?.apiKey) {
-      out.push({
-        id: name,
-        kind: "canonical",
-        label: canonicalLabel(name),
-        providerName: name,
-        apiKey: cred.apiKey,
-        baseURL: undefined,
-      });
-    }
-  }
-  for (const c of config.custom) {
-    if (c.apiKey && c.baseURL) {
-      out.push({
-        id: c.id,
-        kind: "custom",
-        label: c.name || "Untitled",
-        providerName: "openai-compatible",
-        apiKey: c.apiKey,
-        baseURL: c.baseURL,
-      });
-    }
-  }
-  return out;
-}
-
-export function findConfiguredProvider(
-  config: ProvidersConfig,
-  providerId: string | undefined,
-): ConfiguredProvider | undefined {
-  if (!providerId) return undefined;
-  return listConfiguredProviders(config).find((p) => p.id === providerId);
-}
-
-export function canonicalLabel(name: CanonicalProviderName): string {
-  switch (name) {
+function canonicalLabel(type: "openai" | "anthropic" | "google"): string {
+  switch (type) {
     case "openai":
       return "OpenAI";
     case "anthropic":
@@ -250,6 +136,145 @@ export function canonicalLabel(name: CanonicalProviderName): string {
   }
 }
 
-export function newCustomProviderId(): string {
-  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+function emitCanonicalConnections(remote: V3Config["remote"] | undefined): Connection[] {
+  if (!remote) return [];
+  const out: Connection[] = [];
+  for (const type of ["openai", "anthropic", "google"] as const) {
+    const entry = remote[type];
+    if (!entry?.apiKey) continue;
+    out.push({
+      id: type,
+      type,
+      name: canonicalLabel(type),
+      apiKey: entry.apiKey,
+    });
+  }
+  return out;
+}
+
+function emitCustomConnections(custom: V2OrV3Custom[] | undefined): Connection[] {
+  if (!custom) return [];
+  const out: Connection[] = [];
+  for (const c of custom) {
+    if (!c.apiKey || !c.baseURL) continue;
+    out.push({
+      id: c.id,
+      type: "openai-compatible",
+      name: c.name || "Untitled",
+      url: c.baseURL,
+      apiKey: c.apiKey,
+    });
+  }
+  return out;
+}
+
+function migrateFromV1(parsed: V1Config): ProvidersConfig {
+  // V1 had `active.reasoning = "<modelId>"` without a provider id, so
+  // we drop the active selection on migration. Canonical entries
+  // become Connections; an `openai-compatible` legacy entry promotes
+  // to a custom Connection.
+  const remote: V3Config["remote"] = {};
+  const custom: V2OrV3Custom[] = [];
+  for (const [name, cred] of Object.entries(parsed.remote ?? {})) {
+    if (!cred?.apiKey) continue;
+    if (name === "openai" || name === "anthropic" || name === "google") {
+      remote[name] = { apiKey: cred.apiKey };
+    } else if (name === "openai-compatible" && cred.baseURL) {
+      custom.push({
+        id: `custom-${Date.now()}`,
+        name: "OpenAI-compatible",
+        baseURL: cred.baseURL,
+        apiKey: cred.apiKey,
+      });
+    }
+  }
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    connections: [...emitCanonicalConnections(remote), ...emitCustomConnections(custom)],
+    starred: [],
+    local: { downloaded: [] },
+    active: {},
+  };
+}
+
+function migrateFromV2(parsed: V2Config): ProvidersConfig {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    connections: [
+      ...emitCanonicalConnections(parsed.remote),
+      ...emitCustomConnections(parsed.custom),
+    ],
+    starred: [],
+    local: { downloaded: [] },
+    active: parsed.active ?? {},
+  };
+}
+
+function migrateFromV3(parsed: V3Config): ProvidersConfig {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    connections: [
+      ...emitCanonicalConnections(parsed.remote),
+      ...emitCustomConnections(parsed.custom),
+    ],
+    starred: [],
+    local: {
+      downloaded: [],
+      lastActivatedKey: parsed.local?.lastActivatedKey,
+    },
+    active: parsed.active ?? {},
+  };
+}
+
+function normaliseV4(parsed: Partial<ProvidersConfig>): ProvidersConfig {
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    connections: parsed.connections ?? [],
+    starred: parsed.starred ?? [],
+    local: {
+      downloaded: parsed.local?.downloaded ?? [],
+      lastActivatedKey: parsed.local?.lastActivatedKey,
+    },
+    active: parsed.active ?? {},
+  };
+}
+
+export async function loadProvidersConfig(
+  files: FilesApi,
+  systemFolder: string,
+): Promise<ProvidersConfig> {
+  const text = await tryReadText(files, configPath(systemFolder));
+  if (text === undefined) return { ...emptyProvidersConfig };
+  try {
+    const parsed = JSON.parse(text) as {
+      schemaVersion?: number;
+      [key: string]: unknown;
+    };
+    const version: number = parsed.schemaVersion ?? 1;
+    if (version === 1) return migrateFromV1(parsed as V1Config);
+    if (version === 2) return migrateFromV2(parsed as V2Config);
+    if (version === 3) return migrateFromV3(parsed as V3Config);
+    return normaliseV4(parsed as Partial<ProvidersConfig>);
+  } catch {
+    return { ...emptyProvidersConfig };
+  }
+}
+
+export async function saveProvidersConfig(
+  files: FilesApi,
+  systemFolder: string,
+  config: ProvidersConfig,
+): Promise<void> {
+  const path = configPath(systemFolder);
+  const sanitised: ProvidersConfig = {
+    schemaVersion: SCHEMA_VERSION,
+    connections: config.connections.filter((c) => c.apiKey),
+    starred: config.starred,
+    local: {
+      downloaded: config.local.downloaded,
+      lastActivatedKey: config.local.lastActivatedKey,
+    },
+    active: config.active,
+  };
+  await writeText(files, path, JSON.stringify(sanitised, null, 2));
 }

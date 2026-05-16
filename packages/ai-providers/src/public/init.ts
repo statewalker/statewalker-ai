@@ -15,9 +15,7 @@ import { Providers } from "./providers.adapter.js";
  * depends on `ActiveModel` and `AgentRuntimeAdapter` adapters being
  * registered). Per ADR 0002 (logic-only), no React imports.
  */
-export default function initProviders(
-  ctx: Record<string, unknown>,
-): () => Promise<void> {
+export default function initProviders(ctx: Record<string, unknown>): () => Promise<void> {
   const workspace = getWorkspace(ctx);
   workspace.setAdapter(Providers);
 

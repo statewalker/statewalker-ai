@@ -1,5 +1,6 @@
 export * from "./constants.js";
 export * from "./create-remote-provider.js";
+export * from "./discovery.js";
 export * from "./extension-points.js";
 export * from "./intents.js";
 export * from "./providers.adapter.js";

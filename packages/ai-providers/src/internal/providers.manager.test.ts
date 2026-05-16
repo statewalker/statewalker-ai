@@ -1,26 +1,16 @@
-import { remoteProvidersSlot } from "../public/extension-points.js";
+import { ActiveModel, AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime";
 import { Slots } from "@statewalker/shared-slots";
 import { writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { Workspace } from "@statewalker/workspace";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ActiveModel, AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime";
+import { remoteProvidersSlot } from "../public/extension-points.js";
 import { Providers } from "../public/providers.adapter.js";
-import {
-  emptyProvidersConfig, type ProvidersConfig
-} from "../public/providers-store.js";
-
+import { emptyProvidersConfig, type ProvidersConfig } from "../public/providers-store.js";
 import { ProvidersManager } from "./providers.manager.js";
 
-async function writeProvidersJson(
-  files: MemFilesApi,
-  config: ProvidersConfig,
-): Promise<void> {
-  await writeText(
-    files,
-    "/.settings/providers.json",
-    JSON.stringify(config, null, 2),
-  );
+async function writeProvidersJson(files: MemFilesApi, config: ProvidersConfig): Promise<void> {
+  await writeText(files, "/.settings/providers.json", JSON.stringify(config, null, 2));
 }
 
 function makeWorkspace(files: MemFilesApi): Workspace {
@@ -42,15 +32,19 @@ afterEach(() => {
 });
 
 describe("ProvidersManager", () => {
-  it("contributes built-in descriptors for each configured remote provider", async () => {
+  it("contributes one descriptor per Connection", async () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      remote: {
-        openai: { apiKey: "sk-openai" },
-        anthropic: { apiKey: "sk-anthropic" },
-      },
-      active: {},
+      connections: [
+        { id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" },
+        {
+          id: "anthropic",
+          type: "anthropic",
+          name: "Anthropic",
+          apiKey: "sk-anthropic",
+        },
+      ],
     });
     const ws = makeWorkspace(files);
     const slots = ws.requireAdapter(Slots);
@@ -59,13 +53,45 @@ describe("ProvidersManager", () => {
     await ws.open();
     await vi.runAllTimersAsync();
 
-    const descriptors =
-      slots.getSnapshot(remoteProvidersSlot);
-    expect(descriptors.map((d) => d.id).sort()).toEqual([
-      "anthropic",
-      "openai",
-    ]);
+    const descriptors = slots.getSnapshot(remoteProvidersSlot);
+    expect(descriptors.map((d) => d.id).sort()).toEqual(["anthropic", "openai"]);
     expect(descriptors.find((d) => d.id === "openai")?.kind).toBe("canonical");
+
+    await manager.close();
+  });
+
+  it("produces two distinct descriptors for two Connections of the same canonical type", async () => {
+    const files = new MemFilesApi();
+    await writeProvidersJson(files, {
+      ...emptyProvidersConfig,
+      connections: [
+        {
+          id: "openai-work",
+          type: "openai",
+          name: "OpenAI (work)",
+          apiKey: "sk-work",
+        },
+        {
+          id: "openai-personal",
+          type: "openai",
+          name: "OpenAI (personal)",
+          apiKey: "sk-personal",
+        },
+      ],
+    });
+    const ws = makeWorkspace(files);
+    const slots = ws.requireAdapter(Slots);
+
+    const manager = new ProvidersManager({ workspace: ws });
+    await ws.open();
+    await vi.runAllTimersAsync();
+
+    const descriptors = slots.getSnapshot(remoteProvidersSlot);
+    expect(descriptors).toHaveLength(2);
+    const ids = descriptors.map((d) => d.id).sort();
+    expect(ids).toEqual(["openai-personal", "openai-work"]);
+    expect(descriptors.find((d) => d.id === "openai-work")?.label).toBe("OpenAI (work)");
+    expect(descriptors.find((d) => d.id === "openai-personal")?.label).toBe("OpenAI (personal)");
 
     await manager.close();
   });
@@ -74,50 +100,44 @@ describe("ProvidersManager", () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      remote: { openai: { apiKey: "sk-openai" } },
-      active: {},
+      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
     });
     const ws = makeWorkspace(files);
     const slots = ws.requireAdapter(Slots);
 
     const manager = new ProvidersManager({ workspace: ws });
 
-    // Cycle 1.
     await ws.open();
     await vi.runAllTimersAsync();
-    expect(
-      slots.getSnapshot(remoteProvidersSlot).length,
-    ).toBe(1);
+    expect(slots.getSnapshot(remoteProvidersSlot).length).toBe(1);
 
-    // Unload — slot must clear.
     await ws.close();
-    expect(
-      slots.getSnapshot(remoteProvidersSlot).length,
-    ).toBe(0);
+    expect(slots.getSnapshot(remoteProvidersSlot).length).toBe(0);
 
-    // Edit providers.json off-cycle to add Anthropic; cycle 2 picks it up.
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      remote: {
-        openai: { apiKey: "sk-openai" },
-        anthropic: { apiKey: "sk-anthropic" },
-      },
-      active: {},
+      connections: [
+        { id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" },
+        {
+          id: "anthropic",
+          type: "anthropic",
+          name: "Anthropic",
+          apiKey: "sk-anthropic",
+        },
+      ],
     });
     await ws.open();
     await vi.runAllTimersAsync();
-    expect(
-      slots.getSnapshot(remoteProvidersSlot).length,
-    ).toBe(2);
+    expect(slots.getSnapshot(remoteProvidersSlot).length).toBe(2);
 
     await manager.close();
   });
 
-  it("writes ActiveModel when config.active resolves to a configured provider", async () => {
+  it("writes ActiveModel when config.active resolves to a configured Connection", async () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      remote: { openai: { apiKey: "sk-openai" } },
+      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
       active: { providerId: "openai", modelId: "gpt-4o" },
     });
     const ws = makeWorkspace(files);
@@ -152,12 +172,11 @@ describe("ProvidersManager", () => {
     await manager.close();
   });
 
-  it("publishes `no-active-model` when providers exist but selection is empty", async () => {
+  it("publishes `no-active-model` when Connections exist but selection is empty", async () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      remote: { openai: { apiKey: "sk-openai" } },
-      active: {},
+      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
     });
     const ws = makeWorkspace(files);
     const adapter = ws.requireAdapter(AgentRuntimeAdapter);
@@ -185,7 +204,7 @@ describe("ProvidersManager", () => {
 
     await providers.saveProviders({
       ...emptyProvidersConfig,
-      remote: { openai: { apiKey: "sk-openai" } },
+      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
       active: { providerId: "openai", modelId: "gpt-4o" },
     });
     await vi.runAllTimersAsync();

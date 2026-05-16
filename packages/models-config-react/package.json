@@ -1,16 +1,18 @@
 {
-  "name": "@statewalker/ai-providers-react",
+  "name": "@statewalker/models-config-react",
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "AI providers renderer fragment: provider config dialog, model picker UI.",
+  "description": "Renderer fragment for the models-config dialogs and composer picker. Pairs with @statewalker/models-config (logic).",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",
     "./fragment": "./src/fragment.ts",
     "./styles": "./src/styles.css"
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
@@ -18,28 +20,41 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@hookform/resolvers": "^5.0.1",
-    "@statewalker/shadcn-react": "workspace:*",
-    "@statewalker/ai-agent": "workspace:*",
+    "@json-render/core": "0.18.0",
+    "@json-render/react": "0.18.0",
+    "@json-render/shadcn": "0.18.0",
+    "@repo/chat-mini.chat-react": "workspace:*",
+    "@statewalker/ai-agent-runtime": "workspace:*",
     "@statewalker/ai-providers": "workspace:*",
+    "@statewalker/catalog-registry": "workspace:*",
     "@statewalker/core-react": "workspace:*",
+    "@statewalker/models-config": "workspace:*",
+    "@statewalker/shadcn-react": "workspace:*",
+    "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "workspace:*",
     "@statewalker/workspace": "workspace:*",
-    "lucide-react": "catalog:",
-    "react-hook-form": "^7.54.3",
-    "zod": "catalog:"
+    "lucide-react": "catalog:"
   },
-  "peerDependencies": {"react": ">=18", "react-dom": ">=18"},
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
     "@types/react": "catalog:",
     "@types/react-dom": "catalog:",
+    "jsdom": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
-  "sideEffects": ["**/*.css"],
-  "publishConfig": {"access": "public"}
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

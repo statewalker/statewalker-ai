@@ -2,26 +2,29 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
 import {
   emptyProvidersConfig,
-  listConfiguredProviders,
   loadProvidersConfig,
   type ProvidersConfig,
   saveProvidersConfig,
 } from "./providers-store.js";
 
 describe("providers-store round-trip", () => {
-  it("saves and reloads ProvidersConfig from <systemFolder>/providers.json", async () => {
+  it("saves and reloads v4 ProvidersConfig", async () => {
     const files = new MemFilesApi();
     const config: ProvidersConfig = {
       ...emptyProvidersConfig,
-      remote: {
-        openai: { apiKey: "sk-test" },
-        anthropic: { apiKey: "sk-ant-test" },
-      },
-      custom: [
+      connections: [
+        { id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-test" },
+        {
+          id: "anthropic",
+          type: "anthropic",
+          name: "Anthropic",
+          apiKey: "sk-ant-test",
+        },
         {
           id: "custom-abc",
+          type: "openai-compatible",
           name: "LM Studio",
-          baseURL: "http://localhost:1234/v1",
+          url: "http://localhost:1234/v1",
           apiKey: "sk-anything",
         },
       ],
@@ -30,59 +33,51 @@ describe("providers-store round-trip", () => {
     await saveProvidersConfig(files, ".settings", config);
 
     const reloaded = await loadProvidersConfig(files, ".settings");
-    expect(reloaded.remote.openai?.apiKey).toBe("sk-test");
-    expect(reloaded.custom).toHaveLength(1);
-    expect(reloaded.custom[0]?.baseURL).toBe("http://localhost:1234/v1");
+    expect(reloaded.schemaVersion).toBe(4);
+    expect(reloaded.connections).toHaveLength(3);
+    expect(reloaded.connections[0]?.apiKey).toBe("sk-test");
+    expect(reloaded.connections[2]?.url).toBe("http://localhost:1234/v1");
     expect(reloaded.active.providerId).toBe("openai");
     expect(reloaded.active.modelId).toBe("gpt-4o-mini");
   });
 
-  it("returns empty config when providers.json does not exist", async () => {
+  it("returns empty v4 config when providers.json does not exist", async () => {
     const files = new MemFilesApi();
     const reloaded = await loadProvidersConfig(files, ".settings");
-    expect(Object.keys(reloaded.remote)).toHaveLength(0);
-    expect(reloaded.custom).toEqual([]);
+    expect(reloaded.schemaVersion).toBe(4);
+    expect(reloaded.connections).toEqual([]);
+    expect(reloaded.starred).toEqual([]);
+    expect(reloaded.local.downloaded).toEqual([]);
     expect(reloaded.active.providerId).toBeUndefined();
   });
 
-  it("listConfiguredProviders returns canonical entries with stored API keys plus custom entries", () => {
-    const config: ProvidersConfig = {
-      ...emptyProvidersConfig,
-      remote: {
-        openai: { apiKey: "sk-test" },
-        anthropic: { apiKey: "" }, // empty → excluded
-      },
-      custom: [
-        {
-          id: "custom-1",
-          name: "Custom 1",
-          baseURL: "http://localhost:8000/v1",
-          apiKey: "sk-1",
-        },
-      ],
-      active: {},
-    };
-    const list = listConfiguredProviders(config);
-    expect(list).toHaveLength(2);
-    expect(list[0]?.id).toBe("openai");
-    expect(list[0]?.kind).toBe("canonical");
-    expect(list[1]?.id).toBe("custom-1");
-    expect(list[1]?.kind).toBe("custom");
-  });
-
-  it("normalizes the systemFolder argument when computing the path", async () => {
+  it("drops connections without apiKey on save", async () => {
     const files = new MemFilesApi();
     const config: ProvidersConfig = {
       ...emptyProvidersConfig,
-      remote: { openai: { apiKey: "sk" } },
-      active: {},
+      connections: [
+        { id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-test" },
+        { id: "anthropic", type: "anthropic", name: "Anthropic", apiKey: "" },
+      ],
+    };
+    await saveProvidersConfig(files, ".settings", config);
+    const reloaded = await loadProvidersConfig(files, ".settings");
+    expect(reloaded.connections).toHaveLength(1);
+    expect(reloaded.connections[0]?.id).toBe("openai");
+  });
+
+  it("normalises the systemFolder argument when computing the path", async () => {
+    const files = new MemFilesApi();
+    const config: ProvidersConfig = {
+      ...emptyProvidersConfig,
+      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk" }],
     };
     await saveProvidersConfig(files, "/.settings/", config);
     const reloaded = await loadProvidersConfig(files, ".settings");
-    expect(reloaded.remote.openai?.apiKey).toBe("sk");
+    expect(reloaded.connections[0]?.apiKey).toBe("sk");
   });
 
-  it("migrates a v1 config with `openai-compatible` entry into a custom provider", async () => {
+  it("migrates a v1 config with an `openai-compatible` entry into a Connection", async () => {
     const files = new MemFilesApi();
     const v1 = {
       schemaVersion: 1,
@@ -95,20 +90,18 @@ describe("providers-store round-trip", () => {
       },
       active: { reasoning: "gpt-4o-mini" },
     };
-    await files.write("/.settings/providers.json", [
-      new TextEncoder().encode(JSON.stringify(v1)),
-    ]);
+    await files.write("/.settings/providers.json", [new TextEncoder().encode(JSON.stringify(v1))]);
     const reloaded = await loadProvidersConfig(files, ".settings");
-    expect(reloaded.schemaVersion).toBe(3);
-    expect(reloaded.remote.openai?.apiKey).toBe("sk-1");
-    expect(reloaded.custom).toHaveLength(1);
-    expect(reloaded.custom[0]?.baseURL).toBe("http://x:1/v1");
-    // v1 active.reasoning has no provider id → drop on migration.
+    expect(reloaded.schemaVersion).toBe(4);
+    const openai = reloaded.connections.find((c) => c.id === "openai");
+    expect(openai?.apiKey).toBe("sk-1");
+    const compat = reloaded.connections.find((c) => c.type === "openai-compatible");
+    expect(compat?.url).toBe("http://x:1/v1");
+    // V1 active.reasoning had no provider id → drop on migration.
     expect(reloaded.active.providerId).toBeUndefined();
-    expect(reloaded.local).toEqual({});
   });
 
-  it("migrates a v2 config to v3 by adding an empty local block", async () => {
+  it("migrates a v2 config to v4 connections", async () => {
     const files = new MemFilesApi();
     const v2 = {
       schemaVersion: 2,
@@ -123,31 +116,130 @@ describe("providers-store round-trip", () => {
       ],
       active: { providerId: "openai", modelId: "gpt-4o-mini" },
     };
-    await files.write("/.settings/providers.json", [
-      new TextEncoder().encode(JSON.stringify(v2)),
-    ]);
+    await files.write("/.settings/providers.json", [new TextEncoder().encode(JSON.stringify(v2))]);
     const reloaded = await loadProvidersConfig(files, ".settings");
-    expect(reloaded.schemaVersion).toBe(3);
-    expect(reloaded.remote.openai?.apiKey).toBe("sk-1");
-    expect(reloaded.custom).toHaveLength(1);
+    expect(reloaded.schemaVersion).toBe(4);
+    expect(reloaded.connections).toHaveLength(2);
     expect(reloaded.active.providerId).toBe("openai");
     expect(reloaded.active.modelId).toBe("gpt-4o-mini");
-    expect(reloaded.local).toEqual({});
+    expect(reloaded.local.downloaded).toEqual([]);
   });
 
-  it("round-trips a v3 config preserving the local.lastActivatedKey field", async () => {
+  it("migrates a v3 config to v4 preserving canonical + custom + active + lastActivatedKey", async () => {
+    const files = new MemFilesApi();
+    const v3 = {
+      schemaVersion: 3,
+      remote: {
+        openai: { apiKey: "sk-openai" },
+        anthropic: { apiKey: "sk-ant" },
+      },
+      custom: [
+        {
+          id: "lmstudio",
+          name: "LM Studio",
+          baseURL: "http://localhost:1234/v1",
+          apiKey: "sk-c",
+        },
+      ],
+      active: { providerId: "openai", modelId: "gpt-4o" },
+      local: { lastActivatedKey: "webllm:llama-3.2-3b" },
+    };
+    await files.write("/.settings/providers.json", [new TextEncoder().encode(JSON.stringify(v3))]);
+    const reloaded = await loadProvidersConfig(files, ".settings");
+    expect(reloaded.schemaVersion).toBe(4);
+    expect(reloaded.connections).toHaveLength(3);
+    // Canonical entries migrated with deterministic ids.
+    const openai = reloaded.connections.find((c) => c.id === "openai");
+    expect(openai?.type).toBe("openai");
+    expect(openai?.name).toBe("OpenAI");
+    expect(openai?.apiKey).toBe("sk-openai");
+    // Custom entries preserved their id.
+    const lm = reloaded.connections.find((c) => c.id === "lmstudio");
+    expect(lm?.type).toBe("openai-compatible");
+    expect(lm?.url).toBe("http://localhost:1234/v1");
+    // active.providerId survives because canonical ids are deterministic.
+    expect(reloaded.active.providerId).toBe("openai");
+    expect(reloaded.local.lastActivatedKey).toBe("webllm:llama-3.2-3b");
+    expect(reloaded.local.downloaded).toEqual([]);
+    expect(reloaded.starred).toEqual([]);
+  });
+
+  it("migrates an empty v3 config to empty v4 connections", async () => {
+    const files = new MemFilesApi();
+    const v3 = {
+      schemaVersion: 3,
+      remote: {},
+      custom: [],
+      active: {},
+      local: {},
+    };
+    await files.write("/.settings/providers.json", [new TextEncoder().encode(JSON.stringify(v3))]);
+    const reloaded = await loadProvidersConfig(files, ".settings");
+    expect(reloaded.schemaVersion).toBe(4);
+    expect(reloaded.connections).toEqual([]);
+    expect(reloaded.starred).toEqual([]);
+    expect(reloaded.local.downloaded).toEqual([]);
+    expect(reloaded.local.lastActivatedKey).toBeUndefined();
+  });
+
+  it("round-trips headers and discoveredModels", async () => {
     const files = new MemFilesApi();
     const config: ProvidersConfig = {
       ...emptyProvidersConfig,
-      remote: { openai: { apiKey: "sk-1" } },
-      active: { providerId: "local", modelId: "webllm:llama-3.2-3b" },
-      local: { lastActivatedKey: "webllm:llama-3.2-3b" },
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-test",
+          headers: [
+            { name: "X-Org", value: "acme" },
+            { name: "X-Trace", value: "1" },
+          ],
+          discoveredModels: [
+            { id: "gpt-4o", label: "GPT-4o", capabilities: ["text"] },
+            {
+              id: "text-embedding-3-small",
+              label: "text-embedding-3-small",
+              capabilities: ["embedding"],
+            },
+          ],
+          discoveredAt: 1_700_000_000_000,
+        },
+      ],
     };
     await saveProvidersConfig(files, ".settings", config);
     const reloaded = await loadProvidersConfig(files, ".settings");
-    expect(reloaded.schemaVersion).toBe(3);
-    expect(reloaded.active.providerId).toBe("local");
-    expect(reloaded.active.modelId).toBe("webllm:llama-3.2-3b");
-    expect(reloaded.local.lastActivatedKey).toBe("webllm:llama-3.2-3b");
+    expect(reloaded.connections[0]?.headers).toEqual([
+      { name: "X-Org", value: "acme" },
+      { name: "X-Trace", value: "1" },
+    ]);
+    expect(reloaded.connections[0]?.discoveredModels).toHaveLength(2);
+    expect(reloaded.connections[0]?.discoveredAt).toBe(1_700_000_000_000);
+  });
+
+  it("round-trips starred and downloaded", async () => {
+    const files = new MemFilesApi();
+    const config: ProvidersConfig = {
+      ...emptyProvidersConfig,
+      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk" }],
+      starred: [
+        { connectionId: "openai", modelId: "gpt-4o" },
+        { connectionId: "anthropic", modelId: "claude-sonnet-4-20250514" },
+      ],
+      local: {
+        downloaded: [{ key: "local:smollm2-360m", downloadedAt: 1_700_000_000_001 }],
+        lastActivatedKey: "local:smollm2-360m",
+      },
+    };
+    await saveProvidersConfig(files, ".settings", config);
+    const reloaded = await loadProvidersConfig(files, ".settings");
+    expect(reloaded.starred).toHaveLength(2);
+    expect(reloaded.starred[0]).toEqual({
+      connectionId: "openai",
+      modelId: "gpt-4o",
+    });
+    expect(reloaded.local.downloaded[0]?.key).toBe("local:smollm2-360m");
+    expect(reloaded.local.lastActivatedKey).toBe("local:smollm2-360m");
   });
 });

@@ -17,21 +17,23 @@ export interface ProviderModelInfo {
  * must close `createProvider` over its credentials so consumers can
  * call `provider.languageModel(modelId)` without re-resolving anything.
  *
- * Built-in descriptors (OpenAI, Anthropic, Google) are contributed by
- * the providers fragment itself. Custom OpenAI-compatible endpoints
- * loaded from `providers.json` produce one descriptor each. Plug-in
- * fragments contribute additional descriptors via `provideRemoteProvider`.
+ * One descriptor per `Connection` (see `providers-store.ts`). The
+ * providers fragment builds the descriptor list from
+ * `config.connections` (built-ins for canonical types,
+ * OpenAI-compatible for `type: "openai-compatible"`). Plug-in
+ * fragments contribute additional descriptors directly to the slot.
  */
 export interface ProviderDescriptor {
-  /** Stable identifier — canonical name, custom-provider id, or
-   * plug-in-supplied id. Used by `ActiveModel.providerId`. */
+  /** Stable identifier — the originating `Connection.id` for
+   * fragment-built descriptors, or a plug-in-supplied id. Used by
+   * `ActiveModel.providerId`. */
   id: string;
-  /** Display label (e.g. "OpenAI", "LM Studio"). */
+  /** Display label (the Connection's `name`, e.g. "OpenAI",
+   * "OpenAI (work)", "LM Studio"). */
   label: string;
-  /** Distinguishes built-in (canonical) descriptors from user-defined
-   * OpenAI-compatible endpoints. Plug-in fragments use their own
-   * `kind` value if needed; the providers fragment ignores the
-   * `kind` for its core flow. */
+  /** Derived from `Connection.type`: `"canonical"` for the three
+   * first-party SDK types, `"custom"` for `openai-compatible`.
+   * Plug-in fragments use whichever value fits their integration. */
   kind: "canonical" | "custom";
   /** Resolve to the actual `ProviderV3` instance. Closes over
    * credentials. May be called multiple times across rebuilds. */
@@ -39,7 +41,5 @@ export interface ProviderDescriptor {
   /** Models exposed by this provider. Used by the model picker.
    * Returning a Promise lets descriptors hit a remote catalog;
    * implementations that ship a static list return synchronously. */
-  listModels():
-    | readonly ProviderModelInfo[]
-    | Promise<readonly ProviderModelInfo[]>;
+  listModels(): readonly ProviderModelInfo[] | Promise<readonly ProviderModelInfo[]>;
 }

@@ -1,20 +1,21 @@
-import { composerActionsSlot } from "@repo/chat-mini.chat";
 import {
-  ActiveModel, AgentRuntimeAdapter, type ActiveModelValue
+  ActiveModel,
+  type ActiveModelValue,
+  AgentRuntimeAdapter,
 } from "@statewalker/ai-agent-runtime";
-import { settingsTabSlot } from "@statewalker/settings";
 import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import type { Workspace } from "@statewalker/workspace";
-import {
-  PROVIDERS_MODEL_PICKER_VIEW_KEY, PROVIDERS_SETTINGS_TAB_VIEW_KEY
-} from "../public/constants.js";
 import { remoteProvidersSlot } from "../public/extension-points.js";
 import { SelectActiveModelCommand, type SelectActiveModelPayload } from "../public/intents.js";
 import { Providers } from "../public/providers.adapter.js";
 import {
-  emptyProvidersConfig, loadProvidersConfig, saveProvidersConfig, type ProvidersConfig
+  type Connection,
+  emptyProvidersConfig,
+  loadProvidersConfig,
+  type ProvidersConfig,
+  saveProvidersConfig,
 } from "../public/providers-store.js";
 import type { ProviderDescriptor } from "../public/types.js";
 import { buildAnthropicDescriptor } from "./builtins/anthropic.js";
@@ -30,21 +31,16 @@ export interface ProvidersManagerOptions {
 /**
  * Re-entrant orchestrator for the providers fragment. On each
  * `workspace.onLoad`:
- *   1. Reads `providers.json` from `<systemFolder>/providers.json`.
- *   2. For each configured remote / custom provider, builds a
- *      `ProviderDescriptor` and contributes it to the
- *      `providers:remote` slot.
+ *   1. Reads `providers.json` from `<systemFolder>/providers.json`
+ *      (with automatic v1→v2→v3→v4 migration).
+ *   2. For each Connection, builds a `ProviderDescriptor` and
+ *      contributes it to the `providers:remote` slot.
  *   3. Resolves `config.active` against the slot snapshot and writes
  *      `ActiveModel`. Sets `AgentRuntimeAdapter` to `no-providers`
  *      / `no-active-model` when there's no resolvable selection.
  *
  * On `onUnload`: disposes slot contributions, clears `ActiveModel`,
- * resets the adapter to `loading`. The next `onLoad` re-reads from
- * disk and re-contributes — so user-edited providers.json
- * round-trips through the workspace lifecycle naturally.
- *
- * Lifetime-scoped: handles `runSelectActiveModel` even while closed
- * (no-op writes through to a not-yet-loaded config; ignored).
+ * resets the adapter to `loading`.
  */
 export class ProvidersManager {
   private readonly workspace: Workspace;
@@ -56,8 +52,6 @@ export class ProvidersManager {
   private readonly systemFolder: string;
   private readonly _cleanup: () => Promise<void>;
 
-  // Per-cycle disposers for the slot contributions installed at
-  // onLoad. Released on onUnload.
   private _slotCleanup: Array<() => void> = [];
   private _isLoaded = false;
 
@@ -85,32 +79,6 @@ export class ProvidersManager {
           .then(() => cmd.resolve())
           .catch((err) => cmd.reject(err));
         return true;
-      }),
-    );
-
-    // Lifetime-scoped contribution: the providers tab is always
-    // available in the settings dialog regardless of workspace
-    // state. The tab content (rendered via the core:views slot)
-    // handles the not-yet-loaded case itself.
-    register(
-      this.slots.provide(settingsTabSlot, {
-        id: "providers",
-        title: "Providers",
-        viewKey: PROVIDERS_SETTINGS_TAB_VIEW_KEY,
-        order: 10,
-      }),
-    );
-
-    // Lifetime-scoped contribution: the model picker is always
-    // present in the chat composer. The renderer (ComposerModelPicker
-    // in providers-views) handles the empty / unconfigured cases
-    // by surfacing a "Configure providers…" affordance.
-    register(
-      this.slots.provide(composerActionsSlot, {
-        id: "providers:model-picker",
-        viewKey: PROVIDERS_MODEL_PICKER_VIEW_KEY,
-        position: "leading",
-        order: 10,
       }),
     );
 
@@ -174,8 +142,6 @@ export class ProvidersManager {
   // ── Slot + ActiveModel writers ────────────────────────────────
 
   private _applyConfig(config: ProvidersConfig): void {
-    // Tear down the prior cycle's contributions; re-contribute from
-    // scratch so removed providers actually leave the slot.
     for (const dispose of this._slotCleanup) dispose();
     this._slotCleanup = [];
 
@@ -204,14 +170,17 @@ export class ProvidersManager {
     selection: SelectActiveModelPayload | ProvidersConfig["active"],
   ): void {
     const { providerId, modelId } = selection;
+    // Local models are owned by the `models-config` fragment: it
+    // writes `ActiveModel { kind: "local" }` and drives activation.
+    // This manager only handles the remote-Connection case.
+    if (providerId === "local") return;
     const resolved = resolveActive(
       this.slots.getSnapshot(remoteProvidersSlot).slice(),
       providerId,
       modelId,
     );
     if (!resolved) {
-      const noProviders =
-        this.slots.getSnapshot(remoteProvidersSlot).length === 0;
+      const noProviders = this.slots.getSnapshot(remoteProvidersSlot).length === 0;
       this.adapter._setState({
         status: noProviders ? "no-providers" : "no-active-model",
       });
@@ -220,22 +189,21 @@ export class ProvidersManager {
   }
 }
 
+function buildDescriptor(c: Connection): ProviderDescriptor {
+  switch (c.type) {
+    case "openai":
+      return buildOpenAIDescriptor(c);
+    case "anthropic":
+      return buildAnthropicDescriptor(c);
+    case "google":
+      return buildGoogleDescriptor(c);
+    case "openai-compatible":
+      return buildCustomDescriptor(c);
+  }
+}
+
 function buildDescriptors(config: ProvidersConfig): ProviderDescriptor[] {
-  const out: ProviderDescriptor[] = [];
-  if (config.remote.openai?.apiKey) {
-    out.push(buildOpenAIDescriptor(config.remote.openai.apiKey));
-  }
-  if (config.remote.anthropic?.apiKey) {
-    out.push(buildAnthropicDescriptor(config.remote.anthropic.apiKey));
-  }
-  if (config.remote.google?.apiKey) {
-    out.push(buildGoogleDescriptor(config.remote.google.apiKey));
-  }
-  for (const custom of config.custom) {
-    if (!custom.apiKey || !custom.baseURL) continue;
-    out.push(buildCustomDescriptor(custom));
-  }
-  return out;
+  return config.connections.filter((c) => c.apiKey).map((c) => buildDescriptor(c));
 }
 
 function resolveActive(
@@ -244,6 +212,10 @@ function resolveActive(
   modelId: string | undefined,
 ): ActiveModelValue | null {
   if (!providerId || !modelId) return null;
+  // `providerId === "local"` is handled by the local-models fragment
+  // by writing `ActiveModel` directly; this fragment only resolves
+  // remote connections.
+  if (providerId === "local") return null;
   const descriptor = descriptors.find((d) => d.id === providerId);
   if (!descriptor) return null;
   return {
