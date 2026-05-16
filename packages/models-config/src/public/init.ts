@@ -10,13 +10,18 @@ import {
   SelectActiveModelCommand,
 } from "@statewalker/ai-providers";
 import { dockOverlaysSlot } from "@statewalker/dock";
+import { settingsTabSlot } from "@statewalker/settings";
 import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import { getWorkspace } from "@statewalker/workspace";
 import { capabilitiesFor } from "../internal/capabilities.js";
 import { RefreshConnectionModelsCommand } from "./commands.js";
-import { COMPOSER_PICKER_VIEW_KEY, MODELS_CONFIG_OVERLAY_VIEW_KEY } from "./constants.js";
+import {
+  COMPOSER_PICKER_VIEW_KEY,
+  MODELS_CONFIG_OVERLAY_VIEW_KEY,
+  SETTINGS_TAB_VIEW_KEY,
+} from "./constants.js";
 import { LocalModels } from "./local-models.js";
 
 /**
@@ -66,6 +71,18 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
       id: "models-config:picker",
       viewKey: COMPOSER_PICKER_VIEW_KEY,
       position: "leading",
+      order: 10,
+    }),
+  );
+
+  // Slot: settings tab. Gives the user a discoverable entry point
+  // inside the existing Settings dialog — buttons that open each
+  // of the three models-config dialogs.
+  register(
+    slots.provide(settingsTabSlot, {
+      id: "models",
+      title: "Models",
+      viewKey: SETTINGS_TAB_VIEW_KEY,
       order: 10,
     }),
   );

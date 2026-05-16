@@ -4,6 +4,7 @@ import {
   COMPOSER_PICKER_VIEW_KEY,
   MODELS_CONFIG_CATALOG_ID,
   MODELS_CONFIG_OVERLAY_VIEW_KEY,
+  SETTINGS_TAB_VIEW_KEY,
 } from "@statewalker/models-config";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
@@ -11,6 +12,7 @@ import { getWorkspace } from "@statewalker/workspace";
 import { buildModelsConfigRegistry } from "../internal/build-react-catalog.js";
 import { ComposerStarredPicker } from "../internal/composer-starred-picker.js";
 import { ModelsConfigOverlayHost } from "../internal/overlay-host.js";
+import { ModelsSettingsTab } from "../internal/settings-tab.js";
 
 /**
  * Renderer-fragment init for `models-config-react`. Pairs with
@@ -58,6 +60,14 @@ export default function initModelsConfigReact(ctx: Record<string, unknown>): () 
       coreViewsSlot,
       COMPOSER_PICKER_VIEW_KEY,
       ComposerStarredPicker as unknown as ViewComponent,
+    ),
+  );
+
+  register(
+    slots.register(
+      coreViewsSlot,
+      SETTINGS_TAB_VIEW_KEY,
+      ModelsSettingsTab as unknown as ViewComponent,
     ),
   );
 
