@@ -1,29 +1,30 @@
 import { createRemoteProvider } from "../../public/create-remote-provider.js";
-import type { CustomProvider } from "../../public/providers-store.js";
-import type {
-  ProviderDescriptor,
-  ProviderModelInfo,
-} from "../../public/types.js";
+import type { Connection } from "../../public/providers-store.js";
+import type { ProviderDescriptor, ProviderModelInfo } from "../../public/types.js";
 
 /**
  * Build a `ProviderDescriptor` for a user-defined OpenAI-compatible
- * endpoint. Models are not enumerable from generic
- * OpenAI-compatible endpoints (no canonical /models route
- * guaranteed); the picker either lets the user type the model id or
- * relies on the descriptor's manual list once a fragment opts in.
- *
- * Returning an empty model list means the active-model picker for
- * this provider only shows what the user types.
+ * endpoint. Models are not enumerable from generic OpenAI-compatible
+ * endpoints (no canonical /models route guaranteed); when the
+ * Connection has a refreshed `discoveredModels` cache the descriptor
+ * returns it, otherwise an empty list — the picker falls back to
+ * free-text input.
  */
-export function buildCustomDescriptor(
-  custom: CustomProvider,
-): ProviderDescriptor {
+export function buildCustomDescriptor(c: Connection): ProviderDescriptor {
+  if (!c.url) {
+    throw new Error(`openai-compatible Connection ${c.id} requires a url (baseURL)`);
+  }
   return {
-    id: custom.id,
-    label: custom.name || "Untitled",
+    id: c.id,
+    label: c.name || "Untitled",
     kind: "custom",
     createProvider: () =>
-      createRemoteProvider("openai-compatible", custom.apiKey, custom.baseURL),
-    listModels: (): readonly ProviderModelInfo[] => [],
+      createRemoteProvider("openai-compatible", {
+        apiKey: c.apiKey,
+        baseURL: c.url,
+        headers: c.headers,
+      }),
+    listModels: (): readonly ProviderModelInfo[] =>
+      c.discoveredModels?.map((m) => ({ id: m.id, label: m.label })) ?? [],
   };
 }

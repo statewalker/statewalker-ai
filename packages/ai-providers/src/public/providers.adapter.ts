@@ -1,8 +1,5 @@
 import { BaseClass } from "@statewalker/shared-baseclass";
-import {
-  emptyProvidersConfig,
-  type ProvidersConfig,
-} from "../public/providers-store.js";
+import { emptyProvidersConfig, type ProvidersConfig } from "../public/providers-store.js";
 
 /**
  * Workspace-adapter exposing the loaded `ProvidersConfig` reactively.
@@ -22,10 +19,9 @@ export class Providers extends BaseClass {
 
   private _config: ProvidersConfig = emptyProvidersConfig;
   private _systemFolder = ".settings";
-  private _saveProviders: (next: ProvidersConfig) => Promise<void> =
-    async () => {
-      /* attached by the manager on construction */
-    };
+  private _saveProviders: (next: ProvidersConfig) => Promise<void> = async () => {
+    /* attached by the manager on construction */
+  };
   private _reload: () => Promise<void> = async () => {
     /* attached by the manager on construction */
   };

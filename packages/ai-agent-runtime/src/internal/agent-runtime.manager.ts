@@ -4,16 +4,21 @@ import { Slots } from "@statewalker/shared-slots";
 import type { Workspace } from "@statewalker/workspace";
 import { ActiveModel } from "../public/active-model.js";
 import {
-  agentMcpConnectionsSlot, agentSkillsSlot, agentToolsSlot
+  agentMcpConnectionsSlot,
+  agentSkillsSlot,
+  agentToolsSlot,
 } from "../public/extension-points.js";
 import { RebuildAgentCommand } from "../public/intents.js";
 import {
-  AgentRuntimeAdapter, type RuntimeState
+  AgentRuntimeAdapter,
+  type RuntimeState,
 } from "../public/runtime-state.js";
 import type {
-  AgentMcpConnection, AgentSkillContribution, AgentToolContribution
+  AgentMcpConnection,
+  AgentSkillContribution,
+  AgentToolContribution,
 } from "../public/types.js";
-import { buildRuntime, type BuildRuntimeInput } from "./build-runtime.js";
+import { type BuildRuntimeInput, buildRuntime } from "./build-runtime.js";
 
 const AGENT_NAME = "chat";
 const DEFAULT_SYSTEM_PROMPT = `You are a helpful assistant with access to tools for interacting with the local file system.
@@ -64,12 +69,16 @@ export class AgentRuntimeManager {
   >;
 
   private readonly _cleanup: () => Promise<void>;
-
+  private readonly _register: (
+    callback?: (() => void | Promise<void>) | undefined,
+  ) => () => Promise<void>;
   // Per-cycle state — populated on onLoad, cleared on onUnload.
   private _toolsSnap: readonly AgentToolContribution[] = [];
   private _skillsSnap: readonly AgentSkillContribution[] = [];
   private _mcpSnap: readonly AgentMcpConnection[] = [];
-  private _cycleCleanup: Array<() => void> = [];
+
+  private _cycleCleanup: () => Promise<void> = async () => {};
+
   private _isLoaded = false;
   private _generation = 0;
   private _rebuildTimer: ReturnType<typeof setTimeout> | null = null;
@@ -83,8 +92,8 @@ export class AgentRuntimeManager {
     this.activeModel = opts.workspace.requireAdapter(ActiveModel);
     this.adapter = opts.workspace.requireAdapter(AgentRuntimeAdapter);
 
-    const [register, cleanup] = newRegistry();
-    this._cleanup = cleanup;
+    [this._register, this._cleanup] = newRegistry();
+    const register = this._register;
 
     // Lifetime-scoped intent handler. Survives onUnload cycles so
     // late-arriving `runRebuildAgent` calls just no-op while closed.
@@ -111,7 +120,7 @@ export class AgentRuntimeManager {
   }
 
   async close(): Promise<void> {
-    if (this._isLoaded) this._onUnload();
+    if (this._isLoaded) await this._onUnload();
     await this._cleanup();
   }
 
@@ -121,29 +130,34 @@ export class AgentRuntimeManager {
     if (this._isLoaded) return;
     this._isLoaded = true;
     this._generation += 1;
-
-    this._cycleCleanup.push(
+    const [register, cleanup] = newRegistry();
+    this._cycleCleanup = this._register(cleanup);
+    register(
       this.slots.observe(agentToolsSlot, (vs) => {
         this._toolsSnap = vs;
         this._scheduleRebuild();
       }),
+    );
+    register(
       this.slots.observe(agentSkillsSlot, (vs) => {
         this._skillsSnap = vs;
         this._scheduleRebuild();
       }),
+    );
+    register(
       this.slots.observe(agentMcpConnectionsSlot, (vs) => {
         this._mcpSnap = vs;
         this._scheduleRebuild();
       }),
-      this.activeModel.onUpdate(() => this._scheduleRebuild()),
     );
+    register(this.activeModel.onUpdate(() => this._scheduleRebuild()));
 
     // Initial state: `loading` until the first rebuild settles.
     this.adapter._setState({ status: "loading" });
     this._scheduleRebuild();
   }
 
-  private _onUnload(): void {
+  private async _onUnload(): Promise<void> {
     if (!this._isLoaded) return;
     this._isLoaded = false;
     this._generation += 1; // invalidate any in-flight rebuild
@@ -151,14 +165,7 @@ export class AgentRuntimeManager {
       clearTimeout(this._rebuildTimer);
       this._rebuildTimer = null;
     }
-    for (const dispose of this._cycleCleanup) {
-      try {
-        dispose();
-      } catch (err) {
-        console.error("[agent-runtime] cycle cleanup threw:", err);
-      }
-    }
-    this._cycleCleanup = [];
+    await this._cycleCleanup();
     this._toolsSnap = [];
     this._skillsSnap = [];
     this._mcpSnap = [];
@@ -232,8 +239,10 @@ export class AgentRuntimeManager {
 function dedupeMcp(
   contributions: readonly AgentMcpConnection[],
 ): Record<string, import("@statewalker/ai-agent/runtime").McpServerConfig> {
-  const out: Record<string, import("@statewalker/ai-agent/runtime").McpServerConfig> =
-    {};
+  const out: Record<
+    string,
+    import("@statewalker/ai-agent/runtime").McpServerConfig
+  > = {};
   for (const c of contributions) out[c.id] = c.config; // last-wins
   return out;
 }

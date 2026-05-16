@@ -1,9 +1,9 @@
 {
-  "name": "@statewalker/ai-providers",
+  "name": "@statewalker/models-config",
   "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "AI providers fragment: provider config storage, ActiveModel adapter, provider:* intents.",
+  "description": "Models management fragment: connections, starred models, local-model lifecycle, json-render spec for the three dialogs.",
   "license": "MIT",
   "exports": {
     ".": "./src/index.ts",
@@ -19,23 +19,26 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "catalog:",
-    "@ai-sdk/google": "catalog:",
-    "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
+    "@json-render/core": "0.18.0",
+    "@json-render/react": "0.18.0",
+    "@json-render/shadcn": "0.18.0",
     "@repo/chat-mini.chat": "workspace:*",
     "@statewalker/ai-agent": "workspace:*",
     "@statewalker/ai-agent-runtime": "workspace:*",
-    "@statewalker/settings": "workspace:*",
+    "@statewalker/ai-provider-browser": "catalog:",
+    "@statewalker/ai-providers": "workspace:*",
+    "@statewalker/dock": "workspace:*",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "workspace:*",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/webrun-files-mem": "catalog:",
-    "@statewalker/workspace": "workspace:*"
+    "@statewalker/workspace": "workspace:*",
+    "zod": "catalog:"
   },
   "devDependencies": {
+    "@statewalker/webrun-files-mem": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
