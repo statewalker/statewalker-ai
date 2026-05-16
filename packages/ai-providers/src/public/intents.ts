@@ -1,4 +1,4 @@
-import { defineCommand } from "@statewalker/shared-commands";
+import { Command, passthrough } from "@statewalker/shared-commands";
 
 export interface SelectActiveModelPayload {
   /**
@@ -17,7 +17,7 @@ export interface SelectActiveModelPayload {
  * The providers fragment's manager handles this by writing through
  * to `ActiveModel`.
  */
-export const SelectActiveModelCommand = defineCommand<SelectActiveModelPayload, void>(
-  "providers:select-active-model",
-  () => {},
-);
+export const SelectActiveModelCommand = Command.silent("providers:select-active-model")
+  .input(passthrough<SelectActiveModelPayload>())
+  .output(passthrough<void>())
+  .build();
