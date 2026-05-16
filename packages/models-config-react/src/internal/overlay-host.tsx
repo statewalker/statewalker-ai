@@ -77,7 +77,11 @@ export function ModelsConfigOverlayHost(): ReactElement {
   }, [store, providers, localModels, commands]);
 
   return (
-    <JSONUIProvider registry={registry} store={store}>
+    <JSONUIProvider
+      registry={registry}
+      store={store}
+      handlers={actionHandlers}
+    >
       <Renderer spec={spec} registry={registry} />
     </JSONUIProvider>
   );

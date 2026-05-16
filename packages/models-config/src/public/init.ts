@@ -31,6 +31,12 @@ import { LocalModels } from "./local-models.js";
  * "select-active-model with kind: local" listener. The renderer
  * fragment owns the open-dialog command listeners — they only do
  * anything when the host is mounted.
+ *
+ * `LocalModels` is registered as a lazy factory because
+ * `workspace.files` throws while no FileSystem is installed. The
+ * factory only fires when something first calls
+ * `requireAdapter(LocalModels)` — at that point the workspace is
+ * already open and `workspace.files` is safe to read.
  */
 export default function initModelsConfig(ctx: Record<string, unknown>): () => Promise<void> {
   const workspace = getWorkspace(ctx);
@@ -39,9 +45,10 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
   const providers = workspace.requireAdapter(Providers);
   const activeModel = workspace.requireAdapter(ActiveModel);
 
-  // Construct and register the LocalModels adapter.
-  const localModels = new LocalModels({ files: workspace.files });
-  workspace.setAdapter(LocalModels, () => localModels);
+  // Lazy factory — only constructs once the workspace is open and
+  // a consumer reaches for the adapter. Avoids touching
+  // `workspace.files` at boot time.
+  workspace.setAdapter(LocalModels, (ws) => new LocalModels({ files: ws.files }));
 
   const [register, cleanup] = newRegistry();
 
@@ -82,7 +89,12 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
   register(
     commands.listen(SelectActiveModelCommand, (cmd) => {
       if (cmd.payload.providerId !== "local") return;
-      void applyLocalSelection(providers, activeModel, localModels, cmd.payload.modelId);
+      void applyLocalSelection(
+        workspace,
+        providers,
+        activeModel,
+        cmd.payload.modelId,
+      );
       // Observe-only: ai-providers' listener resolves the command.
     }),
   );
@@ -102,7 +114,7 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
       ) {
         return;
       }
-      void applyLocalSelection(providers, activeModel, localModels, active.modelId);
+      void applyLocalSelection(workspace, providers, activeModel, active.modelId);
     }),
   );
 
@@ -134,15 +146,21 @@ async function runRefresh(providers: Providers, connectionId: string): Promise<v
 }
 
 async function applyLocalSelection(
+  workspace: ReturnType<typeof getWorkspace>,
   providers: Providers,
   activeModel: ActiveModel,
-  localModels: LocalModels,
   modelKey: string | undefined,
 ): Promise<void> {
   if (!modelKey) {
     activeModel.clear();
     return;
   }
+  // Resolve LocalModels lazily — calling requireAdapter here triggers
+  // the factory only when actually needed (i.e. the user picked a
+  // local model), so the tjs engine isn't loaded for users who only
+  // use remote connections.
+  const localModels = workspace.requireAdapter(LocalModels);
+
   // Write ActiveModel with kind: "local" pointing at the in-memory
   // ModelStateStore. Lazy activation happens on first message via
   // ModelManager.activate (kicked off below).
