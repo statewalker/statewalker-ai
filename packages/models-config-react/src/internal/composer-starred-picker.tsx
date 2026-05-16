@@ -72,17 +72,19 @@ export function ComposerStarredPicker(): ReactElement {
       ? `${active.providerId}::${active.modelId}`
       : "";
 
-  // No connections at all — direct CTA to configure.
+  // No connections at all — loud CTA so the first-run user finds
+  // the configuration entry point without having to dig through
+  // Settings.
   if (connections.length === 0) {
     return (
       <button
         type="button"
-        className="rounded-md border border-dashed border-border px-3 py-1 text-xs text-muted-foreground hover:bg-accent"
+        className="rounded-md border border-primary bg-primary/10 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/20"
         onClick={() => {
           void commands.call(ManageRemoteConnectionsCommand, undefined);
         }}
       >
-        Configure connections…
+        Add a connection…
       </button>
     );
   }

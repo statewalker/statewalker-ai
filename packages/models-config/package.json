@@ -29,6 +29,7 @@
     "@statewalker/ai-provider-browser": "catalog:",
     "@statewalker/ai-providers": "workspace:*",
     "@statewalker/dock": "workspace:*",
+    "@statewalker/settings": "workspace:*",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
