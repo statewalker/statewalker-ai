@@ -43,13 +43,9 @@ interface PersistentSnapshot {
   localModelsList: LocalModelRow[];
 }
 
-function flattenModels(
-  config: ProvidersConfig,
-): ModelRow[] {
+function flattenModels(config: ProvidersConfig): ModelRow[] {
   const starredKey = (cid: string, mid: string) => `${cid}::${mid}`;
-  const starredSet = new Set(
-    config.starred.map((s) => starredKey(s.connectionId, s.modelId)),
-  );
+  const starredSet = new Set(config.starred.map((s) => starredKey(s.connectionId, s.modelId)));
   const activeKey =
     config.active.providerId && config.active.modelId
       ? starredKey(config.active.providerId, config.active.modelId)
@@ -72,13 +68,9 @@ function flattenModels(
   return out;
 }
 
-function flattenLocalModels(
-  config: ProvidersConfig,
-  localModels: LocalModels,
-): LocalModelRow[] {
+function flattenLocalModels(config: ProvidersConfig, localModels: LocalModels): LocalModelRow[] {
   const downloadedSet = new Set(config.local.downloaded.map((d) => d.key));
-  const activeLocalKey =
-    config.active.providerId === "local" ? config.active.modelId : null;
+  const activeLocalKey = config.active.providerId === "local" ? config.active.modelId : null;
   return localModels.list().map((entry) => {
     // Catalog key (`local:smollm2-360m`) is the lookup id; we don't
     // have direct access to it from the entry, but the catalog
@@ -100,10 +92,7 @@ function flattenLocalModels(
 }
 
 /** Project the workspace adapters into `/persistent/*` paths. */
-function snapshot(
-  providers: Providers,
-  localModels: LocalModels,
-): PersistentSnapshot {
+function snapshot(providers: Providers, localModels: LocalModels): PersistentSnapshot {
   const config = providers.config;
   return {
     connections: config.connections,
