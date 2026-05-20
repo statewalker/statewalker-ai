@@ -16,14 +16,20 @@ describe("capabilitiesFor", () => {
     expect(capabilitiesFor("embed-english-v3.0")).toEqual(["embedding"]);
   });
 
-  it("tags DALL-E / Imagen as image", () => {
-    expect(capabilitiesFor("dall-e-3")).toEqual(["image"]);
-    expect(capabilitiesFor("imagen-3.0-generate")).toEqual(["image"]);
+  it("tags DALL-E / Imagen as image-gen", () => {
+    expect(capabilitiesFor("dall-e-3")).toEqual(["image-gen"]);
+    expect(capabilitiesFor("imagen-3.0-generate")).toEqual(["image-gen"]);
   });
 
-  it("defaults unknown ids to text", () => {
-    expect(capabilitiesFor("gpt-4o")).toEqual(["text"]);
-    expect(capabilitiesFor("claude-sonnet-4-20250514")).toEqual(["text"]);
-    expect(capabilitiesFor("some-random-model-id")).toEqual(["text"]);
+  it("tags TTS-family ids as tts", () => {
+    expect(capabilitiesFor("tts-1")).toEqual(["tts"]);
+    expect(capabilitiesFor("tts-1-hd")).toEqual(["tts"]);
+  });
+
+  it("defaults unknown ids to chat (the composer-dropdown filter dimension)", () => {
+    expect(capabilitiesFor("gpt-4o")).toEqual(["chat"]);
+    expect(capabilitiesFor("claude-sonnet-4-20250514")).toEqual(["chat"]);
+    expect(capabilitiesFor("gemini-1.5-pro")).toEqual(["chat"]);
+    expect(capabilitiesFor("some-random-model-id")).toEqual(["chat"]);
   });
 });

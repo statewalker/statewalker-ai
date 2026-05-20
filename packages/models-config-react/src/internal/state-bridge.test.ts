@@ -34,16 +34,22 @@ describe("bindPersistent", () => {
     const providers = new Providers();
     providers._setConfig({
       ...emptyProvidersConfig,
-      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk" }],
-      starred: [{ connectionId: "openai", modelId: "gpt-4o" }],
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk",
+          starredModelIds: ["gpt-4o"],
+        },
+      ],
     });
     const localModels = new FakeLocalModels();
     const dispose = bindPersistent(store, providers, localModels as never);
     const connections = store.get("/persistent/connections") as ProvidersConfig["connections"];
     expect(connections).toHaveLength(1);
     expect(connections[0]?.id).toBe("openai");
-    const starred = store.get("/persistent/starred") as ProvidersConfig["starred"];
-    expect(starred).toEqual([{ connectionId: "openai", modelId: "gpt-4o" }]);
+    expect(connections[0]?.starredModelIds).toEqual(["gpt-4o"]);
     dispose();
   });
 
@@ -55,7 +61,16 @@ describe("bindPersistent", () => {
     // External update on the adapter.
     providers._setConfig({
       ...emptyProvidersConfig,
-      connections: [{ id: "anthropic", type: "anthropic", name: "Anthropic", apiKey: "sk" }],
+      connections: [
+        {
+          id: "anthropic",
+          type: "anthropic",
+          name: "Anthropic",
+          url: "https://anthropic-proxy.example.com",
+          apiKey: "sk",
+          starredModelIds: [],
+        },
+      ],
     });
     const connections = store.get("/persistent/connections") as ProvidersConfig["connections"];
     expect(connections).toHaveLength(1);
@@ -72,7 +87,15 @@ describe("bindPersistent", () => {
     // After dispose, external updates should NOT flow into the store.
     providers._setConfig({
       ...emptyProvidersConfig,
-      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk" }],
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk",
+          starredModelIds: [],
+        },
+      ],
     });
     const connections = store.get("/persistent/connections") as ProvidersConfig["connections"];
     expect(connections).toEqual([]);

@@ -1,3 +1,4 @@
+import { setTimeout as waitMs } from "node:timers/promises";
 import { tryReadText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -274,6 +275,82 @@ describe("FilesSessionManager", () => {
       expect(loaded.turns[0]?.messages[1]?.text).toBe("First answer");
       expect(loaded.turns[1]?.messages[0]?.text).toBe("Follow-up");
       expect(loaded.turns[1]?.messages[1]?.text).toBe("Second answer");
+    });
+  });
+
+  describe("per-session modelRef", () => {
+    it("create accepts an optional modelRef and round-trips it", async () => {
+      const id = await manager.create("Test", {
+        connectionId: "openai",
+        modelId: "gpt-4o",
+      });
+      const meta = await manager.getMetadata(id);
+      expect(meta?.modelRef).toEqual({ connectionId: "openai", modelId: "gpt-4o" });
+    });
+
+    it("create without modelRef leaves the field undefined", async () => {
+      const id = await manager.create("No model yet");
+      const meta = await manager.getMetadata(id);
+      expect(meta?.modelRef).toBeUndefined();
+    });
+
+    it("setModelRef updates an existing session's modelRef and bumps updatedAt", async () => {
+      const id = await manager.create("Initial");
+      const before = await manager.getMetadata(id);
+      await waitMs(2);
+      await manager.setModelRef(id, { connectionId: "google", modelId: "gemini-1.5-pro" });
+      const after = await manager.getMetadata(id);
+      expect(after?.modelRef).toEqual({
+        connectionId: "google",
+        modelId: "gemini-1.5-pro",
+      });
+      expect(after?.updatedAt).not.toBe(before?.updatedAt);
+    });
+
+    it("setModelRef(null) clears the modelRef", async () => {
+      const id = await manager.create("Test", {
+        connectionId: "openai",
+        modelId: "gpt-4o",
+      });
+      await manager.setModelRef(id, null);
+      const meta = await manager.getMetadata(id);
+      expect(meta?.modelRef).toBeUndefined();
+    });
+
+    it("setModelRef with the same value is a no-op (updatedAt unchanged)", async () => {
+      const id = await manager.create("Test", {
+        connectionId: "openai",
+        modelId: "gpt-4o",
+      });
+      const before = await manager.getMetadata(id);
+      await waitMs(2);
+      await manager.setModelRef(id, { connectionId: "openai", modelId: "gpt-4o" });
+      const after = await manager.getMetadata(id);
+      expect(after?.updatedAt).toBe(before?.updatedAt);
+    });
+
+    it("setModelRef on an unknown session id is a silent no-op", async () => {
+      await manager.setModelRef("never-existed", {
+        connectionId: "openai",
+        modelId: "gpt-4o",
+      });
+      const meta = await manager.getMetadata("never-existed");
+      expect(meta).toBeUndefined();
+    });
+
+    it("list preserves modelRef across reload", async () => {
+      const id = await manager.create("Test", {
+        connectionId: "anthropic",
+        modelId: "claude-3-5-sonnet",
+      });
+      // Drop the in-memory manager; build a fresh one against the
+      // same files to force a reload of index.json.
+      const fresh = new FilesSessionManager(files, "/sessions", factory);
+      const list = await fresh.list();
+      expect(list.find((m) => m.id === id)?.modelRef).toEqual({
+        connectionId: "anthropic",
+        modelId: "claude-3-5-sonnet",
+      });
     });
   });
 });

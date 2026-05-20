@@ -36,7 +36,6 @@ export interface LocalModelRow {
 
 interface PersistentSnapshot {
   connections: ProvidersConfig["connections"];
-  starred: ProvidersConfig["starred"];
   local: ProvidersConfig["local"];
   active: ProvidersConfig["active"];
   allModels: ModelRow[];
@@ -44,14 +43,14 @@ interface PersistentSnapshot {
 }
 
 function flattenModels(config: ProvidersConfig): ModelRow[] {
-  const starredKey = (cid: string, mid: string) => `${cid}::${mid}`;
-  const starredSet = new Set(config.starred.map((s) => starredKey(s.connectionId, s.modelId)));
+  const keyOf = (cid: string, mid: string) => `${cid}::${mid}`;
   const activeKey =
     config.active.providerId && config.active.modelId
-      ? starredKey(config.active.providerId, config.active.modelId)
+      ? keyOf(config.active.providerId, config.active.modelId)
       : null;
   const out: ModelRow[] = [];
   for (const c of config.connections) {
+    const starredSet = new Set(c.starredModelIds);
     for (const m of c.discoveredModels ?? []) {
       out.push({
         connectionId: c.id,
@@ -60,8 +59,8 @@ function flattenModels(config: ProvidersConfig): ModelRow[] {
         modelId: m.id,
         label: m.label,
         capabilities: m.capabilities ?? capabilitiesFor(m.id),
-        starred: starredSet.has(starredKey(c.id, m.id)),
-        active: activeKey === starredKey(c.id, m.id),
+        starred: starredSet.has(m.id),
+        active: activeKey === keyOf(c.id, m.id),
       });
     }
   }
@@ -96,7 +95,6 @@ function snapshot(providers: Providers, localModels: LocalModels): PersistentSna
   const config = providers.config;
   return {
     connections: config.connections,
-    starred: config.starred,
     local: config.local,
     active: config.active,
     allModels: flattenModels(config),
@@ -108,7 +106,6 @@ function snapshot(providers: Providers, localModels: LocalModels): PersistentSna
 function applySnapshot(store: StateStore, snap: PersistentSnapshot): void {
   store.update({
     "/persistent/connections": snap.connections,
-    "/persistent/starred": snap.starred,
     "/persistent/local": snap.local,
     "/persistent/active": snap.active,
     "/persistent/allModels": snap.allModels,
@@ -121,6 +118,10 @@ function applySnapshot(store: StateStore, snap: PersistentSnapshot): void {
  * `LocalModels` notifications. Returns a single combined disposer.
  * Seeds the store with the current snapshot synchronously before
  * returning.
+ *
+ * Used by the transitional overlay host. The new Settings tab hosts
+ * use the focused `bindLocalModels` helper below (the Connections
+ * tab projects its own per-type view directly inside the component).
  */
 export function bindPersistent(
   store: StateStore,
@@ -134,6 +135,28 @@ export function bindPersistent(
   const off2 = localModels.onUpdate(() => {
     applySnapshot(store, snapshot(providers, localModels));
   });
+  return () => {
+    off1();
+    off2();
+  };
+}
+
+/** Local-models-only bridge for the Settings "Local Models" tab.
+ * Mirrors `/persistent/localModelsList` from the curated catalog +
+ * `Providers.config.local.downloaded` + `LocalModels` status. */
+export function bindLocalModels(
+  store: StateStore,
+  providers: Providers,
+  localModels: LocalModels,
+): () => void {
+  const push = () => {
+    store.update({
+      "/persistent/localModelsList": flattenLocalModels(providers.config, localModels),
+    });
+  };
+  push();
+  const off1 = providers.onUpdate(push);
+  const off2 = localModels.onUpdate(push);
   return () => {
     off1();
     off2();

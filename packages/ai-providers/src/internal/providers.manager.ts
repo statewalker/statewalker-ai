@@ -13,6 +13,7 @@ import { Providers } from "../public/providers.adapter.js";
 import {
   type Connection,
   emptyProvidersConfig,
+  isConnected,
   loadProvidersConfig,
   type ProvidersConfig,
   saveProvidersConfig,
@@ -203,7 +204,9 @@ function buildDescriptor(c: Connection): ProviderDescriptor {
 }
 
 function buildDescriptors(config: ProvidersConfig): ProviderDescriptor[] {
-  return config.connections.filter((c) => c.apiKey).map((c) => buildDescriptor(c));
+  // Dormant shells (cleared apiKey, no discoveredModels) produce no
+  // `providers:remote` contribution. Re-Connect reintroduces them.
+  return config.connections.filter(isConnected).map(buildDescriptor);
 }
 
 function resolveActive(

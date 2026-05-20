@@ -3,10 +3,16 @@ import type { ActiveModelValue } from "./types.js";
 
 /**
  * Workspace-adapter holding the resolved active provider+model
- * pointer. Writers (the providers fragment from Wave 4.2; an interim
- * bootstrap inside agent-runtime until then) call `set(value)` to
- * publish a selection; the agent-runtime manager observes the
- * pointer and rebuilds the `AgentRuntime` whenever it changes.
+ * pointer.
+ *
+ * **Semantic shift (post-v5 / ADR 0011): "last-selected hint", not
+ * the gate.** The chat composer now writes a per-session `modelRef`
+ * on every selection AND mirrors the choice into `ActiveModel`. New
+ * sessions inherit `ActiveModel` as their initial `modelRef`; the
+ * adapter remains the workspace-singular pointer that determines
+ * which provider the agent runtime builds against, but the user-facing
+ * selection is per-session. See CONTEXT.md "Models and connections"
+ * for the full contract.
  *
  * Reactive: `notify()` fires on every `set` / `clear`, so subscribers
  * via `BaseClass.onUpdate` (and indirectly the React `useAdapter`

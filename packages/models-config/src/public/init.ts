@@ -9,18 +9,19 @@ import {
   type ProvidersConfig,
   SelectActiveModelCommand,
 } from "@statewalker/ai-providers";
-import { dockOverlaysSlot } from "@statewalker/dock";
-import { settingsTabSlot } from "@statewalker/settings";
+import { Settings, settingsTabSlot } from "@statewalker/settings";
 import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import { getWorkspace } from "@statewalker/workspace";
 import { capabilitiesFor } from "../internal/capabilities.js";
-import { RefreshConnectionModelsCommand } from "./commands.js";
+import { ConfigureModelsCommand, RefreshConnectionModelsCommand } from "./commands.js";
 import {
   COMPOSER_PICKER_VIEW_KEY,
-  MODELS_CONFIG_OVERLAY_VIEW_KEY,
-  SETTINGS_TAB_VIEW_KEY,
+  MODELS_CONFIG_CONNECTIONS_TAB_ID,
+  MODELS_CONFIG_CONNECTIONS_TAB_VIEW_KEY,
+  MODELS_CONFIG_LOCAL_TAB_ID,
+  MODELS_CONFIG_LOCAL_TAB_VIEW_KEY,
 } from "./constants.js";
 import { LocalModels } from "./local-models.js";
 
@@ -49,6 +50,7 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
   const slots = workspace.requireAdapter(Slots);
   const providers = workspace.requireAdapter(Providers);
   const activeModel = workspace.requireAdapter(ActiveModel);
+  const settings = workspace.requireAdapter(Settings);
 
   // Lazy factory — only constructs once the workspace is open and
   // a consumer reaches for the adapter. Avoids touching
@@ -57,15 +59,7 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
 
   const [register, cleanup] = newRegistry();
 
-  // Slot: overlay host (rendered by `models-config-react`).
-  register(
-    slots.provide(dockOverlaysSlot, {
-      id: "models-config",
-      viewKey: MODELS_CONFIG_OVERLAY_VIEW_KEY,
-    }),
-  );
-
-  // Slot: composer starred picker (rendered by `models-config-react`).
+  // Slot: composer session-model picker.
   register(
     slots.provide(composerActionsSlot, {
       id: "models-config:picker",
@@ -75,15 +69,35 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
     }),
   );
 
-  // Slot: settings tab. Gives the user a discoverable entry point
-  // inside the existing Settings dialog — buttons that open each
-  // of the three models-config dialogs.
+  // Slots: two Settings tabs — Models & Connections, and Local
+  // Models. Replaces the v4 draft's single "Models" tab + the
+  // `dock:overlays` overlay host (see ADR 0011).
   register(
     slots.provide(settingsTabSlot, {
-      id: "models",
-      title: "Models",
-      viewKey: SETTINGS_TAB_VIEW_KEY,
-      order: 10,
+      id: MODELS_CONFIG_CONNECTIONS_TAB_ID,
+      title: "Models & Connections",
+      viewKey: MODELS_CONFIG_CONNECTIONS_TAB_VIEW_KEY,
+      order: 20,
+    }),
+  );
+  register(
+    slots.provide(settingsTabSlot, {
+      id: MODELS_CONFIG_LOCAL_TAB_ID,
+      title: "Local Models",
+      viewKey: MODELS_CONFIG_LOCAL_TAB_VIEW_KEY,
+      order: 30,
+    }),
+  );
+
+  // Command: configure-models. Opens the Settings dialog on the
+  // Models & Connections tab. `typeHint` is recorded on the Settings
+  // adapter via the existing `activeTabId` (the sub-tab focus
+  // refinement is a follow-up).
+  register(
+    commands.listen(ConfigureModelsCommand, (cmd) => {
+      settings._setOpen(true, MODELS_CONFIG_CONNECTIONS_TAB_ID);
+      cmd.resolve();
+      return true;
     }),
   );
 
@@ -106,12 +120,7 @@ export default function initModelsConfig(ctx: Record<string, unknown>): () => Pr
   register(
     commands.listen(SelectActiveModelCommand, (cmd) => {
       if (cmd.payload.providerId !== "local") return;
-      void applyLocalSelection(
-        workspace,
-        providers,
-        activeModel,
-        cmd.payload.modelId,
-      );
+      void applyLocalSelection(workspace, providers, activeModel, cmd.payload.modelId);
       // Observe-only: ai-providers' listener resolves the command.
     }),
   );

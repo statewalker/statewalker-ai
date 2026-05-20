@@ -37,12 +37,22 @@ describe("ProvidersManager", () => {
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
       connections: [
-        { id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" },
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-openai",
+          discoveredModels: [],
+          starredModelIds: [],
+        },
         {
           id: "anthropic",
           type: "anthropic",
           name: "Anthropic",
+          url: "https://anthropic-proxy.example.com",
           apiKey: "sk-anthropic",
+          discoveredModels: [],
+          starredModelIds: [],
         },
       ],
     });
@@ -70,12 +80,16 @@ describe("ProvidersManager", () => {
           type: "openai",
           name: "OpenAI (work)",
           apiKey: "sk-work",
+          discoveredModels: [],
+          starredModelIds: [],
         },
         {
           id: "openai-personal",
           type: "openai",
           name: "OpenAI (personal)",
           apiKey: "sk-personal",
+          discoveredModels: [],
+          starredModelIds: [],
         },
       ],
     });
@@ -100,7 +114,16 @@ describe("ProvidersManager", () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-openai",
+          discoveredModels: [],
+          starredModelIds: [],
+        },
+      ],
     });
     const ws = makeWorkspace(files);
     const slots = ws.requireAdapter(Slots);
@@ -117,12 +140,22 @@ describe("ProvidersManager", () => {
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
       connections: [
-        { id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" },
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-openai",
+          discoveredModels: [],
+          starredModelIds: [],
+        },
         {
           id: "anthropic",
           type: "anthropic",
           name: "Anthropic",
+          url: "https://anthropic-proxy.example.com",
           apiKey: "sk-anthropic",
+          discoveredModels: [],
+          starredModelIds: [],
         },
       ],
     });
@@ -137,7 +170,16 @@ describe("ProvidersManager", () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-openai",
+          discoveredModels: [],
+          starredModelIds: [],
+        },
+      ],
       active: { providerId: "openai", modelId: "gpt-4o" },
     });
     const ws = makeWorkspace(files);
@@ -176,7 +218,16 @@ describe("ProvidersManager", () => {
     const files = new MemFilesApi();
     await writeProvidersJson(files, {
       ...emptyProvidersConfig,
-      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-openai",
+          discoveredModels: [],
+          starredModelIds: [],
+        },
+      ],
     });
     const ws = makeWorkspace(files);
     const adapter = ws.requireAdapter(AgentRuntimeAdapter);
@@ -204,7 +255,16 @@ describe("ProvidersManager", () => {
 
     await providers.saveProviders({
       ...emptyProvidersConfig,
-      connections: [{ id: "openai", type: "openai", name: "OpenAI", apiKey: "sk-openai" }],
+      connections: [
+        {
+          id: "openai",
+          type: "openai",
+          name: "OpenAI",
+          apiKey: "sk-openai",
+          discoveredModels: [],
+          starredModelIds: [],
+        },
+      ],
       active: { providerId: "openai", modelId: "gpt-4o" },
     });
     await vi.runAllTimersAsync();

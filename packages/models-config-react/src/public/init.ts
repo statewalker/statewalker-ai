@@ -3,33 +3,33 @@ import { coreViewsSlot, type ViewComponent } from "@statewalker/core-react";
 import {
   COMPOSER_PICKER_VIEW_KEY,
   MODELS_CONFIG_CATALOG_ID,
-  MODELS_CONFIG_OVERLAY_VIEW_KEY,
-  SETTINGS_TAB_VIEW_KEY,
+  MODELS_CONFIG_CONNECTIONS_TAB_VIEW_KEY,
+  MODELS_CONFIG_LOCAL_TAB_VIEW_KEY,
 } from "@statewalker/models-config";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import { getWorkspace } from "@statewalker/workspace";
 import { buildModelsConfigRegistry } from "../internal/build-react-catalog.js";
-import { ComposerStarredPicker } from "../internal/composer-starred-picker.js";
-import { ModelsConfigOverlayHost } from "../internal/overlay-host.js";
-import { ModelsSettingsTab } from "../internal/settings-tab.js";
+import { ComposerSessionModelPicker } from "../internal/composer-session-model-picker.js";
+import { ModelsConfigConnectionsTab } from "../internal/connections-tab.js";
+import { ModelsConfigLocalTab } from "../internal/local-models-tab.js";
 
 /**
  * Renderer-fragment init for `models-config-react`. Pairs with
- * `@statewalker/models-config` (logic). Three responsibilities:
+ * `@statewalker/models-config` (logic). Responsibilities:
  *
  * 1. Register the `models-config` json-render Registry into
  *    `json:catalogs`. The Registry combines shadcn React bindings
  *    with the bespoke `Markdown` primitive.
- * 2. Register `<ModelsConfigOverlayHost>` into `core:views` under
- *    the viewKey contributed by the logic fragment's `dock:overlays`
- *    entry — so the dock-react fragment mounts it alongside MainShell.
- *    The host owns the json-render StateStore, the bridges to
- *    Providers / LocalModels, and the three open-dialog command
- *    listeners.
+ * 2. Register the two Settings-tab host components into `core:views`
+ *    under the viewKeys contributed by the logic fragment's
+ *    `settings:tabs` entries: Models & Connections + Local Models.
+ *    Each host owns its own json-render `StateStore` per mount.
  * 3. Register `<ComposerStarredPicker>` into `core:views` under the
- *    composer picker viewKey — picked up by the chat composer's
- *    `chat:composer-actions` slot iteration.
+ *    composer picker viewKey.
+ *
+ * Per ADR 0011, the v4 `dock:overlays` overlay host is retired —
+ * the Settings dialog is now the single home for model configuration.
  */
 export default function initModelsConfigReact(ctx: Record<string, unknown>): () => Promise<void> {
   const workspace = getWorkspace(ctx);
@@ -37,12 +37,11 @@ export default function initModelsConfigReact(ctx: Record<string, unknown>): () 
 
   const [register, cleanup] = newRegistry();
 
-  // The catalog Registry needs action handlers; the overlay host
-  // builds its own per-mount Registry with mount-scoped handlers.
-  // What we register into `json:catalogs` is a registry built with
-  // no-op action handlers — exposed for consumers that just want to
-  // look up the catalog metadata (action dispatch goes through the
-  // host's controlled store anyway).
+  // The catalog Registry needs action handlers; the tab hosts build
+  // their own per-mount Registry with mount-scoped handlers. What we
+  // register into `json:catalogs` is a registry built with no-op
+  // action handlers — exposed for consumers that just want to look
+  // up the catalog metadata.
   const stubHandlers: Record<string, () => Promise<void>> = {};
   const { registry } = buildModelsConfigRegistry({ actions: stubHandlers });
   register(slots.register(catalogsSlot, MODELS_CONFIG_CATALOG_ID, registry));
@@ -50,8 +49,16 @@ export default function initModelsConfigReact(ctx: Record<string, unknown>): () 
   register(
     slots.register(
       coreViewsSlot,
-      MODELS_CONFIG_OVERLAY_VIEW_KEY,
-      ModelsConfigOverlayHost as unknown as ViewComponent,
+      MODELS_CONFIG_CONNECTIONS_TAB_VIEW_KEY,
+      ModelsConfigConnectionsTab as unknown as ViewComponent,
+    ),
+  );
+
+  register(
+    slots.register(
+      coreViewsSlot,
+      MODELS_CONFIG_LOCAL_TAB_VIEW_KEY,
+      ModelsConfigLocalTab as unknown as ViewComponent,
     ),
   );
 
@@ -59,15 +66,7 @@ export default function initModelsConfigReact(ctx: Record<string, unknown>): () 
     slots.register(
       coreViewsSlot,
       COMPOSER_PICKER_VIEW_KEY,
-      ComposerStarredPicker as unknown as ViewComponent,
-    ),
-  );
-
-  register(
-    slots.register(
-      coreViewsSlot,
-      SETTINGS_TAB_VIEW_KEY,
-      ModelsSettingsTab as unknown as ViewComponent,
+      ComposerSessionModelPicker as unknown as ViewComponent,
     ),
   );
 

@@ -421,6 +421,22 @@ export class AgentRuntime {
     return this._requireSessions().delete(sessionId);
   }
 
+  /** Read a session's metadata (id, title, modelRef, …). */
+  async getSessionMetadata(sessionId: string): Promise<SessionMetadata | undefined> {
+    this._assertBuilt();
+    return this._requireSessions().getMetadata(sessionId);
+  }
+
+  /** Set (or clear with `null`) the per-session `modelRef`. The chat
+   * composer's dropdown writes through this on user selection. */
+  async setSessionModelRef(
+    sessionId: string,
+    modelRef: { connectionId: string; modelId: string } | null,
+  ): Promise<void> {
+    this._assertBuilt();
+    await this._requireSessions().setModelRef(sessionId, modelRef);
+  }
+
   // ─── Read-only views (used by Agent / Session internally) ─────────────
 
   /** Tools-view FilesApi (the one exposed to agents and skills). */

@@ -39,6 +39,7 @@ describe("listConnectionModels", () => {
       name: "OpenAI",
       apiKey: "sk-test",
       headers: [{ name: "X-Org", value: "acme" }],
+      starredModelIds: [],
     };
     const models = await listConnectionModels(c);
     expect(seenAuth).toBe("Bearer sk-test");
@@ -65,6 +66,7 @@ describe("listConnectionModels", () => {
       type: "anthropic",
       name: "Anthropic",
       apiKey: "sk-ant-test",
+      starredModelIds: [],
     };
     const models = await listConnectionModels(c);
     expect(seenApiKey).toBe("sk-ant-test");
@@ -100,6 +102,7 @@ describe("listConnectionModels", () => {
       type: "google",
       name: "Google",
       apiKey: "AIza-test",
+      starredModelIds: [],
     };
     const models = await listConnectionModels(c);
     expect(models).toHaveLength(1);
@@ -112,6 +115,7 @@ describe("listConnectionModels", () => {
       type: "openai-compatible",
       name: "LM Studio",
       apiKey: "x",
+      starredModelIds: [],
     };
     await expect(listConnectionModels(c)).rejects.toThrow(/url/i);
   });
@@ -129,6 +133,7 @@ describe("listConnectionModels", () => {
       type: "openai",
       name: "OpenAI",
       apiKey: "sk-bad",
+      starredModelIds: [],
     };
     await expect(listConnectionModels(c)).rejects.toThrow(/401/);
   });
@@ -141,7 +146,7 @@ describe("capabilities tagging on discovery results", () => {
       { id: "text-embedding-3-small", label: "text-embedding-3-small" },
     ];
     const tagged = raw.map((m) => ({ ...m, capabilities: capabilitiesFor(m.id) }));
-    expect(tagged[0]?.capabilities).toEqual(["text"]);
+    expect(tagged[0]?.capabilities).toEqual(["chat"]);
     expect(tagged[1]?.capabilities).toEqual(["embedding"]);
   });
 });

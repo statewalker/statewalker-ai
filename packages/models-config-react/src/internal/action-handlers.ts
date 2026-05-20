@@ -2,11 +2,19 @@ import type { StateStore } from "@json-render/core";
 import {
   type Connection,
   type ConnectionType,
+  listConnectionModels,
   Providers,
   type ProvidersConfig,
   SelectActiveModelCommand,
-  type StarredRef,
+  validateConnectionUrl,
 } from "@statewalker/ai-providers";
+import { applyDefaultStarred, capabilitiesFor } from "@statewalker/models-config";
+
+interface ModelRef {
+  connectionId: string;
+  modelId: string;
+}
+
 import { LocalModels, RefreshConnectionModelsCommand } from "@statewalker/models-config";
 import { Commands } from "@statewalker/shared-commands";
 import type { Workspace } from "@statewalker/workspace";
@@ -52,6 +60,7 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
   async function saveConnection(params: Record<string, unknown>): Promise<void> {
     const p = params as unknown as ConnectionFormParams;
     const current = providers.config;
+    const existing = p.id ? current.connections.find((c) => c.id === p.id) : undefined;
     const next: Connection = {
       id: p.id ?? newConnectionId(),
       type: p.type,
@@ -59,6 +68,7 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
       url: p.url || undefined,
       apiKey: p.apiKey,
       headers: p.headers && p.headers.length > 0 ? p.headers : undefined,
+      starredModelIds: existing?.starredModelIds ?? [],
     };
     const connections = p.id
       ? current.connections.map((c) => (c.id === p.id ? { ...c, ...next, id: c.id } : c))
@@ -86,14 +96,8 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
     const { connectionId } = params as { connectionId: string };
     const current = providers.config;
     const connections = current.connections.filter((c) => c.id !== connectionId);
-    const starred = current.starred.filter((s) => s.connectionId !== connectionId);
     const active = current.active.providerId === connectionId ? {} : current.active;
-    await providers.saveProviders({
-      ...current,
-      connections,
-      starred,
-      active,
-    });
+    await providers.saveProviders({ ...current, connections, active });
   }
 
   async function refreshConnection(params: Record<string, unknown>): Promise<void> {
@@ -105,31 +109,174 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
     }
   }
 
-  async function starModel(params: Record<string, unknown>): Promise<void> {
-    const { connectionId, modelId } = params as unknown as StarredRef;
-    const current = providers.config;
-    if (current.starred.some((s) => s.connectionId === connectionId && s.modelId === modelId)) {
-      return;
-    }
-    await providers.saveProviders({
+  function updateConnection(
+    current: ProvidersConfig,
+    connectionId: string,
+    updater: (c: Connection) => Connection,
+  ): ProvidersConfig {
+    return {
       ...current,
-      starred: [...current.starred, { connectionId, modelId }],
-    });
+      connections: current.connections.map((c) => (c.id === connectionId ? updater(c) : c)),
+    };
+  }
+
+  async function starModel(params: Record<string, unknown>): Promise<void> {
+    const { connectionId, modelId } = params as unknown as ModelRef;
+    const current = providers.config;
+    const next = updateConnection(current, connectionId, (c) =>
+      c.starredModelIds.includes(modelId)
+        ? c
+        : { ...c, starredModelIds: [...c.starredModelIds, modelId] },
+    );
+    if (next === current) return;
+    await providers.saveProviders(next);
   }
 
   async function unstarModel(params: Record<string, unknown>): Promise<void> {
-    const { connectionId, modelId } = params as unknown as StarredRef;
+    const { connectionId, modelId } = params as unknown as ModelRef;
     const current = providers.config;
-    await providers.saveProviders({
-      ...current,
-      starred: current.starred.filter(
-        (s) => !(s.connectionId === connectionId && s.modelId === modelId),
-      ),
-    });
+    const next = updateConnection(current, connectionId, (c) => ({
+      ...c,
+      starredModelIds: c.starredModelIds.filter((id) => id !== modelId),
+    }));
+    await providers.saveProviders(next);
+  }
+
+  async function toggleStar(params: Record<string, unknown>): Promise<void> {
+    const { connectionId, modelId } = params as unknown as ModelRef;
+    const current = providers.config;
+    const conn = current.connections.find((c) => c.id === connectionId);
+    if (!conn) return;
+    if (conn.starredModelIds.includes(modelId)) {
+      await unstarModel(params);
+    } else {
+      await starModel(params);
+    }
+  }
+
+  /**
+   * Connect lifecycle action. Reads the form values for a new
+   * Connection (or operates against an existing record's id), fetches
+   * the provider's model list, persists the Connection with
+   * `discoveredModels` + `discoveredAt`, and seeds `starredModelIds`
+   * from the curated `DEFAULT_STARRED_BY_TYPE` table iff the
+   * Connection's `starredModelIds` was empty immediately before this
+   * call.
+   */
+  async function connectConnection(params: Record<string, unknown>): Promise<void> {
+    const { connectionId } = params as { connectionId?: string };
+    const current = providers.config;
+    const target = connectionId ? current.connections.find((c) => c.id === connectionId) : null;
+    if (connectionId && !target) {
+      setUi("connectionForm/error", `Unknown connection: ${connectionId}`);
+      return;
+    }
+    const conn: Connection = target ?? {
+      id: newConnectionId(),
+      type: getUi<ConnectionType>("connectionForm/type"),
+      name: getUi<string>("connectionForm/name"),
+      url: getUi<string>("connectionForm/url") || undefined,
+      apiKey: getUi<string>("connectionForm/apiKey"),
+      headers: getUi<Array<{ name: string; value: string }>>("connectionForm/headers"),
+      starredModelIds: [],
+    };
+    setUi("connectionForm/error", undefined);
+    try {
+      validateConnectionUrl(conn);
+      const discoveredModels = (await listConnectionModels(conn)).map((m) => ({
+        ...m,
+        capabilities: m.capabilities ?? capabilitiesFor(m.id),
+      }));
+      const seedStars = conn.starredModelIds.length === 0;
+      const starredModelIds = seedStars
+        ? applyDefaultStarred(
+            conn.type,
+            discoveredModels.map((m) => m.id),
+          )
+        : conn.starredModelIds;
+      const updated: Connection = {
+        ...conn,
+        discoveredModels,
+        discoveredAt: Date.now(),
+        starredModelIds,
+      };
+      const connections = target
+        ? current.connections.map((c) => (c.id === target.id ? updated : c))
+        : [...current.connections, updated];
+      await providers.saveProviders({ ...current, connections });
+      if (!target) {
+        // Form was for adding — clear it on success.
+        setUi("connectionForm/editingId", undefined);
+        setUi("connectionForm/name", "");
+        setUi("connectionForm/url", "");
+        setUi("connectionForm/apiKey", "");
+        setUi("connectionForm/headers", []);
+      }
+    } catch (err) {
+      setUi("connectionForm/error", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Check Connection lifecycle action. Re-fetches a connected
+   * Connection's model list, preserves the user's existing
+   * `starredModelIds`, and prunes star entries whose model ids are
+   * no longer in the refreshed list. Does NOT re-apply the
+   * default-starred table.
+   */
+  async function checkConnection(params: Record<string, unknown>): Promise<void> {
+    const { connectionId } = params as { connectionId: string };
+    const current = providers.config;
+    const conn = current.connections.find((c) => c.id === connectionId);
+    if (!conn) return;
+    try {
+      validateConnectionUrl(conn);
+      const discoveredModels = (await listConnectionModels(conn)).map((m) => ({
+        ...m,
+        capabilities: m.capabilities ?? capabilitiesFor(m.id),
+      }));
+      const stillPresent = new Set(discoveredModels.map((m) => m.id));
+      const updated: Connection = {
+        ...conn,
+        discoveredModels,
+        discoveredAt: Date.now(),
+        starredModelIds: conn.starredModelIds.filter((id) => stillPresent.has(id)),
+      };
+      const connections = current.connections.map((c) => (c.id === conn.id ? updated : c));
+      await providers.saveProviders({ ...current, connections });
+    } catch (err) {
+      setUi(
+        `connectionRows/${connectionId}/error`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  /**
+   * Disconnect lifecycle action. Clears `apiKey`,
+   * `discoveredModels`, `discoveredAt`, and `starredModelIds` in one
+   * save. The shell record (id, type, name, url, headers) persists
+   * so the user can re-Connect with one click.
+   */
+  async function disconnectConnection(params: Record<string, unknown>): Promise<void> {
+    const { connectionId } = params as { connectionId: string };
+    const current = providers.config;
+    const updated = current.connections.map((c) =>
+      c.id === connectionId
+        ? {
+            ...c,
+            apiKey: "",
+            discoveredModels: undefined,
+            discoveredAt: undefined,
+            starredModelIds: [],
+          }
+        : c,
+    );
+    await providers.saveProviders({ ...current, connections: updated });
   }
 
   async function selectModel(params: Record<string, unknown>): Promise<void> {
-    const { connectionId, modelId } = params as unknown as StarredRef;
+    const { connectionId, modelId } = params as unknown as ModelRef;
     await commands.call(SelectActiveModelCommand, {
       providerId: connectionId,
       modelId,
@@ -215,8 +362,12 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
     saveConnection,
     removeConnection,
     refreshConnection,
+    connectConnection,
+    checkConnection,
+    disconnectConnection,
     starModel,
     unstarModel,
+    toggleStar,
     selectModel,
     downloadLocalModel,
     cancelDownload,

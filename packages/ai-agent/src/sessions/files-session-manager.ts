@@ -6,7 +6,7 @@ import { NodeType } from "../state/node-types.js";
 import { markdownToSession, sessionToMarkdown } from "../state/session-serialization.js";
 import { SessionState } from "../state/session-state.js";
 import type { NodeFactory } from "../state/tree-types.js";
-import type { SessionMetadata } from "./metadata.js";
+import type { SessionMetadata, SessionModelRef } from "./metadata.js";
 
 interface IndexData {
   sessions: SessionMetadata[];
@@ -35,7 +35,7 @@ export class FilesSessionManager {
     this.indexFile = `${this.sessionsDir}/index.json`;
   }
 
-  async create(title?: string): Promise<string> {
+  async create(title?: string, modelRef?: SessionModelRef): Promise<string> {
     const id = this.idGen.generate();
     const now = new Date().toISOString();
     const meta: SessionMetadata = {
@@ -43,6 +43,7 @@ export class FilesSessionManager {
       title: title ?? "",
       createdAt: now,
       updatedAt: now,
+      ...(modelRef ? { modelRef } : {}),
     };
 
     // Load/create index BEFORE writing session folder to avoid
@@ -130,6 +131,34 @@ export class FilesSessionManager {
 
   async exists(id: string): Promise<boolean> {
     return this.files.exists(`${this.sessionsDir}/${id}`);
+  }
+
+  /** Update the per-session model selection. Pass `null` to clear.
+   * No-op when the session id isn't in the index. The session's
+   * `updatedAt` is bumped on any change. */
+  async setModelRef(id: string, modelRef: SessionModelRef | null): Promise<void> {
+    const index = await this.loadIndex();
+    const entry = index.sessions.find((s) => s.id === id);
+    if (!entry) return;
+    const before = entry.modelRef;
+    const after = modelRef ?? undefined;
+    const sameRef =
+      before?.connectionId === after?.connectionId && before?.modelId === after?.modelId;
+    if (sameRef) return;
+    if (after) {
+      entry.modelRef = after;
+    } else {
+      delete entry.modelRef;
+    }
+    entry.updatedAt = new Date().toISOString();
+    await this.saveIndex(index);
+  }
+
+  /** Read the metadata for a single session. Returns `undefined`
+   * when the id isn't in the index. */
+  async getMetadata(id: string): Promise<SessionMetadata | undefined> {
+    const index = await this.loadIndex();
+    return index.sessions.find((s) => s.id === id);
   }
 
   // --- Index management ---
