@@ -21,10 +21,10 @@ describe("makeConnectionsTabSpec", () => {
   it("has a Tabs element with all four ConnectionType sub-tabs", () => {
     const tabs = spec.elements.typeTabs as unknown as {
       type: string;
-      props: { items: { value: string }[] };
+      props: { tabs: { value: string }[] };
     };
     expect(tabs.type).toBe("Tabs");
-    expect(tabs.props.items.map((i) => i.value).sort()).toEqual([
+    expect(tabs.props.tabs.map((t) => t.value).sort()).toEqual([
       "anthropic",
       "google",
       "openai",

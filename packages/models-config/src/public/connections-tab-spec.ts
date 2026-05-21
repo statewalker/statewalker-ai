@@ -338,16 +338,22 @@ export function makeConnectionsTabSpec(): Spec {
       type: "Tabs",
       props: {
         value: { $bindState: "/ui/activeType" },
-        items: CONNECTION_TYPES.map((t) => ({
+        tabs: CONNECTION_TYPES.map((t) => ({
           value: t,
           label: TYPE_LABEL[t],
-          panel: `${t}_body`,
         })),
       },
+      // Tabs renders its `children` once inside the radix Tabs.Root.
+      // Each per-type body has a `visible` binding keyed on
+      // /ui/activeType so only the active type's body is rendered.
+      children: CONNECTION_TYPES.map((t) => `${t}_body`),
     },
   };
   for (const type of CONNECTION_TYPES) {
     Object.assign(elements, tabBodyElements(type));
+    // Visibility gate per body — only the active type's body shows.
+    const body = elements[`${type}_body`] as Record<string, unknown>;
+    body.visible = { $state: "/ui/activeType", eq: type };
   }
   return { root: "root", elements } as unknown as Spec;
 }
