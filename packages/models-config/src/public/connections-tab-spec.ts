@@ -41,7 +41,12 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
   return {
     [`${type}_body`]: {
       type: "Stack",
-      props: { direction: "vertical", gap: "md" },
+      props: {
+        direction: "vertical",
+        gap: "lg",
+        // Obsidian-style internal padding around the tab body.
+        className: "px-4 py-4",
+      },
       children: [`${type}_connectionsList`, `${type}_formCard`, `${type}_perConnModels`],
     },
     [`${type}_connectionsList`]: {
@@ -121,29 +126,51 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
     },
 
     // ── Add new Connection form (per-tab) ────────────────────
+    // Obsidian-style: section heading + muted description, separator,
+    // form fields, separator before the optional Headers section,
+    // error + primary button at the bottom. No Card chrome — padding
+    // comes from the outer body Stack className.
     [`${type}_formCard`]: {
-      type: "Card",
-      props: {
-        title: `Add ${TYPE_LABEL[type]} connection`,
-        description: `Enter your ${TYPE_LABEL[type]} API key to connect and discover available models.`,
-        maxWidth: "full",
-        centered: false,
-      },
-      children: [`${type}_formStack`],
-    },
-    [`${type}_formStack`]: {
       type: "Stack",
       props: { direction: "vertical", gap: "md" },
       children: [
+        `${type}_formHeading`,
+        `${type}_formDescription`,
+        `${type}_formSep1`,
         `${type}_formName`,
         `${type}_formApiKey`,
         `${type}_formUrl`,
+        `${type}_formSep2`,
+        `${type}_formHeadersHeading`,
         `${type}_formHeadersLabel`,
         `${type}_formHeadersList`,
         `${type}_formAddHeader`,
         `${type}_formError`,
         `${type}_formConnect`,
       ],
+    },
+    [`${type}_formHeading`]: {
+      type: "Heading",
+      props: { text: `Add ${TYPE_LABEL[type]} connection`, level: "h3" },
+    },
+    [`${type}_formDescription`]: {
+      type: "Text",
+      props: {
+        text: `Enter your ${TYPE_LABEL[type]} API key to connect and discover available models.`,
+        variant: "muted",
+      },
+    },
+    [`${type}_formSep1`]: {
+      type: "Separator",
+      props: { orientation: "horizontal" },
+    },
+    [`${type}_formSep2`]: {
+      type: "Separator",
+      props: { orientation: "horizontal" },
+    },
+    [`${type}_formHeadersHeading`]: {
+      type: "Heading",
+      props: { text: "Headers", level: "h4" },
     },
     [`${type}_formName`]: {
       type: "Input",
@@ -177,7 +204,10 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
     },
     [`${type}_formHeadersLabel`]: {
       type: "Text",
-      props: { text: "Headers (optional)", variant: "caption" },
+      props: {
+        text: "Optional HTTP headers forwarded on every request to this connection.",
+        variant: "muted",
+      },
     },
     [`${type}_formHeadersList`]: {
       type: "Stack",
