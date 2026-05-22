@@ -1,15 +1,13 @@
-import {
-  createAgentNodeFactory,
-  NodeType,
-  type Session,
-  sessionToMarkdown,
-} from "@statewalker/ai-agent";
 import { describe, expect, it } from "vitest";
+import { createAgentNodeFactory } from "./node-factory.js";
+import { NodeType } from "./node-types.js";
+import { sessionToMarkdown } from "./session-serialization.js";
+import type { SessionState } from "./session-state.js";
 
 const factory = createAgentNodeFactory();
 
 function buildConversation() {
-  const session = factory({ type: NodeType.session }) as Session;
+  const session = factory({ type: NodeType.session }) as SessionState;
   const turn1 = session.addTurn({ turnNumber: 1 });
   turn1.addUserMessage("Read /tmp/data.json");
   const agentMsg = turn1.addAgentMessage();
@@ -35,7 +33,6 @@ describe("sessionToMarkdown", () => {
     const md = await sessionToMarkdown(session);
     expect(md.length).toBeGreaterThan(0);
     const delimiters = md.split("\n").filter((l) => /^---+$/.test(l));
-    // One delimiter per node (session + 2 turns + messages + toolcall + tool-* nodes)
     expect(delimiters.length).toBeGreaterThanOrEqual(2);
   });
 

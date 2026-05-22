@@ -1,8 +1,6 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { createOpenAI } from "@ai-sdk/openai";
 import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
+import { createRemoteProvider } from "./create-remote-provider.js";
 import {
   type FileResolver,
   LocalModelStorage,
@@ -404,27 +402,6 @@ export class ModelManager {
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private createRemoteProvider(
-    providerName: ProviderName,
-    settings: RemoteProviderSettings,
-  ): ProviderV3 {
-    switch (providerName) {
-      case "anthropic":
-        return createAnthropic(settings);
-      case "google":
-        return createGoogleGenerativeAI(settings);
-      case "openai":
-        return createOpenAI(settings);
-      case "openai-compatible":
-        if (!settings.baseURL) {
-          throw new Error("openai-compatible provider requires settings.baseURL");
-        }
-        return createOpenAI(settings);
-      default:
-        throw new Error(`Unknown provider: ${providerName as string}`);
-    }
-  }
-
   private async *activateRemote(
     key: string,
     config: { runtime: "remote"; provider: ProviderName; modelId: string },
@@ -448,7 +425,7 @@ export class ModelManager {
     };
 
     try {
-      const provider = this.createRemoteProvider(config.provider, settings);
+      const provider = createRemoteProvider(config.provider, settings);
       await verifyModelAccess(provider, config.modelId, signal);
 
       const model = provider.languageModel(config.modelId);

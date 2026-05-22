@@ -19,9 +19,6 @@
     "format": "biome format --write ."
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "catalog:",
-    "@ai-sdk/google": "catalog:",
-    "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@repo/chat-mini.chat": "workspace:*",
     "@statewalker/ai-agent": "workspace:*",

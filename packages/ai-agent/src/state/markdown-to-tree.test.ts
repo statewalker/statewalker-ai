@@ -1,17 +1,14 @@
-import {
-  createAgentNodeFactory,
-  markdownToSession,
-  NodeType,
-  type Session,
-  sessionToMarkdown,
-  type Turn,
-} from "@statewalker/ai-agent";
 import { describe, expect, it } from "vitest";
+import { createAgentNodeFactory } from "./node-factory.js";
+import { NodeType } from "./node-types.js";
+import { markdownToSession, sessionToMarkdown } from "./session-serialization.js";
+import type { SessionState } from "./session-state.js";
+import type { Turn } from "./turn.js";
 
 const factory = createAgentNodeFactory();
 
 function buildConversation() {
-  const session = factory({ type: NodeType.session }) as Session;
+  const session = factory({ type: NodeType.session }) as SessionState;
   const turn1 = session.addTurn({ turnNumber: 1 });
   turn1.addUserMessage("Read /tmp/data.json");
   const agentMsg = turn1.addAgentMessage();
@@ -35,7 +32,7 @@ describe("markdownToSession", () => {
   it("reconstructs tree from markdown", async () => {
     const { session } = buildConversation();
     const md = await sessionToMarkdown(session);
-    const restored = (await markdownToSession(md, factory)) as Session;
+    const restored = (await markdownToSession(md, factory)) as SessionState;
     expect(restored.id).toBe(session.id);
     expect(restored.turns).toHaveLength(2);
   });
@@ -43,7 +40,7 @@ describe("markdownToSession", () => {
   it("preserves full conversation structure", async () => {
     const { session } = buildConversation();
     const md = await sessionToMarkdown(session);
-    const restored = (await markdownToSession(md, factory)) as Session;
+    const restored = (await markdownToSession(md, factory)) as SessionState;
 
     const t1 = restored.turns[0] as Turn;
     expect(t1.turnNumber).toBe(1);
@@ -72,7 +69,7 @@ describe("markdown round-trip", () => {
   it("round-trip preserves props", async () => {
     const { session } = buildConversation();
     const md = await sessionToMarkdown(session);
-    const restored = (await markdownToSession(md, factory)) as Session;
+    const restored = (await markdownToSession(md, factory)) as SessionState;
 
     const t1 = restored.turns[0] as Turn;
     expect(t1.props.turnNumber).toBe(1);

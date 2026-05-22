@@ -6,15 +6,12 @@ AI agent and provider stack for the statewalker ecosystem. Published as the `@st
 
 | Package | Description |
 | --- | --- |
-| [`@statewalker/ai-agent`](packages/ai-agent) | Three-tier `AgentRuntime → Agent → Session` API for agent projects. Owns providers, tools, skills, the FilesApi split (system / tools view), MCP integration, and session persistence. Reactive tree infrastructure (`TreeNode`, factory, stream serializer) under `./state`. Model library (`ModelManager`, `UnifiedProvider`, weight storage) under `./models`. |
-| [`@statewalker/ai-agent-tests`](packages/ai-agent-tests) | Dev-only cross-implementation test harness for the agent loop. |
-| [`@statewalker/ai-provider-core`](packages/ai-provider-core) | Provider lifecycle, active-models controller, UI wiring for the model picker. Owns the AI-config fragment. |
-| [`@statewalker/ai-provider-core-browser`](packages/ai-provider-core-browser) | Workspace activator that registers browser engines on the shared `ModelManager`. |
-| [`@statewalker/ai-provider-core-node`](packages/ai-provider-core-node) | Workspace activator that registers Node engines on the shared `ModelManager`. |
-| [`@statewalker/ai-provider-browser`](packages/ai-provider-browser) | Browser inference engines: WebLLM (MLC) + transformers.js, plus WebLLM weight-bridge helpers. |
-| [`@statewalker/ai-provider-node`](packages/ai-provider-node) | Node inference engine: llama.cpp via `node-llama-cpp`. |
-
-`ai-agent-tests` is a dev-only test harness that exercises every other package's public surface in combination; it is not published as a runtime dependency.
+| [`@statewalker/ai-agent`](packages/ai-agent) | Pure logic core. Sub-path exports: `/state` (tree-node infrastructure, session state, serialization), `/runtime` (`AgentRuntime`, `Agent`, `Session`), `/models` (`ModelManager`, `ModelStateStore`, `createRemoteProvider`, catalog, verification), `/tools` (`createFileTools`, path utilities). MCP integration, sessions, skills, config live under deep imports as implementation detail. |
+| [`@statewalker/ai-agent-runtime`](packages/ai-agent-runtime) | Workspace-fragment shim. Registers the `ActiveModel` and `AgentRuntimeAdapter` adapters and owns the re-entrant `AgentRuntimeManager`. Exposes `agentToolsSlot` for cross-package tool contribution. Boots before `ai-providers`. |
+| [`@statewalker/ai-providers`](packages/ai-providers) | Workspace-fragment. Owns provider config storage (`Providers` adapter, `providers.json` IO), writes `ActiveModel`, contributes to `providers:remote`. Re-exports types (`ConnectionType`, `Capability`, `Connection`) and helpers (`isConnected`, `listConnectionModels`, `createRemoteProvider`). Boots after `ai-agent-runtime`. |
+| [`@statewalker/models-config`](packages/models-config) | Workspace-fragment. Connections / starred / local-model lifecycle (`LocalModels`), json-render dialog specs (connections, starred, local-models tabs), commands. Logic-only per ADR 0002. |
+| [`@statewalker/models-config-react`](packages/models-config-react) | React renderer for the models-config dialogs and composer model picker. Pairs with `models-config` (logic). |
+| [`@statewalker/ai-provider-browser`](packages/ai-provider-browser) | Browser inference engines: WebLLM (MLC) and transformers.js, plus WebLLM weight-bridge helpers. Registers against `ai-agent`'s `ModelManager` via `registerLocalProvider`. |
 
 ## Development
 

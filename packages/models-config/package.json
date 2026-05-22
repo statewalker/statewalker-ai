@@ -26,7 +26,7 @@
     "@repo/chat-mini.chat": "workspace:*",
     "@statewalker/ai-agent": "workspace:*",
     "@statewalker/ai-agent-runtime": "workspace:*",
-    "@statewalker/ai-provider-browser": "catalog:",
+    "@statewalker/ai-provider-browser": "workspace:*",
     "@statewalker/ai-providers": "workspace:*",
     "@statewalker/dock": "workspace:*",
     "@statewalker/settings": "workspace:*",

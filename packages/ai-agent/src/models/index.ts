@@ -1,3 +1,4 @@
+export { createRemoteProvider } from "./create-remote-provider.js";
 export {
   type DownloadOptions,
   type FileResolver,
