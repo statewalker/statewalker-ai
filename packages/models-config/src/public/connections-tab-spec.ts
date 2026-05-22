@@ -122,10 +122,19 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
 
     // ── Add new Connection form (per-tab) ────────────────────
     [`${type}_formCard`]: {
+      type: "Card",
+      props: {
+        title: `Add ${TYPE_LABEL[type]} connection`,
+        description: `Enter your ${TYPE_LABEL[type]} API key to connect and discover available models.`,
+        maxWidth: "full",
+        centered: false,
+      },
+      children: [`${type}_formStack`],
+    },
+    [`${type}_formStack`]: {
       type: "Stack",
-      props: { direction: "vertical", gap: "sm" },
+      props: { direction: "vertical", gap: "md" },
       children: [
-        `${type}_formHeading`,
         `${type}_formName`,
         `${type}_formApiKey`,
         `${type}_formUrl`,
@@ -135,10 +144,6 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
         `${type}_formError`,
         `${type}_formConnect`,
       ],
-    },
-    [`${type}_formHeading`]: {
-      type: "Text",
-      props: { text: `Add ${TYPE_LABEL[type]} connection`, variant: "heading" },
     },
     [`${type}_formName`]: {
       type: "Input",
