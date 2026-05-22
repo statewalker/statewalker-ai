@@ -179,7 +179,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
         name: "name",
         type: "text",
         placeholder: `e.g. ${TYPE_LABEL[type]} (work)`,
-        value: { $bindState: "/ui/connectionForm/name" },
+        value: { $bindState: `/ui/connectionForms/${type}/name` },
       },
     },
     [`${type}_formApiKey`]: {
@@ -189,7 +189,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
         name: "apiKey",
         type: "password",
         placeholder: "sk-…",
-        value: { $bindState: "/ui/connectionForm/apiKey" },
+        value: { $bindState: `/ui/connectionForms/${type}/apiKey` },
       },
     },
     [`${type}_formUrl`]: {
@@ -199,7 +199,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
         name: "url",
         type: "text",
         placeholder: urlPlaceholder,
-        value: { $bindState: "/ui/connectionForm/url" },
+        value: { $bindState: `/ui/connectionForms/${type}/url` },
       },
     },
     [`${type}_formHeadersLabel`]: {
@@ -217,7 +217,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
     [`${type}_formHeaderRow`]: {
       type: "Stack",
       props: { direction: "horizontal", gap: "sm", align: "center" },
-      repeat: { statePath: "/ui/connectionForm/headers" },
+      repeat: { statePath: `/ui/connectionForms/${type}/headers` },
       children: [`${type}_formHeaderName`, `${type}_formHeaderValue`, `${type}_formHeaderRemove`],
     },
     [`${type}_formHeaderName`]: {
@@ -256,10 +256,14 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       type: "Alert",
       props: {
         title: "Error",
-        message: { $state: "/ui/connectionForm/error" },
+        message: { $state: `/ui/connectionForms/${type}/error` },
         type: "error",
       },
-      visible: { $state: "/ui/connectionForm/error", neq: null },
+      // Only render when error is a non-null string. Initial state
+      // seeds `error: null`, action handlers reset to `null` on
+      // success, so this gate hides the panel until a real error
+      // arrives.
+      visible: { $state: `/ui/connectionForms/${type}/error`, neq: null },
     },
     [`${type}_formConnect`]: {
       type: "Button",
@@ -378,8 +382,20 @@ export function makeConnectionsTabSpec(): Spec {
 
 /** Initial state seed for the Connections tab `StateStore`. The
  * renderer-side bridge merges `/persistent/*` from `Providers` on
- * mount. */
+ * mount. Per-type form state (`/ui/connectionForms/<type>/*`) is
+ * independent for each tab so switching sub-tabs doesn't bleed an
+ * API key from one provider into another. */
 export function makeConnectionsTabInitialState(): Record<string, unknown> {
+  const blankForm = (): Record<string, unknown> => ({
+    name: "",
+    apiKey: "",
+    url: "",
+    headers: [] as Array<{ name: string; value: string }>,
+    // `null` (not `undefined`) so the Alert's `visible:
+    // { neq: null }` gate evaluates correctly — `undefined !== null`
+    // is true and would keep the error panel always visible.
+    error: null as string | null,
+  });
   return {
     persistent: {
       connectionsByType: {
@@ -391,12 +407,11 @@ export function makeConnectionsTabInitialState(): Record<string, unknown> {
     },
     ui: {
       activeType: "google",
-      connectionForm: {
-        name: "",
-        apiKey: "",
-        url: "",
-        headers: [] as Array<{ name: string; value: string }>,
-        error: undefined as string | undefined,
+      connectionForms: {
+        google: blankForm(),
+        openai: blankForm(),
+        anthropic: blankForm(),
+        "openai-compatible": blankForm(),
       },
     },
   };

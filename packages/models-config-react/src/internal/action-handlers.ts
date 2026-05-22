@@ -172,24 +172,25 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
     const target = p.connectionId
       ? current.connections.find((c) => c.id === p.connectionId)
       : null;
-    if (p.connectionId && !target) {
-      setUi("connectionForm/error", `Unknown connection: ${p.connectionId}`);
-      return;
-    }
     // For a fresh form submission, the spec passes `connectionType`
     // (the active type sub-tab is the Connection's type). Fall back
     // to /ui/activeType if the param is missing.
     const formType: ConnectionType =
       p.connectionType ?? (getUi<ConnectionType>("activeType") ?? "openai");
-    const formName = getUi<string>("connectionForm/name") ?? "";
-    const formApiKey = getUi<string>("connectionForm/apiKey") ?? "";
-    if (!target && !formApiKey.trim()) {
-      setUi("connectionForm/error", "API key is required");
+    const errorPath = `connectionForms/${formType}/error`;
+    if (p.connectionId && !target) {
+      setUi(errorPath, `Unknown connection: ${p.connectionId}`);
       return;
     }
-    const formUrl = getUi<string>("connectionForm/url") ?? "";
+    const formName = getUi<string>(`connectionForms/${formType}/name`) ?? "";
+    const formApiKey = getUi<string>(`connectionForms/${formType}/apiKey`) ?? "";
+    if (!target && !formApiKey.trim()) {
+      setUi(errorPath, "API key is required");
+      return;
+    }
+    const formUrl = getUi<string>(`connectionForms/${formType}/url`) ?? "";
     const formHeaders =
-      getUi<Array<{ name: string; value: string }>>("connectionForm/headers") ?? [];
+      getUi<Array<{ name: string; value: string }>>(`connectionForms/${formType}/headers`) ?? [];
     const conn: Connection = target ?? {
       id: newConnectionId(),
       type: formType,
@@ -199,9 +200,13 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
       headers: formHeaders.length > 0 ? formHeaders : undefined,
       starredModelIds: [],
     };
-    setUi("connectionForm/error", undefined);
+    // Clear any prior error so the Alert hides while the request is in flight.
+    setUi(errorPath, null);
     try {
       validateConnectionUrl(conn);
+      // Step 1 — connect to the service and fetch the model list.
+      // If this throws (auth, network, CORS, …) we surface the
+      // error and DO NOT persist the connection.
       const discoveredModels = (await listConnectionModels(conn)).map((m) => ({
         ...m,
         capabilities: m.capabilities ?? capabilitiesFor(m.id),
@@ -222,17 +227,21 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
       const connections = target
         ? current.connections.map((c) => (c.id === target.id ? updated : c))
         : [...current.connections, updated];
+      // Step 2 — only AFTER discovery succeeds do we persist the
+      // Connection (with the discovered models + default-starred
+      // seed) into providers.json.
       await providers.saveProviders({ ...current, connections });
       if (!target) {
-        // Form was for adding — clear it on success.
-        setUi("connectionForm/editingId", undefined);
-        setUi("connectionForm/name", "");
-        setUi("connectionForm/url", "");
-        setUi("connectionForm/apiKey", "");
-        setUi("connectionForm/headers", []);
+        // Form was for adding — clear the active type's form on
+        // success so the user can add another connection for the
+        // same provider without re-typing.
+        setUi(`connectionForms/${formType}/name`, "");
+        setUi(`connectionForms/${formType}/url`, "");
+        setUi(`connectionForms/${formType}/apiKey`, "");
+        setUi(`connectionForms/${formType}/headers`, []);
       }
     } catch (err) {
-      setUi("connectionForm/error", err instanceof Error ? err.message : String(err));
+      setUi(errorPath, err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -363,18 +372,25 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
     setUi(`dialogs/${dialog}/open`, false);
   }
 
+  /** Per-type form state lives at `/ui/connectionForms/<type>/headers`.
+   * `addHeader` / `removeHeader` operate on the active sub-tab's
+   * headers array — read via `/ui/activeType` and routed accordingly. */
+  function activeFormHeadersPath(): string {
+    const type = getUi<ConnectionType>("activeType") ?? "openai";
+    return `connectionForms/${type}/headers`;
+  }
+
   async function addHeader(): Promise<void> {
-    const existing = getUi<Array<{ name: string; value: string }>>("connectionForm/headers");
-    setUi("connectionForm/headers", [...existing, { name: "", value: "" }]);
+    const path = activeFormHeadersPath();
+    const existing = getUi<Array<{ name: string; value: string }>>(path) ?? [];
+    setUi(path, [...existing, { name: "", value: "" }]);
   }
 
   async function removeHeader(params: Record<string, unknown>): Promise<void> {
     const { index } = params as { index: number };
-    const existing = getUi<Array<{ name: string; value: string }>>("connectionForm/headers");
-    setUi(
-      "connectionForm/headers",
-      existing.filter((_, i) => i !== index),
-    );
+    const path = activeFormHeadersPath();
+    const existing = getUi<Array<{ name: string; value: string }>>(path) ?? [];
+    setUi(path, existing.filter((_, i) => i !== index));
   }
 
   return {
