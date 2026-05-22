@@ -164,20 +164,39 @@ export function buildActionHandlers(ctx: ActionHandlerContext): Record<string, H
    * call.
    */
   async function connectConnection(params: Record<string, unknown>): Promise<void> {
-    const { connectionId } = params as { connectionId?: string };
+    const p = params as {
+      connectionId?: string;
+      connectionType?: ConnectionType;
+    };
     const current = providers.config;
-    const target = connectionId ? current.connections.find((c) => c.id === connectionId) : null;
-    if (connectionId && !target) {
-      setUi("connectionForm/error", `Unknown connection: ${connectionId}`);
+    const target = p.connectionId
+      ? current.connections.find((c) => c.id === p.connectionId)
+      : null;
+    if (p.connectionId && !target) {
+      setUi("connectionForm/error", `Unknown connection: ${p.connectionId}`);
       return;
     }
+    // For a fresh form submission, the spec passes `connectionType`
+    // (the active type sub-tab is the Connection's type). Fall back
+    // to /ui/activeType if the param is missing.
+    const formType: ConnectionType =
+      p.connectionType ?? (getUi<ConnectionType>("activeType") ?? "openai");
+    const formName = getUi<string>("connectionForm/name") ?? "";
+    const formApiKey = getUi<string>("connectionForm/apiKey") ?? "";
+    if (!target && !formApiKey.trim()) {
+      setUi("connectionForm/error", "API key is required");
+      return;
+    }
+    const formUrl = getUi<string>("connectionForm/url") ?? "";
+    const formHeaders =
+      getUi<Array<{ name: string; value: string }>>("connectionForm/headers") ?? [];
     const conn: Connection = target ?? {
       id: newConnectionId(),
-      type: getUi<ConnectionType>("connectionForm/type"),
-      name: getUi<string>("connectionForm/name"),
-      url: getUi<string>("connectionForm/url") || undefined,
-      apiKey: getUi<string>("connectionForm/apiKey"),
-      headers: getUi<Array<{ name: string; value: string }>>("connectionForm/headers"),
+      type: formType,
+      name: formName || `${formType} connection`,
+      url: formUrl || undefined,
+      apiKey: formApiKey,
+      headers: formHeaders.length > 0 ? formHeaders : undefined,
       starredModelIds: [],
     };
     setUi("connectionForm/error", undefined);

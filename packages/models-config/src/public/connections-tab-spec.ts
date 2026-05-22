@@ -50,20 +50,9 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       children: [`${type}_connectionRow`],
     },
     [`${type}_connectionRow`]: {
-      type: "Card",
-      props: {
-        title: null,
-        description: null,
-        maxWidth: "full",
-        centered: false,
-        className: "models-config-connection-row",
-      },
-      repeat: { statePath: `/persistent/connectionsByType/${type}` },
-      children: [`${type}_connectionRowStack`],
-    },
-    [`${type}_connectionRowStack`]: {
       type: "Stack",
       props: { direction: "horizontal", gap: "md", align: "center" },
+      repeat: { statePath: `/persistent/connectionsByType/${type}` },
       children: [
         `${type}_connectionRowName`,
         `${type}_connectionRowStatus`,
@@ -133,19 +122,10 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
 
     // ── Add new Connection form (per-tab) ────────────────────
     [`${type}_formCard`]: {
-      type: "Card",
-      props: {
-        title: `Add ${TYPE_LABEL[type]} connection`,
-        description: null,
-        maxWidth: "full",
-        centered: false,
-      },
-      children: [`${type}_formStack`],
-    },
-    [`${type}_formStack`]: {
       type: "Stack",
       props: { direction: "vertical", gap: "sm" },
       children: [
+        `${type}_formHeading`,
         `${type}_formName`,
         `${type}_formApiKey`,
         `${type}_formUrl`,
@@ -155,6 +135,10 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
         `${type}_formError`,
         `${type}_formConnect`,
       ],
+    },
+    [`${type}_formHeading`]: {
+      type: "Text",
+      props: { text: `Add ${TYPE_LABEL[type]} connection`, variant: "heading" },
     },
     [`${type}_formName`]: {
       type: "Input",
@@ -262,16 +246,15 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       children: [`${type}_perConnGroup`],
     },
     [`${type}_perConnGroup`]: {
-      type: "Card",
-      props: {
-        title: { $item: "name" },
-        description: null,
-        maxWidth: "full",
-        centered: false,
-      },
+      type: "Stack",
+      props: { direction: "vertical", gap: "xs" },
       repeat: { statePath: `/persistent/connectionsByType/${type}` },
       visible: { $item: "connected", eq: true },
-      children: [`${type}_perConnModelRow`],
+      children: [`${type}_perConnGroupHeading`, `${type}_perConnModelRow`],
+    },
+    [`${type}_perConnGroupHeading`]: {
+      type: "Text",
+      props: { text: { $item: "name" }, variant: "heading" },
     },
     [`${type}_perConnModelRow`]: {
       type: "Stack",
