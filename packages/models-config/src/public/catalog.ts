@@ -18,6 +18,27 @@ export const modelsConfigCatalog = defineCatalog(schema, {
       props: z.object({ source: z.string() }),
       description: "Rendered markdown text (formatted lists, headings, etc.)",
     },
+    /**
+     * Replacement for shadcn `Input` for the Connections form. Two
+     * differences from the stock primitive:
+     *   1. Disables browser autofill (`autocomplete="off"` for text;
+     *      `autocomplete="new-password"` for password). Stock `Input`
+     *      lets the browser cross-populate same-named fields across
+     *      sibling form sections (the four tabs).
+     *   2. For `type: "password"`, renders an eye / eye-off toggle
+     *      that flips the input between masked and plain.
+     */
+    FieldInput: {
+      props: z.object({
+        label: z.string().nullable(),
+        name: z.string(),
+        type: z.enum(["text", "password"]).nullable(),
+        placeholder: z.string().nullable(),
+        value: z.string().nullable(),
+      }),
+      description:
+        "Form input with autofill disabled and a show/hide toggle when type=password.",
+    },
   },
   actions: {
     saveConnection: {

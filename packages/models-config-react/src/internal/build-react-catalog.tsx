@@ -2,6 +2,7 @@ import type { Actions, Components } from "@json-render/react";
 import { type DefineRegistryResult, defineRegistry } from "@json-render/react";
 import { shadcnComponents } from "@json-render/shadcn";
 import { type ModelsConfigCatalog, modelsConfigCatalog } from "@statewalker/models-config";
+import { FieldInput } from "./field-input.js";
 import { MarkdownText } from "./markdown-text.js";
 
 export interface BuildRegistryOptions {
@@ -19,6 +20,7 @@ export function buildModelsConfigRegistry(options: BuildRegistryOptions): Define
   const components = {
     ...shadcnComponents,
     Markdown: MarkdownText,
+    FieldInput,
   } as unknown as Components<ModelsConfigCatalog>;
   const actions = options.actions as unknown as Actions<ModelsConfigCatalog>;
   return defineRegistry(modelsConfigCatalog, { components, actions });

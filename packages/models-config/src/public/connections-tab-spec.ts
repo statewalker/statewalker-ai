@@ -126,28 +126,31 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
     },
 
     // ── Add new Connection form (per-tab) ────────────────────
-    // Obsidian-style: section heading + muted description, separator,
-    // form fields, separator before the optional Headers section,
-    // error + primary button at the bottom. No Card chrome — padding
-    // comes from the outer body Stack className.
+    // Section heading + description sit on a single horizontal row
+    // (Stack horizontal) so they read like a panel title rather than
+    // two stacked text lines. The Headers section lives inside a
+    // shadcn Collapsible, folded by default — it's the rare-use
+    // sub-section, the user shouldn't have to scroll past it on
+    // every connection.
     [`${type}_formCard`]: {
       type: "Stack",
       props: { direction: "vertical", gap: "md" },
       children: [
-        `${type}_formHeading`,
-        `${type}_formDescription`,
+        `${type}_formHeadingRow`,
         `${type}_formSep1`,
         `${type}_formName`,
         `${type}_formApiKey`,
         `${type}_formUrl`,
         `${type}_formSep2`,
-        `${type}_formHeadersHeading`,
-        `${type}_formHeadersLabel`,
-        `${type}_formHeadersList`,
-        `${type}_formAddHeader`,
+        `${type}_formHeadersCollapsible`,
         `${type}_formError`,
         `${type}_formConnect`,
       ],
+    },
+    [`${type}_formHeadingRow`]: {
+      type: "Stack",
+      props: { direction: "horizontal", gap: "md", align: "baseline" },
+      children: [`${type}_formHeading`, `${type}_formDescription`],
     },
     [`${type}_formHeading`]: {
       type: "Heading",
@@ -168,16 +171,27 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       type: "Separator",
       props: { orientation: "horizontal" },
     },
-    [`${type}_formHeadersHeading`]: {
-      type: "Heading",
-      props: { text: "Headers", level: "h4" },
+    [`${type}_formHeadersCollapsible`]: {
+      type: "Collapsible",
+      props: { title: "Headers (optional)", defaultOpen: false },
+      children: [`${type}_formHeadersInner`],
     },
-    // Input `name` attributes are per-type-prefixed so the browser's
-    // autofill heuristics don't share the value across the four
-    // sub-tabs (otherwise the OpenAI API Key field would be
-    // auto-filled with the value the user typed into Google).
+    [`${type}_formHeadersInner`]: {
+      type: "Stack",
+      props: { direction: "vertical", gap: "sm" },
+      children: [
+        `${type}_formHeadersLabel`,
+        `${type}_formHeadersList`,
+        `${type}_formAddHeader`,
+      ],
+    },
+    // FieldInput (catalog-local primitive) replaces shadcn `Input`
+    // here: it explicitly opts out of browser autofill (per-type
+    // `name=` alone wasn't enough — Chrome/Safari still propagated
+    // the same value across sibling tabs' password and text fields)
+    // and adds a show/hide eye toggle on `type: "password"`.
     [`${type}_formName`]: {
-      type: "Input",
+      type: "FieldInput",
       props: {
         label: "Name",
         name: `${type}-name`,
@@ -187,7 +201,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       },
     },
     [`${type}_formApiKey`]: {
-      type: "Input",
+      type: "FieldInput",
       props: {
         label: "API Key",
         name: `${type}-apiKey`,
@@ -197,7 +211,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       },
     },
     [`${type}_formUrl`]: {
-      type: "Input",
+      type: "FieldInput",
       props: {
         label: urlLabel,
         name: `${type}-url`,
