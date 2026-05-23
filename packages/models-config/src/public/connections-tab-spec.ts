@@ -172,11 +172,15 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       type: "Heading",
       props: { text: "Headers", level: "h4" },
     },
+    // Input `name` attributes are per-type-prefixed so the browser's
+    // autofill heuristics don't share the value across the four
+    // sub-tabs (otherwise the OpenAI API Key field would be
+    // auto-filled with the value the user typed into Google).
     [`${type}_formName`]: {
       type: "Input",
       props: {
         label: "Name",
-        name: "name",
+        name: `${type}-name`,
         type: "text",
         placeholder: `e.g. ${TYPE_LABEL[type]} (work)`,
         value: { $bindState: `/ui/connectionForms/${type}/name` },
@@ -186,7 +190,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       type: "Input",
       props: {
         label: "API Key",
-        name: "apiKey",
+        name: `${type}-apiKey`,
         type: "password",
         placeholder: "sk-…",
         value: { $bindState: `/ui/connectionForms/${type}/apiKey` },
@@ -196,7 +200,7 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
       type: "Input",
       props: {
         label: urlLabel,
-        name: "url",
+        name: `${type}-url`,
         type: "text",
         placeholder: urlPlaceholder,
         value: { $bindState: `/ui/connectionForms/${type}/url` },
@@ -259,11 +263,11 @@ function tabBodyElements(type: ConnectionType): Record<string, unknown> {
         message: { $state: `/ui/connectionForms/${type}/error` },
         type: "error",
       },
-      // Only render when error is a non-null string. Initial state
-      // seeds `error: null`, action handlers reset to `null` on
-      // success, so this gate hides the panel until a real error
-      // arrives.
-      visible: { $state: `/ui/connectionForms/${type}/error`, neq: null },
+      // Truthy gate — `evaluateCondition` falls back to
+      // `Boolean(value)` when no comparator (eq/neq/gt/…) is
+      // supplied. Hidden for null, undefined, and "" — visible
+      // only when an action handler has written a real string.
+      visible: { $state: `/ui/connectionForms/${type}/error` },
     },
     [`${type}_formConnect`]: {
       type: "Button",
