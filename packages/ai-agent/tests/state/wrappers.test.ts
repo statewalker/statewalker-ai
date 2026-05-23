@@ -7,12 +7,10 @@ import {
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
-import {
-  applyFlat,
-  jsonToTree,
-  toFlatStream,
-  treeToJson,
-} from "../../src/state/serialization/index.js";
+import { applyFlat } from "../../src/state/serialization/apply-flat.js";
+import { jsonToTree } from "../../src/state/serialization/json-to-tree.js";
+import { toFlatStream } from "../../src/state/serialization/to-flat-stream.js";
+import { treeToJson } from "../../src/state/serialization/tree-to-json.js";
 
 const factory = createAgentNodeFactory();
 

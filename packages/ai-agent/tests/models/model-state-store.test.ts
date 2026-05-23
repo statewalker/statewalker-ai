@@ -167,13 +167,12 @@ describe("ModelStateStore as ProviderV3", () => {
     }
   });
 
-  it("languageModel and getLanguageModel return the same instance", () => {
+  it("languageModel returns the active model", () => {
     const store = createStore();
     const fakeModel = { specificationVersion: "v3" } as unknown as Parameters<
       ModelStateStore["setActiveModel"]
     >[1];
     store.setActiveModel("local:test", fakeModel);
     expect(store.languageModel("local:test")).toBe(fakeModel);
-    expect(store.getLanguageModel("local:test")).toBe(fakeModel);
   });
 });

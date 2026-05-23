@@ -22,9 +22,4 @@ export class ToolRegistry extends BaseClass {
   get size(): number {
     return this.#tools.size;
   }
-
-  /** Iterate over [name, tool] entries. */
-  entries(): IterableIterator<[string, Tool]> {
-    return this.#tools.entries();
-  }
 }

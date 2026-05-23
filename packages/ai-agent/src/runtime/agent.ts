@@ -36,7 +36,6 @@ const idGen = new SnowflakeId();
 export class Agent {
   private readonly _definition: AgentDefinition;
   private readonly _runtime: AgentRuntime;
-  private readonly _subAgents: Agent[] = [];
   private _selectionStrategy?: SelectionStrategy;
 
   /** @internal Use {@link AgentRuntime#createAgent} instead. */
@@ -54,11 +53,6 @@ export class Agent {
     return this._definition;
   }
 
-  /** @internal Sub-agents currently registered on this Agent. */
-  get subAgents(): readonly Agent[] {
-    return this._subAgents;
-  }
-
   /** @internal Per-Agent override of the runtime-level selection strategy. */
   get selectionStrategy(): SelectionStrategy | undefined {
     return this._selectionStrategy;
@@ -67,16 +61,6 @@ export class Agent {
   /** @internal Runtime this Agent belongs to. */
   get runtime(): AgentRuntime {
     return this._runtime;
-  }
-
-  /**
-   * Register a sub-agent. The sub-agent becomes available as a tool to
-   * Sessions of this Agent — when called, the runtime constructs a child
-   * Session of the sub-agent and streams its result back.
-   */
-  addSubAgent(child: Agent): this {
-    this._subAgents.push(child);
-    return this;
   }
 
   /** Per-Agent override of the runtime-level message selection strategy. */
@@ -103,8 +87,10 @@ export class Agent {
     const def = this._definition;
     const id = opts?.sessionId ?? idGen.generate();
 
-    // 1. State tree (new or adopted).
-    const state = buildState(id, opts?.title, opts?.existingState);
+    // 1. State tree (new or adopted). New sessions persist the Agent name
+    //    so AgentRuntime.loadSession can bind a resumed Session to the
+    //    registered Agent rather than falling back to `__resumed__`.
+    const state = buildState(id, def.name, opts?.title, opts?.existingState);
 
     // 2. Per-session inbox + tool/skill registries.
     const inbox = new Inbox();
@@ -140,16 +126,7 @@ export class Agent {
       );
     }
 
-    // 6. Sub-agents — TODO: runtime-native sub-agent invocation. Until
-    //    consumers actually use sub-agents through the runtime API,
-    //    registering one throws here.
-    if (this._subAgents.length > 0) {
-      throw new Error(
-        `Sub-agents not supported yet on runtime API (agent "${def.name}" declared ${this._subAgents.length})`,
-      );
-    }
-
-    // 7. MCP tools — sync into this session's tool registry.
+    // 6. MCP tools — sync into this session's tool registry.
     const mcp = runtime.mcp;
     const mcpUnsubscribe = mcp ? bridgeMcpTools(mcp, tools) : undefined;
 
@@ -191,6 +168,7 @@ export class Agent {
 
 function buildState(
   id: string,
+  agentName: string,
   title: string | undefined,
   existingState: SessionState | undefined,
 ): SessionState {
@@ -200,10 +178,12 @@ function buildState(
     return existingState;
   }
   const factory = createAgentNodeFactory();
+  const props: Record<string, unknown> = { agent: agentName };
+  if (title) props.title = title;
   return factory<SessionState>({
     type: NodeType.session,
     id,
-    props: title ? { title } : {},
+    props,
   });
 }
 

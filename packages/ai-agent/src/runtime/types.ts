@@ -72,8 +72,7 @@ export interface AgentDefinition {
   name: string;
   /**
    * Tool names visible to this agent. Empty / undefined → all tools
-   * registered on the runtime (and any sub-agents declared via
-   * {@link Agent#addSubAgent}).
+   * registered on the runtime.
    */
   tools?: string[];
   /**

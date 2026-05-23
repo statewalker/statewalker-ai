@@ -1,4 +1,5 @@
 import type { FilesApi } from "@statewalker/webrun-files";
+import { readText } from "@statewalker/webrun-files";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 import type { AgentRuntimeErrorContext, AgentRuntimeErrorHandler } from "./types.js";
@@ -24,7 +25,7 @@ export class SkillsLoader {
     for await (const entry of systemFiles.list(skillsPath)) {
       if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
       try {
-        const text = await readFile(systemFiles, entry.path);
+        const text = await readText(systemFiles, entry.path);
         const skill = parseSkillMarkdown(text, entry.path);
         if (skill) skills.push(skill);
       } catch (err) {
@@ -33,17 +34,4 @@ export class SkillsLoader {
     }
     return skills;
   }
-}
-
-async function readFile(files: FilesApi, path: string): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of files.read(path)) chunks.push(chunk);
-  const total = chunks.reduce((acc, c) => acc + c.byteLength, 0);
-  const merged = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    merged.set(c, off);
-    off += c.byteLength;
-  }
-  return new TextDecoder().decode(merged);
 }

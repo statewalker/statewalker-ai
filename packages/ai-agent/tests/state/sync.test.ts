@@ -7,7 +7,8 @@ import {
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
-import { applyFlat, toFlatStream, treeToJson } from "../../src/state/serialization/index.js";
+import { applyFlat } from "../../src/state/serialization/apply-flat.js";
+import { toFlatStream } from "../../src/state/serialization/to-flat-stream.js";
 
 const factory = createAgentNodeFactory();
 
@@ -112,8 +113,8 @@ describe("Live sync: session1 → session2 via FlatTreeEntry stream", () => {
     // VERIFY
     // ════════════════════════════════════════════════════════════
 
-    // 1. JSON snapshots are identical
-    expect(treeToJson(session2)).toEqual(treeToJson(session1));
+    // 1. Tree data snapshots are identical
+    expect(session2.data).toEqual(session1.data);
 
     // 2. Same turns
     expect(session2).toBeInstanceOf(SessionState);

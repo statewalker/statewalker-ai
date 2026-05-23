@@ -1,4 +1,5 @@
 import type { FilesApi } from "@statewalker/webrun-files";
+import { readText } from "@statewalker/webrun-files";
 import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import { Agent } from "./agent.js";
 import type { AgentRuntime } from "./agent-runtime.js";
@@ -54,7 +55,7 @@ export class AgentCatalog {
     for await (const entry of systemFiles.list(agentsPath)) {
       if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
       try {
-        const text = await readFile(systemFiles, entry.path);
+        const text = await readText(systemFiles, entry.path);
         const def = parseAgentMarkdown(text, entry.name.replace(/\.md$/, ""));
         if (def && !this._agents.has(def.name)) {
           this._agents.set(def.name, new Agent(def, runtime));
@@ -67,19 +68,6 @@ export class AgentCatalog {
 }
 
 // ── Module-private helpers ───────────────────────────────────────────────
-
-async function readFile(files: FilesApi, path: string): Promise<string> {
-  const chunks: Uint8Array[] = [];
-  for await (const chunk of files.read(path)) chunks.push(chunk);
-  const total = chunks.reduce((acc, c) => acc + c.byteLength, 0);
-  const merged = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    merged.set(c, off);
-    off += c.byteLength;
-  }
-  return new TextDecoder().decode(merged);
-}
 
 /**
  * Parse an Agent definition file (markdown with key=value frontmatter

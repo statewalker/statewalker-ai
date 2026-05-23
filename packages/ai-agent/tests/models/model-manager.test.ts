@@ -94,10 +94,10 @@ describe("ModelManager", () => {
     });
   });
 
-  describe("store.getLanguageModel", () => {
+  describe("store.languageModel", () => {
     it("throws when model is not ready", () => {
       const { store } = createManager({ "remote:test": REMOTE_MODEL });
-      expect(() => store.getLanguageModel("remote:test")).toThrow(/not ready/);
+      expect(() => store.languageModel("remote:test")).toThrow(/not ready/);
     });
   });
 

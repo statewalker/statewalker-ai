@@ -1,4 +1,3 @@
-import type { LogMessage } from "./log-message.js";
 import { NodeType } from "./node-types.js";
 import { TreeNode } from "./tree-node.js";
 import type { Turn } from "./turn.js";
@@ -63,29 +62,6 @@ export class SessionState extends TreeNode {
       this.error = error instanceof Error ? error.message : String(error);
     }
     this.notify();
-  }
-
-  async *runTurn(
-    text: string,
-    handleTurn: (turn: Turn) => AsyncGenerator<LogMessage>,
-  ): AsyncGenerator<LogMessage> {
-    this.startStreaming();
-    let error: unknown;
-    try {
-      const turn = this.addTurn();
-      turn.addUserMessage(text);
-      yield* handleTurn(turn);
-    } catch (e) {
-      error = e;
-      const turnId = this.currentTurn?.id ?? "";
-      yield {
-        type: "error",
-        turnId,
-        message: e instanceof Error ? e.message : String(e),
-      };
-    } finally {
-      this.stopStreaming(error);
-    }
   }
 }
 

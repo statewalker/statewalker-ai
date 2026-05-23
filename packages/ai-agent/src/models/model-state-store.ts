@@ -163,11 +163,6 @@ export class ModelStateStore implements ProviderV3 {
     return model;
   }
 
-  /** @deprecated Use {@link languageModel} instead — kept as an alias for backward compatibility. */
-  getLanguageModel(key: string): LanguageModelV3 {
-    return this.languageModel(key);
-  }
-
   /** ProviderV3 conformance — embedding models are not supported. */
   embeddingModel(modelId: string): EmbeddingModelV3 {
     throw new NoSuchModelError({ modelId, modelType: "embeddingModel" });

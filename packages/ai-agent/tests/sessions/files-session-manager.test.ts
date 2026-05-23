@@ -1,4 +1,5 @@
 import { setTimeout as waitMs } from "node:timers/promises";
+import { SnowflakeId } from "@statewalker/shared-ids";
 import { tryReadText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -12,6 +13,16 @@ import {
 } from "../../src/state/index.js";
 
 const factory = createAgentNodeFactory();
+const idGen = new SnowflakeId();
+
+function newSession(title?: string): { id: string; session: SessionState } {
+  const id = idGen.generate();
+  const session = factory<SessionState>({
+    type: NodeType.session,
+    props: title ? { title } : {},
+  });
+  return { id, session };
+}
 
 function buildPopulatedSession(): SessionState {
   const session = factory<SessionState>({ type: NodeType.session });
@@ -46,22 +57,16 @@ describe("FilesSessionManager", () => {
     manager = new FilesSessionManager(files, "/sessions", factory);
   });
 
-  describe("create", () => {
-    it("creates a session and returns a unique ID", async () => {
-      const id1 = await manager.create("First chat");
-      const id2 = await manager.create("Second chat");
-      expect(id1).toBeTruthy();
-      expect(id2).toBeTruthy();
-      expect(id1).not.toBe(id2);
-    });
-
+  describe("save inserts the index entry on first persist", () => {
     it("creates session folder with markdown file", async () => {
-      const id = await manager.create("My session");
+      const { id, session } = newSession("My session");
+      await manager.save(id, session);
       expect(await files.exists(`/sessions/${id}/${id}.md`)).toBe(true);
     });
 
-    it("updates the index", async () => {
-      const id = await manager.create("Indexed session");
+    it("updates the index with title from session.props", async () => {
+      const { id, session } = newSession("Indexed session");
+      await manager.save(id, session);
       const indexText = await tryReadText(files, "/sessions/index.json");
       expect(indexText).toBeTruthy();
       const index = JSON.parse(indexText as string);
@@ -69,11 +74,21 @@ describe("FilesSessionManager", () => {
       expect(index.sessions[0].id).toBe(id);
       expect(index.sessions[0].title).toBe("Indexed session");
     });
+
+    it("inserts distinct ids for distinct sessions", async () => {
+      const a = newSession("First chat");
+      const b = newSession("Second chat");
+      await manager.save(a.id, a.session);
+      await manager.save(b.id, b.session);
+      expect(a.id).not.toBe(b.id);
+      const list = await manager.list();
+      expect(list).toHaveLength(2);
+    });
   });
 
   describe("save and load — round-trip", () => {
     it("preserves session tree structure", async () => {
-      const id = await manager.create("Round-trip test");
+      const id = idGen.generate();
       const session = buildPopulatedSession();
 
       await manager.save(id, session);
@@ -89,7 +104,7 @@ describe("FilesSessionManager", () => {
     });
 
     it("preserves user messages", async () => {
-      const id = await manager.create();
+      const id = idGen.generate();
       const session = buildPopulatedSession();
 
       await manager.save(id, session);
@@ -102,7 +117,7 @@ describe("FilesSessionManager", () => {
     });
 
     it("preserves agent messages", async () => {
-      const id = await manager.create();
+      const id = idGen.generate();
       const session = buildPopulatedSession();
 
       await manager.save(id, session);
@@ -116,7 +131,7 @@ describe("FilesSessionManager", () => {
     });
 
     it("preserves tool calls", async () => {
-      const id = await manager.create();
+      const id = idGen.generate();
       const session = buildPopulatedSession();
 
       await manager.save(id, session);
@@ -132,7 +147,7 @@ describe("FilesSessionManager", () => {
     });
 
     it("preserves usage metadata", async () => {
-      const id = await manager.create();
+      const id = idGen.generate();
       const session = buildPopulatedSession();
 
       await manager.save(id, session);
@@ -143,7 +158,7 @@ describe("FilesSessionManager", () => {
     });
 
     it("stores session as markdown file", async () => {
-      const id = await manager.create();
+      const id = idGen.generate();
       const session = buildPopulatedSession();
 
       await manager.save(id, session);
@@ -157,14 +172,17 @@ describe("FilesSessionManager", () => {
 
   describe("list", () => {
     it("returns all sessions sorted by updatedAt desc", async () => {
-      await manager.create("First");
-      await manager.create("Second");
-      const id3 = await manager.create("Third");
+      const a = newSession("First");
+      await manager.save(a.id, a.session);
+      const b = newSession("Second");
+      await manager.save(b.id, b.session);
+      const c = newSession("Third");
+      await manager.save(c.id, c.session);
 
       const list = await manager.list();
       expect(list).toHaveLength(3);
-      // Most recently created first
-      expect(list[0]?.id).toBe(id3);
+      // Most recently saved first
+      expect(list[0]?.id).toBe(c.id);
       expect(list[0]?.title).toBe("Third");
     });
 
@@ -174,8 +192,8 @@ describe("FilesSessionManager", () => {
     });
 
     it("updates metadata on save", async () => {
-      const id = await manager.create("Original title");
-      const session = buildPopulatedSession();
+      const { id, session } = newSession("Original title");
+      await manager.save(id, session);
       session.update({ title: "Updated title" });
 
       await manager.save(id, session);
@@ -187,7 +205,8 @@ describe("FilesSessionManager", () => {
 
   describe("exists", () => {
     it("returns true for existing session", async () => {
-      const id = await manager.create();
+      const { id, session } = newSession();
+      await manager.save(id, session);
       expect(await manager.exists(id)).toBe(true);
     });
 
@@ -198,7 +217,8 @@ describe("FilesSessionManager", () => {
 
   describe("delete", () => {
     it("removes session folder and index entry", async () => {
-      const id = await manager.create("To delete");
+      const { id, session } = newSession("To delete");
+      await manager.save(id, session);
       expect(await manager.exists(id)).toBe(true);
 
       const result = await manager.delete(id);
@@ -214,24 +234,27 @@ describe("FilesSessionManager", () => {
     });
 
     it("does not affect other sessions", async () => {
-      const id1 = await manager.create("Keep");
-      const id2 = await manager.create("Delete");
+      const a = newSession("Keep");
+      await manager.save(a.id, a.session);
+      const b = newSession("Delete");
+      await manager.save(b.id, b.session);
 
-      await manager.delete(id2);
+      await manager.delete(b.id);
 
-      expect(await manager.exists(id1)).toBe(true);
-      expect(await manager.exists(id2)).toBe(false);
+      expect(await manager.exists(a.id)).toBe(true);
+      expect(await manager.exists(b.id)).toBe(false);
       const list = await manager.list();
       expect(list).toHaveLength(1);
-      expect(list[0]?.id).toBe(id1);
+      expect(list[0]?.id).toBe(a.id);
     });
   });
 
   describe("index auto-rebuild", () => {
     it("rebuilds index from folder scan when index is missing", async () => {
-      // Create some sessions (which writes the index)
-      const id1 = await manager.create("SessionState A");
-      const id2 = await manager.create("SessionState B");
+      const a = newSession("SessionState A");
+      await manager.save(a.id, a.session);
+      const b = newSession("SessionState B");
+      await manager.save(b.id, b.session);
 
       // Delete the index file directly
       await files.remove("/sessions/index.json");
@@ -240,8 +263,8 @@ describe("FilesSessionManager", () => {
       const list = await manager.list();
       expect(list).toHaveLength(2);
       const ids = list.map((s) => s.id);
-      expect(ids).toContain(id1);
-      expect(ids).toContain(id2);
+      expect(ids).toContain(a.id);
+      expect(ids).toContain(b.id);
 
       // Index file should be re-created
       expect(await files.exists("/sessions/index.json")).toBe(true);
@@ -250,7 +273,7 @@ describe("FilesSessionManager", () => {
 
   describe("multi-turn session", () => {
     it("round-trips a session with multiple turns", async () => {
-      const id = await manager.create();
+      const id = idGen.generate();
       const session = factory<SessionState>({ type: NodeType.session });
 
       // Turn 1
@@ -279,23 +302,24 @@ describe("FilesSessionManager", () => {
   });
 
   describe("per-session modelRef", () => {
-    it("create accepts an optional modelRef and round-trips it", async () => {
-      const id = await manager.create("Test", {
-        connectionId: "openai",
-        modelId: "gpt-4o",
-      });
+    it("save then setModelRef round-trips the model selection", async () => {
+      const { id, session } = newSession("Test");
+      await manager.save(id, session);
+      await manager.setModelRef(id, { connectionId: "openai", modelId: "gpt-4o" });
       const meta = await manager.getMetadata(id);
       expect(meta?.modelRef).toEqual({ connectionId: "openai", modelId: "gpt-4o" });
     });
 
-    it("create without modelRef leaves the field undefined", async () => {
-      const id = await manager.create("No model yet");
+    it("save without setModelRef leaves the field undefined", async () => {
+      const { id, session } = newSession("No model yet");
+      await manager.save(id, session);
       const meta = await manager.getMetadata(id);
       expect(meta?.modelRef).toBeUndefined();
     });
 
     it("setModelRef updates an existing session's modelRef and bumps updatedAt", async () => {
-      const id = await manager.create("Initial");
+      const { id, session } = newSession("Initial");
+      await manager.save(id, session);
       const before = await manager.getMetadata(id);
       await waitMs(2);
       await manager.setModelRef(id, { connectionId: "google", modelId: "gemini-1.5-pro" });
@@ -308,20 +332,18 @@ describe("FilesSessionManager", () => {
     });
 
     it("setModelRef(null) clears the modelRef", async () => {
-      const id = await manager.create("Test", {
-        connectionId: "openai",
-        modelId: "gpt-4o",
-      });
+      const { id, session } = newSession("Test");
+      await manager.save(id, session);
+      await manager.setModelRef(id, { connectionId: "openai", modelId: "gpt-4o" });
       await manager.setModelRef(id, null);
       const meta = await manager.getMetadata(id);
       expect(meta?.modelRef).toBeUndefined();
     });
 
     it("setModelRef with the same value is a no-op (updatedAt unchanged)", async () => {
-      const id = await manager.create("Test", {
-        connectionId: "openai",
-        modelId: "gpt-4o",
-      });
+      const { id, session } = newSession("Test");
+      await manager.save(id, session);
+      await manager.setModelRef(id, { connectionId: "openai", modelId: "gpt-4o" });
       const before = await manager.getMetadata(id);
       await waitMs(2);
       await manager.setModelRef(id, { connectionId: "openai", modelId: "gpt-4o" });
@@ -339,7 +361,9 @@ describe("FilesSessionManager", () => {
     });
 
     it("list preserves modelRef across reload", async () => {
-      const id = await manager.create("Test", {
+      const { id, session } = newSession("Test");
+      await manager.save(id, session);
+      await manager.setModelRef(id, {
         connectionId: "anthropic",
         modelId: "claude-3-5-sonnet",
       });

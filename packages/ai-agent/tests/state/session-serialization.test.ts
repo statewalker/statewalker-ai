@@ -7,7 +7,8 @@ import {
   ToolCall,
   Turn,
 } from "../../src/state/index.js";
-import { jsonToTree, treeToJson } from "../../src/state/serialization/index.js";
+import { jsonToTree } from "../../src/state/serialization/json-to-tree.js";
+import { treeToJson } from "../../src/state/serialization/tree-to-json.js";
 import { markdownToSession, sessionToMarkdown } from "../../src/state/session-serialization.js";
 
 const factory = createAgentNodeFactory();

@@ -163,16 +163,6 @@ export class AgentRuntime {
   }
 
   /**
-   * Override the tools folder (default: `<system>/tools`). Reserved for
-   * future on-disk tool loading; setting this value has no effect today
-   * but the API is stable.
-   */
-  setToolsPath(_path: string): this {
-    // TODO: wire on-disk tool definitions when the format is settled.
-    return this;
-  }
-
-  /**
    * Register one or more model providers. Multiple calls are additive — at
    * `build()` the runtime constructs a single composite provider whose
    * model list is the union of all registered providers.

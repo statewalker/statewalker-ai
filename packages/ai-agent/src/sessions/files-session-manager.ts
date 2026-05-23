@@ -1,4 +1,3 @@
-import { SnowflakeId } from "@statewalker/shared-ids";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { readText, tryReadText, writeText } from "@statewalker/webrun-files";
 import { createAgentNodeFactory } from "../state/node-factory.js";
@@ -13,7 +12,6 @@ interface IndexData {
 }
 
 export class FilesSessionManager {
-  private idGen = new SnowflakeId();
   private factory: NodeFactory;
   private sessionsDir: string;
   private indexFile: string;
@@ -35,45 +33,10 @@ export class FilesSessionManager {
     this.indexFile = `${this.sessionsDir}/index.json`;
   }
 
-  async create(title?: string, modelRef?: SessionModelRef): Promise<string> {
-    const id = this.idGen.generate();
-    const now = new Date().toISOString();
-    const meta: SessionMetadata = {
-      id,
-      title: title ?? "",
-      createdAt: now,
-      updatedAt: now,
-      ...(modelRef ? { modelRef } : {}),
-    };
-
-    // Load/create index BEFORE writing session folder to avoid
-    // rebuildIndex() picking up the folder we're about to create.
-    const index = await this.loadIndex();
-    index.sessions.unshift(meta);
-    await this.saveIndex(index);
-
-    // Create session folder with empty session
-    const session = this.factory({
-      type: NodeType.session,
-      props: { title: meta.title },
-    }) as SessionState;
-    const markdown = await sessionToMarkdown(session);
-    await writeText(this.files, `${this.sessionsDir}/${id}/${id}.md`, markdown);
-
-    return id;
-  }
-
   async save(id: string, session: SessionState): Promise<void> {
     const sessionDir = `${this.sessionsDir}/${id}`;
     const markdown = await sessionToMarkdown(session);
-
-    // Extract large attachments
-    const { text, attachments } = this.extractAttachments(markdown, id);
-    for (const [fileName, content] of attachments) {
-      await writeText(this.files, `${sessionDir}/${fileName}`, content);
-    }
-
-    await writeText(this.files, `${sessionDir}/${id}.md`, text);
+    await writeText(this.files, `${sessionDir}/${id}.md`, markdown);
 
     // Update index metadata
     const index = await this.loadIndex();
@@ -98,10 +61,7 @@ export class FilesSessionManager {
     const sessionDir = `${this.sessionsDir}/${id}`;
     const text = await readText(this.files, `${sessionDir}/${id}.md`);
 
-    // Re-inject attachments
-    const rehydrated = await this.rehydrateAttachments(text, sessionDir);
-
-    const root = await markdownToSession(rehydrated, this.factory);
+    const root = await markdownToSession(text, this.factory);
     if (root instanceof SessionState) return root;
     // Wrap in SessionState if the factory returned a plain TreeNode
     const session = this.factory({ type: NodeType.session }) as SessionState;
@@ -199,22 +159,5 @@ export class FilesSessionManager {
     const index: IndexData = { sessions };
     await this.saveIndex(index);
     return index;
-  }
-
-  // --- Attachment handling ---
-
-  private extractAttachments(
-    markdown: string,
-    _id: string,
-  ): { text: string; attachments: [string, string][] } {
-    // For now, attachment extraction is a future optimization.
-    // The full markdown is stored inline.
-    // TODO: extract tool responses > ATTACHMENT_THRESHOLD
-    return { text: markdown, attachments: [] };
-  }
-
-  private async rehydrateAttachments(text: string, _sessionDir: string): Promise<string> {
-    // TODO: resolve [attachment:{callId}] markers from .att.json files
-    return text;
   }
 }
