@@ -1,9 +1,8 @@
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createMoveFileTool(files: FilesApi, isExcluded: PathFilter) {
+export function createMoveFileTool(files: FilesApi) {
   return tool({
     description:
       "Move or rename a file or directory. All paths are absolute (start with '/'). " +
@@ -21,14 +20,8 @@ export function createMoveFileTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ old_path, new_path }) => {
-      let normalizedOld: string;
-      let normalizedNew: string;
-      try {
-        normalizedOld = guardPath(old_path, isExcluded);
-        normalizedNew = guardPath(new_path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalizedOld = normalizePath(old_path);
+      const normalizedNew = normalizePath(new_path);
 
       const exists = await files.exists(normalizedOld);
       if (!exists) {

@@ -1,7 +1,6 @@
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const MAX_RESULTS = 200;
 
@@ -37,7 +36,7 @@ function globToRegex(pattern: string): RegExp {
 
 const REGEX_ESCAPE_CHARS = new Set([".", "[", "]", "+", "^", "$", "{", "}", "(", ")", "|", "\\"]);
 
-export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
+export function createListFilesTool(files: FilesApi) {
   return tool({
     description:
       "List files and directories. All paths are absolute (start with '/'). " +
@@ -91,12 +90,7 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path: searchPath, pattern, max_depth }) => {
-      let dir: string;
-      try {
-        dir = guardPath(searchPath ?? "/", isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const dir = normalizePath(searchPath ?? "/");
 
       const exists = await files.exists(dir);
       if (!exists) {
@@ -116,8 +110,6 @@ export function createListFilesTool(files: FilesApi, isExcluded: PathFilter) {
       }[] = [];
 
       for await (const entry of files.list(dir, { recursive })) {
-        if (isExcluded(entry.path)) continue;
-
         // Depth check
         if (depthLimit !== undefined) {
           const relative = dir === "/" ? entry.path.slice(1) : entry.path.slice(dir.length + 1);

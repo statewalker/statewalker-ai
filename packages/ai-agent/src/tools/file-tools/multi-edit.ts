@@ -1,9 +1,8 @@
-import { type FilesApi, readText, writeText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText, writeText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createMultiEditTool(files: FilesApi, isExcluded: PathFilter) {
+export function createMultiEditTool(files: FilesApi) {
   return tool({
     description:
       "Perform multiple find-and-replace edits on a single file atomically. " +
@@ -39,12 +38,7 @@ export function createMultiEditTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path, edits }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const exists = await files.exists(normalized);
       if (!exists) {

@@ -1,9 +1,8 @@
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createCreateDirectoryTool(files: FilesApi, isExcluded: PathFilter) {
+export function createCreateDirectoryTool(files: FilesApi) {
   return tool({
     description:
       "Create a directory and all parent directories if needed. " +
@@ -20,12 +19,7 @@ export function createCreateDirectoryTool(files: FilesApi, isExcluded: PathFilte
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       await files.mkdir(normalized);
       return { path: normalized, created: true };

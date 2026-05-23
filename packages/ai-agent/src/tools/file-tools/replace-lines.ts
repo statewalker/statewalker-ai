@@ -1,7 +1,6 @@
-import { type FilesApi, readText, writeText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText, writeText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const BINARY_EXTENSIONS = new Set([
   ".png",
@@ -55,7 +54,7 @@ function isBinaryFile(path: string): boolean {
   return BINARY_EXTENSIONS.has(path.slice(dot).toLowerCase());
 }
 
-export function createReplaceLinesTool(files: FilesApi, isExcluded: PathFilter) {
+export function createReplaceLinesTool(files: FilesApi) {
   return tool({
     description:
       "Replace a range of lines in a text file with new content. " +
@@ -103,12 +102,7 @@ export function createReplaceLinesTool(files: FilesApi, isExcluded: PathFilter) 
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path, offset, limit, new_content }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const exists = await files.exists(normalized);
       if (!exists) {

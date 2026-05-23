@@ -1,7 +1,6 @@
-import { type FilesApi, readText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const MAX_FILES_WITH_MATCHES = 50;
 const MAX_TOTAL_MATCHES = 200;
@@ -12,7 +11,7 @@ interface Match {
   content: string;
 }
 
-export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
+export function createSearchFilesTool(files: FilesApi) {
   return tool({
     description:
       "Search for a regex pattern inside file contents. All paths are absolute (start with '/'). " +
@@ -69,12 +68,7 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ pattern, path: searchPath, include, case_sensitive }) => {
-      let dir: string;
-      try {
-        dir = guardPath(searchPath ?? "/", isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const dir = normalizePath(searchPath ?? "/");
       const caseSensitive = case_sensitive !== false;
       let re: RegExp;
       try {
@@ -90,7 +84,6 @@ export function createSearchFilesTool(files: FilesApi, isExcluded: PathFilter) {
 
       for await (const entry of files.list(dir, { recursive: true })) {
         if (entry.kind !== "file") continue;
-        if (isExcluded(entry.path)) continue;
         if (includeRe && !includeRe.test(entry.name)) continue;
         if (isBinaryFilename(entry.name)) continue;
 

@@ -1,7 +1,6 @@
-import { type FilesApi, readText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const DEFAULT_HEAD_LIMIT = 250;
 const MAX_LINE_LENGTH = 300;
@@ -134,7 +133,7 @@ const grepOutputSchema = z
 
 type GrepOutput = z.infer<typeof grepOutputSchema>;
 
-export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
+export function createGrepTool(files: FilesApi) {
   return tool({
     description:
       "Search file contents using regex, inspired by ripgrep. All paths are absolute (start with '/'). " +
@@ -236,12 +235,7 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
       head_limit,
       offset,
     }): Promise<GrepOutput> => {
-      let dir: string;
-      try {
-        dir = guardPath(searchPath ?? "/", isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const dir = normalizePath(searchPath ?? "/");
 
       const caseSensitive = case_sensitive !== false;
       const mode = output_mode ?? "content";
@@ -276,7 +270,6 @@ export function createGrepTool(files: FilesApi, isExcluded: PathFilter) {
       } else {
         for await (const entry of files.list(dir, { recursive: true })) {
           if (entry.kind !== "file") continue;
-          if (isExcluded(entry.path)) continue;
           if (globRe && !globRe.test(entry.name)) continue;
           if (isBinaryFilename(entry.name)) continue;
           fileEntries.push({ path: entry.path, name: entry.name });

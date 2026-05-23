@@ -1,7 +1,6 @@
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const fileInfoOutputSchema = z
   .object({
@@ -19,7 +18,7 @@ const fileInfoOutputSchema = z
 
 type FileInfoOutput = z.infer<typeof fileInfoOutputSchema>;
 
-export function createFileInfoTool(files: FilesApi, isExcluded: PathFilter) {
+export function createFileInfoTool(files: FilesApi) {
   return tool({
     description:
       "Get metadata about a file or directory: size, last modified date, " +
@@ -31,12 +30,7 @@ export function createFileInfoTool(files: FilesApi, isExcluded: PathFilter) {
     }),
     outputSchema: fileInfoOutputSchema,
     execute: async ({ path }): Promise<FileInfoOutput> => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const stats = await files.stats(normalized);
       if (!stats) {

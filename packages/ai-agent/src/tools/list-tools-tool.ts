@@ -38,7 +38,7 @@ export function createListToolsTool(registry: ToolRegistry) {
     inputSchema: z.object({}),
     execute: async () => {
       const tools: ToolInfo[] = [];
-      for (const [name, t] of registry.entries()) {
+      for (const [name, t] of Object.entries(registry.toToolSet())) {
         const info: ToolInfo = {
           name,
           description: t.description ?? "",

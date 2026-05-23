@@ -1,7 +1,6 @@
-import { type FilesApi, readText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const BINARY_EXTENSIONS = new Set([
   ".png",
@@ -55,7 +54,7 @@ function isBinaryFile(path: string): boolean {
   return BINARY_EXTENSIONS.has(path.slice(dot).toLowerCase());
 }
 
-export function createCountLinesTool(files: FilesApi, isExcluded: PathFilter) {
+export function createCountLinesTool(files: FilesApi) {
   return tool({
     description:
       "Count the number of text lines in a file. All paths are absolute (start with '/'). " +
@@ -74,12 +73,7 @@ export function createCountLinesTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const exists = await files.exists(normalized);
       if (!exists) {

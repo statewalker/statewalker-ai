@@ -1,9 +1,8 @@
-import { type FilesApi, readText, writeText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText, writeText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createEditFileTool(files: FilesApi, isExcluded: PathFilter) {
+export function createEditFileTool(files: FilesApi) {
   return tool({
     description:
       "Perform an exact string replacement in a file. All paths are absolute (start with '/'). " +
@@ -26,12 +25,7 @@ export function createEditFileTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path, old_string, new_string, replace_all }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const exists = await files.exists(normalized);
       if (!exists) {

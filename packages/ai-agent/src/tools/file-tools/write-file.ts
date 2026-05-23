@@ -1,9 +1,8 @@
-import { type FilesApi, writeText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, writeText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createWriteFileTool(files: FilesApi, isExcluded: PathFilter) {
+export function createWriteFileTool(files: FilesApi) {
   return tool({
     description:
       "Write content to a file, creating it and any parent directories if needed. " +
@@ -24,12 +23,7 @@ export function createWriteFileTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path, content }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       await writeText(files, normalized, content);
       return {

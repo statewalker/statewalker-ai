@@ -1,7 +1,6 @@
-import { type FilesApi, readText } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath, readText } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
 const DEFAULT_LIMIT = 2000;
 
@@ -57,7 +56,7 @@ function isBinaryFile(path: string): boolean {
   return BINARY_EXTENSIONS.has(path.slice(dot).toLowerCase());
 }
 
-export function createReadLinesTool(files: FilesApi, isExcluded: PathFilter) {
+export function createReadLinesTool(files: FilesApi) {
   return tool({
     description:
       "Read specific lines from a text file. All paths are absolute (start with '/'). " +
@@ -106,12 +105,7 @@ export function createReadLinesTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path, offset, limit }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const exists = await files.exists(normalized);
       if (!exists) {

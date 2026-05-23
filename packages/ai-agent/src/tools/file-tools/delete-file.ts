@@ -1,9 +1,8 @@
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, normalizePath } from "@statewalker/webrun-files";
 import { tool } from "ai";
 import { z } from "zod";
-import { guardPath, type PathFilter } from "./path-utils.js";
 
-export function createDeleteFileTool(files: FilesApi, isExcluded: PathFilter) {
+export function createDeleteFileTool(files: FilesApi) {
   return tool({
     description:
       "Delete a file or directory. All paths are absolute (start with '/'). " +
@@ -19,12 +18,7 @@ export function createDeleteFileTool(files: FilesApi, isExcluded: PathFilter) {
       .passthrough()
       .describe("On error returns { error: string } instead."),
     execute: async ({ path }) => {
-      let normalized: string;
-      try {
-        normalized = guardPath(path, isExcluded);
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
+      const normalized = normalizePath(path);
 
       const exists = await files.exists(normalized);
       if (!exists) {

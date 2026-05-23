@@ -2,7 +2,6 @@ import type { ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
-import { SecretsManager } from "../config/secrets-manager.js";
 import { ContextWindow } from "../context/context-window.js";
 import { createDefaultPinPolicy } from "../context/pin-policy.js";
 import { selectHierarchical } from "../context/select-hierarchical.js";
@@ -102,7 +101,6 @@ export class AgentRuntime {
   private _toolsFiles?: FilesApi;
   private _paths?: ResolvedPaths;
   private _config?: ConfigManager;
-  private _secrets?: SecretsManager;
   private _provider?: ProviderV3;
   private _resolvedTools?: ToolSet;
   private _resolvedSkills?: SkillInfo[];
@@ -258,7 +256,6 @@ export class AgentRuntime {
     this._toolsFiles = split.toolsFiles;
     this._paths = split.paths;
     this._config = new ConfigManager(this._systemFiles, this._paths.config);
-    this._secrets = new SecretsManager(this._config);
     this._provider = this._resolveProvider();
     this._sessions = new FilesSessionManager(this._systemFiles, this._paths.sessions);
     this._resolvedTools = await this._resolveTools();
@@ -449,12 +446,6 @@ export class AgentRuntime {
     return this._config;
   }
 
-  get secrets(): SecretsManager {
-    this._assertBuilt();
-    if (!this._secrets) throw new Error("unreachable");
-    return this._secrets;
-  }
-
   get mcp(): McpClientManager | undefined {
     return this._mcp;
   }
@@ -574,24 +565,7 @@ export class AgentRuntime {
   }
 
   private _buildAgentContext(): import("../config/types.js").AgentContext {
-    if (
-      !this._toolsFiles ||
-      !this._systemFiles ||
-      !this._config ||
-      !this._secrets ||
-      !this._provider ||
-      !this._sessions
-    ) {
-      throw new Error("unreachable");
-    }
-    return {
-      files: this._toolsFiles,
-      systemFiles: this._systemFiles,
-      config: this._config,
-      secrets: this._secrets,
-      sessions: this._sessions,
-      provider: this._provider,
-      model: "",
-    };
+    if (!this._toolsFiles) throw new Error("unreachable");
+    return { files: this._toolsFiles };
   }
 }

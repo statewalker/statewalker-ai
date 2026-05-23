@@ -53,28 +53,6 @@ export function combineFilters(...filters: PathFilter[]): PathFilter {
   };
 }
 
-/**
- * Build the tools-visible {@link FilesApi} view: a {@link FilteredFilesApi}
- * over `rootFiles` that hides the system path-tree and (optionally)
- * restricts visibility to a user subtree.
- *
- * @deprecated The tools view is now constructed inline in
- *   {@link buildFilesSplit}: when `userPath === "/"`, a `FilteredFilesApi`
- *   hides system paths from the root; otherwise a `CompositeFilesApi`
- *   rebases at `userPath`. This helper is no longer used internally.
- */
-export function buildToolsView(
-  rootFiles: FilesApi,
-  systemPath: string,
-  userPath: string,
-): FilesApi {
-  const filters: PathFilter[] = [hideUnder(systemPath)];
-  if (normalizePath(userPath) !== "/") {
-    filters.push(insideSubtree(userPath));
-  }
-  return new FilteredFilesApi(rootFiles, combineFilters(...filters));
-}
-
 // ── Path-geometry helpers (relocated from agent-runtime.ts) ──────────────
 
 /** Normalise a folder path: ensure leading slash, strip trailing slash. */
