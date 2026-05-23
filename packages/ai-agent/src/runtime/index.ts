@@ -4,7 +4,6 @@ export { AgentRuntime } from "./agent-runtime.js";
 export { Session } from "./session.js";
 export type {
   AgentDefinition,
-  AgentRuntimeBuildOptions,
   AgentRuntimeErrorContext,
   AgentRuntimeErrorHandler,
   AgentRuntimeOptions,

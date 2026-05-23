@@ -10,7 +10,7 @@ Domain language for the agent runtime: agent loop, conversation state, context s
 Project-level entry point. Owns providers, tools, skills, the FilesApi split (system vs tools view), MCP clients, and session storage. Built once and stays alive for the host process.
 
 **Agent**:
-A *definition* — name, tools whitelist, skills whitelist, system prompt, default model, optional sub-agents. Loaded from `<systemPath>/agents/*.md` or created programmatically.
+A *definition* — name, tools whitelist, skills whitelist, system prompt, default model. Loaded from `<systemPath>/agents/*.md` or created programmatically.
 _Avoid_: agent instance, agent worker
 
 **Session**:
@@ -45,7 +45,7 @@ _Avoid_: agent controller, turn runner
 ### Context shaping
 
 **ContextWindow**:
-The module that, given the current `SessionState` and the active `SkillsModel`, produces `{ system, messages, events, stats }` for one model call. Internally orchestrates compaction, selection, elision, pin policy, summarisation, and system-prompt assembly. Mutates the tree (compaction artifacts persist); returns a projected snapshot. One instance per Session — constructed by `runtime/Session` from runtime defaults plus per-agent overrides.
+The module that, given the current `SessionState` and the active `SkillsModel`, produces `{ system, messages, events, stats }` for one model call. Internally orchestrates compaction, selection, elision, pin policy, summarisation, and system-prompt assembly. Mutates the tree (compaction artifacts persist); returns a projected snapshot. One instance per Session — `Agent.createSession()` constructs it with package defaults (`selectAll`, no budget compaction). Consumers needing compaction construct a `ContextWindow` directly and pass it to a `Session` — the runtime no longer carries selection/compaction tunability.
 _Avoid_: context builder, context manager, prompt builder
 
 **compaction**:
@@ -93,13 +93,13 @@ The `AgentRuntime` builds two views over the root `FilesApi`: a **system view** 
 **FilesSplit**:
 Free function `buildFilesSplit(rootFiles, opts)` returning `{ systemFiles, toolsFiles, paths }`. Owns the geometry validation and the path-normalisation helpers (`normalizeFolderPath`, `isUnderSystem`, `toSystemRelative`). Tested in isolation; `AgentRuntime` calls it once during `build()`.
 
-**AgentCatalog**:
-Registry of `Agent` definitions — owns the name → `Agent` map, dup-name validation, and disk loading from `<agentsPath>/*.md`. `AgentRuntime.createAgent / getAgent / agents` delegate to it.
+**Agent disk loading**:
+`AgentRuntime.build()` walks `<systemPath>/agents/*.md` via a private `_loadAgentsFromDisk` method and registers each file as an `Agent` definition (skipping names already present from `createAgent`). The previous `AgentCatalog` class was folded back into `AgentRuntime` after the boundary stopped earning its cost.
 
-**SkillsLoader**:
-Resolves the runtime's `SkillInfo[]` from a `FilesApi` skills folder plus any manually-registered skills. Owns the markdown-walk + parse loop. `AgentRuntime.build()` invokes it once.
+**Skill disk loading**:
+`AgentRuntime.build()` walks `<systemPath>/skills/*.md` via a private `_loadSkillsFromDisk` method. Manually-registered skills (via `addSkills(...)`) come first; disk-loaded skills append. The previous `SkillsLoader` class was folded back for the same reason.
 
-**Agent.createSession()** is the wiring site (relocated from `runtime/Session` ctor in opportunity #4): builds the per-session inbox / tools / skills, filters by Agent definition, registers built-in tools, throws on sub-agents, bridges MCP, builds the `ContextWindow` + `TurnDriver`, and constructs the slim `Session`. `Session` itself is now a thin data class taking a pre-built bag of dependencies — no longer reaches into `AgentRuntime`.
+**Agent.createSession()** is the wiring site (relocated from `runtime/Session` ctor in opportunity #4): builds the per-session inbox / tools / skills, filters by Agent definition, registers built-in tools, bridges MCP, builds the `ContextWindow` + `TurnDriver`, and constructs the slim `Session`. `Session` itself is now a thin data class taking a pre-built bag of dependencies — no longer reaches into `AgentRuntime`.
 
 ## Relationships
 

@@ -1,6 +1,6 @@
 import { createMCPClient } from "@ai-sdk/mcp";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { BaseClass, onChange } from "@statewalker/shared-baseclass";
+import { BaseClass } from "@statewalker/shared-baseclass";
 import type { ToolSet } from "ai";
 
 export interface McpServerConfig {
@@ -32,17 +32,6 @@ export class McpClientManager extends BaseClass {
   private _desiredConfigs: Record<string, McpServerConfig> = {};
   private _errorHandler: McpErrorHandler = defaultErrorHandler;
 
-  #revision = 0;
-
-  get revision(): number {
-    return this.#revision;
-  }
-
-  /** Fires only when revision changes (user-initiated modifications). */
-  onRevisionChange(cb: () => void): () => void {
-    return onChange(this.onUpdate, cb, () => this.#revision);
-  }
-
   /**
    * Install an error handler. Defaults to `console.warn`. The handler is
    * invoked at every site that previously logged or silently swallowed an
@@ -55,26 +44,7 @@ export class McpClientManager extends BaseClass {
     return this;
   }
 
-  private bumpRevision(): void {
-    this.#revision++;
-  }
-
-  /**
-   * Update configs and connect to servers. User-initiated — bumps revision
-   * synchronously to trigger save, then connects in the background.
-   */
-  connectAll(servers: Record<string, McpServerConfig>): void {
-    this._desiredConfigs = { ...servers };
-    this.bumpRevision();
-    this.notify();
-    this.doConnect(servers)
-      .then(() => this.notify())
-      .catch((err) => this._errorHandler(err as Error));
-  }
-
-  /**
-   * Load servers from saved settings. Does NOT bump revision (no save needed).
-   */
+  /** Connect to the given servers. */
   async loadServers(servers: Record<string, McpServerConfig>, signal?: AbortSignal): Promise<void> {
     this._desiredConfigs = { ...servers };
     await this.doConnect(servers, signal);

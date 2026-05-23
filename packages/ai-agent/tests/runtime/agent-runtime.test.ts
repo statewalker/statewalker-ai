@@ -14,13 +14,11 @@ async function buildRuntime(opts?: {
   files?: MemFilesApi;
   provider?: ProviderV3;
   systemPath?: string;
-  userPath?: string;
 }) {
   const files = opts?.files ?? new MemFilesApi();
   const runtime = new AgentRuntime({ files });
   runtime.addModelProvider(opts?.provider ?? mockProvider());
   if (opts?.systemPath) runtime.setSystemPath(opts.systemPath);
-  if (opts?.userPath) runtime.setUserPath(opts.userPath);
   return runtime.build();
 }
 
@@ -94,20 +92,6 @@ describe("AgentRuntime", () => {
           })(),
         ),
       ).rejects.toThrow(/Path is hidden/);
-    });
-
-    it("rebases tools view at userPath subtree when set", async () => {
-      const files = new MemFilesApi();
-      await writeText(files, "/workspace/a.md", "in");
-      await writeText(files, "/outside/b.md", "out");
-      const runtime = await buildRuntime({ files, userPath: "/workspace" });
-
-      // tools view is rebased at /workspace — paths are relative.
-      expect(await runtime.files.exists("/a.md")).toBe(true);
-      // Paths outside the rebase do not resolve.
-      expect(await runtime.files.exists("/outside/b.md")).toBe(false);
-      // The underlying FS still has the file (verify via the original ref).
-      expect(await files.exists("/outside/b.md")).toBe(true);
     });
   });
 
@@ -206,17 +190,11 @@ describe("AgentRuntime", () => {
     });
   });
 
-  describe("setErrorHandler", () => {
-    it("returns the runtime for chaining", () => {
-      const runtime = new AgentRuntime({ files: new MemFilesApi() });
-      const result = runtime.setErrorHandler(() => {});
-      expect(result).toBe(runtime);
-    });
-
+  describe("errorHandler (constructor option)", () => {
     it("custom handler receives configuration errors", async () => {
       const handler = vi.fn();
       const files = new MemFilesApi();
-      await expect(new AgentRuntime({ files }).setErrorHandler(handler).build()).rejects.toThrow();
+      await expect(new AgentRuntime({ files, errorHandler: handler }).build()).rejects.toThrow();
       expect(handler).toHaveBeenCalled();
       expect(handler.mock.calls[0]?.[0]).toBeInstanceOf(Error);
     });

@@ -64,29 +64,32 @@ const id = await session.save();
 
 `AgentRuntime` builds two views over the root `FilesApi` you pass to its constructor:
 
-- **System view** — full visibility. Used internally by the runtime for config, secrets, agent definition loading, skill loading, and session persistence. Never exposed to tools.
+- **System view** — full visibility. Used internally by the runtime for agent definition loading, skill loading, and session persistence. Never exposed to tools.
 - **Tools view** — a [`FilteredFilesApi`](../../../webrun-files/packages/webrun-files-composite/) over the same root with the system path-tree hidden. Tools and skills receive this via `AgentContext.files`. Hidden paths are reported as not-existing (read/list/stats/exists return empty/false); writes/mkdir into hidden paths reject with `"Path is hidden"`.
 
-Defaults: `setSystemPath("/.settings/")`, `setUserPath("/")`. The system path-tree contains:
+Default: `setSystemPath("/.settings/")`. The system path-tree is laid out:
 
-| Subject | Default path | Override |
-|---|---|---|
-| Agents folder | `<system>/agents/` | `setAgentsPath(path)` |
-| Skills folder | `<system>/skills/` | `setSkillsPath(path)` |
-| Sessions folder | `<system>/sessions/` | `setSessionsPath(path)` |
-| Config folder | `<system>/config/` | `setConfigPath(path)` |
+| Subject | Path on `systemFiles` |
+|---|---|
+| Agents folder | `/agents/` |
+| Skills folder | `/skills/` |
+| Sessions folder | `/sessions/` |
+| Config folder | `/` |
 
-If a tool needs broader access (e.g. read from `/.settings/`), it must be wired into the runtime via `addTools` and use the system view through manager-provided helpers — never through `AgentContext.files`.
+`AgentContext` is `{ files: FilesApi }` — tools and skills receive the tools view only. Tool factories needing more (model, provider, custom storage) accept those as closure-captured constructor arguments at their own factory boundary.
 
 ## Error handling
 
-A single error handler routes errors from every runtime-internal source:
+A single error handler routes errors from every runtime-internal source, supplied via the constructor:
 
 ```ts
-runtime.setErrorHandler((err, ctx) => {
-  // ctx?.path   — set when a FilteredFilesApi violation surfaces
-  // ctx?.server — set when an MCP server interaction fails
-  log.warn({ err, ctx });
+const runtime = new AgentRuntime({
+  files,
+  errorHandler: (err, ctx) => {
+    // ctx?.path   — set when a FilteredFilesApi violation surfaces
+    // ctx?.server — set when an MCP server interaction fails
+    log.warn({ err, ctx });
+  },
 });
 ```
 
@@ -107,20 +110,12 @@ new AgentRuntime({ files: FilesApi, errorHandler?: AgentRuntimeErrorHandler })
 | Method | Purpose |
 |---|---|
 | `setSystemPath(path)` | System path-tree root. Default `"/.settings"`. |
-| `setUserPath(path)` | Tools-visible root. Default `"/"`. |
-| `setSessionsPath(path)` | Override sessions storage path. |
-| `setConfigPath(path)` | Override config folder. |
-| `setSkillsPath(path)` | Override skills folder. |
-| `setAgentsPath(path)` | Override agents folder. |
-| `setToolsPath(path)` | Reserved for future on-disk tool loading. |
 | `addModelProvider(...providers)` | Register one or more `ProviderV3` instances. Callers holding a `ModelManager` pass `modelManager.provider`. |
 | `addTools(...tools)` | Register tools (`ToolSet` or `ToolFactory`). |
 | `addSkills(...skills)` | Register skills programmatically. |
-| `setSelectionStrategy(strategy)` | Install a fixed message-selection strategy. Mutually exclusive with `setBudgetCompaction`. Configures the `ContextWindow` factory used by every Session. |
-| `setBudgetCompaction(opts)` | Install hierarchical selection + compaction. Mutually exclusive with `setSelectionStrategy`. Configures the `ContextWindow` factory used by every Session. |
 | `setMcpServers(config)` | Configure MCP servers inline. |
-| `setMcpConfigFile(path)` | Load MCP servers from a config file (system view). |
-| `setErrorHandler(handler)` | Replace the runtime-wide error handler. |
+
+Per-subject paths under `<systemPath>` are hard-coded: `sessions` → `/sessions`, `skills` → `/skills`, `agents` → `/agents`, `config` → `/`. The tools view always uses `FilteredFilesApi` with the system path-tree hidden. To customise context-window behaviour (selection strategy, budget compaction, summariser, etc.), construct a `ContextWindow` directly and pass it to a `Session` — the runtime no longer carries that surface. The error handler is set via the constructor option `errorHandler` rather than a live setter.
 
 #### Materialization
 
@@ -142,7 +137,7 @@ new AgentRuntime({ files: FilesApi, errorHandler?: AgentRuntimeErrorHandler })
 
 - `files: FilesApi` (tools view)
 - `systemFiles: FilesApi` (system view)
-- `config`, `secrets`, `models`, `mcp`
+- `config`, `mcp`
 
 ### `class Agent`
 
@@ -160,8 +155,6 @@ interface AgentDefinition {
 }
 ```
 
-- `addSubAgent(child: Agent): this` — register a sub-agent. The runtime will expose it as a tool to this agent's sessions. *Not yet supported through the runtime API; throws when a Session is created.*
-- `setSelectionStrategy(strategy)` — per-agent override of the runtime-level strategy.
 - `createSession({ title?, sessionId? }): Session`
 
 ### `class Session`

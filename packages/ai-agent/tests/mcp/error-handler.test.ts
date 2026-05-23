@@ -1,11 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { McpClientManager, type McpErrorHandler } from "../../src/mcp/mcp-client-manager.js";
 
-/**
- * Drives the manager against an unreachable URL — `connectAll` settles
- * (it's fire-and-forget) but `loadServers` awaits, so we can observe
- * the routed errors deterministically.
- */
+/** Drive the manager against an unreachable URL to observe routed errors. */
 async function settleConnect(
   manager: McpClientManager,
   servers: Record<string, { url: string; type?: "http" | "sse" }>,

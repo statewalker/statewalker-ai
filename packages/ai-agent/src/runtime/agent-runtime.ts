@@ -1,34 +1,25 @@
 import type { ProviderV3 } from "@ai-sdk/provider";
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, readText } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
-import { ContextWindow } from "../context/context-window.js";
-import { createDefaultPinPolicy } from "../context/pin-policy.js";
-import { selectHierarchical } from "../context/select-hierarchical.js";
-import type { SelectionStrategy } from "../context/select-messages.js";
-import { createTokenEstimator } from "../context/token-estimator.js";
-import { createDefaultElisionPolicy } from "../context/tool-elision.js";
 import { McpClientManager, type McpServerConfig } from "../mcp/mcp-client-manager.js";
 import { FilesSessionManager } from "../sessions/files-session-manager.js";
 import type { SessionMetadata } from "../sessions/metadata.js";
+import { parseSkillMarkdown } from "../skills/skill-parser.js";
 import type { SkillInfo } from "../skills/skill-types.js";
 import { Agent } from "./agent.js";
-import { AgentCatalog } from "./agent-catalog.js";
 import { buildFilesSplit, normalizeFolderPath, type ResolvedPaths } from "./files-split.js";
 import type { Session } from "./session.js";
-import { SkillsLoader } from "./skills-loader.js";
 import type {
   AgentDefinition,
   AgentRuntimeErrorContext,
   AgentRuntimeErrorHandler,
   AgentRuntimeOptions,
-  BudgetCompactionOptions,
   ModelProviderInput,
   ToolInput,
 } from "./types.js";
 
 const DEFAULT_SYSTEM_PATH = "/.settings";
-const DEFAULT_USER_PATH = "/";
 
 const defaultErrorHandler: AgentRuntimeErrorHandler = (error, ctx) => {
   console.warn(
@@ -81,19 +72,11 @@ const defaultErrorHandler: AgentRuntimeErrorHandler = (error, ctx) => {
 export class AgentRuntime {
   private readonly _rootFiles: FilesApi;
   private _systemPath: string = DEFAULT_SYSTEM_PATH;
-  private _userPath: string = DEFAULT_USER_PATH;
-  private _sessionsPath?: string;
-  private _skillsPath?: string;
-  private _agentsPath?: string;
-  private _configPath?: string;
 
   private readonly _providers: ModelProviderInput[] = [];
   private readonly _toolInputs: ToolInput[] = [];
   private readonly _skills: SkillInfo[] = [];
-  private _selectionStrategy?: SelectionStrategy;
-  private _budgetCompaction?: BudgetCompactionOptions;
   private _mcpServers?: Record<string, McpServerConfig>;
-  private _mcpConfigFile?: string;
   private _errorHandler: AgentRuntimeErrorHandler;
 
   private _built = false;
@@ -107,7 +90,7 @@ export class AgentRuntime {
   private _sessions?: FilesSessionManager;
   private _mcp?: McpClientManager;
 
-  private readonly _agentCatalog = new AgentCatalog();
+  private readonly _agents = new Map<string, Agent>();
 
   /** Construct a new `AgentRuntime`. Use the fluent setters then call `build()`. */
   constructor(opts: AgentRuntimeOptions) {
@@ -124,39 +107,6 @@ export class AgentRuntime {
    */
   setSystemPath(path: string): this {
     this._systemPath = normalizeFolderPath(path);
-    return this;
-  }
-
-  /**
-   * Tools-visible root. Tools/skills can only see paths inside this subtree
-   * and **never** inside `systemPath`, regardless. Default: `"/"`.
-   */
-  setUserPath(path: string): this {
-    this._userPath = normalizeFolderPath(path);
-    return this;
-  }
-
-  /** Override the sessions storage path (default: `<system>/sessions`). */
-  setSessionsPath(path: string): this {
-    this._sessionsPath = normalizeFolderPath(path);
-    return this;
-  }
-
-  /** Override the skills folder (default: `<system>/skills`). */
-  setSkillsPath(path: string): this {
-    this._skillsPath = normalizeFolderPath(path);
-    return this;
-  }
-
-  /** Override the agents folder (default: `<system>/agents`). */
-  setAgentsPath(path: string): this {
-    this._agentsPath = normalizeFolderPath(path);
-    return this;
-  }
-
-  /** Override the config folder (default: `<system>/config`). */
-  setConfigPath(path: string): this {
-    this._configPath = normalizeFolderPath(path);
     return this;
   }
 
@@ -184,58 +134,9 @@ export class AgentRuntime {
     return this;
   }
 
-  /**
-   * Install a fixed message-selection strategy on every Session this runtime
-   * hosts. Mutually exclusive with {@link AgentRuntime#setBudgetCompaction}.
-   */
-  setSelectionStrategy(strategy: SelectionStrategy): this {
-    if (this._budgetCompaction) {
-      this._errorHandler(
-        new Error("setSelectionStrategy overrides prior setBudgetCompaction configuration"),
-      );
-      this._budgetCompaction = undefined;
-    }
-    this._selectionStrategy = strategy;
-    return this;
-  }
-
-  /**
-   * Install hierarchical selection + compaction on every Session.
-   * Mutually exclusive with {@link AgentRuntime#setSelectionStrategy}.
-   */
-  setBudgetCompaction(options: BudgetCompactionOptions): this {
-    if (this._selectionStrategy) {
-      this._errorHandler(
-        new Error("setBudgetCompaction overrides prior setSelectionStrategy configuration"),
-      );
-      this._selectionStrategy = undefined;
-    }
-    this._budgetCompaction = options;
-    return this;
-  }
-
-  /** Configure MCP servers inline. Mutually exclusive with `setMcpConfigFile`. */
+  /** Configure MCP servers inline. */
   setMcpServers(config: Record<string, McpServerConfig>): this {
     this._mcpServers = config;
-    return this;
-  }
-
-  /** Load MCP server configs from a file at `path` (system view). */
-  setMcpConfigFile(path: string): this {
-    this._mcpConfigFile = path;
-    return this;
-  }
-
-  /**
-   * Replace the runtime-wide error handler. The handler is invoked for:
-   * - build-phase configuration errors,
-   * - {@link FilteredFilesApi} visibility violations (with `{ path }`),
-   * - MCP server failures (with `{ server }`).
-   * Default handler is `console.warn`.
-   */
-  setErrorHandler(handler: AgentRuntimeErrorHandler): this {
-    this._errorHandler = handler;
-    if (this._mcp) this._mcp.setErrorHandler((e, c) => handler(e, c));
     return this;
   }
 
@@ -259,36 +160,69 @@ export class AgentRuntime {
     this._provider = this._resolveProvider();
     this._sessions = new FilesSessionManager(this._systemFiles, this._paths.sessions);
     this._resolvedTools = await this._resolveTools();
-    this._resolvedSkills = await new SkillsLoader().load(
+    this._resolvedSkills = await this._loadSkillsFromDisk(
       this._systemFiles,
       this._paths.skills,
       this._skills,
-      this._errorHandler,
     );
     this._mcp = await this._startMcp();
-    await this._agentCatalog.loadFromDisk(
-      this._systemFiles,
-      this._paths.agents,
-      this,
-      this._errorHandler,
-    );
+    await this._loadAgentsFromDisk(this._systemFiles, this._paths.agents);
     this._built = true;
     return this;
+  }
+
+  /**
+   * Walk `<systemFiles>/<agentsPath>` and register each `*.md` file as an
+   * Agent definition. Programmatically-registered agents win over disk-loaded
+   * ones (already-present names are skipped). Per-file errors flow through
+   * the runtime's `errorHandler` without aborting the walk.
+   */
+  private async _loadAgentsFromDisk(systemFiles: FilesApi, agentsPath: string): Promise<void> {
+    if (!(await systemFiles.exists(agentsPath))) return;
+    for await (const entry of systemFiles.list(agentsPath)) {
+      if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
+      try {
+        const text = await readText(systemFiles, entry.path);
+        const def = parseAgentMarkdown(text, entry.name.replace(/\.md$/, ""));
+        if (def && !this._agents.has(def.name)) {
+          this._agents.set(def.name, new Agent(def, this));
+        }
+      } catch (err) {
+        this._errorHandler(err as Error, { path: entry.path } as AgentRuntimeErrorContext);
+      }
+    }
+  }
+
+  /**
+   * Resolve the runtime's `SkillInfo[]` from disk plus manually-registered
+   * skills. Manual skills come first; disk-loaded skills append. Per-file
+   * errors flow through the runtime's `errorHandler` without aborting.
+   * Returns the manual list unchanged when the folder doesn't exist.
+   */
+  private async _loadSkillsFromDisk(
+    systemFiles: FilesApi,
+    skillsPath: string,
+    manualSkills: SkillInfo[],
+  ): Promise<SkillInfo[]> {
+    const skills: SkillInfo[] = [...manualSkills];
+    if (!(await systemFiles.exists(skillsPath))) return skills;
+    for await (const entry of systemFiles.list(skillsPath)) {
+      if (entry.kind !== "file" || !entry.name.endsWith(".md")) continue;
+      try {
+        const text = await readText(systemFiles, entry.path);
+        const skill = parseSkillMarkdown(text, entry.path);
+        if (skill) skills.push(skill);
+      } catch (err) {
+        this._errorHandler(err as Error, { path: entry.path } as AgentRuntimeErrorContext);
+      }
+    }
+    return skills;
   }
 
   /** Build the FilesApi split, routing geometry errors through the handler. */
   private _buildSplit(): ReturnType<typeof buildFilesSplit> {
     try {
-      return buildFilesSplit(this._rootFiles, {
-        systemPath: this._systemPath,
-        userPath: this._userPath,
-        overrides: {
-          ...(this._sessionsPath !== undefined && { sessions: this._sessionsPath }),
-          ...(this._skillsPath !== undefined && { skills: this._skillsPath }),
-          ...(this._agentsPath !== undefined && { agents: this._agentsPath }),
-          ...(this._configPath !== undefined && { config: this._configPath }),
-        },
-      });
+      return buildFilesSplit(this._rootFiles, { systemPath: this._systemPath });
     } catch (err) {
       this._errorHandler(err as Error, { path: "/" });
       throw err;
@@ -316,33 +250,14 @@ export class AgentRuntime {
     return tools;
   }
 
-  /**
-   * Connect MCP servers when configured. Returns the manager (or undefined
-   * when neither inline servers nor a config file was set).
-   */
+  /** Connect MCP servers when `setMcpServers(...)` was called. */
   private async _startMcp(): Promise<McpClientManager | undefined> {
-    if (!this._mcpServers && !this._mcpConfigFile) return undefined;
+    if (!this._mcpServers) return undefined;
     const mcp = new McpClientManager().setErrorHandler((e, c) =>
       this._errorHandler(e as Error, c as AgentRuntimeErrorContext),
     );
-    let serverConfigs = this._mcpServers;
-    if (this._mcpConfigFile) {
-      try {
-        const cfg = await this._requireConfig().load<{
-          servers: Record<string, McpServerConfig>;
-        }>(this._mcpConfigFile);
-        if (cfg?.servers) serverConfigs = { ...serverConfigs, ...cfg.servers };
-      } catch (err) {
-        this._errorHandler(err as Error, { path: this._mcpConfigFile });
-      }
-    }
-    if (serverConfigs) await mcp.loadServers(serverConfigs);
+    await mcp.loadServers(this._mcpServers);
     return mcp;
-  }
-
-  private _requireConfig(): ConfigManager {
-    if (!this._config) throw new Error("unreachable");
-    return this._config;
   }
 
   // ─── Agent definitions ─────────────────────────────────────────────────
@@ -361,17 +276,22 @@ export class AgentRuntime {
    * ```
    */
   createAgent(def: AgentDefinition): Agent {
-    return this._agentCatalog.register(def, this);
+    if (this._agents.has(def.name)) {
+      throw new Error(`AgentRuntime: agent already registered: ${def.name}`);
+    }
+    const agent = new Agent(def, this);
+    this._agents.set(def.name, agent);
+    return agent;
   }
 
   /** Return a registered Agent by name, or `undefined`. */
   getAgent(name: string): Agent | undefined {
-    return this._agentCatalog.get(name);
+    return this._agents.get(name);
   }
 
   /** Return all registered Agents. */
   agents(): Agent[] {
-    return this._agentCatalog.all();
+    return [...this._agents.values()];
   }
 
   // ─── Sessions ──────────────────────────────────────────────────────────
@@ -391,7 +311,7 @@ export class AgentRuntime {
     // Best-effort: if the persisted state's `agent` prop is a known agent,
     // bind the resumed Session to it. Otherwise fall back to a synthetic.
     const persistedAgentName = (existingState.props?.agent as string | undefined) ?? undefined;
-    const known = persistedAgentName ? this._agentCatalog.get(persistedAgentName) : undefined;
+    const known = persistedAgentName ? this._agents.get(persistedAgentName) : undefined;
     const agent = known ?? new Agent({ name: "__resumed__" }, this);
     return agent.createSession({ sessionId, existingState });
   }
@@ -471,74 +391,6 @@ export class AgentRuntime {
   }
 
   /** @internal */
-  get selectionStrategy(): SelectionStrategy | undefined {
-    return this._selectionStrategy;
-  }
-
-  /**
-   * Return a factory that builds a per-session {@link ContextWindow} from
-   * the runtime-wide defaults (selection strategy, budget compaction, etc.).
-   * Per-agent overrides are applied by `runtime/Session` on top of the
-   * factory output.
-   *
-   * @internal
-   */
-  contextDefaults(opts: {
-    systemPromptTemplate?: string;
-    selectStrategy?: SelectionStrategy;
-  }): ContextWindow {
-    this._assertBuilt();
-    if (!this._provider) throw new Error("unreachable");
-
-    const bc = this._budgetCompaction;
-    if (bc) {
-      const estimator = bc.estimator ?? createTokenEstimator();
-      const pinPolicy = bc.pinPolicy ?? createDefaultPinPolicy();
-      const elisionPolicy = bc.elisionPolicy ?? createDefaultElisionPolicy();
-      const keepRecentTurns = bc.keepRecentTurns ?? 4;
-      const defaultSelect = selectHierarchical({
-        budgetTokens: bc.budgetTokens,
-        keepRecentTurns,
-        pinPolicy,
-        elisionPolicy,
-        estimator,
-      });
-      return new ContextWindow({
-        provider: this._provider,
-        model: "",
-        selectStrategy: opts.selectStrategy ?? defaultSelect,
-        ...(opts.systemPromptTemplate !== undefined && {
-          systemPromptTemplate: opts.systemPromptTemplate,
-        }),
-        estimator,
-        pinPolicy,
-        elisionPolicy,
-        summarizer: bc.summarizer,
-        budgetTokens: bc.budgetTokens,
-        keepRecentTurns,
-        ...(bc.groupSize !== undefined && { groupSize: bc.groupSize }),
-        ...(bc.depthPromoteThreshold !== undefined && {
-          depthPromoteThreshold: bc.depthPromoteThreshold,
-        }),
-        ...(bc.maxPassesPerCompact !== undefined && {
-          maxPassesPerCompact: bc.maxPassesPerCompact,
-        }),
-      });
-    }
-
-    return new ContextWindow({
-      provider: this._provider,
-      model: "",
-      ...(opts.selectStrategy !== undefined && { selectStrategy: opts.selectStrategy }),
-      ...(this._selectionStrategy !== undefined &&
-        opts.selectStrategy === undefined && { selectStrategy: this._selectionStrategy }),
-      ...(opts.systemPromptTemplate !== undefined && {
-        systemPromptTemplate: opts.systemPromptTemplate,
-      }),
-    });
-  }
-
-  /** @internal */
   get errorHandler(): AgentRuntimeErrorHandler {
     return this._errorHandler;
   }
@@ -568,4 +420,19 @@ export class AgentRuntime {
     if (!this._toolsFiles) throw new Error("unreachable");
     return { files: this._toolsFiles };
   }
+}
+
+// ── Module-private helpers ───────────────────────────────────────────────
+
+/**
+ * Parse an Agent definition file (markdown with key=value frontmatter
+ * delimited by `---` lines). Returns `null` if the file is not recognisable
+ * as an Agent definition — the caller treats `null` as "skip".
+ */
+function parseAgentMarkdown(text: string, fallbackName: string): AgentDefinition | null {
+  const parsed = parseSkillMarkdown(text, fallbackName);
+  if (!parsed) return null;
+  const def: AgentDefinition = { name: parsed.name ?? fallbackName };
+  if (parsed.description) def.systemPrompt = parsed.content ?? parsed.description;
+  return def;
 }

@@ -1,6 +1,6 @@
 import { SnowflakeId } from "@statewalker/shared-ids";
 import { generateText } from "ai";
-import type { SelectionStrategy } from "../context/select-messages.js";
+import { ContextWindow } from "../context/context-window.js";
 import { bridgeMcpTools } from "../mcp/bridge-mcp-tools.js";
 import { Inbox } from "../state/inbox.js";
 import { createAgentNodeFactory } from "../state/node-factory.js";
@@ -36,7 +36,6 @@ const idGen = new SnowflakeId();
 export class Agent {
   private readonly _definition: AgentDefinition;
   private readonly _runtime: AgentRuntime;
-  private _selectionStrategy?: SelectionStrategy;
 
   /** @internal Use {@link AgentRuntime#createAgent} instead. */
   constructor(definition: AgentDefinition, runtime: AgentRuntime) {
@@ -53,20 +52,9 @@ export class Agent {
     return this._definition;
   }
 
-  /** @internal Per-Agent override of the runtime-level selection strategy. */
-  get selectionStrategy(): SelectionStrategy | undefined {
-    return this._selectionStrategy;
-  }
-
   /** @internal Runtime this Agent belongs to. */
   get runtime(): AgentRuntime {
     return this._runtime;
-  }
-
-  /** Per-Agent override of the runtime-level message selection strategy. */
-  setSelectionStrategy(strategy: SelectionStrategy): this {
-    this._selectionStrategy = strategy;
-    return this;
   }
 
   /**
@@ -130,10 +118,14 @@ export class Agent {
     const mcp = runtime.mcp;
     const mcpUnsubscribe = mcp ? bridgeMcpTools(mcp, tools) : undefined;
 
-    // 8. ContextWindow + TurnDriver from runtime defaults + agent overrides.
-    const contextWindow = runtime.contextDefaults({
+    // 8. ContextWindow + TurnDriver. Per-Session ContextWindow uses package
+    //    defaults (selectAll, no budget compaction). Consumers needing
+    //    compaction construct ContextWindow directly and pass it to Session
+    //    via the runtime's wiring (see openspec change ai-agent-cleanup-2026-05).
+    const contextWindow = new ContextWindow({
+      provider: runtime.provider,
+      model,
       ...(def.systemPrompt !== undefined && { systemPromptTemplate: def.systemPrompt }),
-      ...(this._selectionStrategy !== undefined && { selectStrategy: this._selectionStrategy }),
     });
     const turnDriver = new TurnDriver({
       provider: runtime.provider,
