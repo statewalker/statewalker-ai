@@ -25,6 +25,7 @@ catalog:
   "@types/node": ^25.6.0
   "@vitest/coverage-v8": ^4.1.4
   ai: ^6.0.168
+  openai: ^6.39.1
   rimraf: ^6.1.3
   tsdown: ^0.21.9
   tsx: ^4.21.0

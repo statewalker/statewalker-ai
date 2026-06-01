@@ -1,0 +1,33 @@
+{
+  "name": "@statewalker/openai-compat",
+  "version": "0.1.0",
+  "license": "MIT",
+  "description": "Wire-format adapter that exposes Vercel AI SDK provider instances over the OpenAI HTTP v1 API as a standard fetch handler. Transport-agnostic — no Hono / Express / Node http dependency.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist/**",
+    "src/**"
+  ],
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "catalog:",
+    "ai": "catalog:"
+  },
+  "devDependencies": {
+    "@ai-sdk/openai": "catalog:",
+    "@biomejs/biome": "catalog:",
+    "@types/node": "catalog:",
+    "openai": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
