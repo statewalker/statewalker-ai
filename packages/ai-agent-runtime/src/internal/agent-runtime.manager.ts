@@ -3,16 +3,13 @@ import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import type { Workspace } from "@statewalker/workspace";
 import { ActiveModel } from "../public/active-model.js";
+import { RebuildAgentCommand } from "../public/commands.js";
 import {
   agentMcpConnectionsSlot,
   agentSkillsSlot,
   agentToolsSlot,
 } from "../public/extension-points.js";
-import { RebuildAgentCommand } from "../public/intents.js";
-import {
-  AgentRuntimeAdapter,
-  type RuntimeState,
-} from "../public/runtime-state.js";
+import { AgentRuntimeAdapter, type RuntimeState } from "../public/runtime-state.js";
 import type {
   AgentMcpConnection,
   AgentSkillContribution,
@@ -59,14 +56,12 @@ export interface AgentRuntimeManagerOptions {
  */
 export class AgentRuntimeManager {
   private readonly workspace: Workspace;
-  private readonly intents: Commands;
+  private readonly commands: Commands;
   private readonly slots: Slots;
   private readonly activeModel: ActiveModel;
   private readonly adapter: AgentRuntimeAdapter;
   private readonly systemFolder: string;
-  private readonly _buildRuntime: NonNullable<
-    AgentRuntimeManagerOptions["buildRuntime"]
-  >;
+  private readonly _buildRuntime: NonNullable<AgentRuntimeManagerOptions["buildRuntime"]>;
 
   private readonly _cleanup: () => Promise<void>;
   private readonly _register: (
@@ -87,7 +82,7 @@ export class AgentRuntimeManager {
     this.workspace = opts.workspace;
     this.systemFolder = opts.systemFolder ?? "/.settings";
     this._buildRuntime = opts.buildRuntime ?? buildRuntime;
-    this.intents = opts.workspace.requireAdapter(Commands);
+    this.commands = opts.workspace.requireAdapter(Commands);
     this.slots = opts.workspace.requireAdapter(Slots);
     this.activeModel = opts.workspace.requireAdapter(ActiveModel);
     this.adapter = opts.workspace.requireAdapter(AgentRuntimeAdapter);
@@ -95,10 +90,10 @@ export class AgentRuntimeManager {
     [this._register, this._cleanup] = newRegistry();
     const register = this._register;
 
-    // Lifetime-scoped intent handler. Survives onUnload cycles so
+    // Lifetime-scoped command handler. Survives onUnload cycles so
     // late-arriving `runRebuildAgent` calls just no-op while closed.
     register(
-      this.intents.listen(RebuildAgentCommand, (cmd) => {
+      this.commands.listen(RebuildAgentCommand, (cmd) => {
         this._scheduleRebuild();
         cmd.resolve();
         return true;
@@ -239,10 +234,7 @@ export class AgentRuntimeManager {
 function dedupeMcp(
   contributions: readonly AgentMcpConnection[],
 ): Record<string, import("@statewalker/ai-agent/runtime").McpServerConfig> {
-  const out: Record<
-    string,
-    import("@statewalker/ai-agent/runtime").McpServerConfig
-  > = {};
+  const out: Record<string, import("@statewalker/ai-agent/runtime").McpServerConfig> = {};
   for (const c of contributions) out[c.id] = c.config; // last-wins
   return out;
 }

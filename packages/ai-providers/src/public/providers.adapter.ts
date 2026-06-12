@@ -10,7 +10,7 @@ import { emptyProvidersConfig, type ProvidersConfig } from "../public/providers-
  *
  * `saveProviders` and `reload` are async wrappers around the
  * manager. Held on the adapter so React callers can fire them
- * directly without going through an intent (these are local-only
+ * directly without going through an command (these are local-only
  * effects that don't benefit from cross-fragment dispatch).
  */
 export class Providers extends BaseClass {

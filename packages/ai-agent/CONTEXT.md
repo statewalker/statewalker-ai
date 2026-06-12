@@ -1,6 +1,6 @@
 # @statewalker/ai-agent
 
-Domain language for the agent runtime: agent loop, conversation state, context shaping for model calls, tool/skill registries, model providers, and session persistence. The package is framework-free — UI and intents live in `@statewalker/ai-provider-core` and the consuming apps.
+Domain language for the agent runtime: agent loop, conversation state, context shaping for model calls, tool/skill registries, model providers, and session persistence. The package is framework-free — UI and commands live in `@statewalker/ai-provider-core` and the consuming apps.
 
 ## Language
 

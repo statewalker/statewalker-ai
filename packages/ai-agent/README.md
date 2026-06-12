@@ -2,7 +2,7 @@
 
 A TypeScript library for building multi-turn AI agents with persistent state, tool/skill registries, MCP integration, and session management. Built on the [Vercel AI SDK](https://sdk.vercel.ai/).
 
-The package is framework-free (no workspace-api / workbench-views / shared-adapters dependencies) — it deals only with the agent loop, state tree, tools, models, and persistence. Application-level concerns (UI, intents, fragment activators) live in `@statewalker/ai-provider-core` and the consuming apps.
+The package is framework-free (no workspace-api / workbench-views / shared-adapters dependencies) — it deals only with the agent loop, state tree, tools, models, and persistence. Application-level concerns (UI, commands, fragment activators) live in `@statewalker/ai-provider-core` and the consuming apps.
 
 ## Three-tier API
 

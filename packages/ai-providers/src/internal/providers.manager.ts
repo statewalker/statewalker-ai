@@ -7,8 +7,8 @@ import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
 import type { Workspace } from "@statewalker/workspace";
+import { SelectActiveModelCommand, type SelectActiveModelPayload } from "../public/commands.js";
 import { remoteProvidersSlot } from "../public/extension-points.js";
-import { SelectActiveModelCommand, type SelectActiveModelPayload } from "../public/intents.js";
 import { Providers } from "../public/providers.adapter.js";
 import {
   type Connection,
@@ -45,7 +45,7 @@ export interface ProvidersManagerOptions {
  */
 export class ProvidersManager {
   private readonly workspace: Workspace;
-  private readonly intents: Commands;
+  private readonly commands: Commands;
   private readonly slots: Slots;
   private readonly providers: Providers;
   private readonly activeModel: ActiveModel;
@@ -59,7 +59,7 @@ export class ProvidersManager {
   constructor(opts: ProvidersManagerOptions) {
     this.workspace = opts.workspace;
     this.systemFolder = opts.systemFolder ?? ".settings";
-    this.intents = opts.workspace.requireAdapter(Commands);
+    this.commands = opts.workspace.requireAdapter(Commands);
     this.slots = opts.workspace.requireAdapter(Slots);
     this.providers = opts.workspace.requireAdapter(Providers);
     this.activeModel = opts.workspace.requireAdapter(ActiveModel);
@@ -75,7 +75,7 @@ export class ProvidersManager {
     this._cleanup = cleanup;
 
     register(
-      this.intents.listen(SelectActiveModelCommand, (cmd) => {
+      this.commands.listen(SelectActiveModelCommand, (cmd) => {
         void this._persistActiveSelection(cmd.payload)
           .then(() => cmd.resolve())
           .catch((err) => cmd.reject(err));
