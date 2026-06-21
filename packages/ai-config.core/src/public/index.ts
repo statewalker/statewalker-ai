@@ -1,0 +1,13 @@
+export { AiConfigImpl, type AiConfigImplOptions } from "../internal/ai-config.impl.js";
+export { capabilitiesFor, DEFAULT_CAPABILITIES } from "../internal/capabilities.js";
+export { applyDefaultStarred, DEFAULT_STARRED_BY_TYPE } from "../internal/default-starred.js";
+export { AiConfig, apiKeySecretKey } from "./ai-config.js";
+export * from "./commands.js";
+export * from "./connections-catalog.js";
+export * from "./connections-spec.js";
+export * from "./constants.js";
+export { seedAiConfigFromEnv } from "./env-seed.js";
+export { default } from "./init.js";
+export * from "./model-reference.js";
+export * from "./provider-registry.js";
+export * from "./types.js";

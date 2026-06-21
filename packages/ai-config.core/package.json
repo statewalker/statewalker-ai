@@ -1,0 +1,42 @@
+{
+  "name": "@statewalker/ai-config.core",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Unified AI configuration: one workspace adapter for provider connections + discovered models + active selection. Credentials in Secrets; providers built directly from @ai-sdk. Shared by chat and wiki.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fragment": "./src/fragment.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "catalog:",
+    "@ai-sdk/google": "catalog:",
+    "@ai-sdk/openai": "catalog:",
+    "@ai-sdk/provider": "catalog:",
+    "@json-render/core": "0.18.0",
+    "ai": "catalog:",
+    "@statewalker/shared-commands": "catalog:",
+    "@statewalker/shared-registry": "catalog:",
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/workspace.core": "workspace:*"
+  },
+  "devDependencies": {
+    "@statewalker/webrun-files-mem": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}
