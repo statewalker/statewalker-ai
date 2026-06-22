@@ -1,0 +1,58 @@
+{
+  "name": "@statewalker/ai-local-models.browser",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./transformers": "./src/transformers/register.ts"
+  },
+  "files": [
+    "dist/**",
+    "src/**"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "lint": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "catalog:",
+    "@statewalker/ai-agent.core": "workspace:*",
+    "@statewalker/webrun-files": "catalog:"
+  },
+  "peerDependencies": {
+    "@browser-ai/transformers-js": "^2.2.2",
+    "@huggingface/transformers": "^4.2.0",
+    "@mlc-ai/web-llm": "^0.2.83"
+  },
+  "peerDependenciesMeta": {
+    "@browser-ai/transformers-js": {
+      "optional": true
+    },
+    "@huggingface/transformers": {
+      "optional": true
+    },
+    "@mlc-ai/web-llm": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@browser-ai/transformers-js": "catalog:",
+    "@huggingface/transformers": "catalog:",
+    "@mlc-ai/web-llm": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-local-models.browser"
+  }
+}
