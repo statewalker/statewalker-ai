@@ -310,6 +310,25 @@ describe("FilesSessionManager", () => {
       expect(meta?.modelRef).toEqual({ connectionId: "openai", modelId: "gpt-4o" });
     });
 
+    it("two sessions hold distinct modelRefs without cross-talk", async () => {
+      const a = newSession("Session A");
+      const b = newSession("Session B");
+      await manager.save(a.id, a.session);
+      await manager.save(b.id, b.session);
+      await manager.setModelRef(a.id, { connectionId: "openai", modelId: "gpt-4o" });
+      await manager.setModelRef(b.id, { connectionId: "google", modelId: "gemini-1.5-pro" });
+      // Each session reads back its own selection; setting one never bleeds
+      // into the other.
+      expect((await manager.getMetadata(a.id))?.modelRef).toEqual({
+        connectionId: "openai",
+        modelId: "gpt-4o",
+      });
+      expect((await manager.getMetadata(b.id))?.modelRef).toEqual({
+        connectionId: "google",
+        modelId: "gemini-1.5-pro",
+      });
+    });
+
     it("save without setModelRef leaves the field undefined", async () => {
       const { id, session } = newSession("No model yet");
       await manager.save(id, session);
