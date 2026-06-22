@@ -1,0 +1,44 @@
+{
+  "name": "@statewalker/ai-local-models.core",
+  "version": "0.1.0",
+  "private": false,
+  "type": "module",
+  "description": "Local (in-browser) model lifecycle: curated transformers.js catalog, download/activation manager, own persistence store, and ActiveModel{kind:\"local\"} selection. React-free.",
+  "license": "MIT",
+  "exports": {
+    ".": "./src/index.ts",
+    "./fragment": "./src/fragment.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check --write .",
+    "format": "biome format --write ."
+  },
+  "dependencies": {
+    "@ai-sdk/provider": "catalog:",
+    "@json-render/core": "0.18.0",
+    "@statewalker/ai-agent.core": "workspace:*",
+    "@statewalker/ai-agent-runtime.core": "workspace:*",
+    "@statewalker/ai-local-models.browser": "workspace:*",
+    "@statewalker/settings.core": "workspace:*",
+    "@statewalker/shared-baseclass": "catalog:",
+    "@statewalker/shared-commands": "catalog:",
+    "@statewalker/shared-registry": "catalog:",
+    "@statewalker/shared-slots": "workspace:*",
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/workspace.core": "workspace:*"
+  },
+  "devDependencies": {
+    "@statewalker/webrun-files-mem": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
+}
