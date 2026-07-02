@@ -1,6 +1,7 @@
 import { NodeType } from "./node-types.js";
 import { TreeNode } from "./tree-node.js";
 import type { Turn } from "./turn.js";
+import type { TodoItem } from "./worklist.js";
 
 /**
  * The persistable state of one Session — the tree of `Turn`s, `Message`s,
@@ -20,6 +21,20 @@ export class SessionState extends TreeNode {
 
   set title(value: string | undefined) {
     this.props.title = value;
+    this.touch();
+  }
+
+  /**
+   * The autonomous-continuation worklist — a flat list of todo items the
+   * agent maintains via the `write_todos` tool. Persisted with the session
+   * tree; an absent worklist reads as empty.
+   */
+  get worklist(): TodoItem[] {
+    return (this.props.worklist as TodoItem[] | undefined) ?? [];
+  }
+
+  set worklist(items: TodoItem[]) {
+    this.props.worklist = items;
     this.touch();
   }
 

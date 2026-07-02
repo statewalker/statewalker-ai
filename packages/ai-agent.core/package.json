@@ -31,6 +31,7 @@
     "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@modelcontextprotocol/sdk": "catalog:",
+    "@statewalker/fsm": "catalog:",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-ids": "catalog:",
     "@statewalker/webrun-files": "catalog:",
@@ -39,6 +40,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@statewalker/fsm-validator": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",

@@ -3,6 +3,7 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
 import type { AgentContext } from "../config/types.js";
 import type { SkillInfo } from "../skills/skill-types.js";
+import type { Executor } from "./executor.js";
 
 /** Factory invoked at `build()` to materialise tools from the live context. */
 export type ToolFactory = (ctx: AgentContext) => ToolSet | Promise<ToolSet>;
@@ -65,6 +66,17 @@ export interface AgentDefinition {
   maxSteps?: number;
   /** Cap on per-step output tokens. */
   maxOutputTokens?: number;
+  /**
+   * Cap on autonomous continuations within one burst (the default
+   * `LoopExecutor`'s outer loop). Distinct from `maxSteps` (the inner
+   * per-turn tool-call cap). Defaults to `DEFAULT_MAX_TURNS`.
+   */
+  maxTurns?: number;
+  /**
+   * The loop that drives this agent's sessions. Defaults to a shared
+   * `LoopExecutor` when omitted.
+   */
+  executor?: Executor;
 }
 
 /** Skill registry types re-exported for convenience. */

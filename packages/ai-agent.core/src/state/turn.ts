@@ -66,6 +66,12 @@ export class Turn extends TreeNode {
     return this.children.filter((c) => MESSAGE_TYPES.has(c.type)) as Message[];
   }
 
+  /** Text of this turn's first user message, if any. */
+  get userText(): string | undefined {
+    const um = this.children.find((c) => c.type === NodeType.userMessage) as Message | undefined;
+    return um?.text;
+  }
+
   get toolCalls(): ToolCall[] {
     return this.childrenOfType(NodeType.toolCall) as ToolCall[];
   }

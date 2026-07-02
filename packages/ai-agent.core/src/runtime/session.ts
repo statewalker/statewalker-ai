@@ -4,6 +4,8 @@ import type { SessionState } from "../state/session-state.js";
 import type { SkillsModel } from "../state/skills-model.js";
 import type { ToolRegistry } from "../state/tool-registry.js";
 import type { Agent } from "./agent.js";
+import type { Executor, ExecutorContext } from "./executor.js";
+import { withFirstTurnTitle } from "./executor.js";
 import type { TurnDriver } from "./turn-driver.js";
 
 /**
@@ -19,6 +21,8 @@ export interface SessionOptions {
   tools: ToolRegistry;
   skills: SkillsModel;
   turnDriver: TurnDriver;
+  /** The loop that drives this session. */
+  executor: Executor;
   /** Best-effort title generator for the first turn. */
   generateTitle: (userText: string, signal?: AbortSignal) => Promise<string | undefined>;
   /** Persistence callback. Closes over the runtime + id. */
@@ -53,6 +57,7 @@ export class Session {
   readonly tools: ToolRegistry;
   readonly skills: SkillsModel;
   private readonly _turnDriver: TurnDriver;
+  private readonly _executor: Executor;
   private readonly _generateTitle: SessionOptions["generateTitle"];
   private readonly _save: SessionOptions["save"];
   private _mcpUnsubscribe?: () => void;
@@ -67,6 +72,7 @@ export class Session {
     this.tools = opts.tools;
     this.skills = opts.skills;
     this._turnDriver = opts.turnDriver;
+    this._executor = opts.executor;
     this._generateTitle = opts.generateTitle;
     this._save = opts.save;
     this._mcpUnsubscribe = opts.mcpUnsubscribe;
@@ -81,36 +87,26 @@ export class Session {
   }
 
   /**
-   * Run the agent loop. Drains the {@link Inbox} and delegates each message
-   * to the {@link TurnDriver}. On the first turn, generates a session title
-   * before forwarding the buffered `turn-finish` event, so consumers
-   * persisting on `turn-finish` see `state.title` populated. Resolves when
-   * the inbox closes or the signal aborts.
+   * Run the agent loop. Delegates control flow to the agent's {@link Executor}
+   * (default {@link import("./loop-executor.js").LoopExecutor}) over an
+   * {@link ExecutorContext} exposing the inbox, state, and the bound turn
+   * primitive. First-turn title generation is applied by
+   * {@link withFirstTurnTitle} so consumers persisting on `turn-finish` see
+   * `state.title` populated. Resolves when the inbox closes or the signal aborts.
    */
   async *run(signal?: AbortSignal): AsyncGenerator<LogMessage> {
     if (this._closed) throw new Error("Session: closed");
-    for (;;) {
-      const message = await this.inbox.take(signal);
-      if (!message) break;
-
-      const isFirstTurn = this.state.turns.length === 0;
-      let pendingFinish: LogMessage | undefined;
-      for await (const ev of this._turnDriver.drive(this.state, message, signal)) {
-        if (ev.type === "turn-finish") {
-          pendingFinish = ev;
-          continue;
-        }
-        yield ev;
-      }
-      if (isFirstTurn && !this.state.title) {
-        try {
-          this.state.title = await this._generateTitle(message.text, signal);
-        } catch {
-          // Title generation is best-effort — do not propagate errors.
-        }
-      }
-      if (pendingFinish) yield pendingFinish;
-    }
+    const ctx: ExecutorContext = {
+      inbox: this.inbox,
+      state: this.state,
+      drive: (message, sig) => this._turnDriver.drive(this.state, message, sig),
+    };
+    yield* withFirstTurnTitle(
+      this._executor.run(ctx, signal),
+      this.state,
+      this._generateTitle,
+      signal,
+    );
   }
 
   /**

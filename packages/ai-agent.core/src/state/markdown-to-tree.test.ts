@@ -65,6 +65,37 @@ describe("markdownToSession", () => {
   });
 });
 
+describe("SessionState worklist", () => {
+  it("reads as empty when never written", () => {
+    const session = factory({ type: NodeType.session }) as SessionState;
+    expect(session.worklist).toEqual([]);
+  });
+
+  it("replaces the worklist wholesale", () => {
+    const session = factory({ type: NodeType.session }) as SessionState;
+    session.worklist = [
+      { id: "1", status: "open", text: "a" },
+      { id: "2", status: "open", text: "b" },
+    ];
+    session.worklist = [{ id: "3", status: "done", text: "c" }];
+    expect(session.worklist).toEqual([{ id: "3", status: "done", text: "c" }]);
+  });
+
+  it("round-trips the worklist through serialization", async () => {
+    const session = factory({ type: NodeType.session }) as SessionState;
+    session.worklist = [
+      { id: "1", status: "open", text: "write tests" },
+      { id: "2", status: "done", text: "read spec" },
+    ];
+    const md = await sessionToMarkdown(session);
+    const restored = (await markdownToSession(md, factory)) as SessionState;
+    expect(restored.worklist).toEqual([
+      { id: "1", status: "open", text: "write tests" },
+      { id: "2", status: "done", text: "read spec" },
+    ]);
+  });
+});
+
 describe("markdown round-trip", () => {
   it("round-trip preserves props", async () => {
     const { session } = buildConversation();

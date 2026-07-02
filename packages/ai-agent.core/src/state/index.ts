@@ -25,3 +25,4 @@ export { TreeNode } from "./tree-node.js";
 export type { NodeFactory, TreeEntry } from "./tree-types.js";
 export { type StreamPart, Turn, type Usage } from "./turn.js";
 export { type SummarySection, TurnGroup } from "./turn-group.js";
+export { openTodos, type TodoItem } from "./worklist.js";

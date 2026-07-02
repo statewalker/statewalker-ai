@@ -11,12 +11,18 @@ import { ToolRegistry } from "../state/tool-registry.js";
 import { createListSkillsTool } from "../tools/list-skills-tool.js";
 import { createListToolsTool } from "../tools/list-tools-tool.js";
 import { createUseSkillsTool } from "../tools/use-skills-tool.js";
+import { createWriteTodosTool } from "../tools/write-todos-tool.js";
 import type { AgentRuntime } from "./agent-runtime.js";
+import type { Executor } from "./executor.js";
+import { LoopExecutor } from "./loop-executor.js";
 import { Session } from "./session.js";
 import { TurnDriver } from "./turn-driver.js";
 import type { AgentDefinition } from "./types.js";
 
 const idGen = new SnowflakeId();
+
+/** Default executor for agents that do not declare one. Stateless — shared. */
+const DEFAULT_EXECUTOR: Executor = new LoopExecutor();
 
 /**
  * `Agent` is a **definition** value: a named bundle of capabilities
@@ -106,6 +112,7 @@ export class Agent {
     //    skills are available. Registered once at construction.
     const model = def.defaultModel ?? "";
     tools.register("list_tools", createListToolsTool(tools));
+    tools.register("write_todos", createWriteTodosTool(state));
     if (skills.size > 0) {
       tools.register("list_skills", createListSkillsTool(skills));
       tools.register(
@@ -149,6 +156,9 @@ export class Agent {
       tools,
       skills,
       turnDriver,
+      executor:
+        def.executor ??
+        (def.maxTurns !== undefined ? new LoopExecutor(def.maxTurns) : DEFAULT_EXECUTOR),
       generateTitle,
       save,
       ...(mcpUnsubscribe && { mcpUnsubscribe }),
