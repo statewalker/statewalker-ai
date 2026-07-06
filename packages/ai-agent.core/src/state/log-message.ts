@@ -48,4 +48,14 @@ export type LogMessage =
       stamp: string;
       budget: number;
       estimated: number;
+    }
+  | {
+      // Advisory (non-blocking) FsmExecutor pre/post goal check: records that the
+      // check ran and its verdict. `event` is present only when it failed (the
+      // graph-routable event the executor emitted).
+      type: "advisory-check";
+      stateKey: string;
+      phase: "pre" | "post";
+      passed: boolean;
+      event?: string;
     };

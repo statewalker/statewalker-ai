@@ -40,6 +40,7 @@ interface ProcOpts {
   workMaxTurnsEvent?: string;
   workStagnation?: Check;
   workStagnationEvent?: string;
+  workPre?: Condition;
   workPost?: Condition;
 }
 
@@ -87,6 +88,7 @@ function buildProc(opts: ProcOpts, visited: string[]): FsmProcessDefinition {
         ...(opts.workMaxTurnsEvent && { maxTurnsEvent: opts.workMaxTurnsEvent }),
         ...(opts.workStagnation && { stagnation: opts.workStagnation }),
         ...(opts.workStagnationEvent && { stagnationEvent: opts.workStagnationEvent }),
+        ...(opts.workPre && { pre: opts.workPre }),
         ...(opts.workPost && { post: opts.workPost }),
       },
       Alt: {
@@ -195,7 +197,7 @@ describe("FsmExecutor — execution", () => {
     const ctx = makeCtx(state, calls);
 
     // post fails → emits "replan" (routes Work→Alt) instead of blocking; Alt then completes.
-    await drain(
+    const events = await drain(
       new FsmExecutor(buildProc({ workPost: { when: () => false, event: "replan" } }, visited)).run(
         ctx,
       ),
@@ -203,6 +205,64 @@ describe("FsmExecutor — execution", () => {
 
     expect(calls).toEqual(["WORK", "ALT"]);
     expect(visited).toEqual(["Work", "Alt"]);
+    // The advisory post-check is annotated into the trace with its verdict + routable event.
+    expect(events.find((e) => e.type === "advisory-check")).toMatchObject({
+      type: "advisory-check",
+      stateKey: "Work",
+      phase: "post",
+      passed: false,
+      event: "replan",
+    });
+  });
+
+  it("an advisory pre-check runs before the state's turns, annotating and routing on failure", async () => {
+    const state = newState();
+    state.worklist = openA;
+    const calls: string[] = [];
+    const visited: string[] = [];
+    const ctx = makeCtx(state, calls);
+
+    // Work.pre fails → emits "replan" (routes Work→Alt) BEFORE any Work turn runs.
+    const events = await drain(
+      new FsmExecutor(buildProc({ workPre: { when: () => false, event: "replan" } }, visited)).run(
+        ctx,
+      ),
+    );
+
+    // Work's turn loop never ran (pre short-circuited to Alt); only Alt drove a turn.
+    expect(calls).toEqual(["ALT"]);
+    expect(visited).toEqual(["Alt"]);
+    expect(events.find((e) => e.type === "advisory-check")).toMatchObject({
+      type: "advisory-check",
+      stateKey: "Work",
+      phase: "pre",
+      passed: false,
+      event: "replan",
+    });
+  });
+
+  it("an advisory pre-check that passes annotates the trace and lets the state run", async () => {
+    const state = newState();
+    state.worklist = doneA; // Work completes on its first turn
+    const calls: string[] = [];
+    const visited: string[] = [];
+    const ctx = makeCtx(state, calls);
+
+    const events = await drain(
+      new FsmExecutor(buildProc({ workPre: { when: () => true, event: "replan" } }, visited)).run(
+        ctx,
+      ),
+    );
+
+    expect(calls).toEqual(["WORK"]); // pre passed → Work ran its turn
+    const ann = events.find((e) => e.type === "advisory-check");
+    expect(ann).toMatchObject({
+      type: "advisory-check",
+      stateKey: "Work",
+      phase: "pre",
+      passed: true,
+    });
+    expect(ann).not.toHaveProperty("event"); // no routable event when the check passes
   });
 
   it("forwards the driven turns' LogMessages to the output stream", async () => {

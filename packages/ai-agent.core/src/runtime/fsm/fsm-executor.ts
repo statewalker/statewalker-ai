@@ -63,7 +63,7 @@ export class FsmExecutor implements Executor {
     const executorMaxTurns = this.maxTurns;
     return [
       async function* stateHandler(c: FsmRunContext): AsyncGenerator<string> {
-        yield* runState(c, cfg, executorMaxTurns);
+        yield* runState(c, cfg, executorMaxTurns, stateKey);
       },
     ];
   }
@@ -74,9 +74,21 @@ async function* runState(
   c: FsmRunContext,
   cfg: StateHandlerConfig,
   executorMaxTurns: number,
+  stateKey: string,
 ): AsyncGenerator<string> {
-  // Advisory pre-check: emit its event for the graph to route, but do not block.
-  if (cfg.pre && !(await cfg.pre.when(c))) yield cfg.pre.event;
+  // Advisory pre-check: annotate the trace with its verdict, and on failure emit
+  // its event for the graph to route — but never block.
+  if (cfg.pre) {
+    const passed = await cfg.pre.when(c);
+    c.emit({
+      type: "advisory-check",
+      stateKey,
+      phase: "pre",
+      passed,
+      ...(passed ? {} : { event: cfg.pre.event }),
+    });
+    if (!passed) yield cfg.pre.event;
+  }
 
   const maxTurns = cfg.maxTurns ?? executorMaxTurns;
   const run = newRunState();
@@ -93,8 +105,19 @@ async function* runState(
       }
     }
     if (fired) {
-      // Advisory post-check: emit its event first (non-blocking), then transition.
-      if (cfg.post && !(await cfg.post.when(c))) yield cfg.post.event;
+      // Advisory post-check: annotate the trace, emit its event on failure
+      // (non-blocking), then transition.
+      if (cfg.post) {
+        const passed = await cfg.post.when(c);
+        c.emit({
+          type: "advisory-check",
+          stateKey,
+          phase: "post",
+          passed,
+          ...(passed ? {} : { event: cfg.post.event }),
+        });
+        if (!passed) yield cfg.post.event;
+      }
       yield fired;
       return;
     }
