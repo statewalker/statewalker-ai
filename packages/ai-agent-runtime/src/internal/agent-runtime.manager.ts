@@ -1,7 +1,7 @@
 import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
-import type { Workspace } from "@statewalker/workspace";
+import type { Workspace } from "@statewalker/workspace.core";
 import { ActiveModel } from "../public/active-model.js";
 import { RebuildAgentCommand } from "../public/commands.js";
 import {

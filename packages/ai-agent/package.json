@@ -31,15 +31,15 @@
     "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
     "@modelcontextprotocol/sdk": "catalog:",
-    "@statewalker/shared-baseclass": "catalog:",
-    "@statewalker/shared-ids": "catalog:",
-    "@statewalker/webrun-files": "catalog:",
-    "@statewalker/webrun-files-composite": "catalog:",
+    "@statewalker/shared-baseclass": "workspace:*",
+    "@statewalker/shared-ids": "workspace:*",
+    "@statewalker/webrun-files": "workspace:*",
+    "@statewalker/webrun-files-composite": "workspace:*",
     "ai": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@statewalker/webrun-files-mem": "catalog:",
+    "@statewalker/webrun-files-mem": "workspace:*",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

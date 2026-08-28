@@ -24,13 +24,13 @@
     "@statewalker/ai-agent": "workspace:*",
     "@statewalker/ai-agent-runtime": "workspace:*",
     "@statewalker/settings": "workspace:*",
-    "@statewalker/shared-baseclass": "catalog:",
-    "@statewalker/shared-commands": "catalog:",
-    "@statewalker/shared-registry": "catalog:",
+    "@statewalker/shared-baseclass": "workspace:*",
+    "@statewalker/shared-commands": "workspace:*",
+    "@statewalker/shared-registry": "workspace:*",
     "@statewalker/shared-slots": "workspace:*",
-    "@statewalker/webrun-files": "catalog:",
-    "@statewalker/webrun-files-mem": "catalog:",
-    "@statewalker/workspace": "workspace:*"
+    "@statewalker/webrun-files": "workspace:*",
+    "@statewalker/webrun-files-mem": "workspace:*",
+    "@statewalker/workspace.core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "catalog:",

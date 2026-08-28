@@ -30,12 +30,12 @@
     "@statewalker/core-react": "workspace:*",
     "@statewalker/models-config": "workspace:*",
     "@statewalker/shadcn-react": "workspace:*",
-    "@statewalker/shared-baseclass": "catalog:",
-    "@statewalker/shared-commands": "catalog:",
-    "@statewalker/shared-registry": "catalog:",
+    "@statewalker/shared-baseclass": "workspace:*",
+    "@statewalker/shared-commands": "workspace:*",
+    "@statewalker/shared-registry": "workspace:*",
     "@statewalker/shared-slots": "workspace:*",
-    "@statewalker/workspace": "workspace:*",
-    "lucide-react": "catalog:"
+    "lucide-react": "catalog:",
+    "@statewalker/workspace.core": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18",

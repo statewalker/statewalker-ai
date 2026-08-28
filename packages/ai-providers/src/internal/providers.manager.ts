@@ -6,7 +6,7 @@ import {
 import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
-import type { Workspace } from "@statewalker/workspace";
+import type { Workspace } from "@statewalker/workspace.core";
 import { SelectActiveModelCommand, type SelectActiveModelPayload } from "../public/commands.js";
 import { remoteProvidersSlot } from "../public/extension-points.js";
 import { Providers } from "../public/providers.adapter.js";

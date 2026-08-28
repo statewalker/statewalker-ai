@@ -2,7 +2,7 @@ import { ActiveModel, AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime"
 import { Slots } from "@statewalker/shared-slots";
 import { writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
-import { Workspace } from "@statewalker/workspace";
+import { Workspace } from "@statewalker/workspace.core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { remoteProvidersSlot } from "../public/extension-points.js";
 import { Providers } from "../public/providers.adapter.js";

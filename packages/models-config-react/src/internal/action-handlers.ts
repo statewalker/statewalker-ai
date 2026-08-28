@@ -17,7 +17,7 @@ interface ModelRef {
 
 import { LocalModels, RefreshConnectionModelsCommand } from "@statewalker/models-config";
 import { Commands } from "@statewalker/shared-commands";
-import type { Workspace } from "@statewalker/workspace";
+import type { Workspace } from "@statewalker/workspace.core";
 
 const newConnectionId = (): string =>
   `conn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
