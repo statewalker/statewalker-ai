@@ -24,7 +24,7 @@
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
     "@statewalker/ai-agent.core": "workspace:*",
-    "@statewalker/webrun-files": "workspace:*"
+    "@statewalker/webrun-files": "catalog:"
   },
   "peerDependencies": {
     "@browser-ai/transformers-js": "^2.2.2",
