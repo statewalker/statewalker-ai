@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-config.core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "Unified AI configuration: one workspace adapter for provider connections + discovered models + active selection. Credentials in Secrets; providers built directly from @ai-sdk. Shared by chat and wiki.",

@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-agent-runtime.core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "AI agent-runtime fragment: AgentRuntimeAdapter, agent:tools slot, agent intents.",
