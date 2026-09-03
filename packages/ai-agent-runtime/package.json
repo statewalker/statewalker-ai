@@ -10,7 +10,9 @@
     "./fragment": "./src/fragment.ts",
     "./internal/build-runtime": "./src/internal/build-runtime.ts"
   },
-  "files": ["src"],
+  "files": [
+    "src"
+  ],
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
@@ -23,11 +25,17 @@
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
-    "@statewalker/shared-slots": "workspace:*",
+    "@statewalker/shared-slots": "catalog:",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/workspace": "workspace:*"
+    "@statewalker/workspace.core": "catalog:"
   },
-  "devDependencies": {"typescript": "catalog:", "vitest": "catalog:"},
+  "devDependencies": {
+    "ai": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
   "sideEffects": false,
-  "publishConfig": {"access": "public"}
+  "publishConfig": {
+    "access": "public"
+  }
 }

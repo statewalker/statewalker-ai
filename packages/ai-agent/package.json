@@ -40,6 +40,7 @@
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",
+    "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

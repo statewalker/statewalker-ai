@@ -1,8 +1,25 @@
 packages:
   - "packages/*"
   - "apps/*"
+# QUARANTINED — not part of the compilable configuration (statewalker/umbrella#25).
+#
+# These three declare workspace:* on package names that exist in no repository of this
+# ecosystem and under no other spelling on npm: @repo/chat-mini.chat,
+# @repo/chat-mini.chat-react, @statewalker/settings, @statewalker/catalog-registry,
+# @statewalker/core-react, @statewalker/shadcn-react, @statewalker/dock. pnpm validates
+# workspace: refs across the whole workspace, so leaving them in makes `pnpm install` fail
+# for every package in this repo, not just these three.
+#
+# Excluded, not deleted: the source is untouched and restoring them is one line here, once
+# #25 rules whether each name is dead code or a package to bring back.
+  - "!packages/ai-providers/**"
+  - "!packages/models-config/**"
+  - "!packages/models-config-react/**"
 
 catalog:
+  "@statewalker/shared-commands": "^0.2.1"
+  "@statewalker/workspace.core": "^0.1.1"
+  "@statewalker/shared-slots": "^0.2.1"
   "@ai-sdk/anthropic": ^3.0.71
   "@ai-sdk/google": ^3.0.64
   "@ai-sdk/mcp": ^1.0.36

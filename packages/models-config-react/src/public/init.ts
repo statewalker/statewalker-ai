@@ -8,7 +8,7 @@ import {
 } from "@statewalker/models-config";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
-import { getWorkspace } from "@statewalker/workspace";
+import { getWorkspace } from "@statewalker/workspace.core";
 import { buildModelsConfigRegistry } from "../internal/build-react-catalog.js";
 import { ComposerSessionModelPicker } from "../internal/composer-session-model-picker.js";
 import { ModelsConfigConnectionsTab } from "../internal/connections-tab.js";

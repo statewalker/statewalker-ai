@@ -30,7 +30,7 @@
     "@statewalker/shared-slots": "workspace:*",
     "@statewalker/webrun-files": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
-    "@statewalker/workspace": "workspace:*"
+    "@statewalker/workspace.core": "catalog:"
   },
   "devDependencies": {
     "typescript": "catalog:",

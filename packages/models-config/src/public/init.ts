@@ -13,7 +13,7 @@ import { Settings, settingsTabSlot } from "@statewalker/settings";
 import { Commands } from "@statewalker/shared-commands";
 import { newRegistry } from "@statewalker/shared-registry";
 import { Slots } from "@statewalker/shared-slots";
-import { getWorkspace } from "@statewalker/workspace";
+import { getWorkspace } from "@statewalker/workspace.core";
 import { capabilitiesFor } from "../internal/capabilities.js";
 import { ConfigureModelsCommand, RefreshConnectionModelsCommand } from "./commands.js";
 import {

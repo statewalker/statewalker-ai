@@ -3,7 +3,7 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it, vi } from "vitest";
 import { ModelManager } from "../../src/models/model-manager.js";
 import { ModelStateStore } from "../../src/models/model-state-store.js";
-import type { ActivationProgress, LocalModelConfig, ModelConfig } from "../../src/models/types.js";
+import type { ActivationProgress, LocalModelConfig, LocalModelFactory, ModelConfig } from "../../src/models/types.js";
 
 const REMOTE_MODEL: ModelConfig = {
   runtime: "remote",
@@ -87,7 +87,7 @@ describe("ModelManager", () => {
   describe("activate local model without files", () => {
     it("yields error when no FilesApi configured", async () => {
       const { manager } = createManager({ "local:test": LOCAL_MODEL });
-      manager.registerLocalFactory("tjs", vi.fn());
+      manager.registerLocalFactory("tjs", vi.fn<LocalModelFactory>());
       const events = await collectProgress(manager.activate("local:test"));
       expect(events.at(-1)?.phase).toBe("error");
       expect(events.at(-1)?.message).toContain("FilesApi");
@@ -300,7 +300,7 @@ describe("ModelManager", () => {
 
     it("hasFactory reports registered engines only", () => {
       const { manager } = createManager({});
-      manager.registerLocalFactory("tjs", vi.fn());
+      manager.registerLocalFactory("tjs", vi.fn<LocalModelFactory>());
       manager.registerLocalFactory("webllm", { factory: vi.fn() });
       expect(manager.hasFactory("tjs")).toBe(true);
       expect(manager.hasFactory("webllm")).toBe(true);
