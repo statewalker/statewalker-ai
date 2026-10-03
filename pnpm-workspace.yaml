@@ -3,41 +3,40 @@ packages:
   - "apps/*"
 
 catalog:
-  "@changesets/cli": "^2.30.0"
-  "@json-render/core": 0.18.0
+  "@changesets/cli": "^2.31.1"
+  "@json-render/core": ^0.18.0
   "@statewalker/settings.core": "^0.2.0"
   "@statewalker/workspace.core": "^0.2.0"
-  "openai": "^7.4.0"
-  "@mlc-ai/web-llm": "^0.2.84"
-  "@huggingface/transformers": "^4.2.0"
-  "@browser-ai/transformers-js": "^3.0.0"
-  "@modelcontextprotocol/sdk": "^1.29.0"
-  "@ai-sdk/mcp": "^1.0.36"
-  "@ai-sdk/anthropic": "^3.0.71"
+  "openai": "^7.27.0"
+  "@mlc-ai/web-llm": "^0.2.85"
+  "@huggingface/transformers": "^4.3.0"
+  "@browser-ai/transformers-js": "^3.0.4"
+  "@modelcontextprotocol/sdk": "^1.32.0"
+  "@ai-sdk/mcp": "^1.0.90"
+  "@ai-sdk/anthropic": "^3.0.127"
   # 0.1.7 and 0.2.0 on npm leak catalog:/workspace: specifiers and cannot install; 0.2.1 is clean.
   "@statewalker/shared-ids": ^0.1.0
   "@statewalker/shared-slots": ^0.2.0
   "@statewalker/shared-commands": ^0.2.0
-  "@ai-sdk/google": ^3.0.64
-  "@ai-sdk/openai": ^3.0.53
-  "@ai-sdk/provider": ^3.0.10
+  "@ai-sdk/google": ^3.0.130
+  "@ai-sdk/openai": ^3.0.124
+  "@ai-sdk/provider": ^3.0.18
   "@statewalker/fsm": ^0.38.1
   "@statewalker/fsm-validator": ^0.2.0
-  "ai": ^6.0.168
-  "@biomejs/biome": ^2.5.8
+  "ai": ^6.0.300
+  "@biomejs/biome": ^2.5.15
   "@statewalker/shared-baseclass": ^0.1.0
   "@statewalker/shared-registry": ^0.1.0
   "@statewalker/webrun-files": "^0.10.0"
   "@statewalker/webrun-files-composite": "^0.10.0"
   "@statewalker/webrun-files-mem": "^0.10.0"
-  "@types/node": ^26.2.0
-  # Exact: jsdom 30.1.1 breaks new Blob([Uint8Array]) in the mime.view.* tests ("Cannot read properties of undefined (reading '_buffer')").
+  "@types/node": ^26.6.4
   tsdown: ^0.22.14
-  tsx: ^4.23.12
-  turbo: ^2.10.9
+  tsx: ^4.23.15
+  turbo: ^2.11.7
   typescript: ^7.0.2
-  vitest: ^4.1.10
-  zod: ^4.4.3
+  vitest: ^4.1.11
+  zod: ^4.6.5
 
 catalogs:
   peers:
