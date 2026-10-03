@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
-    "@statewalker/ai-agent.core": "workspace:*",
+    "@statewalker/ai-agent.core": "workspace:^",
     "@statewalker/webrun-files": "catalog:"
   },
   "peerDependencies": {

@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
-    "@statewalker/ai-agent.core": "workspace:*",
+    "@statewalker/ai-agent.core": "workspace:^",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",

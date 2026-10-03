@@ -21,9 +21,9 @@
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
     "@json-render/core": "catalog:",
-    "@statewalker/ai-agent.core": "workspace:*",
-    "@statewalker/ai-agent-runtime.core": "workspace:*",
-    "@statewalker/ai-local-models.browser": "workspace:*",
+    "@statewalker/ai-agent.core": "workspace:^",
+    "@statewalker/ai-agent-runtime.core": "workspace:^",
+    "@statewalker/ai-local-models.browser": "workspace:^",
     "@statewalker/settings.core": "catalog:",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
