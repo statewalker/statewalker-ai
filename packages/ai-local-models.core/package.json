@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-local-models.core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "Local (in-browser) model lifecycle: curated transformers.js catalog, download/activation manager, own persistence store, and ActiveModel{kind:\"local\"} selection. React-free.",
@@ -20,17 +20,17 @@
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
-    "@json-render/core": "0.18.0",
+    "@json-render/core": "catalog:",
     "@statewalker/ai-agent.core": "workspace:*",
     "@statewalker/ai-agent-runtime.core": "workspace:*",
     "@statewalker/ai-local-models.browser": "workspace:*",
-    "@statewalker/settings.core": "workspace:*",
+    "@statewalker/settings.core": "catalog:",
     "@statewalker/shared-baseclass": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/shared-slots": "catalog:",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/workspace.core": "workspace:*"
+    "@statewalker/workspace.core": "catalog:"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",

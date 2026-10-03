@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-config.core",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": false,
   "type": "module",
   "description": "Unified AI configuration: one workspace adapter for provider connections + discovered models + active selection. Credentials in Secrets; providers built directly from @ai-sdk. Shared by chat and wiki.",
@@ -23,12 +23,12 @@
     "@ai-sdk/google": "catalog:",
     "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
-    "@json-render/core": "0.18.0",
+    "@json-render/core": "catalog:",
     "ai": "catalog:",
     "@statewalker/shared-commands": "catalog:",
     "@statewalker/shared-registry": "catalog:",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/workspace.core": "workspace:*"
+    "@statewalker/workspace.core": "catalog:"
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",

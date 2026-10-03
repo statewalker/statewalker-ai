@@ -40,11 +40,10 @@ export function createFileInfoTool(files: FilesApi) {
       return {
         path: normalized,
         kind: stats.kind,
-        ...(stats.size !== undefined
-          ? { size: stats.size, size_formatted: formatSize(stats.size) }
-          : {}),
-        ...(stats.lastModified !== undefined
+        ...(stats.kind === "file"
           ? {
+              size: stats.size,
+              size_formatted: formatSize(stats.size),
               last_modified: new Date(stats.lastModified).toISOString(),
             }
           : {}),

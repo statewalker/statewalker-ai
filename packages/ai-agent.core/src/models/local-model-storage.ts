@@ -128,7 +128,7 @@ export class LocalModelStorage {
 
       // Check for existing partial download
       const existing = await this.files.stats(localPath);
-      const existingSize = existing?.size ?? 0;
+      const existingSize = existing?.kind === "file" ? existing.size : 0;
 
       if (existingSize > 0 && existingSize >= file.size) {
         // File already fully downloaded

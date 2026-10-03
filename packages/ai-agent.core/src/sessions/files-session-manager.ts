@@ -148,12 +148,14 @@ export class FilesSessionManager {
       if (entry.kind !== "directory") continue;
       const id = entry.name;
       const mdPath = `${this.sessionsDir}/${id}/${id}.md`;
-      if (!(await this.files.exists(mdPath))) continue;
+      // webrun-files >=0.9: directories carry no times, so date the session by its .md file
+      const md = await this.files.stats(mdPath);
+      if (md?.kind !== "file") continue;
       sessions.push({
         id,
         title: "",
-        createdAt: new Date(entry.lastModified ?? 0).toISOString(),
-        updatedAt: new Date(entry.lastModified ?? 0).toISOString(),
+        createdAt: new Date(md.lastModified).toISOString(),
+        updatedAt: new Date(md.lastModified).toISOString(),
       });
     }
     const index: IndexData = { sessions };

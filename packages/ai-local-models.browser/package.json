@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-local-models.browser",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -27,9 +27,9 @@
     "@statewalker/webrun-files": "catalog:"
   },
   "peerDependencies": {
-    "@browser-ai/transformers-js": "^2.2.2",
-    "@huggingface/transformers": "^4.2.0",
-    "@mlc-ai/web-llm": "^0.2.83"
+    "@browser-ai/transformers-js": "catalog:peers",
+    "@huggingface/transformers": "catalog:peers",
+    "@mlc-ai/web-llm": "catalog:peers"
   },
   "peerDependenciesMeta": {
     "@browser-ai/transformers-js": {

@@ -71,7 +71,7 @@ export async function syncWeightsFromCache(
     // Already on disk — leave it alone.
     try {
       const stat = await files.stats(localPath);
-      if (stat && (stat.size ?? 0) > 0) {
+      if (stat?.kind === "file" && stat.size > 0) {
         skipped += 1;
         continue;
       }

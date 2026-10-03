@@ -127,9 +127,8 @@ export function createListFilesTool(files: FilesApi) {
           name: entry.name + (entry.kind === "directory" ? "/" : ""),
           path: entry.path,
           kind: entry.kind,
-          ...(entry.size !== undefined ? { size: entry.size } : {}),
-          ...(entry.lastModified !== undefined
-            ? { lastModified: new Date(entry.lastModified).toISOString() }
+          ...(entry.kind === "file"
+            ? { size: entry.size, lastModified: new Date(entry.lastModified).toISOString() }
             : {}),
         });
 
