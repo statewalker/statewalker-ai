@@ -7,6 +7,7 @@ import type { LogMessage } from "../../src/state/log-message.js";
 import { createAgentNodeFactory } from "../../src/state/node-factory.js";
 import { NodeType } from "../../src/state/node-types.js";
 import type { SessionState } from "../../src/state/session-state.js";
+import type { TodoItem } from "../../src/state/worklist.js";
 
 function newState(): SessionState {
   const factory = createAgentNodeFactory();
@@ -124,7 +125,7 @@ function makeDrive(state: SessionState, inbox: TestInbox, scripts: TurnScript[],
 
 const open = [{ id: "a", status: "open" as const, text: "do a" }];
 const done = [{ id: "a", status: "done" as const, text: "do a" }];
-const setW = (items: typeof open) => (state: SessionState) => {
+const setW = (items: TodoItem[]) => (state: SessionState) => {
   state.worklist = items;
 };
 
