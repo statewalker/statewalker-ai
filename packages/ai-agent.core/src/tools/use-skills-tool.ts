@@ -1,6 +1,6 @@
-import type { ModelProvider } from "../models/types.js";
 import { generateText, tool } from "ai";
 import { z } from "zod";
+import type { ModelProvider } from "../models/types.js";
 import type { SkillsModel } from "../state/skills-model.js";
 
 /**

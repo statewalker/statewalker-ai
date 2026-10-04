@@ -1,6 +1,15 @@
 import type { EmbeddingModelV3, ImageModelV3 } from "@ai-sdk/provider";
 import { NoSuchModelError } from "@ai-sdk/provider";
-import type { ActivationProgress, AnyLanguageModel, ModelConfig, ModelProvider, ModelState, ModelStatus, ProviderName, RemoteProviderSettings } from "./types.js";
+import type {
+  ActivationProgress,
+  AnyLanguageModel,
+  ModelConfig,
+  ModelProvider,
+  ModelState,
+  ModelStatus,
+  ProviderName,
+  RemoteProviderSettings,
+} from "./types.js";
 
 /**
  * Observable data model for model catalog, states, and active model instances.

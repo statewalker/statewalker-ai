@@ -13,11 +13,11 @@ export { type DiscoveredModel, listModels } from "./remote-discovery.js";
 export type {
   ActivationPhase,
   ActivationProgress,
+  AnyLanguageModel,
   EngineId,
   LocalModelConfig,
   LocalModelFactory,
   ModelConfig,
-  AnyLanguageModel,
   ModelKind,
   ModelProvider,
   ModelRuntime,

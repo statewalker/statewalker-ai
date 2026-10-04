@@ -1,6 +1,6 @@
-import type { AnyLanguageModel } from "@statewalker/ai-agent.core/models";
 import type {
   ActivationProgress,
+  AnyLanguageModel,
   LocalModelConfig,
   ModelManager,
 } from "@statewalker/ai-agent.core/models";

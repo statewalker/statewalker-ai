@@ -1,8 +1,7 @@
 import { NoSuchModelError } from "@ai-sdk/provider";
-import type { ModelProvider } from "../../src/models/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { ModelStateStore } from "../../src/models/model-state-store.js";
-import type { ActivationProgress, ModelConfig } from "../../src/models/types.js";
+import type { ActivationProgress, ModelConfig, ModelProvider } from "../../src/models/types.js";
 
 const LOCAL_MODEL: ModelConfig = {
   runtime: "local",

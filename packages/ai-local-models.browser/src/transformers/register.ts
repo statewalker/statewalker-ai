@@ -1,7 +1,7 @@
-import type { AnyLanguageModel } from "@statewalker/ai-agent.core/models";
 import { type TransformersJSModelSettings, transformersJS } from "@browser-ai/transformers-js";
 import type {
   ActivationProgress,
+  AnyLanguageModel,
   LocalModelConfig,
   ModelManager,
 } from "@statewalker/ai-agent.core/models";

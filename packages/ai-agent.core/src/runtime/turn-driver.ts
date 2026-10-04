@@ -1,6 +1,6 @@
-import type { ModelProvider } from "../models/types.js";
 import { stepCountIs, streamText } from "ai";
 import type { ContextWindow } from "../context/context-window.js";
+import type { ModelProvider } from "../models/types.js";
 import type { InboxMessage } from "../state/inbox.js";
 import type { LogMessage, TurnFinishKind } from "../state/log-message.js";
 import type { SessionState } from "../state/session-state.js";

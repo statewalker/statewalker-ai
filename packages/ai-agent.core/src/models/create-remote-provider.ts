@@ -1,8 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { ModelProvider } from "./types.js";
-import type { ProviderName, RemoteProviderSettings } from "./types.js";
+import type { ModelProvider, ProviderName, RemoteProviderSettings } from "./types.js";
 
 export function createRemoteProvider(
   providerName: ProviderName,

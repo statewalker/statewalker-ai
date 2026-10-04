@@ -1,5 +1,5 @@
-import type { ModelProvider } from "./types.js";
 import { generateText } from "ai";
+import type { ModelProvider } from "./types.js";
 
 /**
  * Verify that the provider + model combination works by making a minimal

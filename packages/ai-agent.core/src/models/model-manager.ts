@@ -7,7 +7,17 @@ import {
 } from "./local-model-storage.js";
 import type { ModelStateStore } from "./model-state-store.js";
 import { type DiscoveredModel, listModels } from "./remote-discovery.js";
-import type { ActivationProgress, AnyLanguageModel, EngineId, LocalModelConfig, LocalModelFactory, ModelProvider, ProviderName, RemoteModelConfig, RemoteProviderSettings } from "./types.js";
+import type {
+  ActivationProgress,
+  AnyLanguageModel,
+  EngineId,
+  LocalModelConfig,
+  LocalModelFactory,
+  ModelProvider,
+  ProviderName,
+  RemoteModelConfig,
+  RemoteProviderSettings,
+} from "./types.js";
 import { verifyModelAccess } from "./verify-model.js";
 
 /**
