@@ -4,6 +4,15 @@
   "private": false,
   "type": "module",
   "description": "AI agent-runtime fragment: AgentRuntimeAdapter, agent:tools slot, agent intents.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-agent-runtime.core"
+  },
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-agent-runtime.core#readme",
   "license": "MIT",
   "exports": {
     ".": {

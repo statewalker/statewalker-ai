@@ -4,6 +4,15 @@
   "private": false,
   "type": "module",
   "description": "Local (in-browser) model lifecycle: curated transformers.js catalog, download/activation manager, own persistence store, and ActiveModel{kind:\"local\"} selection. React-free.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-local-models.core"
+  },
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-local-models.core#readme",
   "license": "MIT",
   "exports": {
     ".": {

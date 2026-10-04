@@ -4,6 +4,15 @@
   "private": false,
   "type": "module",
   "description": "Unified AI configuration: one workspace adapter for provider connections + discovered models + active selection. Credentials in Secrets; providers built directly from @ai-sdk. Shared by chat and wiki.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-config.core"
+  },
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-config.core#readme",
   "license": "MIT",
   "exports": {
     ".": {

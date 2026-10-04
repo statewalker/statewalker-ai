@@ -3,6 +3,15 @@
   "version": "0.4.1",
   "license": "MIT",
   "description": "Wire-format adapter that exposes Vercel AI SDK provider instances over the OpenAI HTTP v1 API as a standard fetch handler. Transport-agnostic — no Hono / Express / Node http dependency.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-openai-compat.core"
+  },
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-openai-compat.core#readme",
   "type": "module",
   "exports": {
     ".": {
