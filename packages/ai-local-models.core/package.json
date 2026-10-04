@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-local-models.core",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": false,
   "type": "module",
   "description": "Local (in-browser) model lifecycle: curated transformers.js catalog, download/activation manager, own persistence store, and ActiveModel{kind:\"local\"} selection. React-free.",
