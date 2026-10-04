@@ -53,6 +53,9 @@ export const handleChatCompletions = async (req: Request, init: Init): Promise<R
   const callOptions = {
     model,
     messages,
+    // OpenAI clients send system / developer messages inline, possibly interleaved;
+    // ai 7 rejects them in `messages` unless allowed. Keep them in place.
+    allowSystemInMessages: true,
     ...(tools ? { tools } : {}),
     ...(toolChoice ? { toolChoice } : {}),
     ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),

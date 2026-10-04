@@ -41,7 +41,9 @@ export function createListToolsTool(registry: ToolRegistry) {
       for (const [name, t] of Object.entries(registry.toToolSet())) {
         const info: ToolInfo = {
           name,
-          description: t.description ?? "",
+          // AI SDK 7: a description may be a function of the tool's context; the
+          // registry has no context to call it with, so only string ones are listed.
+          description: typeof t.description === "string" ? t.description : "",
           parameters: extractParams(t.inputSchema),
         };
         const result = extractParams((t as { outputSchema?: unknown }).outputSchema);

@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "@statewalker/ai-agent.core/models";
 import type { McpServerConfig } from "@statewalker/ai-agent.core/runtime";
 import { AgentRuntime, type SkillInfo, type ToolInput } from "@statewalker/ai-agent.core/runtime";
 import { createFileTools } from "@statewalker/ai-agent.core/tools";
@@ -14,7 +14,7 @@ function normalizeSystemPath(folder: string): string {
 export interface BuildRuntimeInput {
   files: FilesApi;
   systemFolder?: string;
-  provider: ProviderV3;
+  provider: ModelProvider;
   /** Extra slot-contributed tools (`agent:tools`). The built-in file
    * tools are installed by this builder directly (see `build`), so this
    * list carries only additional contributions. */

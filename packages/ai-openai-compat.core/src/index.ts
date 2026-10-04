@@ -1,4 +1,9 @@
-import type { EmbeddingModelV3, LanguageModelV3 } from "@ai-sdk/provider";
+import type {
+  EmbeddingModelV3,
+  EmbeddingModelV4,
+  LanguageModelV3,
+  LanguageModelV4,
+} from "@ai-sdk/provider";
 import { handleChatCompletions } from "./endpoints/chat-completions.js";
 import { handleCompletions } from "./endpoints/completions.js";
 import { handleEmbeddings } from "./endpoints/embeddings.js";
@@ -6,8 +11,9 @@ import { handleModels } from "./endpoints/models.js";
 import { errorResponse } from "./errors.js";
 
 export interface Init {
-  languageModels?: Record<string, LanguageModelV3>;
-  embeddingModels?: Record<string, EmbeddingModelV3>;
+  /** Served through `ai` (generateText / streamText / embedMany), which accepts V3 and V4. */
+  languageModels?: Record<string, LanguageModelV3 | LanguageModelV4>;
+  embeddingModels?: Record<string, EmbeddingModelV3 | EmbeddingModelV4>;
   /** Default `/v1`. Handler matches `${basePath}/<endpoint>`. */
   basePath?: string;
 }

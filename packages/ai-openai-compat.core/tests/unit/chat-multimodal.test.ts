@@ -47,11 +47,12 @@ describe("multimodal input", () => {
     expect(parts).toHaveLength(2);
     expect(parts[0]).toEqual({ type: "text", text: "caption" });
     expect(parts[1]?.type).toBe("file");
-    // V3 normalizes URL parts to file parts with mediaType image/*
+    // ai normalizes URL image parts to file parts: ai 6 used the wildcard
+    // "image/*", ai 7 the top-level type "image" (the subtype is unknown for a URL).
     expect(String((parts[1] as unknown as { data: unknown }).data)).toBe(
       "https://example.com/y.png",
     );
-    expect((parts[1] as unknown as { mediaType: string }).mediaType).toMatch(/^image\//);
+    expect((parts[1] as unknown as { mediaType: string }).mediaType).toMatch(/^image(\/|$)/);
   });
 
   it("file part with file_data translates to a file part", async () => {

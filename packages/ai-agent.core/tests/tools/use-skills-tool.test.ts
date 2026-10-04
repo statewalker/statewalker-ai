@@ -39,6 +39,7 @@ async function executeTool(
   const result = await exec({ prompt }, {
     toolCallId: "test",
     messages: [],
+    context: {},
   } as Parameters<typeof exec>[1]);
   return result as SkillResult;
 }

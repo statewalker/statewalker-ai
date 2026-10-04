@@ -1,23 +1,23 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "@statewalker/ai-agent.core/models";
 import type { McpServerConfig, SkillInfo, ToolInput } from "@statewalker/ai-agent.core/runtime";
 
 /**
  * Pointer to the resolved provider+model. Written by the providers
  * fragment (Wave 4.2; an interim bootstrap stands in until then) and
- * read by the agent-runtime manager. Carries a concrete `ProviderV3`
+ * read by the agent-runtime manager. Carries a concrete `ModelProvider`
  * factory so the manager doesn't have to look it up by id at rebuild
  * time.
  *
  * `kind: "remote"` covers @ai-sdk providers (OpenAI, Anthropic,
  * Google, OpenAI-compatible). `kind: "local"` covers a model loaded
- * into the in-app `ModelManager`. Both share the same `ProviderV3`
+ * into the in-app `ModelManager`. Both share the same `ModelProvider`
  * shape so AgentRuntime treats them uniformly.
  */
 export interface ActiveModelValue {
   kind: "remote" | "local";
   providerId: string;
   modelId: string;
-  createProvider: () => ProviderV3;
+  createProvider: () => ModelProvider;
 }
 
 /**

@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ProviderV4 } from "@ai-sdk/provider";
 import { Secrets, type Workspace } from "@statewalker/workspace.core";
 import { AiConfig, apiKeySecretKey } from "../public/ai-config.js";
 import {
@@ -77,7 +77,7 @@ export class AiConfigImpl extends AiConfig {
     // embedding-capable even if it was discovered before tagging existed.
     return models.filter((m) => (m.capabilities ?? capabilitiesFor(m.id)).includes(capability));
   }
-  async getProvider(connectionId: string): Promise<ProviderV3> {
+  async getProvider(connectionId: string): Promise<ProviderV4> {
     const c = this.getConnection(connectionId);
     if (!c) throw new Error(`AiConfig: no connection "${connectionId}"`);
     const key = (await this.secrets.get(apiKeySecretKey(connectionId))) as string | undefined;

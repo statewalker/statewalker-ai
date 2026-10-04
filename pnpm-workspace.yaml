@@ -4,7 +4,7 @@ packages:
 
 catalog:
   "@changesets/cli": "^3.0.3"
-  "@json-render/core": ^0.18.0
+  "@json-render/core": ^0.21.0
   "@statewalker/settings.core": "^0.3.0"
   "@statewalker/workspace.core": "^0.3.0"
   "openai": "^7.27.0"
@@ -12,18 +12,21 @@ catalog:
   "@huggingface/transformers": "^4.3.0"
   "@browser-ai/transformers-js": "^3.0.4"
   "@modelcontextprotocol/sdk": "^1.32.0"
-  "@ai-sdk/mcp": "^1.0.90"
-  "@ai-sdk/anthropic": "^3.0.127"
+  "@ai-sdk/mcp": "^2.0.66"
+  "@ai-sdk/anthropic": "^4.0.71"
   # 0.1.7 and 0.2.0 on npm leak catalog:/workspace: specifiers and cannot install; 0.2.1 is clean.
   "@statewalker/shared-ids": ^0.1.0
   "@statewalker/shared-slots": ^0.2.0
   "@statewalker/shared-commands": ^0.2.0
-  "@ai-sdk/google": ^3.0.130
-  "@ai-sdk/openai": ^3.0.124
-  "@ai-sdk/provider": ^3.0.18
+  "@ai-sdk/google": ^4.0.87
+  "@ai-sdk/openai": ^4.0.83
+  "@ai-sdk/provider": ^4.0.21
+  # The tool factories' declarations name types from it (TS2883 without a direct dependency);
+  # exact, the version ai 7.0.127 pins, so there is one copy.
+  "@ai-sdk/provider-utils": "5.0.53"
   "@statewalker/fsm": ^0.38.1
   "@statewalker/fsm-validator": ^0.2.0
-  "ai": ^6.0.300
+  "ai": ^7.0.127
   "@biomejs/biome": ^2.5.15
   "@statewalker/shared-baseclass": ^0.1.0
   "@statewalker/shared-registry": ^0.1.0
@@ -40,6 +43,6 @@ catalog:
 
 catalogs:
   peers:
-    "@browser-ai/transformers-js": "^2.2.2"
+    "@browser-ai/transformers-js": "^2.2.2 || ^3.0.4"
     "@huggingface/transformers": "^4.2.0"
     "@mlc-ai/web-llm": "^0.2.83"

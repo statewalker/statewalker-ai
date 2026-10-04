@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "../models/types.js";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
 import type { AgentContext } from "../config/types.js";
@@ -38,7 +38,7 @@ export interface AgentRuntimeOptions {
  * Provider supplied via {@link AgentRuntime#addModelProvider}.
  * Callers holding a `ModelManager` pass `modelManager.provider`.
  */
-export type ModelProviderInput = ProviderV3;
+export type ModelProviderInput = ModelProvider;
 
 /** Tool input accepted by {@link AgentRuntime#addTools}. */
 export type ToolInput = ToolSet | ToolFactory;

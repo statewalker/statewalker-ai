@@ -30,6 +30,7 @@
     "@ai-sdk/mcp": "catalog:",
     "@ai-sdk/openai": "catalog:",
     "@ai-sdk/provider": "catalog:",
+    "@ai-sdk/provider-utils": "catalog:",
     "@modelcontextprotocol/sdk": "catalog:",
     "@statewalker/fsm": "catalog:",
     "@statewalker/shared-baseclass": "catalog:",

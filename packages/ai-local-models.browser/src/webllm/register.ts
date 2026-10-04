@@ -1,4 +1,4 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { AnyLanguageModel } from "@statewalker/ai-agent.core/models";
 import type {
   ActivationProgress,
   LocalModelConfig,
@@ -109,7 +109,7 @@ export function registerWebLLMProvider(
       files: FilesApi,
       onProgress: (progress: ActivationProgress) => void,
       signal?: AbortSignal,
-    ): Promise<LanguageModelV3> => {
+    ): Promise<AnyLanguageModel> => {
       if (!config.mlcModelLib) {
         throw new Error(
           `WebLLM model "${modelId}" is missing required \`mlcModelLib\` URL in its catalog entry.`,

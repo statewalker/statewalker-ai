@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ProviderV4 } from "@ai-sdk/provider";
 import { describe, expect, it } from "vitest";
 import { type AiConfigRegistrySource, createLiveProviderRegistry } from "./provider-registry.js";
 import type { Connection } from "./types.js";
@@ -6,11 +6,13 @@ import type { Connection } from "./types.js";
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
 /** A fake provider whose model objects record which connection + model they came from. */
-function fakeProvider(connectionId: string): ProviderV3 {
+function fakeProvider(connectionId: string): ProviderV4 {
   return {
+    // ai 7's registry dispatches on it (a provider without it is treated as V2).
+    specificationVersion: "v4",
     languageModel: (modelId: string) => ({ kind: "lm", connectionId, modelId }),
     embeddingModel: (modelId: string) => ({ kind: "em", connectionId, modelId }),
-  } as unknown as ProviderV3;
+  } as unknown as ProviderV4;
 }
 
 function conn(id: string): Connection {
@@ -19,7 +21,7 @@ function conn(id: string): Connection {
 
 function source(opts: {
   connections: Connection[];
-  provider: (id: string) => ProviderV3;
+  provider: (id: string) => ProviderV4;
 }): AiConfigRegistrySource & { fire: () => void } {
   let cb: (() => void) | undefined;
   return {
@@ -66,9 +68,10 @@ describe("createLiveProviderRegistry", () => {
     // Swap the backing provider (simulating a key/connection change) and fire onUpdate.
     providerFor = (id) =>
       ({
+        specificationVersion: "v4",
         languageModel: (modelId: string) => ({ kind: "lm", connectionId: `${id}!`, modelId }),
         embeddingModel: () => ({}),
-      }) as unknown as ProviderV3;
+      }) as unknown as ProviderV4;
     src.fire();
     await tick();
 

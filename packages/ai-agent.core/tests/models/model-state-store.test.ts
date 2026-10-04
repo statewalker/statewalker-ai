@@ -1,4 +1,5 @@
-import { NoSuchModelError, type ProviderV3 } from "@ai-sdk/provider";
+import { NoSuchModelError } from "@ai-sdk/provider";
+import type { ModelProvider } from "../../src/models/types.js";
 import { describe, expect, it, vi } from "vitest";
 import { ModelStateStore } from "../../src/models/model-state-store.js";
 import type { ActivationProgress, ModelConfig } from "../../src/models/types.js";
@@ -138,11 +139,11 @@ describe("ModelStateStore — downloading/partial statuses", () => {
   });
 });
 
-describe("ModelStateStore as ProviderV3", () => {
-  it("is assignable to ProviderV3", () => {
+describe("ModelStateStore as ModelProvider", () => {
+  it("is assignable to ModelProvider", () => {
     const store = createStore();
-    const provider: ProviderV3 = store;
-    expect(provider.specificationVersion).toBe("v3");
+    const provider: ModelProvider = store;
+    expect(typeof provider.languageModel).toBe("function");
   });
 
   it("embeddingModel throws NoSuchModelError", () => {

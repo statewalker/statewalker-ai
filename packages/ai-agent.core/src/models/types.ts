@@ -1,5 +1,22 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { LanguageModelV3, LanguageModelV4 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
+
+// ── Specification versions ───────────────────────────────────────────────
+
+/**
+ * A language model of either supported specification version. The AI SDK 7
+ * (`ai`) accepts both; `@ai-sdk/*` 4 providers return V4, while our own local
+ * engines (WebLLM) still implement V3.
+ */
+export type AnyLanguageModel = LanguageModelV3 | LanguageModelV4;
+
+/**
+ * What the agent needs from a provider: a language model by id. Satisfied by
+ * `@ai-sdk/*` providers (ProviderV4), V3 providers, and `ModelStateStore`.
+ */
+export interface ModelProvider {
+  languageModel(modelId: string): AnyLanguageModel;
+}
 
 // ── Model configuration ────────────────────────────────────────────────────
 
@@ -172,4 +189,4 @@ export type LocalModelFactory = (
   files: FilesApi,
   onProgress: (progress: ActivationProgress) => void,
   signal?: AbortSignal,
-) => Promise<LanguageModelV3>;
+) => Promise<AnyLanguageModel>;

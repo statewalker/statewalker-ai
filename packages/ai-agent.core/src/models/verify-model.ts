@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "./types.js";
 import { generateText } from "ai";
 
 /**
@@ -6,7 +6,7 @@ import { generateText } from "ai";
  * generateText call. Throws on auth or network errors.
  */
 export async function verifyModelAccess(
-  provider: ProviderV3,
+  provider: ModelProvider,
   model: string,
   signal?: AbortSignal,
 ): Promise<void> {

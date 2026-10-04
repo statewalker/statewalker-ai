@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ProviderV4 } from "@ai-sdk/provider";
 import { createProviderRegistry, type ProviderRegistryProvider } from "ai";
 import type { AiConfig } from "./ai-config.js";
 import { MODEL_REFERENCE_SEPARATOR } from "./model-reference.js";
@@ -24,7 +24,7 @@ export interface LiveProviderRegistry {
 
 /** Build a one-shot registry from the current connections (skipping any that fail to build). */
 async function buildRegistry(source: AiConfigRegistrySource): Promise<ProviderRegistryProvider> {
-  const providers: Record<string, ProviderV3> = {};
+  const providers: Record<string, ProviderV4> = {};
   for (const c of source.listConnections()) {
     try {
       providers[c.id] = await source.getProvider(c.id);

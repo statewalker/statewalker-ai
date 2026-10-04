@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "../models/types.js";
 import { type FilesApi, readText } from "@statewalker/webrun-files";
 import type { ToolSet } from "ai";
 import { ConfigManager } from "../config/config-manager.js";
@@ -84,7 +84,7 @@ export class AgentRuntime {
   private _toolsFiles?: FilesApi;
   private _paths?: ResolvedPaths;
   private _config?: ConfigManager;
-  private _provider?: ProviderV3;
+  private _provider?: ModelProvider;
   private _resolvedTools?: ToolSet;
   private _resolvedSkills?: SkillInfo[];
   private _sessions?: FilesSessionManager;
@@ -230,7 +230,7 @@ export class AgentRuntime {
   }
 
   /** First registered provider wins. TODO: union of multiple providers. */
-  private _resolveProvider(): ProviderV3 {
+  private _resolveProvider(): ModelProvider {
     const first = this._providers[0];
     if (!first) {
       const err = new Error("AgentRuntime: no model provider configured. Use .addModelProvider()");
@@ -372,7 +372,7 @@ export class AgentRuntime {
 
   /** Internal: provider used by sessions. */
   /** @internal */
-  get provider(): ProviderV3 {
+  get provider(): ModelProvider {
     this._assertBuilt();
     if (!this._provider) throw new Error("unreachable");
     return this._provider;

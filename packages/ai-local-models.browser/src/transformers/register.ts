@@ -1,4 +1,4 @@
-import type { LanguageModelV3 } from "@ai-sdk/provider";
+import type { AnyLanguageModel } from "@statewalker/ai-agent.core/models";
 import { type TransformersJSModelSettings, transformersJS } from "@browser-ai/transformers-js";
 import type {
   ActivationProgress,
@@ -87,7 +87,7 @@ export function registerLocalProvider(
       _files: FilesApi,
       onProgress: (progress: ActivationProgress) => void,
       _signal?: AbortSignal,
-    ): Promise<LanguageModelV3> => {
+    ): Promise<AnyLanguageModel> => {
       const dtype = config.dtype as TjsDtype;
       const errors: Array<{ device: string; error: unknown }> = [];
       // WASM-only by default. WebGPU on the current onnxruntime-web build

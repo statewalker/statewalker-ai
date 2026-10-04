@@ -1,7 +1,7 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ProviderV4 } from "@ai-sdk/provider";
 import type { ConnectionHeader, ConnectionType } from "../public/types.js";
 
 export interface ProviderSettings {
@@ -25,12 +25,12 @@ function toHeaderRecord(
 }
 
 /**
- * Build a `ProviderV3` directly from `@ai-sdk/*` for one of the supported
+ * Build a `ProviderV4` directly from `@ai-sdk/*` for one of the supported
  * connection types. Inlined here (rather than via `@statewalker/ai-agent`)
  * to keep `ai.config` free of any `@statewalker/ai-*` dependency — that edge
  * would form a workbench ↔ ai cycle.
  */
-export function buildProvider(type: ConnectionType, settings: ProviderSettings): ProviderV3 {
+export function buildProvider(type: ConnectionType, settings: ProviderSettings): ProviderV4 {
   const sdkSettings = {
     apiKey: settings.apiKey,
     baseURL: settings.baseURL,

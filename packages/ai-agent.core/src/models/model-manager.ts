@@ -1,4 +1,3 @@
-import type { LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { createRemoteProvider } from "./create-remote-provider.js";
 import {
@@ -8,20 +7,12 @@ import {
 } from "./local-model-storage.js";
 import type { ModelStateStore } from "./model-state-store.js";
 import { type DiscoveredModel, listModels } from "./remote-discovery.js";
-import type {
-  ActivationProgress,
-  EngineId,
-  LocalModelConfig,
-  LocalModelFactory,
-  ProviderName,
-  RemoteModelConfig,
-  RemoteProviderSettings,
-} from "./types.js";
+import type { ActivationProgress, AnyLanguageModel, EngineId, LocalModelConfig, LocalModelFactory, ModelProvider, ProviderName, RemoteModelConfig, RemoteProviderSettings } from "./types.js";
 import { verifyModelAccess } from "./verify-model.js";
 
 /**
  * Registration for a local engine: the factory that creates
- * `LanguageModelV3` instances and optional helpers for custom download
+ * `AnyLanguageModel` instances and optional helpers for custom download
  * and weight-verification logic.
  */
 export interface LocalEngineRegistration {
@@ -72,10 +63,10 @@ export class ModelManager {
   }
 
   /**
-   * The `ProviderV3` face of this manager — its underlying
+   * The `ModelProvider` face of this manager — its underlying
    * {@link ModelStateStore}. Pass to `AgentRuntime.addModelProvider()`.
    */
-  get provider(): ProviderV3 {
+  get provider(): ModelProvider {
     return this.store;
   }
 
@@ -514,7 +505,7 @@ export class ModelManager {
         w?.();
       };
 
-      let model: LanguageModelV3 | undefined;
+      let model: AnyLanguageModel | undefined;
       let factoryError: unknown;
       let done = false;
       const factoryPromise = registration

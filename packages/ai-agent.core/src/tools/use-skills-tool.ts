@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "../models/types.js";
 import { generateText, tool } from "ai";
 import { z } from "zod";
 import type { SkillsModel } from "../state/skills-model.js";
@@ -57,7 +57,7 @@ function parseSelectedSkills(text: string): string[] {
  */
 export function createUseSkillsTool(options: {
   skills: SkillsModel;
-  provider: ProviderV3;
+  provider: ModelProvider;
   model: string;
 }) {
   return tool({

@@ -1,28 +1,22 @@
-import type { EmbeddingModelV3, ImageModelV3, LanguageModelV3, ProviderV3 } from "@ai-sdk/provider";
+import type { EmbeddingModelV3, ImageModelV3 } from "@ai-sdk/provider";
 import { NoSuchModelError } from "@ai-sdk/provider";
-import type {
-  ActivationProgress,
-  ModelConfig,
-  ModelState,
-  ModelStatus,
-  ProviderName,
-  RemoteProviderSettings,
-} from "./types.js";
+import type { ActivationProgress, AnyLanguageModel, ModelConfig, ModelProvider, ModelState, ModelStatus, ProviderName, RemoteProviderSettings } from "./types.js";
 
 /**
  * Observable data model for model catalog, states, and active model instances.
  * Pure state container — no external API calls, no I/O.
  * Controllers subscribe via `onUpdate()` to react to state changes.
  *
- * Also implements `ProviderV3` so it can be passed directly to
- * `AgentRuntime.addModelProvider()`. Only `languageModel` is supported;
- * `embeddingModel` and `imageModel` throw `NoSuchModelError`.
+ * Also a `ModelProvider`, so it can be passed directly to
+ * `AgentRuntime.addModelProvider()`. Its active models may be of either
+ * specification version (V3: WebLLM; V4: `@ai-sdk/*` 4, transformers.js 3), so
+ * it is no longer a `ProviderV3`. `embeddingModel` and `imageModel` are kept
+ * for callers that probe them and throw `NoSuchModelError`.
  */
-export class ModelStateStore implements ProviderV3 {
-  readonly specificationVersion = "v3" as const;
+export class ModelStateStore implements ModelProvider {
   private readonly _catalog: Record<string, ModelConfig>;
   private readonly _states = new Map<string, ModelState>();
-  private readonly _activeModels = new Map<string, LanguageModelV3>();
+  private readonly _activeModels = new Map<string, AnyLanguageModel>();
   private readonly _downloadProgress = new Map<string, ActivationProgress>();
   /**
    * Provider settings keyed by `{provider}` for canonical providers, or
@@ -137,7 +131,7 @@ export class ModelStateStore implements ProviderV3 {
   }
 
   /** Store an active (ready) model instance. Notifies listeners. */
-  setActiveModel(key: string, model: LanguageModelV3): void {
+  setActiveModel(key: string, model: AnyLanguageModel): void {
     this._activeModels.set(key, model);
     this.notify();
   }
@@ -149,12 +143,12 @@ export class ModelStateStore implements ProviderV3 {
   }
 
   /**
-   * Get a LanguageModelV3 for an already-activated model.
+   * Get the language model of an already-activated model.
    * Throws if the model is not active.
    *
-   * Implements `ProviderV3.languageModel`.
+   * Implements `ModelProvider.languageModel`.
    */
-  languageModel(key: string): LanguageModelV3 {
+  languageModel(key: string): AnyLanguageModel {
     const model = this._activeModels.get(key);
     if (!model) {
       const state = this._states.get(key);
@@ -163,18 +157,18 @@ export class ModelStateStore implements ProviderV3 {
     return model;
   }
 
-  /** ProviderV3 conformance — embedding models are not supported. */
+  /** Embedding models are not supported. */
   embeddingModel(modelId: string): EmbeddingModelV3 {
     throw new NoSuchModelError({ modelId, modelType: "embeddingModel" });
   }
 
-  /** ProviderV3 conformance — image models are not supported. */
+  /** Image models are not supported. */
   imageModel(modelId: string): ImageModelV3 {
     throw new NoSuchModelError({ modelId, modelType: "imageModel" });
   }
 
   /** Return the active model instance or `undefined` without throwing. */
-  peekActiveModel(key: string): LanguageModelV3 | undefined {
+  peekActiveModel(key: string): AnyLanguageModel | undefined {
     return this._activeModels.get(key);
   }
 

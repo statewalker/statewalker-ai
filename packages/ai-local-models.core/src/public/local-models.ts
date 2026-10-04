@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "@statewalker/ai-agent.core/models";
 import {
   type ActivationProgress,
   ModelManager,
@@ -134,11 +134,11 @@ export class LocalModels extends BaseClass {
   }
 
   /**
-   * The `ProviderV3` face used by `ActiveModelValue.createProvider` for
+   * The `ModelProvider` face used by `ActiveModelValue.createProvider` for
    * `kind: "local"`. Calling `provider.languageModel(modelId)` triggers
    * lazy activation (loads ONNX weights into memory on first use).
    */
-  buildProvider(_modelKey: string): ProviderV3 {
+  buildProvider(_modelKey: string): ModelProvider {
     return this._store;
   }
 

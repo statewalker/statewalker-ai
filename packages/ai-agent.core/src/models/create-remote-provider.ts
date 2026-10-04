@@ -1,13 +1,13 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "./types.js";
 import type { ProviderName, RemoteProviderSettings } from "./types.js";
 
 export function createRemoteProvider(
   providerName: ProviderName,
   settings: RemoteProviderSettings,
-): ProviderV3 {
+): ModelProvider {
   switch (providerName) {
     case "anthropic":
       return createAnthropic(settings);

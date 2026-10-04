@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "../models/types.js";
 import { stepCountIs, streamText } from "ai";
 import type { ContextWindow } from "../context/context-window.js";
 import type { InboxMessage } from "../state/inbox.js";
@@ -12,7 +12,7 @@ import { createUseSkillsTool } from "../tools/use-skills-tool.js";
 export const DEFAULT_MAX_STEPS = 10;
 
 export interface TurnDriverOptions {
-  provider: ProviderV3;
+  provider: ModelProvider;
   model: string;
   contextWindow: ContextWindow;
   tools: ToolRegistry;
@@ -33,7 +33,7 @@ export interface TurnDriverOptions {
  * are session-scoped and configured by `runtime/Session` at construction.
  */
 export class TurnDriver {
-  readonly provider: ProviderV3;
+  readonly provider: ModelProvider;
   readonly model: string;
   readonly contextWindow: ContextWindow;
   readonly tools: ToolRegistry;
@@ -139,6 +139,7 @@ export class TurnDriver {
           toolCallId: `skill-select-${Date.now()}`,
           messages: [],
           abortSignal: signal,
+          context: {},
         },
       );
 

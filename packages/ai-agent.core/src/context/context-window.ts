@@ -1,4 +1,4 @@
-import type { ProviderV3 } from "@ai-sdk/provider";
+import type { ModelProvider } from "../models/types.js";
 import type { ModelMessage } from "ai";
 import type { LogMessage } from "../state/log-message.js";
 import type { SessionState } from "../state/session-state.js";
@@ -36,7 +36,7 @@ Provide concise, actionable answers.`;
 /** Construction options for a per-Session {@link ContextWindow}. */
 export interface ContextWindowOptions {
   /** Required only for downstream callers (not used internally today). */
-  provider: ProviderV3;
+  provider: ModelProvider;
   /** Model id (used by callers via `provider.languageModel(model)` — not by build). */
   model: string;
   /** Selection strategy. Defaults to {@link selectAll}. */
@@ -97,7 +97,7 @@ export interface ContextWindowResult {
  * serial per session and this invariant is the caller's responsibility.
  */
 export class ContextWindow {
-  readonly provider: ProviderV3;
+  readonly provider: ModelProvider;
   readonly model: string;
   private readonly selectStrategy: SelectionStrategy;
   private readonly systemPromptTemplate: string;
