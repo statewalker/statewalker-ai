@@ -5,8 +5,8 @@ packages:
 catalog:
   "@changesets/cli": "^3.0.3"
   "@json-render/core": ^0.21.0
-  "@statewalker/settings.core": "^0.3.0"
-  "@statewalker/workspace.core": "^0.3.0"
+  "@statewalker/settings.core": "^0.4.0"
+  "@statewalker/workspace.core": "^0.4.0"
   "openai": "^7.27.0"
   "@mlc-ai/web-llm": "^0.2.85"
   "@huggingface/transformers": "^4.3.0"
