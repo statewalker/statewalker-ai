@@ -5,7 +5,12 @@
   "description": "Wire-format adapter that exposes Vercel AI SDK provider instances over the OpenAI HTTP v1 API as a standard fetch handler. Transport-agnostic — no Hono / Express / Node http dependency.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
   },
   "files": [
     "dist/**",
@@ -16,7 +21,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "build": "tsdown"
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
@@ -27,6 +33,7 @@
     "@biomejs/biome": "catalog:",
     "@types/node": "catalog:",
     "openai": "catalog:",
+    "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

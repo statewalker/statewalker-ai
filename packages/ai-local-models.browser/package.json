@@ -4,8 +4,18 @@
   "license": "MIT",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./transformers": "./src/transformers/register.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./transformers": {
+      "source": "./src/transformers/register.ts",
+      "types": "./dist/transformers/register.d.ts",
+      "import": "./dist/transformers/register.js",
+      "default": "./dist/transformers/register.js"
+    }
   },
   "files": [
     "dist/**",

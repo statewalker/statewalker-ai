@@ -6,18 +6,35 @@
   "description": "AI agent-runtime fragment: AgentRuntimeAdapter, agent:tools slot, agent intents.",
   "license": "MIT",
   "exports": {
-    ".": "./src/index.ts",
-    "./fragment": "./src/fragment.ts",
-    "./internal/build-runtime": "./src/internal/build-runtime.ts"
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./fragment": {
+      "source": "./src/fragment.ts",
+      "types": "./dist/fragment.d.ts",
+      "import": "./dist/fragment.js",
+      "default": "./dist/fragment.js"
+    },
+    "./internal/build-runtime": {
+      "source": "./src/internal/build-runtime.ts",
+      "types": "./dist/internal/build-runtime.d.ts",
+      "import": "./dist/internal/build-runtime.js",
+      "default": "./dist/internal/build-runtime.js"
+    }
   },
   "files": [
+    "dist",
     "src"
   ],
   "scripts": {
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "lint": "biome check --write .",
-    "format": "biome format --write ."
+    "format": "biome format --write .",
+    "build": "tsdown"
   },
   "dependencies": {
     "@ai-sdk/provider": "catalog:",
@@ -31,6 +48,7 @@
   },
   "devDependencies": {
     "@statewalker/webrun-files-mem": "catalog:",
+    "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
