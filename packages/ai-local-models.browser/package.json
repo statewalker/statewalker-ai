@@ -1,6 +1,10 @@
 {
   "name": "@statewalker/ai-local-models.browser",
   "version": "0.4.1",
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-local-models.browser#readme",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -62,7 +66,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/statewalker/statewalker-ai.git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
     "directory": "packages/ai-local-models.browser"
   }
 }

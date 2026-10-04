@@ -4,7 +4,10 @@
   "type": "module",
   "packageManager": "pnpm@10.16.1",
   "description": "Headless AI layer: agent runtime, agent core, model configuration, local models, OpenAI-compatible providers.",
-  "homepage": "https://github.com/statewalker/statewalker-ai",
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "homepage": "https://github.com/statewalker/statewalker-ai#readme",
   "author": {
     "name": "Mikhail Kotelnikov",
     "email": "mikhail.kotelnikov@gmail.com"
@@ -12,7 +15,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/statewalker/statewalker-ai.git"
+    "url": "git+https://github.com/statewalker/statewalker-ai.git"
   },
   "scripts": {
     "build": "pnpm -r run build",
