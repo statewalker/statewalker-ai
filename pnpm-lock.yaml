@@ -7,20 +7,23 @@ settings:
 catalogs:
   default:
     '@ai-sdk/anthropic':
-      specifier: ^3.0.127
-      version: 3.0.127
+      specifier: ^4.0.71
+      version: 4.0.71
     '@ai-sdk/google':
-      specifier: ^3.0.130
-      version: 3.0.130
+      specifier: ^4.0.87
+      version: 4.0.87
     '@ai-sdk/mcp':
-      specifier: ^1.0.90
-      version: 1.0.90
+      specifier: ^2.0.66
+      version: 2.0.66
     '@ai-sdk/openai':
-      specifier: ^3.0.124
-      version: 3.0.124
+      specifier: ^4.0.83
+      version: 4.0.83
     '@ai-sdk/provider':
-      specifier: ^3.0.18
-      version: 3.0.18
+      specifier: ^4.0.21
+      version: 4.0.21
+    '@ai-sdk/provider-utils':
+      specifier: 5.0.53
+      version: 5.0.53
     '@biomejs/biome':
       specifier: ^2.5.15
       version: 2.5.15
@@ -34,8 +37,8 @@ catalogs:
       specifier: ^4.3.0
       version: 4.3.0
     '@json-render/core':
-      specifier: ^0.18.0
-      version: 0.18.0
+      specifier: ^0.21.0
+      version: 0.21.0
     '@mlc-ai/web-llm':
       specifier: ^0.2.85
       version: 0.2.85
@@ -49,8 +52,8 @@ catalogs:
       specifier: ^0.2.0
       version: 0.2.0
     '@statewalker/settings.core':
-      specifier: ^0.3.0
-      version: 0.3.0
+      specifier: ^0.4.0
+      version: 0.4.0
     '@statewalker/shared-baseclass':
       specifier: ^0.1.0
       version: 0.1.1
@@ -76,14 +79,14 @@ catalogs:
       specifier: ^0.10.0
       version: 0.10.0
     '@statewalker/workspace.core':
-      specifier: ^0.3.0
-      version: 0.3.0
+      specifier: ^0.4.0
+      version: 0.4.0
     '@types/node':
       specifier: ^26.6.4
       version: 26.6.4
     ai:
-      specifier: ^6.0.300
-      version: 6.0.300
+      specifier: ^7.0.127
+      version: 7.0.127
     openai:
       specifier: ^7.27.0
       version: 7.27.0
@@ -136,7 +139,7 @@ importers:
     dependencies:
       '@ai-sdk/provider':
         specifier: 'catalog:'
-        version: 3.0.18
+        version: 4.0.21
       '@statewalker/ai-agent.core':
         specifier: workspace:^
         version: link:../ai-agent.core
@@ -157,7 +160,7 @@ importers:
         version: 0.10.0
       '@statewalker/workspace.core':
         specifier: 'catalog:'
-        version: 0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
@@ -173,19 +176,22 @@ importers:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: 'catalog:'
-        version: 3.0.127(zod@4.6.5)
+        version: 4.0.71(zod@4.6.5)
       '@ai-sdk/google':
         specifier: 'catalog:'
-        version: 3.0.130(zod@4.6.5)
+        version: 4.0.87(zod@4.6.5)
       '@ai-sdk/mcp':
         specifier: 'catalog:'
-        version: 1.0.90(zod@4.6.5)
+        version: 2.0.66(zod@4.6.5)
       '@ai-sdk/openai':
         specifier: 'catalog:'
-        version: 3.0.124(zod@4.6.5)
+        version: 4.0.83(zod@4.6.5)
       '@ai-sdk/provider':
         specifier: 'catalog:'
-        version: 3.0.18
+        version: 4.0.21
+      '@ai-sdk/provider-utils':
+        specifier: 'catalog:'
+        version: 5.0.53(zod@4.6.5)
       '@modelcontextprotocol/sdk':
         specifier: 'catalog:'
         version: 1.32.0(zod@4.6.5)
@@ -206,7 +212,7 @@ importers:
         version: 0.10.0
       ai:
         specifier: 'catalog:'
-        version: 6.0.300(zod@4.6.5)
+        version: 7.0.127(zod@4.6.5)
       zod:
         specifier: 'catalog:'
         version: 4.6.5
@@ -234,19 +240,19 @@ importers:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: 'catalog:'
-        version: 3.0.127(zod@4.6.5)
+        version: 4.0.71(zod@4.6.5)
       '@ai-sdk/google':
         specifier: 'catalog:'
-        version: 3.0.130(zod@4.6.5)
+        version: 4.0.87(zod@4.6.5)
       '@ai-sdk/openai':
         specifier: 'catalog:'
-        version: 3.0.124(zod@4.6.5)
+        version: 4.0.83(zod@4.6.5)
       '@ai-sdk/provider':
         specifier: 'catalog:'
-        version: 3.0.18
+        version: 4.0.21
       '@json-render/core':
         specifier: 'catalog:'
-        version: 0.18.0(zod@4.6.5)
+        version: 0.21.0(zod@4.6.5)
       '@statewalker/shared-commands':
         specifier: 'catalog:'
         version: 0.2.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
@@ -258,10 +264,10 @@ importers:
         version: 0.10.0
       '@statewalker/workspace.core':
         specifier: 'catalog:'
-        version: 0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       ai:
         specifier: 'catalog:'
-        version: 6.0.300(zod@4.6.5)
+        version: 7.0.127(zod@4.6.5)
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
@@ -277,7 +283,7 @@ importers:
     dependencies:
       '@ai-sdk/provider':
         specifier: 'catalog:'
-        version: 3.0.18
+        version: 4.0.21
       '@statewalker/ai-agent.core':
         specifier: workspace:^
         version: link:../ai-agent.core
@@ -287,7 +293,7 @@ importers:
     devDependencies:
       '@browser-ai/transformers-js':
         specifier: 'catalog:'
-        version: 3.0.4(@huggingface/transformers@4.3.0(@types/node@26.6.4))(ai@6.0.300(zod@4.6.5))
+        version: 3.0.4(@huggingface/transformers@4.3.0(@types/node@26.6.4))(ai@7.0.127(zod@4.6.5))
       '@huggingface/transformers':
         specifier: 'catalog:'
         version: 4.3.0(@types/node@26.6.4)
@@ -308,10 +314,10 @@ importers:
     dependencies:
       '@ai-sdk/provider':
         specifier: 'catalog:'
-        version: 3.0.18
+        version: 4.0.21
       '@json-render/core':
         specifier: 'catalog:'
-        version: 0.18.0(zod@4.6.5)
+        version: 0.21.0(zod@4.6.5)
       '@statewalker/ai-agent-runtime.core':
         specifier: workspace:^
         version: link:../ai-agent-runtime.core
@@ -323,7 +329,7 @@ importers:
         version: link:../ai-local-models.browser
       '@statewalker/settings.core':
         specifier: 'catalog:'
-        version: 0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
         version: 0.1.1
@@ -341,7 +347,7 @@ importers:
         version: 0.10.0
       '@statewalker/workspace.core':
         specifier: 'catalog:'
-        version: 0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
@@ -357,14 +363,14 @@ importers:
     dependencies:
       '@ai-sdk/provider':
         specifier: 'catalog:'
-        version: 3.0.18
+        version: 4.0.21
       ai:
         specifier: 'catalog:'
-        version: 6.0.300(zod@4.6.5)
+        version: 7.0.127(zod@4.6.5)
     devDependencies:
       '@ai-sdk/openai':
         specifier: 'catalog:'
-        version: 3.0.124(zod@4.6.5)
+        version: 4.0.83(zod@4.6.5)
       '@biomejs/biome':
         specifier: 'catalog:'
         version: 2.5.15
@@ -373,7 +379,7 @@ importers:
         version: 26.6.4
       openai:
         specifier: 'catalog:'
-        version: 7.27.0(undici@6.29.0)(zod@4.6.5)
+        version: 7.27.0(undici@7.30.0)(zod@4.6.5)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -383,45 +389,45 @@ importers:
 
 packages:
 
-  '@ai-sdk/anthropic@3.0.127':
-    resolution: {integrity: sha512-Inff1DmPRVWi6QGr9YL2wiA4maILZuve9I8id/O4keQEoq6fJv6EfvkrSFw/nNvm2jiTcIUfDrpczeHTuhl9mg==}
-    engines: {node: '>=18'}
+  '@ai-sdk/anthropic@4.0.71':
+    resolution: {integrity: sha512-wiv3jhUH0RrvGzSolJMZfZ2cI9As45LhwYmcAoWvNivXjC7wzJ4W/Udq9/u7EGnGsT8lpmFKEKBrMXVeUO97Dg==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/gateway@3.0.209':
-    resolution: {integrity: sha512-CjCBzC35lRZ0LnUYLDfTB92p0Fr1Fu9Wrivc+LI0u3ox/DyZ0wPOHjt8DKBKHD/R4aZ86+JCFFuD9f8MFjAQFg==}
-    engines: {node: '>=18'}
+  '@ai-sdk/gateway@4.0.103':
+    resolution: {integrity: sha512-nnGTUHzPRQ14jhv9CL4OQrzcRBIFTBMIPKGIi9Z9u/4GtwSRxa/nxUX6np2Iwp5phOzO0a0njj/j9Jolf5AEaA==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/google@3.0.130':
-    resolution: {integrity: sha512-DOhGfFT667LbopxMZU7kIiT4K8F2RNN8ziwmOxAfMbp3xTvAaxQ4ynPKNWBVXcCkGYDmzPb7QiazN1IRX8y3lw==}
-    engines: {node: '>=18'}
+  '@ai-sdk/google@4.0.87':
+    resolution: {integrity: sha512-s0tWc+QeSce7O2ZLm+VWSRQy16dGfqEcMIUxEWh+LFvXX3h0TLH8jxCQ2H1qhiBgTta+6A97eHPhBlRFu1xy+g==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/mcp@1.0.90':
-    resolution: {integrity: sha512-av+lCK8/76EfF7waNyCxfzJmhyeYk6I+nzJ70m6V/9BDdebPfSY6MF55CrLzneR4dGZndfpQWiY0rmAcibjpTw==}
-    engines: {node: '>=18'}
+  '@ai-sdk/mcp@2.0.66':
+    resolution: {integrity: sha512-wFAL5rL/CQljgrhrtpzvrmLJ1tY7Q3o9+SQR+02ZYff3jzXOpj3vfCdi6PjJ1jS3jDd8rkmE9QFlfOFKztI3pg==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/openai@3.0.124':
-    resolution: {integrity: sha512-7DpRUPXzJ+S6XasEJBojzFCs04J3rNPs0FZFF3PEeix49IggZAwsMrqscUwB/+05+87r01SS/jeopQGOOL4AEQ==}
-    engines: {node: '>=18'}
+  '@ai-sdk/openai@4.0.83':
+    resolution: {integrity: sha512-NgqZVWoya7hfmtLkWyIjX9THbyYMLfxFqpShdAmvMnkoT+R9AZbdULGan8+4BiBWIZ1aHiAsc90l3SL8QU/0+Q==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider-utils@4.0.57':
-    resolution: {integrity: sha512-89a7sPvZqXsP3PigcAQLWntu/duIVEcN/RyChAB+j6p3C7NwW767sVttvL8r0+BetTg63uAXQoYHCZZueQKBSw==}
-    engines: {node: '>=18.17'}
+  '@ai-sdk/provider-utils@5.0.53':
+    resolution: {integrity: sha512-VVe6UDd0y0/B4TfauuKKzcppqvhTmSluwwUVT4WG2/8h7gFbyFm7PM4UGM+ZXe3/RI6bv+Vl1cw/7aiBoQqdxg==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/provider@3.0.18':
-    resolution: {integrity: sha512-IpefF5ssZVOZCD4Wu7zxt6PwZoGT2HLVjxpJ10Bjx6EAmRfLYJPjyrfxb0RYDlwvXnDb9nkQ7Do/oJVDuRFzew==}
-    engines: {node: '>=18'}
+  '@ai-sdk/provider@4.0.21':
+    resolution: {integrity: sha512-UpbC9C1oht8dhfKPbVXSLRZS3DI8uk8n5v2uMjBPNIYGsC2kL045ywq7D8Hh9KgnH9rP5W/GxQdYtWScRouqlA==}
+    engines: {node: '>=22'}
 
   '@biomejs/biome@2.5.15':
     resolution: {integrity: sha512-WZTW4slm/pdkh92K6t/3aEN++44JD1PQ7squ7RCMLI1flHGl43DVOIGXvCjHiZgBMO1V4uYxoFNtqrIA4qGuIQ==}
@@ -882,8 +888,8 @@ packages:
   '@jridgewell/trace-mapping@0.3.31':
     resolution: {integrity: sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw==}
 
-  '@json-render/core@0.18.0':
-    resolution: {integrity: sha512-zm0K9cgxZLGshw5TmdKe3Xc6fpjbONdlj3v+Er+HhCYZ9fSJpv32d9VzQds4bDW36vPfdieAOcsPR9+EcTff7Q==}
+  '@json-render/core@0.21.0':
+    resolution: {integrity: sha512-vysEbTjO1y8mEgAsp0tztRyaWCkNsBrG8MhAqbndGK3qmMXjMRdCNtk21+AQRNKdRelFGVAwBgtUNW8tfjQlsw==}
     peerDependencies:
       zod: ^4.0.0
 
@@ -1086,8 +1092,8 @@ packages:
   '@statewalker/fsm@0.38.1':
     resolution: {integrity: sha512-+HXe9Uv6SAhjXnQzai6CiKYBXPjIdEKO6FCrfo3FM/lCVKERFgm5Q9xQxg4ROftjYxUAn9hw9k1rxcb1B/AARQ==}
 
-  '@statewalker/settings.core@0.3.0':
-    resolution: {integrity: sha512-MJCYyHHAngxzykzUaWltmESPgNyFrGzaGbvOcVDiGAuxFHcgIoANivYoiPtrrhcbMjAW5V+AgZe971o7D/OwsQ==}
+  '@statewalker/settings.core@0.4.0':
+    resolution: {integrity: sha512-CMwxSjwJQvN5oxi0kzAwSySSliNNdEq0ggvoSWzTI2x8L29quZ/tTuxPi9Y/Y6lRAq7XaxG1KgDfPSR62KvgsA==}
 
   '@statewalker/shared-adapters@0.1.1':
     resolution: {integrity: sha512-ey/rkohlhFSoYn/T3H1VWf6N+uXeCBxDRrrjH1jNABrnHxZtK9OR5/Qad4MDco07srNRa9AHpvyhuQodAvQTtg==}
@@ -1128,8 +1134,8 @@ packages:
   '@statewalker/webrun-files@0.7.0':
     resolution: {integrity: sha512-NHrlyRzcmzXQ3arf4OqDrVE+FJpLaiR/EwTJkcpPmcmfII9MKAcjV8DNmKDYcmHOYhcMmhdBtY8Yb41qR0TZAw==}
 
-  '@statewalker/workspace.core@0.3.0':
-    resolution: {integrity: sha512-HsaO78GKzg4I6KzGYpUhbK1PHdi9+2lVyclGXt/a/ZuI428Om5Si/o9T+Z6HtWfcaDgXUPKIYrt53oFSPuoJbQ==}
+  '@statewalker/workspace.core@0.4.0':
+    resolution: {integrity: sha512-34UyQKXvEZ+xmSEtgoCVCa7x0OVppkij/ReSZE+BI/HhaNzZvBEhSNue+C/DVipOGWt2S3MBhs2pxZzCoeWPCQ==}
 
   '@turbo/darwin-64@2.11.7':
     resolution: {integrity: sha512-Z2LFOxwbiJueD1miByXJS/BrW21vv6YaQXZustty5jEX4vQYw6zyh101Sz1QO7WG0mqBzKagZ/DoAeeujI0/Sw==}
@@ -1314,6 +1320,9 @@ packages:
   '@vitest/spy@5.0.3':
     resolution: {integrity: sha512-XhFysQTB8AZ+P4gMi+Lpo99vg2AZi0qKpaB9yXQl37+CaMEAPO3iH/wGVnSyL5MPERiLezpqTVtrR6UZH5GCXg==}
 
+  '@workflow/serde@4.1.0':
+    resolution: {integrity: sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ==}
+
   '@yuku-codegen/binding-android-arm64@0.10.2':
     resolution: {integrity: sha512-Oc2KInVkPfUjEB4PeV6X0NvIoyYTzDe/WmqFrTwBqKs6YKnz4A7XwWQvJTb7M0rLz9a6WgpUUiiS5QKaCi4O/g==}
     cpu: [arm64]
@@ -1469,9 +1478,9 @@ packages:
     resolution: {integrity: sha512-Xwrja8nx9e5o2N1my4DsKCeKpdrnACyr1wtbPxBDgGzKzKyE9kRtBFA8mWldI+RVlD7CBZNWY/wQ2+ydwOR6kQ==}
     engines: {node: '>=14.0'}
 
-  ai@6.0.300:
-    resolution: {integrity: sha512-ZBT30eQTy6exP+EWJJxm3DMb34m9td8STy+hfnvKdjhyEQoM8vQN5YfFLTRVVTCONHoM+y5K+Tudb6PTFrpikA==}
-    engines: {node: '>=18'}
+  ai@7.0.127:
+    resolution: {integrity: sha512-JNsNPk4ZvRGEJuqdVo2lYFkm7uAuf3p/RwKFWn1Wh/+IK3U1RyFWw2GXoFnhzqNfxEuj7XJB4WpIUhl1sHToWg==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
@@ -2234,9 +2243,9 @@ packages:
   undici-types@8.9.0:
     resolution: {integrity: sha512-KTDyRTYX8sWmKXAikPHHSyc63CRPETMctyjKFupcC6OBLXT3xsN0e9aF7m+mIXutFWpUXuedtowG7iLOzp0kQg==}
 
-  undici@6.29.0:
-    resolution: {integrity: sha512-R+RODBqp6i2pPflGdq+xIOUkl+RNfGgHwoinecKu/JCuf2uO06cOKoDbI2P7Dn6KcswdKwrczbU6IYJ6K8X+wg==}
-    engines: {node: '>=18.17'}
+  undici@7.30.0:
+    resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
+    engines: {node: '>=20.18.1'}
 
   unpipe@1.0.0:
     resolution: {integrity: sha512-pjy2bYhSsufwWlKwPc+l3cN7+wuJlK6uz0YdJEOlQDbl6jo/YlPi4mb8agUkVC8BF7V8NuzeyPNqRksA3hztKQ==}
@@ -2371,48 +2380,49 @@ packages:
 
 snapshots:
 
-  '@ai-sdk/anthropic@3.0.127(zod@4.6.5)':
+  '@ai-sdk/anthropic@4.0.71(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 3.0.18
-      '@ai-sdk/provider-utils': 4.0.57(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/gateway@3.0.209(zod@4.6.5)':
+  '@ai-sdk/gateway@4.0.103(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 3.0.18
-      '@ai-sdk/provider-utils': 4.0.57(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
       '@vercel/oidc': 3.2.0
       zod: 4.6.5
 
-  '@ai-sdk/google@3.0.130(zod@4.6.5)':
+  '@ai-sdk/google@4.0.87(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 3.0.18
-      '@ai-sdk/provider-utils': 4.0.57(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/mcp@1.0.90(zod@4.6.5)':
+  '@ai-sdk/mcp@2.0.66(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 3.0.18
-      '@ai-sdk/provider-utils': 4.0.57(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
       cross-spawn: 7.0.6
       pkce-challenge: 5.0.1
       zod: 4.6.5
 
-  '@ai-sdk/openai@3.0.124(zod@4.6.5)':
+  '@ai-sdk/openai@4.0.83(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 3.0.18
-      '@ai-sdk/provider-utils': 4.0.57(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
       zod: 4.6.5
 
-  '@ai-sdk/provider-utils@4.0.57(zod@4.6.5)':
+  '@ai-sdk/provider-utils@5.0.53(zod@4.6.5)':
     dependencies:
-      '@ai-sdk/provider': 3.0.18
+      '@ai-sdk/provider': 4.0.21
       '@standard-schema/spec': 1.1.0
+      '@workflow/serde': 4.1.0
       eventsource-parser: 3.1.1
-      undici: 6.29.0
+      undici: 7.30.0
       zod: 4.6.5
 
-  '@ai-sdk/provider@3.0.18':
+  '@ai-sdk/provider@4.0.21':
     dependencies:
       json-schema: 0.4.0
 
@@ -2451,10 +2461,10 @@ snapshots:
   '@biomejs/cli-win32-x64@2.5.15':
     optional: true
 
-  '@browser-ai/transformers-js@3.0.4(@huggingface/transformers@4.3.0(@types/node@26.6.4))(ai@6.0.300(zod@4.6.5))':
+  '@browser-ai/transformers-js@3.0.4(@huggingface/transformers@4.3.0(@types/node@26.6.4))(ai@7.0.127(zod@4.6.5))':
     dependencies:
       '@huggingface/transformers': 4.3.0(@types/node@26.6.4)
-      ai: 6.0.300(zod@4.6.5)
+      ai: 7.0.127(zod@4.6.5)
 
   '@changesets/apply-release-plan@8.1.1':
     dependencies:
@@ -2788,7 +2798,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.6.0
 
-  '@json-render/core@0.18.0(zod@4.6.5)':
+  '@json-render/core@0.21.0(zod@4.6.5)':
     dependencies:
       zod: 4.6.5
 
@@ -2833,7 +2843,8 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@opentelemetry/api@1.9.1': {}
+  '@opentelemetry/api@1.9.1':
+    optional: true
 
   '@oxc-project/types@0.152.0': {}
 
@@ -2925,13 +2936,13 @@ snapshots:
 
   '@statewalker/fsm@0.38.1': {}
 
-  '@statewalker/settings.core@0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@statewalker/settings.core@0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@statewalker/shared-baseclass': 0.1.1
       '@statewalker/shared-commands': 0.2.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-registry': 0.1.1
       '@statewalker/shared-slots': 0.2.1
-      '@statewalker/workspace.core': 0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@statewalker/workspace.core': 0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     transitivePeerDependencies:
       - '@types/json-schema'
       - '@valibot/to-json-schema'
@@ -2991,7 +3002,7 @@ snapshots:
 
   '@statewalker/webrun-files@0.7.0': {}
 
-  '@statewalker/workspace.core@0.3.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@statewalker/workspace.core@0.4.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@statewalker/shared-adapters': 0.1.1
       '@statewalker/shared-baseclass': 0.1.1
@@ -3118,6 +3129,8 @@ snapshots:
 
   '@vitest/spy@5.0.3': {}
 
+  '@workflow/serde@4.1.0': {}
+
   '@yuku-codegen/binding-android-arm64@0.10.2':
     optional: true
 
@@ -3199,12 +3212,11 @@ snapshots:
 
   adm-zip@0.6.1: {}
 
-  ai@6.0.300(zod@4.6.5):
+  ai@7.0.127(zod@4.6.5):
     dependencies:
-      '@ai-sdk/gateway': 3.0.209(zod@4.6.5)
-      '@ai-sdk/provider': 3.0.18
-      '@ai-sdk/provider-utils': 4.0.57(zod@4.6.5)
-      '@opentelemetry/api': 1.9.1
+      '@ai-sdk/gateway': 4.0.103(zod@4.6.5)
+      '@ai-sdk/provider': 4.0.21
+      '@ai-sdk/provider-utils': 5.0.53(zod@4.6.5)
       zod: 4.6.5
 
   ajv-formats@3.0.1(ajv@8.20.0):
@@ -3660,9 +3672,9 @@ snapshots:
       platform: 1.3.6
       protobufjs: 7.6.6
 
-  openai@7.27.0(undici@6.29.0)(zod@4.6.5):
+  openai@7.27.0(undici@7.30.0)(zod@4.6.5):
     optionalDependencies:
-      undici: 6.29.0
+      undici: 7.30.0
       zod: 4.6.5
 
   package-manager-detector@1.8.0: {}
@@ -3980,7 +3992,7 @@ snapshots:
 
   undici-types@8.9.0: {}
 
-  undici@6.29.0: {}
+  undici@7.30.0: {}
 
   unpipe@1.0.0: {}
 
