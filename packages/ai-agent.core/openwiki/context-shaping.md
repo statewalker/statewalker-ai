@@ -24,7 +24,7 @@ interface ContextWindowResult {
 
 | Option | Default | Purpose |
 |---|---|---|
-| `provider` | (required) | `ProviderV3` — used by callers, not internally by `build`. |
+| `provider` | (required) | `ModelProvider` — used by callers, not internally by `build`. |
 | `model` | (required) | Model id — used by callers via `provider.languageModel(model)`. |
 | `selectStrategy` | `selectAll` | Projection from tree to `ModelMessage[]`. |
 | `systemPromptTemplate` | `DEFAULT_SYSTEM_PROMPT` | Base system prompt; per-agent overrides threaded in by runtime. |

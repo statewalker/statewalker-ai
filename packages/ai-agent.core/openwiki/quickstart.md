@@ -8,7 +8,7 @@ TypeScript library for building multi-turn AI agents with persistent conversatio
 - **Conversation state** — a reactive tree of `Turn` → `Message` / `ToolCall` / `TurnGroup` nodes (`SessionState`), persisted as markdown. Compaction wraps old turns in summarised `TurnGroup` wrappers when token budgets are exceeded — never drops data.
 - **Context shaping** — `ContextWindow.build()` produces `{ system, messages, events, stats }` for each model call by running compaction, selection, elision, pin policy, and system-prompt assembly.
 - **Tools & skills** — per-session `ToolRegistry` with 15 built-in file tools, MCP server bridging, and markdown-loaded skills injected into the system prompt.
-- **Models** — `ModelManager` manages local-engine model lifecycle (download, verify, activate). `ModelStateStore` implements `ProviderV3` directly. Cloud providers (Anthropic, OpenAI, Google) are passed in as `ProviderV3`.
+- **Models** — `ModelManager` manages local-engine model lifecycle (download, verify, activate). `ModelStateStore` implements `ModelProvider` (`languageModel(id)`) directly. Cloud providers (Anthropic, OpenAI, Google) are passed in as `@ai-sdk/*` provider instances.
 - **Persistence** — sessions serialised by id under `<systemPath>/sessions/` as markdown, with a shared `index.json` metadata index.
 
 ## Three-tier API
@@ -24,8 +24,8 @@ AgentRuntime   ─→   Agent (definition)   ─→   Session (runtime instance)
 ## Quick start
 
 ```ts
-import { AgentRuntime } from "@statewalker/ai-agent/runtime";
-import { createFileTools } from "@statewalker/ai-agent/tools";
+import { AgentRuntime } from "@statewalker/ai-agent.core/runtime";
+import { createFileTools } from "@statewalker/ai-agent.core/tools";
 import { NodeFilesApi } from "@statewalker/webrun-files-node";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
@@ -48,6 +48,7 @@ session.send("List the markdown files in /docs.");
 
 for await (const log of session.run()) {
   console.log(log.type, log);
+  if (log.type === "turn-finish") break; // run() otherwise waits for the next inbox message
 }
 
 const id = await session.save();
@@ -58,12 +59,12 @@ const id = await session.save();
 
 | Export Path | Description |
 |---|---|
-| `@statewalker/ai-agent/runtime` | `AgentRuntime`, `Agent`, `Session`, `Executor`, `LoopExecutor`, `FsmExecutor`, gates, runtime types. The official entry point. |
-| `@statewalker/ai-agent/state` | `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, `NodeType`, `TreeNode`, `LogMessage`, `openTodos`. |
-| `@statewalker/ai-agent/models` | `ModelManager`, `ModelStateStore`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. |
-| `@statewalker/ai-agent/tools` | `createFileTools` and path utilities. |
+| `@statewalker/ai-agent.core/runtime` | `AgentRuntime`, `Agent`, `Session`, `Executor`, `LoopExecutor`, `FsmExecutor`, gates, runtime types. The official entry point. |
+| `@statewalker/ai-agent.core/state` | `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, `NodeType`, `TreeNode`, `LogMessage`, `openTodos`. |
+| `@statewalker/ai-agent.core/models` | `ModelManager`, `ModelStateStore`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. |
+| `@statewalker/ai-agent.core/tools` | `createFileTools`. |
 
-The bare `@statewalker/ai-agent` root is intentionally empty — use a sub-path.
+The bare `@statewalker/ai-agent.core` root is intentionally empty — use a sub-path.
 
 ## Documentation sections
 
@@ -76,7 +77,7 @@ The bare `@statewalker/ai-agent` root is intentionally empty — use a sub-path.
 
 ## Existing documentation
 
-- [README.md](../README.md) — published API reference with full method signatures and migration table
+- [README.md](../README.md) — package README: usage, examples, API overview
 - [CONTEXT.md](../CONTEXT.md) — domain language glossary
 - [README.draft.md](../README.draft.md) — v2 direction draft (Commands substrate, tree-mutation control surface)
-- [ADR 0001](../docs/adr/0001-ai-agent-stays-in-workbench.md) — why this package lives in workbench as `.core`
+- [ADR 0001](../docs/adr/0001-ai-agent-stays-in-workbench.md) — why the package keeps the `.core` naming (superseded on location: it now lives in statewalker-ai)

@@ -1,5 +1,7 @@
 # `ai-agent` lives in `statewalker-workbench` as a domain, not in a library repo
 
+> Status note (2026-10): the location part of this decision no longer holds. The package now lives in the statewalker-ai repository (statewalker-workbench was renamed statewalker-shell-react). The `.core` name is unchanged.
+
 `ai-agent` is a standalone, workspace-free library (the `AgentRuntime → Agent →
 Session` tree; deps are only external substrate — `shared-*`, `webrun-*`). A reader
 might expect a library with no workbench coupling to live alongside `shared-*` in

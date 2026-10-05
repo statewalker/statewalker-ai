@@ -43,7 +43,7 @@ src/
 
 ### Internal vs public surface
 
-The root export (`@statewalker/ai-agent`) is intentionally empty. Internal modules (`config`, `context`, `mcp`, `sessions`, `skills`) are implementation detail — not reachable from the published sub-paths. They are imported via deep paths by the runtime internally. The four sub-paths (`/runtime`, `/state`, `/models`, `/tools`) are the public surface.
+The root export (`@statewalker/ai-agent.core`) is intentionally empty. Internal modules (`config`, `context`, `mcp`, `sessions`, `skills`) are implementation detail — not reachable from the published sub-paths. They are imported via deep paths by the runtime internally. The four sub-paths (`/runtime`, `/state`, `/models`, `/tools`) are the public surface.
 
 **Source**: `src/index.ts` (comment explaining the intent), `src/runtime/index.ts`, `src/state/index.ts`, `src/models/index.ts`, `src/tools/index.ts`.
 
@@ -115,8 +115,6 @@ The `Executor` interface owns only across-turn control flow. The per-turn lifecy
 
 See [Agent Loop](agent-loop.md) for full details.
 
-## Why this package lives in workbench as `.core`
+## Where this package lives
 
-Per [ADR 0001](../docs/adr/0001-ai-agent-stays-in-workbench.md): `ai-agent` is a standalone, workspace-free library (deps are only external substrate — `shared-*`, `webrun-*`). A reader might expect it to live in `statewalker-shared` or its own repo. It is deliberately kept **in the workbench** and named `@statewalker/ai-agent.core`, consistent with `backbone.core`.
-
-**Tripwire**: if a consumer outside `statewalker-workbench` + `statewalker-apps` begins importing it, the ADR should be reopened and the package relocated to a dedicated library repo.
+The package lives in the statewalker-ai repository and is published as `@statewalker/ai-agent.core`. It is a standalone, workspace-free library (its `@statewalker` dependencies are only `shared-*`, `webrun-files*` and `fsm`). [ADR 0001](../docs/adr/0001-ai-agent-stays-in-workbench.md) records the earlier decision to keep it in the workbench repository; that location part no longer applies.

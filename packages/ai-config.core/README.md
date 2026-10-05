@@ -1,97 +1,109 @@
-# @statewalker/ai-config
+# @statewalker/ai-config.core
 
 ## What it is
 
-The unified AI-configuration logic fragment: one workspace adapter (`AiConfig`) that is the single source of truth for provider **connections**, their **discovered models**, and the **active selection**. It is credential-free — API keys live in the workspace `Secrets` adapter, never in the config document — and builds `@ai-sdk/*` providers on demand straight from a connection's stored key. Both chat (`ActiveModel`) and wiki (`WikiLlmConfiguration`) bind to it by id reference. The package also ships the React-free contract for the "Remote Models" settings panel (the json-render spec, catalog id, component/action vocabularies) that its paired renderer implements.
+A workspace fragment that holds the AI configuration: provider **connections**, their **discovered models**, and the **active selection**. One adapter, `AiConfig`, is the source of truth for chat and for other consumers such as a wiki. It stores no credentials: API keys live in the workspace `Secrets` adapter. It also ships the React-free contract (json-render spec, catalog id, component and action names) for the "Remote Models" settings panel, which `@statewalker/ai-config.view.react` renders.
 
 ## Why it exists
 
-It consolidates what used to be split across `ai-providers` v5 and `models-config`: provider connection definitions, model discovery caches, the active-model pointer, and a tangle of where credentials lived. The design rules that fell out of that consolidation:
-
-- **Credentials never touch the config file.** A `Connection` has no `apiKey` field; keys are keyed `ai.connection.<id>.apiKey` in `Secrets` and read only at `getProvider`/`refreshModels` time. The store even migrates legacy plaintext keys (from pre-v6 `providers.json`) into `Secrets` on load and strips them.
-- **Providers are built directly from `@ai-sdk/*`**, not via `@statewalker/ai-agent`. Routing provider construction through an `@statewalker/ai-*` package would form a workbench ↔ ai dependency cycle; `provider-build.ts` inlines `createOpenAI`/`createAnthropic`/`createGoogleGenerativeAI` to keep this package cycle-free.
-- **One adapter, shared by chat and wiki**, so there is a single place to add a connection and a single active-selection pointer.
-
-Per ADR 0002 it is logic-only (no React); the renderer is `@statewalker/ai-config.view.react`.
+Several features need the same answers: which providers the user connected, which models each one offers, and which model is selected. Keeping that in one adapter gives one place to add a connection and one active selection. Keeping keys out of the config document means the document can be saved, synced or shown without leaking secrets. Providers are built directly with `@ai-sdk/openai`, `@ai-sdk/anthropic` and `@ai-sdk/google`, so this package does not depend on the agent packages.
 
 ## How to use
 
 ```sh
-pnpm add @statewalker/ai-config
+pnpm add @statewalker/ai-config.core
 ```
 
-The default export is the fragment `init(ctx)`. It registers the `AiConfig` adapter, loads the config on workspace open, and wires the `ai-config:*` command handlers.
+No peer dependencies. The workspace (`@statewalker/workspace.core`) must have the `Secrets` and `Commands` adapters.
+
+| Import path | Contents |
+| --- | --- |
+| `@statewalker/ai-config.core` | `AiConfig` (abstract adapter class), `AiConfigImpl`, `apiKeySecretKey`, the `ai-config:*` commands, `seedAiConfigFromEnv`, `createLiveProviderRegistry`, model-reference helpers, capability and default-starred helpers, the connections panel contract, constants and types. The fragment `init` is also the default export. |
+| `@statewalker/ai-config.core/fragment` | Default export: the fragment `init(ctx)` function. |
+
+Register the fragment. It sets the `AiConfig` adapter, loads the config when the workspace opens, and handles the `ai-config:*` commands.
 
 ```ts
-import initAiConfig from "@statewalker/ai-config/fragment";
+import initAiConfig from "@statewalker/ai-config.core/fragment";
+
 const cleanup = initAiConfig(ctx);
 ```
 
-Then resolve the adapter and use its read/write surface:
+`AiConfig` is an abstract class, so it is both the adapter key and the contract:
 
-```ts
-import { AiConfig } from "@statewalker/ai-config";
-const config = workspace.requireAdapter(AiConfig);
-```
+- Reads (synchronous): `listConnections()`, `getConnection(id)`, `getModels(connectionId, capability?)`, `getActive()`.
+- Async reads: `getProvider(connectionId)`, `hasKey(connectionId)`, `getApiKey(connectionId)`.
+- Writes (async; they touch `Secrets` and persist the document): `upsertConnection(connection, apiKey?)`, `removeConnection(id)`, `disconnect(connectionId)`, `setApiKey(connectionId, apiKey)`, `refreshModels(connectionId)`, `setActive(connectionId, modelId)`, `starModels(connectionId, modelIds)`.
+- `onUpdate(cb)`: subscribe to changes.
 
-`AiConfig` is an abstract class (the concrete `AiConfigImpl` is registered by the fragment). Reads are synchronous (`listConnections`, `getConnection`, `getModels`, `getActive`); writes are async because they round-trip `Secrets` and persist the JSON document.
+Connection types: `openai`, `anthropic`, `google`, `openai-compatible`. Capabilities: `chat`, `embedding`, `image-gen`, `tts`.
 
 ## Examples
 
 ### Add a connection and discover its models
 
 ```ts
-import { AiConfig } from "@statewalker/ai-config";
+import { AiConfig } from "@statewalker/ai-config.core";
 
 const config = workspace.requireAdapter(AiConfig);
 
 await config.upsertConnection(
   { id: "openai-work", type: "openai", name: "OpenAI (work)", starredModelIds: [] },
-  process.env.OPENAI_API_KEY, // stored in Secrets, not the config file
+  process.env.OPENAI_API_KEY, // stored in Secrets, not in the config file
 );
 
-const models = await config.refreshModels("openai-work"); // hits /v1/models
+const models = await config.refreshModels("openai-work"); // GET …/models
 await config.setActive("openai-work", models[0].id);
 ```
 
 ### Build a provider for the active selection
 
 ```ts
-const active = config.getActive(); // { connectionId, modelId }
-if (active.connectionId) {
-  const provider = await config.getProvider(active.connectionId); // ProviderV3
-  // key is read from Secrets here, never from the Connection
+const active = config.getActive(); // { connectionId?, modelId? }
+if (active.connectionId && active.modelId) {
+  const provider = await config.getProvider(active.connectionId); // ProviderV4
+  const model = provider.languageModel(active.modelId);
 }
 ```
 
-### Filter discovered models by capability
+### Resolve models by reference
+
+A model reference is `connectionId:modelId` (split on the first colon). `createLiveProviderRegistry` resolves references and rebuilds itself on every `AiConfig` update:
 
 ```ts
-import { capabilitiesFor } from "@statewalker/ai-config";
+import { createLiveProviderRegistry, formatModelReference } from "@statewalker/ai-config.core";
+
+const registry = await createLiveProviderRegistry(config);
+const model = registry.languageModel(formatModelReference("openai-work", "gpt-4o"));
+const embedder = registry.textEmbeddingModel("openai-work:text-embedding-3-small");
+registry.dispose();
+```
+
+### Filter models by capability
+
+```ts
+import { capabilitiesFor } from "@statewalker/ai-config.core";
 
 const chatModels = config.getModels("openai-work", "chat");
-const embeddings = config.getModels("openai-work", "embedding");
+const embeddingModels = config.getModels("openai-work", "embedding");
 
-// Tag an arbitrary id (curated table; unknown ids default to ["chat"]):
-capabilitiesFor("text-embedding-3-small"); // → ["embedding"]
+capabilitiesFor("text-embedding-3-small"); // ["embedding"]; unknown ids → ["chat"]
 ```
 
 ### Seed connections from environment variables (Node host)
 
 ```ts
-import { seedAiConfigFromEnv } from "@statewalker/ai-config";
+import { seedAiConfigFromEnv } from "@statewalker/ai-config.core";
 
-// For each known provider env var, register a connection + key ONLY when
-// Secrets has no key for it. A stored secret always wins.
+// Reads OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_GENERATIVE_AI_API_KEY.
+// A key already stored in Secrets always wins.
 await seedAiConfigFromEnv(workspace, process.env);
 ```
 
-### Drive the panel via commands
-
-The fragment registers handlers for the `ai-config:*` commands, so UI can stay decoupled from the adapter:
+### Use commands
 
 ```ts
-import { UpsertConnectionCommand, RefreshModelsCommand } from "@statewalker/ai-config";
+import { UpsertConnectionCommand } from "@statewalker/ai-config.core";
 import { Commands } from "@statewalker/shared-commands";
 
 const commands = workspace.requireAdapter(Commands);
@@ -101,44 +113,28 @@ await commands.call(UpsertConnectionCommand, {
 }).promise;
 ```
 
-`ConfigureAiCommand` is the deep-link to open the settings dialog on the connections tab (handled by the renderer).
+The fragment handles `UpsertConnectionCommand`, `RemoveConnectionCommand`, `SetApiKeyCommand`, `RefreshModelsCommand`, `SetActiveModelCommand` and `StarModelsCommand`. `ConfigureAiCommand` (open the settings dialog on the connections tab) is handled by the renderer.
 
 ## Internals
 
-### Architectural decisions
+### Where things are stored and how they change
 
-- **`AiConfig` is an abstract class, not an interface**, so it doubles as the registry key (`workspace.requireAdapter(AiConfig)`) and the published contract. `AiConfigImpl` holds one in-memory `AiConfigData`, persists it credential-free, and routes every credential through `Secrets`.
-- **Connection shells survive disconnect.** `disconnect()` deletes the stored key and clears `discoveredModels`/`discoveredAt`/`starredModelIds` but keeps the id/type/name/url/headers so the user can re-connect with one click. `removeConnection()` deletes everything including the secret.
-- **`openai-compatible` escape hatch.** Beyond the three canonical providers, an `openai-compatible` connection targets arbitrary proxies/self-hosted endpoints; its `url` is mandatory (the endpoint *is* the configuration).
-- **Capabilities are tagged locally.** The `/v1/models` endpoints don't reliably surface capability metadata, so `capabilities.ts` carries a curated id-pattern → tag table (embeddings/image-gen/tts), defaulting unknown ids to `["chat"]` so exotic models stay usable.
-
-### Algorithms
-
-- **Legacy-key migration (idempotent).** `loadAiConfig` parses the document; any connection still carrying a plaintext `apiKey` has it reported via the `onLegacyKey` callback (the impl writes it to `Secrets`) and stripped. The schema is normalised to v6 and the stripped document is re-persisted, so the migration runs at most once.
-- **Default-starred seeding.** `applyDefaultStarred(type, modelIds)` compiles a curated per-type glob table (`*` → `.*`, case-insensitive, anchored) into memoised `RegExp`s and returns the discovered ids that match, preserving discovery order. Applied **only** on the first successful connect (when `starredModelIds` is empty); re-discovery never re-applies it, so user un-stars are durable. `openai-compatible` ships no defaults by design.
-- **Discovery** issues a `GET …/models` per provider with provider-specific auth (`Authorization: Bearer` for OpenAI/compatible, `x-api-key` + `anthropic-version` for Anthropic, `?key=` for Google), merges any per-connection headers, filters Google models to those supporting `generateContent`, and surfaces non-2xx bodies (truncated to 512 chars) as `Error`s.
-
-### Constraints
-
-- Discovery uses the global `fetch` and talks to live provider endpoints; it throws on non-2xx/network failure. `anthropic` (CORS) and `openai-compatible` require a `url`.
-- The config document is schema v6 (`AI_CONFIG_SCHEMA_VERSION`); only the legacy-plaintext-key shape is migrated.
-- `LocalModelRef` entries are recorded in the document but loading local models is out of scope (owned by the local-model lifecycle package).
+- **Storage.** The document is `/.settings/ai-config.json` (schema version 6, `AI_CONFIG_SCHEMA_VERSION`). Keys are stored in `Secrets` under `ai.connection.<id>.apiKey` (`apiKeySecretKey(id)`).
+- **Plaintext keys are lifted out on load.** If a connection in the document carries an `apiKey` field, `load()` writes it to `Secrets`, removes it, and saves the document again, so this happens at most once.
+- **Disconnect vs remove.** `disconnect()` deletes the key and the discovered and starred models but keeps the connection's id, type, name, url and headers. `removeConnection()` deletes everything, including the key.
+- **Discovery.** `refreshModels` calls the provider's model list endpoint with the provider's auth scheme and any per-connection headers. Google results are limited to models that support `generateContent`. Non-2xx responses become errors (body truncated to 512 characters). `openai-compatible` connections need a `url` (otherwise: `openai-compatible Connection requires a url`); `anthropic` needs one in the browser because of CORS.
+- **Capabilities** come from a curated id-pattern table, because model list endpoints do not report them reliably.
+- **Default stars.** On the first successful connect (empty `starredModelIds`), `applyDefaultStarred` stars models that match a curated per-type pattern list. Later refreshes never re-apply it.
+- Local model entries can be recorded in the document, but this package does not load local models.
 
 ### Dependencies
 
-- `@statewalker/workspace.core` — `Workspace`, `Secrets`, the adapter host and lifecycle hooks; credentials live in `Secrets`.
-- `@statewalker/webrun-files` — `FilesApi` plus `tryReadText`/`writeText` for the credential-free JSON store.
-- `@statewalker/shared-commands` — the `ai-config:*` command definitions and bus.
-- `@statewalker/shared-registry` — `newRegistry` for scoped cleanup.
-- `@ai-sdk/openai` / `@ai-sdk/anthropic` / `@ai-sdk/google` / `@ai-sdk/provider` — provider construction (`ProviderV3`), inlined to avoid a workbench ↔ ai cycle.
-- `@json-render/core` — `Spec` typing for the connections panel contract.
-
-## Related
-
-- `@statewalker/ai-config.view.react` — the paired renderer: the React registry, components, action handlers, and the `AiConfig → state` bridge for the "Remote Models" settings tab.
-- `@statewalker/ai-agent-runtime` — the agent-runtime fragment whose `ActiveModel` pointer is fed from this config's active selection.
-- `@statewalker/workspace.core` — the workspace/`Secrets` substrate.
+- `@statewalker/workspace.core`: workspace, `Secrets`, adapters, lifecycle hooks.
+- `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/provider`, `ai`: building providers and the provider registry.
+- `@statewalker/webrun-files`: reading and writing the JSON document.
+- `@statewalker/shared-commands`, `@statewalker/shared-registry`: the `ai-config:*` commands and cleanup.
+- `@json-render/core`: `Spec` type of the connections panel contract.
 
 ## License
 
-MIT — see the monorepo root `LICENSE`.
+MIT

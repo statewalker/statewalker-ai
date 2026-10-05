@@ -1,4 +1,4 @@
-# @statewalker/ai-agent
+# @statewalker/ai-agent.core
 
 Domain language for the agent runtime: agent loop, conversation state, context shaping for model calls, tool/skill registries, model providers, and session persistence. The package is framework-free — UI and commands live in `@statewalker/ai-provider-core` and the consuming apps.
 
@@ -80,10 +80,10 @@ A markdown file with a YAML frontmatter — declarative guidance the agent can a
 ### Models
 
 **ModelManager**:
-Manages local-engine model lifecycle: registration, download, verification, activation, weight storage. Distinct from cloud providers (Anthropic/OpenAI/Google), which are passed in directly as `ProviderV3`.
+Manages local-engine model lifecycle: registration, download, verification, activation, weight storage. Distinct from cloud providers (Anthropic/OpenAI/Google), which are passed in directly as `@ai-sdk/*` provider instances.
 
-**ModelStateStore as ProviderV3**:
-`ModelStateStore` implements `ProviderV3` directly (`specificationVersion = "v3"`, `languageModel(id)`, `embeddingModel`/`imageModel` throw `NoSuchModelError`). `AgentRuntime.addModelProvider()` accepts only `ProviderV3`. Callers holding a `ModelManager` pass `modelManager.provider` (a getter that returns the underlying store typed as `ProviderV3`).
+**ModelStateStore as ModelProvider**:
+`ModelStateStore` implements `ModelProvider` directly (`languageModel(id)` returns a V3 or V4 language model; `embeddingModel`/`imageModel` throw `NoSuchModelError`). `AgentRuntime.addModelProvider()` accepts any `ModelProvider` (an object with `languageModel(modelId)`). Callers holding a `ModelManager` pass `modelManager.provider` (a getter that returns the underlying store).
 
 ### Files
 

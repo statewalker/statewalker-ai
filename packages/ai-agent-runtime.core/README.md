@@ -1,84 +1,91 @@
-# @statewalker/ai-agent-runtime
+# @statewalker/ai-agent-runtime.core
 
 ## What it is
 
-The workbench logic-fragment that owns a live, rebuildable `AgentRuntime`. It projects the workspace's active model selection plus three contribution slots (`agent:tools`, `agent:skills`, `agent:mcp-connections`) into a single discriminated `RuntimeState`, and rebuilds the underlying `AgentRuntime` whenever any of those inputs change. Consumers (the chat surface, other fragments) read one adapter to learn whether the agent is usable and to get the built `AgentRuntime` + `Agent` when it is.
+A workspace fragment that keeps a live `AgentRuntime` (from `@statewalker/ai-agent.core`) for the open workspace. It watches the active model (`ActiveModel`) and four contribution slots (`agent:tools`, `agent:skills`, `agent:system-prompt`, `agent:mcp-connections`), rebuilds the runtime when any of them change, and publishes the result through one adapter, `AgentRuntimeAdapter`. It contains no React code.
 
 ## Why it exists
 
-`@statewalker/ai-agent` is framework-free: it knows nothing about the workspace, its adapters, its command bus, or its slot system. Something has to glue the agent engine to the running app — answer "which provider/model is active?", "what tools/skills/MCP servers has the app contributed?", and "rebuild the runtime when the user edits credentials." This fragment is that glue. It keeps `@statewalker/ai-agent` portable while giving the host a single reactive entry point (`AgentRuntimeAdapter`) instead of forcing every consumer to assemble an `AgentRuntime` by hand.
-
-Per ADR 0002 it is logic-only — no React imports. The reactive adapters are plain `BaseClass` observables; React consumers reach them through the `useAdapter` hook in the view layer.
+`@statewalker/ai-agent.core` knows nothing about workspaces, adapters, commands or slots. An app still has to answer "which model is active?", "which tools, skills and MCP servers have other fragments contributed?" and "rebuild the agent when the user edits credentials". This fragment answers those questions in one place, so consumers read a single adapter instead of each assembling an `AgentRuntime` by hand.
 
 ## How to use
 
 ```sh
-pnpm add @statewalker/ai-agent-runtime
+pnpm add @statewalker/ai-agent-runtime.core
 ```
 
-The package is a fragment: its default export is an `init(ctx)` function that registers the adapters and the rebuild orchestrator against the workspace. Register it **after** the workspace bridge so workspace lifecycle hooks are wired; the providers fragment (which writes `ActiveModel`) registers **after** this one.
+No peer dependencies. The workspace (`@statewalker/workspace.core`) must already have the `Commands` (`@statewalker/shared-commands`) and `Slots` (`@statewalker/shared-slots`) adapters.
 
-```ts
-import initAgentRuntime from "@statewalker/ai-agent-runtime/fragment";
-// ... in your fragment boot sequence:
-const cleanup = initAgentRuntime(ctx);
-```
+| Import path | Exports |
+| --- | --- |
+| `@statewalker/ai-agent-runtime.core` | `ActiveModel`, `AgentRuntimeAdapter`, `RebuildAgentCommand`, `agentToolsSlot`, `agentSkillsSlot`, `agentSystemPromptSlot`, `agentMcpConnectionsSlot`; types `RuntimeState`, `ActiveModelValue`, `AgentToolContribution`, `AgentSkillContribution`, `AgentMcpConnection`. |
+| `@statewalker/ai-agent-runtime.core/fragment` | Default export: `init(ctx)`, which registers `ActiveModel` and `AgentRuntimeAdapter` and starts the rebuild manager. Returns an async cleanup function. |
+| `@statewalker/ai-agent-runtime.core/internal/build-runtime` | `buildRuntime(input)`: the pure builder the manager uses. Exposed for tests. |
 
-Once registered, three pieces are available on the workspace:
-
-- **`AgentRuntimeAdapter`** — read `getState()` for the current `RuntimeState`.
-- **`ActiveModel`** — the resolved provider+model pointer (written by the providers fragment, observed here).
-- **`agentToolsSlot` / `agentSkillsSlot` / `agentMcpConnectionsSlot`** — contribution points; anything dropped into them is folded into the next rebuild.
+Register the fragment after the workspace bridge (so workspace lifecycle hooks exist) and before fragments that write `ActiveModel`, such as `@statewalker/ai-local-models.core`.
 
 ## Examples
 
-### Reading the runtime state
+### Start the fragment
 
 ```ts
-import { AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime";
+import initAgentRuntime from "@statewalker/ai-agent-runtime.core/fragment";
 
-const adapter = workspace.requireAdapter(AgentRuntimeAdapter);
-const state = adapter.getState();
-
-if (state.status === "ready") {
-  const session = state.agent.createSession({ title: "chat" });
-  // state.runtime, state.activeProviderId, state.activeModelId also available
-} else {
-  // "loading" | "no-providers" | "no-active-model" | "error"
-}
+const cleanup = initAgentRuntime(ctx);
+// …
+await cleanup();
 ```
 
-`RuntimeState` is the single source of truth — never peek at the underlying `AgentRuntime` outside the `ready` branch.
+### Get a ready agent
 
-### Contributing tools, skills, MCP servers
+```ts
+import { AgentRuntimeAdapter } from "@statewalker/ai-agent-runtime.core";
+
+const adapter = workspace.requireAdapter(AgentRuntimeAdapter);
+adapter.onUpdate(() => {
+  const state = adapter.getState();
+  if (state.status === "ready") {
+    const session = state.agent.createSession({ title: "chat" });
+    // state.runtime, state.activeProviderId, state.activeModelId
+  } else if (state.status === "error") {
+    console.error(state.message);
+  }
+});
+```
+
+### Contribute tools, skills, prompt text and an MCP server
 
 ```ts
 import {
-  agentToolsSlot,
-  agentSkillsSlot,
   agentMcpConnectionsSlot,
-} from "@statewalker/ai-agent-runtime";
+  agentSkillsSlot,
+  agentSystemPromptSlot,
+  agentToolsSlot,
+} from "@statewalker/ai-agent-runtime.core";
 import { Slots } from "@statewalker/shared-slots";
 
 const slots = workspace.requireAdapter(Slots);
 
-slots.provide(agentToolsSlot, (ctx) => createMyTools(ctx.files));
-slots.provide(agentSkillsSlot, { name: "analyze-csv", description: "…", body: "…" });
+const removeTools = slots.provide(agentToolsSlot, (ctx) => createMyTools(ctx.files));
+slots.provide(agentSkillsSlot, {
+  name: "analyze-csv",
+  description: "Summarize a CSV file.",
+  content: "…skill instructions…",
+});
+slots.provide(agentSystemPromptSlot, "Prefer the wiki tools for project questions.");
 slots.provide(agentMcpConnectionsSlot, {
-  id: "filesystem",
-  config: { command: "npx", args: ["@modelcontextprotocol/server-filesystem", "/data"] },
+  id: "docs",
+  config: { url: "https://example.com/mcp" },
 });
 ```
 
-Each slot write schedules a (debounced) rebuild. Duplicate MCP `id`s are resolved last-wins.
+A tool contribution is a `ToolSet` or a factory that receives the runtime's filtered files view. Prompt blocks are appended to the default system prompt in contribution order. Duplicate MCP `id`s resolve last-wins.
 
-### Setting the active model
-
-`ActiveModel` is normally written by the providers fragment, but its shape is public:
+### Select the model the agent uses
 
 ```ts
-import { ActiveModel } from "@statewalker/ai-agent-runtime";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { ActiveModel } from "@statewalker/ai-agent-runtime.core";
 
 workspace.requireAdapter(ActiveModel).set({
   kind: "remote",
@@ -88,55 +95,54 @@ workspace.requireAdapter(ActiveModel).set({
 });
 ```
 
-### Forcing a rebuild
+### Force a rebuild
 
-After a credentials edit that doesn't change the `ActiveModel` reference, fire the command:
+Use it when the provider must be rebuilt but the `ActiveModel` value is unchanged, for example after an API key edit:
 
 ```ts
-import { RebuildAgentCommand } from "@statewalker/ai-agent-runtime";
+import { RebuildAgentCommand } from "@statewalker/ai-agent-runtime.core";
 import { Commands } from "@statewalker/shared-commands";
 
-workspace.requireAdapter(Commands).call(RebuildAgentCommand);
+workspace.requireAdapter(Commands).call(RebuildAgentCommand, undefined);
 ```
 
 ## Internals
 
-### Architectural decisions
+### One state value instead of many flags
 
-- **Three-input projection.** `AgentRuntimeManager` observes exactly four sources — `ActiveModel.onUpdate` plus the three slots — and collapses them into one `RuntimeState`. Nothing else triggers a rebuild.
-- **`ActiveModel` carries a `createProvider()` factory, not an id.** The pointer ships a concrete `ProviderV3` factory so the manager builds against it directly without re-resolving the provider by id at rebuild time. `kind: "remote"` and `kind: "local"` share the same `ProviderV3` shape so `AgentRuntime` treats them uniformly.
-- **`ActiveModel` is a "last-selected hint", not the gate** (ADR 0011). It remains the workspace-singular pointer that determines which provider the runtime builds against, but the user-facing selection is per-session; new sessions inherit `ActiveModel` as their initial `modelRef`.
-- **`build-runtime.ts` is a pure builder.** `buildRuntime(input)` takes fully-resolved inputs and returns a built `AgentRuntime`; it installs the built-in file tools (`createFileTools`) as a `ToolFactory` so they receive the runtime's filtered tools-view (never the raw workspace files), then folds in slot-contributed tools/skills/MCP. It is exposed at `./internal/build-runtime` so tests can call it without the manager.
-- **Lifetime- vs cycle-scoped subscriptions.** The `RebuildAgentCommand` handler lives for the manager's whole lifetime, so a late `runRebuildAgent` while the workspace is closed simply no-ops. The slot/`ActiveModel` subscriptions are per workspace-open cycle, torn down on `onUnload`.
+```
+ActiveModel ─┐
+agent:tools ─┤                     ┌──────────────┐
+agent:skills ┼─► debounce 25 ms ─► │ buildRuntime │ ─► AgentRuntimeAdapter.getState()
+agent:system-prompt ┤              └──────────────┘     loading | ready | error
+agent:mcp-connections ┘
+RebuildAgentCommand ─┘
+```
 
-### Algorithms
+`RuntimeState` is a discriminated union: `loading`, `ready` (with `runtime`, `agent`, `activeProviderId`, `activeModelId`), `error` (with `message`), `no-providers`, `no-active-model`. This package sets only `loading`, `ready` and `error`; the other two are reserved for fragments that know about providers. Read `state.runtime` only in the `ready` branch.
 
-- **Debounced, generation-guarded rebuild.** Every input change calls `_scheduleRebuild`, which coalesces bursts behind a 25 ms timer. A monotonic `_generation` counter is captured at the start of each rebuild and re-checked after the async `buildRuntime`/`createAgent`; if the workspace cycled (open/unload) under an in-flight rebuild, the stale result is discarded rather than published.
-- **State transitions.** `onLoad` resets to `{ status: "loading" }` and schedules the first rebuild. A rebuild with no `ActiveModel` leaves the current state untouched (the `no-providers` vs `no-active-model` distinction is owned by the providers fragment). A successful build publishes `ready` with the runtime + a `chat` agent; a thrown error publishes `error` with its message. `onUnload` drops the runtime and returns to `loading`.
+### Why rebuilds are debounced and generation-checked
+
+A burst of slot writes at startup would otherwise build the runtime many times. Changes are coalesced behind a 25 ms timer. A generation counter is captured before the async build and checked after it; if the workspace was closed or reopened in between, the result is dropped instead of published.
+
+### What a rebuild does
+
+`buildRuntime` creates an `AgentRuntime` over `workspace.files` with the system path `/.settings`, installs the built-in file tools as a factory (so they get the filtered tools view, never the raw workspace files), adds the contributed tools, skills and MCP servers, and calls `build()`. The manager then creates one agent named `chat` with the default system prompt plus the prompt blocks, bound to `ActiveModel.modelId`.
 
 ### Constraints
 
-- One agent definition (`name: "chat"`) with a fixed default system prompt is created per rebuild; multi-agent fan-out is not modelled here.
-- The system folder defaults to `/.settings`; override via `AgentRuntimeManagerOptions.systemFolder` (not surfaced through the fragment init).
-- Rebuilds are full rebuilds — there is no incremental tool/skill patching of a live `AgentRuntime`.
+- When `ActiveModel` is empty or has no `modelId`, nothing is built and the state stays as it was (`loading` after a workspace load). An agent bound to an empty model id would fail on its first turn.
+- Rebuilds are full rebuilds; there is no incremental patching of a live runtime. Open sessions keep the old runtime.
+- One agent per rebuild. The system folder is fixed to `/.settings` through `init`.
+- On workspace unload the runtime is dropped and the state returns to `loading`. The `RebuildAgentCommand` handler stays registered and does nothing while the workspace is closed.
 
 ### Dependencies
 
-- `@statewalker/ai-agent` — the agent engine being built and managed (`AgentRuntime`, `createFileTools`, runtime types).
-- `@statewalker/workspace.core` — `Workspace`, `getWorkspace`, the adapter host and lifecycle hooks.
-- `@statewalker/shared-baseclass` — `BaseClass` for the reactive adapters.
-- `@statewalker/shared-commands` — `RebuildAgentCommand` and the command bus.
-- `@statewalker/shared-registry` — `newRegistry` for scoped cleanup.
-- `@statewalker/shared-slots` — `defineSlot`/`Slots` for the three contribution points.
-- `@statewalker/webrun-files` — `FilesApi` typing passed into `buildRuntime`.
-- `@ai-sdk/provider` — `ProviderV3` typing for `ActiveModelValue`.
-
-## Related
-
-- `@statewalker/ai-agent` — the framework-free agent engine this fragment drives.
-- `@statewalker/ai-config` — the unified AI configuration adapter; the providers fragment that consumes it writes `ActiveModel`.
-- `@statewalker/workspace.core` — the workspace/adapter substrate.
+- `@statewalker/ai-agent.core`: `AgentRuntime`, `createFileTools` and the runtime types.
+- `@statewalker/workspace.core`: workspace, adapters, lifecycle hooks.
+- `@statewalker/shared-slots`, `@statewalker/shared-commands`, `@statewalker/shared-registry`, `@statewalker/shared-baseclass`: slots, the rebuild command, cleanup registry, observable adapters.
+- `@statewalker/webrun-files`, `@ai-sdk/provider`: types.
 
 ## License
 
-MIT — see the monorepo root `LICENSE`.
+MIT

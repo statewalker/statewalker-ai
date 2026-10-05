@@ -4,7 +4,7 @@ How the runtime manages model providers, local model lifecycle, and session pers
 
 ## Model providers
 
-`AgentRuntime.addModelProvider(...providers)` registers one or more `ProviderV3` instances. At `build()`, the runtime resolves the provider (currently: first registered provider wins; TODO: union of multiple providers).
+`AgentRuntime.addModelProvider(...providers)` registers one or more `ModelProvider` instances (anything with `languageModel(modelId)`). At `build()`, the runtime resolves the provider (currently: first registered provider wins; TODO: union of multiple providers).
 
 ```ts
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -16,7 +16,7 @@ const runtime = await new AgentRuntime({ files })
   .build();
 ```
 
-Cloud providers (Anthropic/OpenAI/Google) are passed in directly as `ProviderV3`. Local-engine models go through `ModelManager` → `ModelStateStore` (which implements `ProviderV3`).
+Cloud providers (Anthropic/OpenAI/Google) are passed in directly; `@ai-sdk/*` providers satisfy `ModelProvider`. Local-engine models go through `ModelManager` → `ModelStateStore` (which implements `ModelProvider`).
 
 **Source**: `src/runtime/agent-runtime.ts` (`addModelProvider`, `_resolveProvider`), `src/runtime/types.ts` (`ModelProviderInput`).
 
@@ -26,15 +26,21 @@ Operations controller for local model activation lifecycle. Performs external AP
 
 ```ts
 class ModelManager {
+  constructor(options: { store: ModelStateStore; files?: FilesApi; modelStoragePath?: string }); // default path "/models"
   readonly store: ModelStateStore;
   readonly files: FilesApi | undefined;
-  get provider(): ProviderV3;  // returns this.store — pass to AgentRuntime.addModelProvider()
+  get provider(): ModelProvider;  // returns this.store — pass to AgentRuntime.addModelProvider()
 
-  registerEngine(engineId: string, registration: LocalEngineRegistration): void;
-  async download(config: LocalModelConfig, signal?: AbortSignal): Promise<void>;
-  async activate(config: LocalModelConfig): Promise<LanguageModelV3>;
-  async verifyAccess(modelId: string): Promise<boolean>;
-  async listRemoteModels(settings: RemoteProviderSettings): Promise<DiscoveredModel[]>;
+  registerLocalFactory(engine: EngineId, factoryOrRegistration: LocalModelFactory | LocalEngineRegistration): void;
+  hasFactory(engine: EngineId): boolean;
+  refreshLocalStatuses(): Promise<void>;
+  activate(key: string, options?: { settings?: RemoteProviderSettings; signal?: AbortSignal }): AsyncGenerator<ActivationProgress>;
+  deactivate(key: string): void;
+  download(key: string, signal?: AbortSignal): AsyncGenerator<ActivationProgress>;
+  cancel(key: string): void;
+  deleteLocal(key: string): Promise<void>;
+  testConnection(providerType: ProviderName, settings: RemoteProviderSettings): Promise<DiscoveredModel[]>;
+  importDiscoveredModels(providerType: ProviderName, providerInstanceId: string | null, selected: DiscoveredModel[], settings: RemoteProviderSettings): string[];
 }
 ```
 
@@ -42,7 +48,7 @@ class ModelManager {
 
 ```ts
 interface LocalEngineRegistration {
-  factory: LocalModelFactory;        // creates LanguageModelV3 instances
+  factory: LocalModelFactory;        // creates language model instances (V3 or V4)
   fileResolver?: FileResolver;       // custom download file listing (e.g. MLC shards)
   verifier?: WeightVerifier;         // custom weight-presence check
   engineHasWeights?: (config: LocalModelConfig, files: FilesApi | undefined) => Promise<boolean>;
@@ -57,14 +63,13 @@ The `engineHasWeights` hook takes precedence over the default `LocalModelStorage
 
 Observable data model for model catalog, states, and active model instances. Pure state container — no external API calls, no I/O. Controllers subscribe via `onUpdate()` to react to state changes.
 
-Also implements `ProviderV3` so it can be passed directly to `AgentRuntime.addModelProvider()`:
+Also implements `ModelProvider` so it can be passed directly to `AgentRuntime.addModelProvider()`:
 
-- `specificationVersion = "v3"`
-- `languageModel(id)` — returns the active `LanguageModelV3` for the model id.
+- `languageModel(id)` — returns the active language model (V3 or V4) for the model id.
 - `embeddingModel` / `imageModel` — throw `NoSuchModelError`.
 
 ```ts
-class ModelStateStore implements ProviderV3 {
+class ModelStateStore implements ModelProvider {
   constructor(catalog: Record<string, ModelConfig>);
   onUpdate(cb: () => void): () => void;
   get catalog(): Record<string, ModelConfig>;
@@ -97,14 +102,14 @@ Manages on-disk weight storage for local models under a configurable `FilesApi` 
 
 ## Remote discovery
 
-`listModels(settings: RemoteProviderSettings)` queries remote provider APIs to discover available models. Returns `DiscoveredModel[]` that can be merged into the catalog via `mergeCatalogs` or used to configure `createDefaultCatalog`.
+`listModels(provider: ProviderName, settings: RemoteProviderSettings)` queries remote provider APIs to discover available models. Returns `DiscoveredModel[]` that can be merged into the catalog via `mergeCatalogs` or used to configure `createDefaultCatalog`.
 
 **Source**: `src/models/remote-discovery.ts`, `src/models/model-catalog.ts` (`createDefaultCatalog`, `mergeCatalogs`).
 
 ## verifyModelAccess
 
 ```ts
-async function verifyModelAccess(provider: ProviderV3, modelId: string): Promise<boolean>;
+async function verifyModelAccess(provider: ModelProvider, model: string, signal?: AbortSignal): Promise<void>; // throws when the model cannot be served
 ```
 
 Tests whether the provider can actually serve the model — useful for connection validation after configuration.
