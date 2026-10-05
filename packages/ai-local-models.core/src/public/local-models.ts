@@ -50,12 +50,15 @@ export class LocalModels extends BaseClass {
     this._files = opts.files;
     this._systemFolder = opts.systemFolder ?? ".settings";
     this._store = new ModelStateStore({ ...localCatalog });
+    const storagePath = (opts.basePath ?? "/.settings/models").replace(/\/+$/, "");
     this._manager = new ModelManager({
       store: this._store,
       files: opts.files,
-      modelStoragePath: opts.basePath ?? "/.settings/models",
+      modelStoragePath: storagePath,
     });
-    registerLocalProvider(this._manager);
+    // The engine probes `<basePath>/<modelId>` for weights: the tjs folder of the storage path,
+    // where the manager keeps them (TJS_WEIGHTS_BASE_PATH with the default storage path).
+    registerLocalProvider(this._manager, { basePath: `${storagePath}/tjs` });
     // Listen to underlying store updates and re-broadcast.
     this._store.onUpdate(() => this.notify());
   }
