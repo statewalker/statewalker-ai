@@ -1,7 +1,7 @@
 {
   "name": "@statewalker/ai-agent.core",
   "description": "Multi-turn AI agent library on the Vercel AI SDK: AgentRuntime, agents, persisted sessions, context shaping, tools, skills, MCP and model management.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "bugs": {
     "url": "https://github.com/statewalker/statewalker-ai/issues"
   },

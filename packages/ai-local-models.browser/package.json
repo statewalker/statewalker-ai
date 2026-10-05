@@ -1,7 +1,7 @@
 {
   "name": "@statewalker/ai-local-models.browser",
   "description": "Browser engine for local models: registers transformers.js on an ai-agent.core ModelManager.",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "bugs": {
     "url": "https://github.com/statewalker/statewalker-ai/issues"
   },
