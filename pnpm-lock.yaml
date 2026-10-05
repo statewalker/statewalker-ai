@@ -165,6 +165,9 @@ importers:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
         version: 0.10.2
+      ai:
+        specifier: 'catalog:'
+        version: 7.0.127(zod@4.6.5)
       tsdown:
         specifier: 'catalog:'
         version: 0.23.0(tsx@4.23.15)(typescript@7.0.2)
