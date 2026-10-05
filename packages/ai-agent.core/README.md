@@ -1,39 +1,52 @@
-# @statewalker/ai-agent
+# @statewalker/ai-agent.core
 
-A TypeScript library for building multi-turn AI agents with persistent state, tool/skill registries, MCP integration, and session management. Built on the [Vercel AI SDK](https://sdk.vercel.ai/).
+## What it is
 
-The package is framework-free (no workspace / shared-adapters dependencies) — it deals only with the agent loop, state tree, tools, models, and persistence. Application-level concerns (UI, commands, fragment activators) live in the workbench fragments (`@statewalker/ai-agent-runtime`, `@statewalker/ai-config`, `@statewalker/models-config`) and the consuming apps.
+A TypeScript library for multi-turn AI agents built on the Vercel AI SDK (`ai`). It runs the agent loop, keeps each conversation as a persisted state tree, shapes the context for every model call, and provides tool and skill registries, MCP (HTTP/SSE) integration, built-in file tools, local-model management and session persistence. It works on a `FilesApi` from `@statewalker/webrun-files` and has no UI and no workspace dependency.
 
-## Three-tier API
+## Why it exists
+
+An agent needs the same machinery wherever it runs: a turn loop, a conversation tree that survives restarts, a way to fit long histories into a context window, and a controlled view of the files its tools may touch. This package does that and nothing else. It does not know about workspaces, adapters or UI, so it works in a browser app, a CLI or a server; the workspace integration lives in `@statewalker/ai-agent-runtime.core`.
+
+## How to use
+
+```sh
+pnpm add @statewalker/ai-agent.core
+```
+
+There are no peer dependencies. Add the AI SDK provider packages you use (for example `@ai-sdk/anthropic`) and a `FilesApi` implementation (for example `@statewalker/webrun-files-node` or `@statewalker/webrun-files-mem`).
+
+The package root exports nothing. Import from the sub-paths:
+
+| Import path | Main exports |
+| --- | --- |
+| `@statewalker/ai-agent.core/runtime` | `AgentRuntime`, `Agent`, `Session`, `LoopExecutor`, `FsmExecutor`, `withFirstTurnTitle`, gates (`completionGate`, `controllerGate`, `newRunState`, `turnSignature`, `DEFAULT_MAX_TURNS`), types (`AgentDefinition`, `AgentRuntimeOptions`, `AgentRuntimeErrorHandler`, `ToolInput`, `SkillInfo`, `McpServerConfig`, `Executor`, FSM process types). |
+| `@statewalker/ai-agent.core/state` | `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `TreeNode`, `NodeType`, `createAgentNodeFactory`, `Inbox`, `ToolRegistry`, `SkillsModel`, `openTodos`; types `LogMessage`, `TurnFinishKind`, `InboxMessage`, `TodoItem`, … |
+| `@statewalker/ai-agent.core/models` | `ModelManager`, `ModelStateStore`, `LocalModelStorage`, `createDefaultCatalog`, `mergeCatalogs`, `createRemoteProvider`, `listModels`, `verifyModelAccess`, provider-name and model-kind constants, model types (`ModelProvider`, `LocalModelConfig`, `RemoteModelConfig`, `ModelStatus`, …). |
+| `@statewalker/ai-agent.core/tools` | `createFileTools(files)`. |
+
+The three objects you work with:
 
 ```
-AgentRuntime   ─→   Agent (definition)   ─→   Session (runtime instance)
+AgentRuntime ──createAgent()──► Agent ──createSession()──► Session ──run()──► LogMessage stream
+ providers, tools, skills,       name, allowed tools/skills,   conversation tree, inbox,
+ MCP, sessions, FilesApi views   system prompt, model, limits  per-session tools/skills
 ```
 
-- **`AgentRuntime`** — project-level entry point. Owns providers, tools, skills, the FilesApi split (system view vs tools view), MCP clients, session storage. Built once; stays alive for the life of the host.
-- **`Agent`** — a *definition*: name, tools whitelist, skills whitelist, system prompt, default model, optional sub-agents. Cheap to construct; agents are loaded from `<systemPath>/agents/*.md` at `build()` time and can also be created programmatically.
-- **`Session`** — a *runtime instance* bound to one Agent. Owns the conversation tree, inbox, per-session tool/skill views, and the loop. Persisted by id under `<systemPath>/sessions/`.
+- `new AgentRuntime({ files, errorHandler? })`, then `setSystemPath`, `addModelProvider`, `addTools`, `addSkills`, `setMcpServers` (each returns `this`), then `await build()`.
+- `runtime.createAgent(def)`, `getAgent(name)`, `agents()`; `loadSession(id)`, `listSessions()`, `deleteSession(id)`, `getSessionMetadata(id)`, `setSessionModelRef(id, ref)`.
+- `agent.createSession({ title?, sessionId? })`.
+- `session.send(text)`, `session.run(signal?)`, `session.save({ title? })`, `session.close()`.
 
-Each Session owns one **`ContextWindow`** — the module that, given the current conversation tree and active skills, produces `{ system, messages }` for the next model call. It orchestrates compaction, selection, elision, pin policy, and system-prompt assembly behind one interface, so the agent loop's per-turn code is `build → streamText → process`. Configured runtime-wide via `setSelectionStrategy` / `setBudgetCompaction`; per-agent overrides flow through the agent's `selectionStrategy` and `systemPrompt`.
+## Examples
 
-## Sub-path exports
-
-| Export Path | Description |
-|---|---|
-| `@statewalker/ai-agent/runtime` | `AgentRuntime`, `Agent`, `Session`, runtime types and FilesApi helpers (`buildToolsView`, `hideUnder`, `insideSubtree`). The official entry point. |
-| `@statewalker/ai-agent/state` | `TreeNode`, `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `Inbox`, `ToolRegistry`, `SkillsModel`, `NodeType`, `LogMessage`, `createAgentNodeFactory`, tree types. Explicit per-symbol exports; serialization helpers live at `/state/serialization` and `/state/session-serialization` (deep import) — they are not part of the published surface. |
-| `@statewalker/ai-agent/models` | `ModelManager`, `LocalModelStorage`, model catalog, remote discovery, `verifyModelAccess`, provider/model types. `ModelStateStore` implements `ProviderV3` directly; use `ModelManager#provider` to pass it to `addModelProvider()`. |
-| `@statewalker/ai-agent/tools` | File-system tools (`createFileTools`) and path utilities. |
-
-The bare `@statewalker/ai-agent` root is intentionally empty — go through one of the sub-paths above. Internal modules (`context`, `mcp`, `skills`, `config`, `sessions`) are no longer reachable; they're implementation detail. The `Session` deprecated alias previously re-exported from `/state` was removed; use `SessionState` directly.
-
-## Quick start
+### Run one exchange with an agent
 
 ```ts
-import { AgentRuntime } from "@statewalker/ai-agent/runtime";
-import { createFileTools } from "@statewalker/ai-agent/tools";
-import { NodeFilesApi } from "@statewalker/webrun-files-node";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { AgentRuntime } from "@statewalker/ai-agent.core/runtime";
+import { createFileTools } from "@statewalker/ai-agent.core/tools";
+import { NodeFilesApi } from "@statewalker/webrun-files-node";
 
 const files = new NodeFilesApi({ rootDir: "/my/project" });
 
@@ -53,160 +66,129 @@ const session = assistant.createSession({ title: "first chat" });
 session.send("List the markdown files in /docs.");
 
 for await (const log of session.run()) {
-  console.log(log.kind, log.content);
+  if (log.type === "text-delta") process.stdout.write(log.text);
+  if (log.type === "turn-finish") break; // run() would otherwise wait for the next message
 }
 
 const id = await session.save();
-// later: const resumed = await runtime.loadSession(id);
+const resumed = await runtime.loadSession(id);
 ```
 
-## FilesApi split (system vs tools views)
+### Restrict an agent to some tools and skills
 
-`AgentRuntime` builds two views over the root `FilesApi` you pass to its constructor:
+```ts
+const analyst = runtime.createAgent({
+  name: "analyst",
+  tools: ["read_file", "grep"], // undefined → all runtime tools
+  skills: ["analyze-csv"],      // undefined → all runtime skills
+  maxSteps: 8,                  // tool-call steps per turn
+  maxTurns: 4,                  // autonomous continuations per user message
+});
+```
 
-- **System view** — full visibility. Used internally by the runtime for agent definition loading, skill loading, and session persistence. Never exposed to tools.
-- **Tools view** — a `FilteredFilesApi` over the same root with the system path-tree hidden. Tools and skills receive this via `AgentContext.files`. Hidden paths are reported as not-existing (read/list/stats/exists return empty/false); writes/mkdir into hidden paths reject with `"Path is hidden"`.
+Every session also gets the built-in `list_tools` and `write_todos` tools, and `list_skills` and `use_skills` when it has skills.
 
-Default: `setSystemPath("/.settings/")`. The system path-tree is laid out:
+### Stop a running session with a signal
 
-| Subject | Path on `systemFiles` |
-|---|---|
-| Agents folder | `/agents/` |
-| Skills folder | `/skills/` |
-| Sessions folder | `/sessions/` |
-| Config folder | `/` |
+```ts
+const controller = new AbortController();
+setTimeout(() => controller.abort(), 60_000);
+for await (const log of session.run(controller.signal)) {
+  if (log.type === "tool-call") console.log("tool:", log.toolName, log.args);
+  if (log.type === "error") console.error(log.message);
+}
+```
 
-`AgentContext` is `{ files: FilesApi }` — tools and skills receive the tools view only. Tool factories needing more (model, provider, custom storage) accept those as closure-captured constructor arguments at their own factory boundary.
-
-## Error handling
-
-A single error handler routes errors from every runtime-internal source, supplied via the constructor:
+### Route runtime errors
 
 ```ts
 const runtime = new AgentRuntime({
   files,
   errorHandler: (err, ctx) => {
-    // ctx?.path   — set when a FilteredFilesApi violation surfaces
-    // ctx?.server — set when an MCP server interaction fails
-    log.warn({ err, ctx });
+    // ctx?.path   — FilesApi and definition-file errors
+    // ctx?.server — MCP server errors
+    console.warn(err, ctx);
   },
 });
 ```
 
-Default handler is `console.warn`. Errors thrown by build-phase configuration mistakes (no provider, system path covering root, etc.) are routed through the handler **and** rethrown — observers see the error and `await runtime.build()` still rejects.
-
-## API surface
-
-### `class AgentRuntime`
-
-#### Constructor
+### Connect an MCP server
 
 ```ts
-new AgentRuntime({ files: FilesApi, errorHandler?: AgentRuntimeErrorHandler })
+runtime.setMcpServers({
+  docs: { url: "https://example.com/mcp", type: "http", headers: { Authorization: "Bearer …" } },
+});
 ```
 
-#### Fluent setup (each returns `this`)
+Only remote MCP servers (`"http"` or `"sse"`) are supported. Their tools are added to every session.
 
-| Method | Purpose |
-|---|---|
-| `setSystemPath(path)` | System path-tree root. Default `"/.settings"`. |
-| `addModelProvider(...providers)` | Register one or more `ProviderV3` instances. Callers holding a `ModelManager` pass `modelManager.provider`. |
-| `addTools(...tools)` | Register tools (`ToolSet` or `ToolFactory`). |
-| `addSkills(...skills)` | Register skills programmatically. |
-| `setMcpServers(config)` | Configure MCP servers inline. |
-
-Per-subject paths under `<systemPath>` are hard-coded: `sessions` → `/sessions`, `skills` → `/skills`, `agents` → `/agents`, `config` → `/`. The tools view always uses `FilteredFilesApi` with the system path-tree hidden. To customise context-window behaviour (selection strategy, budget compaction, summariser, etc.), construct a `ContextWindow` directly and pass it to a `Session` — the runtime no longer carries that surface. The error handler is set via the constructor option `errorHandler` rather than a live setter.
-
-#### Materialization
-
-- `build(): Promise<this>` — load skills + agent definitions from disk, resolve the provider union, connect MCP. Idempotent.
-
-#### Agent definitions
-
-- `createAgent(def: AgentDefinition): Agent`
-- `getAgent(name): Agent | undefined`
-- `agents(): Agent[]`
-
-#### Sessions
-
-- `loadSession(id): Promise<Session>`
-- `listSessions(): Promise<SessionMetadata[]>`
-- `deleteSession(id): Promise<boolean>`
-
-#### Read-only views
-
-- `files: FilesApi` (tools view)
-- `systemFiles: FilesApi` (system view)
-- `config`, `mcp`
-
-### `class Agent`
-
-A definition value. Use `runtime.createAgent({ ... })` rather than constructing directly.
+### Use the file tools on their own
 
 ```ts
-interface AgentDefinition {
-  name: string;
-  tools?: string[];        // empty / undefined → all
-  skills?: string[];       // empty / undefined → none
-  systemPrompt?: string;
-  defaultModel?: string;
-  maxSteps?: number;
-  maxOutputTokens?: number;
-}
+import { createFileTools } from "@statewalker/ai-agent.core/tools";
+
+const tools = createFileTools(files); // ToolSet for streamText / generateText
 ```
 
-- `createSession({ title?, sessionId? }): Session`
+The set contains `get_current_time`, `read_file`, `read_lines`, `write_file`, `edit_file`, `multi_edit`, `replace_lines`, `delete_file`, `move_file`, `list_files`, `search_files`, `grep`, `file_info`, `count_lines` and `create_directory`.
 
-### `class Session`
+### Define skills and agents as markdown files
 
-A runtime instance.
+Files in `<systemPath>/skills/*.md` become skills and files in `<systemPath>/agents/*.md` become agent definitions when `build()` runs. Both use `key: value` frontmatter:
 
-- `id: string`, `agent: Agent`, `state: SessionTreeNode`
-- `inbox`, `tools`, `skills` — per-session views
-- `send(text, opts?)` — push a user message into the inbox
-- `run(signal?): AsyncGenerator<LogMessage>` — drive the loop
-- `save({ title? }): Promise<string>` — persist
-- `close(): Promise<void>` — tear down
-
-## Migration from `AgentBuilder` (removed)
-
-The legacy `AgentBuilder` / `AgentManager` / `Agent` (wrapper) / `SubAgentTool` classes were removed. The mapping:
-
-| Legacy | New |
-|---|---|
-| `new AgentBuilder().withProvider(p).withFilesApi(f).withTools(t).build()` | `await new AgentRuntime({ files: f }).addModelProvider(p).addTools(t).build()` |
-| `withProvider(p)` / `withModelManager(m)` | `addModelProvider(p)` / `addModelProvider(m.provider)` |
-| `withModel(model)` | per-Agent: `runtime.createAgent({ defaultModel: model })` |
-| `withFilesApi(f)` | constructor option |
-| `withSystemFolder(path)` | `setSystemPath(path)` |
-| `withExcludedPaths(...)` | pre-wrap the `FilesApi` with `FilteredFilesApi` before passing it in |
-| `withTools(t)` | `addTools(t)` |
-| `withSkills(s)` / `withSkillsFolder(path)` | `addSkills(...s)` + `setSkillsPath(path)` |
-| `withMcpServers(cfg)` / `withMcpConfigFile(path)` | `setMcpServers(cfg)` / `setMcpConfigFile(path)` |
-| `new AgentManager(builder).create(title)` | `runtime.createAgent({ name }).createSession({ title })` |
-| `manager.resume(id)` | `runtime.loadSession(id)` |
-| `agent.run(signal)` | `session.run(signal)` |
-| `agent.inbox.push({ role: "user", text })` | `session.send(text)` |
-| `agent.save(title)` | `session.save({ title })` |
-| `withSubAgent(name, factory)` | `agentDef.addSubAgent(other)` *(runtime support pending)* |
-
-The `SessionManager` interface and `Agent` wrapper class no longer exist — sessions are returned directly from `agent.createSession()` / `runtime.loadSession()`.
-
-## Skill markdown format
-
-Skills are markdown files under `<systemPath>/skills/` with key=value frontmatter:
-
-```
+```markdown
 ---
-name=analyze-csv
-description=Read a CSV and produce a summary statistics report.
+name: analyze-csv
+description: Read a CSV and produce a summary statistics report.
 ---
 
-(skill body — instructions for the LLM when this skill is selected)
+Instructions for the model when this skill is used.
 ```
 
-`name` and `description` are required. Additional keys are passed through as metadata.
+Without frontmatter, the first `# heading` is the name and the first paragraph the description. For an agent file the body becomes the system prompt. Agents registered with `createAgent` before `build()` take precedence over files with the same name; after `build()`, `createAgent` with a name loaded from a file throws.
+
+## Internals
+
+### Tools never see the system folder
+
+`build()` creates two views over the `FilesApi` given to the constructor:
+
+```
+root FilesApi
+├── /.settings/        ◄── system view (runtime.systemFiles): config, agents/, skills/, sessions/
+└── everything else    ◄── tools view (runtime.files): /.settings hidden
+```
+
+Tool factories and skills receive only the tools view (`AgentContext.files`). Hidden paths look absent on reads, and writes into them reject with `"Path is hidden"`. This keeps a tool from reading or overwriting saved sessions and agent definitions. The system path defaults to `/.settings`; the sub-layout (`/agents`, `/skills`, `/sessions`, config at `/`) is fixed. A system path of `/` would hide everything, so `build()` rejects it.
+
+### Context shaping
+
+Each session owns a `ContextWindow` that turns the conversation tree and active skills into `{ system, messages }` for the next model call. It runs compaction (old turns are wrapped in summarised `TurnGroup`s, never dropped), selection, elision, pin policy and system-prompt assembly. The runtime uses the package defaults; `ContextWindow` is internal and not exported. See [openwiki/context-shaping.md](openwiki/context-shaping.md).
+
+### The loop
+
+`Session.run()` hands control to the agent's `Executor`. The default `LoopExecutor` takes one inbox message, drives a turn, and keeps driving while the worklist (`write_todos`) has open items, until a new message arrives, the work is done, or the turn budget (`maxTurns`, default `DEFAULT_MAX_TURNS`) or stagnation gate stops it. Then it waits for the next inbox message. `FsmExecutor` drives turns from an FSM process definition instead. See [openwiki/agent-loop.md](openwiki/agent-loop.md).
+
+### Constraints
+
+- `addModelProvider` accepts several providers, but only the first one is used.
+- `build()` runs once; later calls return the same runtime. Tools, skills and MCP servers added after `build()` are ignored.
+- `build()` throws `AgentRuntime: no model provider configured. Use .addModelProvider()` when no provider was added. Configuration errors go to the error handler and are also thrown.
+- `createAgent` throws `AgentRuntime: agent already registered: <name>` for a duplicate name.
+- `session.run()` on a closed session throws `Session: closed`.
+
+### Dependencies
+
+- `ai`, `@ai-sdk/provider`, `@ai-sdk/provider-utils`: model calls, tool definitions, provider types.
+- `@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/openai`: `createRemoteProvider` and remote model discovery.
+- `@ai-sdk/mcp`, `@modelcontextprotocol/sdk`: MCP clients over HTTP/SSE.
+- `@statewalker/webrun-files`, `@statewalker/webrun-files-composite`: the `FilesApi` and the filtered and composite views.
+- `@statewalker/fsm`: `FsmExecutor`.
+- `@statewalker/shared-baseclass`, `@statewalker/shared-ids`: observable state objects and session ids.
+- `zod`: tool input schemas.
+
+More: [openwiki/](openwiki/quickstart.md) (architecture, state, context shaping, loop, tools, models) and [CONTEXT.md](CONTEXT.md) (glossary).
 
 ## License
 
-MIT.
+MIT

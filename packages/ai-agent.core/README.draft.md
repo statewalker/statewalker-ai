@@ -5,14 +5,14 @@
   rename this file and strip the `<!-- DRAFT ONLY -->` block at the bottom.
 -->
 
-# @statewalker/ai-agent
+# @statewalker/ai-agent.core
 
 ## What it is
 
 TypeScript library for building multi-turn AI agents with persistent
 conversation state, a reactive control surface, and session resume. Built on
 the [Vercel AI SDK](https://sdk.vercel.ai/) for model streams and
-[`@statewalker/shared-commands`](../../../statewalker-shared/packages/shared-commands/)
+`@statewalker/shared-commands`
 for the tool surface. The package is framework-free — no UI, no
 workspace-adapter coupling.
 
@@ -53,7 +53,7 @@ external Commands when the adapter pattern lands).
 Install:
 
 ```sh
-pnpm add @statewalker/ai-agent @statewalker/shared-commands
+pnpm add @statewalker/ai-agent.core @statewalker/shared-commands
 ```
 
 Three-tier API:
@@ -89,11 +89,11 @@ See [Examples](#examples) for the full DX. API surface:
 
 | Export Path | Description |
 |---|---|
-| `@statewalker/ai-agent/runtime` | `AgentRuntime`, `Agent`, `Session`, runtime types, FilesApi helpers. The official entry point. |
-| `@statewalker/ai-agent/state` | `TreeNode`, `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `Inbox`, `NodeType`, `LogMessage`, typed pending-node accessors (`ToolRequestNode`, …). |
-| `@statewalker/ai-agent/models` | `ModelManager`, `LocalModelStorage`, model catalog, remote discovery, provider/model types. |
+| `@statewalker/ai-agent.core/runtime` | `AgentRuntime`, `Agent`, `Session`, runtime types, FilesApi helpers. The official entry point. |
+| `@statewalker/ai-agent.core/state` | `TreeNode`, `SessionState`, `Turn`, `TurnGroup`, `Message`, `ToolCall`, `Inbox`, `NodeType`, `LogMessage`, typed pending-node accessors (`ToolRequestNode`, …). |
+| `@statewalker/ai-agent.core/models` | `ModelManager`, `LocalModelStorage`, model catalog, remote discovery, provider/model types. |
 
-The bare `@statewalker/ai-agent` root is intentionally empty; go through one
+The bare `@statewalker/ai-agent.core` root is intentionally empty; go through one
 of the sub-paths. `tools/` and `mcp/` sub-paths are **removed** in v2 — tool
 surfaces and MCP are owned by external adapter packages.
 
@@ -102,7 +102,7 @@ surfaces and MCP are owned by external adapter packages.
 ### Minimal usage
 
 ```ts
-import { AgentRuntime } from "@statewalker/ai-agent/runtime";
+import { AgentRuntime } from "@statewalker/ai-agent.core/runtime";
 import { Commands, CommandsRegistry } from "@statewalker/shared-commands";
 import { NodeFilesApi } from "@statewalker/webrun-files-node";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -161,7 +161,7 @@ Two seams sit on top of it — **observation** (read-only, many subscribers)
 and **gating** (single decision-maker per node-type, blocks the loop).
 
 ```ts
-import { NodeType } from "@statewalker/ai-agent/state";
+import { NodeType } from "@statewalker/ai-agent.core/state";
 
 const session = assistant.createSession();
 

@@ -65,7 +65,7 @@ The following tools are registered by `Agent.createSession()` in addition to the
 | `create_directory` | Create a directory. |
 
 ```ts
-import { createFileTools } from "@statewalker/ai-agent/tools";
+import { createFileTools } from "@statewalker/ai-agent.core/tools";
 
 const tools = createFileTools(files);
 // → { get_current_time, read_file, read_lines, write_file, ... }

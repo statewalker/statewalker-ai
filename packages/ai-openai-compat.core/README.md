@@ -1,11 +1,9 @@
-# @statewalker/ai-openai-compat
-
-Wire-format adapter that exposes any [Vercel AI SDK v6](https://sdk.vercel.ai/)
-`LanguageModelV3` / `EmbeddingModelV3` provider over the OpenAI HTTP v1 API as
-a standard Web Fetch handler.
+# @statewalker/ai-openai-compat.core
 
 ## What it is
 
+A wire-format adapter that serves Vercel AI SDK language and embedding models
+(`LanguageModelV3`/`V4`, `EmbeddingModelV3`/`V4`) over the OpenAI HTTP v1 API.
 A single function — `createOpenAICompat(init)` — that returns a handler of
 type `(req: Request) => Promise<Response>`. The handler implements the
 OpenAI v1 endpoint surface most clients actually use:
@@ -51,17 +49,20 @@ fetch handler. Concretely it replaces:
 ### Install
 
 ```sh
-pnpm add @statewalker/ai-openai-compat ai @ai-sdk/provider
+pnpm add @statewalker/ai-openai-compat.core
 ```
 
-`ai` and `@ai-sdk/provider` are peer dependencies of the AI SDK ecosystem;
-add whichever provider package(s) supply your models (`@ai-sdk/openai`,
-`@ai-sdk/anthropic`, `@ai-sdk/google`, `@ai-sdk/mcp`, etc.).
+`ai` and `@ai-sdk/provider` are regular dependencies; there are no peer
+dependencies. Add the provider packages that supply your models
+(`@ai-sdk/openai`, `@ai-sdk/anthropic`, `@ai-sdk/google`, …).
+
+The package has one entry point, `@statewalker/ai-openai-compat.core`, which
+exports `createOpenAICompat` and the `Init` type.
 
 ### Minimal example
 
 ```ts
-import { createOpenAICompat } from "@statewalker/ai-openai-compat";
+import { createOpenAICompat } from "@statewalker/ai-openai-compat.core";
 import { createAnthropic } from "@ai-sdk/anthropic";
 
 const anthropic = createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -90,7 +91,7 @@ console.log(await res.json());
 ```ts
 import { Hono } from "hono";
 import { bearerAuth } from "hono/bearer-auth";
-import { createOpenAICompat } from "@statewalker/ai-openai-compat";
+import { createOpenAICompat } from "@statewalker/ai-openai-compat.core";
 import { createOpenAI } from "@ai-sdk/openai";
 
 const llamacpp = createOpenAI({
@@ -126,6 +127,16 @@ const reply = await client.chat.completions.create({
   messages: [{ role: "user", content: "Hello" }],
 });
 ```
+
+### API
+
+| Export | Description |
+| --- | --- |
+| `createOpenAICompat(init: Init): (req: Request) => Promise<Response>` | Returns a standard fetch handler. |
+| `Init` | `{ languageModels?: Record<string, LanguageModelV3 \| LanguageModelV4>; embeddingModels?: Record<string, EmbeddingModelV3 \| EmbeddingModelV4>; basePath?: string }` |
+
+Nothing else is exported. The OpenAI error envelope helpers in `src/errors.ts`
+are internal.
 
 ## Examples
 
@@ -240,24 +251,14 @@ const res = await client.embeddings.create({
 // res.data[0].embedding, res.data[1].embedding
 ```
 
-## API
-
-| Export | Description |
-| --- | --- |
-| `createOpenAICompat(init: Init): (req: Request) => Promise<Response>` | The single entry point. Returns a standard fetch handler. |
-| `Init` | `{ languageModels?: Record<string, LanguageModelV3>; embeddingModels?: Record<string, EmbeddingModelV3>; basePath?: string }` |
-| `OpenAIError`, `OpenAIErrorCode`, `OpenAIErrorType`, `errorResponse(...)` | Re-exported from `./errors.js` so transports can emit identically-shaped errors. |
-
 ## Internals
 
 ### Architectural decisions
 
-- **Fetch handler, not a Hono app.** The reference adapter
-  [`@ns/ai-to-openai-hono`](https://jsr.io/@ns/ai-to-openai-hono) returns a
-  Hono `App`. We instead return a pure `(req: Request) => Promise<Response>`
-  because (a) it keeps the adapter usable in transports that never want a
-  Hono dep (Workers, Bun, raw Node), and (b) routing four fixed paths is
-  ~30 LOC of pathname-switch — cheaper than the import.
+- **Fetch handler, not a framework app.** The adapter returns a plain
+  `(req: Request) => Promise<Response>` because it must work in transports
+  that do not want a Hono or Express dependency (Workers, Bun, raw Node), and
+  routing four fixed paths is a short pathname switch.
 - **Record-only model registration.** `languageModels` / `embeddingModels`
   are `Record<id, Model>`. `/v1/models` derives the list from
   `Object.keys`. Dynamic / lazy resolvers were considered and rejected:
@@ -307,9 +308,8 @@ sequence of `data: <json>\n\n` chunks terminated by `data: [DONE]\n\n`.
 For one response:
 
 - `id` is generated once (`chatcmpl-<uuid>`) and reused across every chunk.
-- `created` is `Math.floor(Date.now() / 1000)` — integer seconds. (The
-  reference adapter has a known bug where `created` is a float; we
-  deliberately diverge.)
+- `created` is `Math.floor(Date.now() / 1000)` — integer seconds, as OpenAI
+  clients expect.
 - `object` is `chat.completion.chunk` on every chunk.
 - The terminal chunk (the one that carries `finish_reason`) is the only
   one with `usage`.
@@ -323,7 +323,7 @@ Tool-call streaming follows OpenAI's per-index delta convention:
 - A bare `tool-call` event (no prior streaming deltas) yields one chunk
   carrying the full JSON-stringified arguments.
 
-### Translation table — OpenAI → AI SDK v3
+### Translation table — OpenAI → AI SDK
 
 | OpenAI field                                       | AI SDK target                                  |
 | -------------------------------------------------- | ---------------------------------------------- |
@@ -389,7 +389,7 @@ Tool-call streaming follows OpenAI's per-index delta convention:
 | Package                | Why                                                   |
 | ---------------------- | ----------------------------------------------------- |
 | `ai`                   | `generateText`, `streamText`, `embedMany`, `jsonSchema`, `tool`, types. |
-| `@ai-sdk/provider`     | `LanguageModelV3` / `EmbeddingModelV3` type surface used by `Init`. |
+| `@ai-sdk/provider`     | `LanguageModelV3`/`V4` and `EmbeddingModelV3`/`V4` types used by `Init`. |
 
 No HTTP transport, no Zod runtime, no `openai` SDK runtime dep. The `openai`
 package only appears as a devDependency for integration tests that drive
@@ -397,7 +397,7 @@ the adapter through the real OpenAI client.
 
 ### Tests
 
-Three tiers:
+Two tiers:
 
 - **Unit (`tests/unit/`)** — synthetic `LanguageModelV3` / `EmbeddingModelV3`
   mocks, no I/O. Asserts every wire-format invariant at the `Response`
@@ -407,15 +407,6 @@ Three tiers:
   custom `fetch` returning canned ChatCompletion / SSE / embedding JSON)
   and drives it through the official `openai` SDK to validate the round-trip
   preserves OpenAI semantics on both ends.
-- **App e2e** — see `@repo/openai-proxy-app` in `statewalker-apps` for the
-  llama.cpp + Gemma 3 1B end-to-end harness (env-gated by `OPENAI_COMPAT_E2E=1`).
-
-## Related
-
-- [Vercel AI SDK](https://sdk.vercel.ai/) — the underlying model abstraction.
-- [@ns/ai-to-openai-hono](https://jsr.io/@ns/ai-to-openai-hono) — the
-  Hono-coupled reference adapter this package was inspired by (we diverge
-  on transport coupling, basePath, error envelope, and AI SDK v6 alignment).
 
 ## License
 
