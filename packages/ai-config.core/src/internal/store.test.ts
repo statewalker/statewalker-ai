@@ -55,7 +55,7 @@ describe("ai.config store", () => {
     const lifted: Array<[string, string]> = [];
     const data = await loadAiConfig(files, SYS, (id, key) => lifted.push([id, key]));
     expect(lifted).toEqual([["openai", "sk-legacy"]]);
-    expect((data.connections[0] as Record<string, unknown>).apiKey).toBeUndefined();
+    expect((data.connections[0] as unknown as Record<string, unknown>).apiKey).toBeUndefined();
     expect(data.schemaVersion).toBe(6);
 
     // Persist the migrated (stripped) config, reload — no second lift.
