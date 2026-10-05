@@ -96,7 +96,7 @@ The config is `/.settings/local-models.json`: `{ schemaVersion: 1, downloaded: [
 
 - Only the transformers.js (`tjs`) engine is registered, and it runs on WASM only.
 - Browser only in practice: activation goes through `@statewalker/ai-local-models.browser`.
-- `LocalModels` calls `registerLocalProvider` without a `basePath`, so it looks for downloaded weights under `/models/tjs`, while `TJS_WEIGHTS_BASE_PATH` is `/.settings/models/tjs`. If your Service Worker writes weights to `TJS_WEIGHTS_BASE_PATH`, downloaded models show as not downloaded after a reload.
+- `LocalModels` looks for downloaded weights under `<basePath>/tjs/<modelId>` (`TJS_WEIGHTS_BASE_PATH` with the default `basePath`, `/.settings/models`): a `config.json` and at least one `.onnx` file there make the model show as downloaded after a reload. Weights written anywhere else are not found.
 - `buildProvider(key)` returns the same `ModelStateStore` for every key; the store resolves the model by the key passed to `languageModel`.
 
 ### Dependencies
