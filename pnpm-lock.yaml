@@ -47,40 +47,40 @@ catalogs:
       version: 1.32.0
     '@statewalker/fsm':
       specifier: ^0.38.1
-      version: 0.38.1
+      version: 0.38.2
     '@statewalker/fsm-validator':
       specifier: ^0.2.0
-      version: 0.2.0
+      version: 0.2.1
     '@statewalker/settings.core':
       specifier: ^0.5.0
-      version: 0.5.1
+      version: 0.5.2
     '@statewalker/shared-baseclass':
       specifier: ^0.1.0
-      version: 0.1.2
+      version: 0.1.3
     '@statewalker/shared-commands':
       specifier: ^0.2.0
-      version: 0.2.3
+      version: 0.2.4
     '@statewalker/shared-ids':
       specifier: ^0.1.0
-      version: 0.1.2
+      version: 0.1.3
     '@statewalker/shared-registry':
       specifier: ^0.1.0
-      version: 0.1.2
+      version: 0.1.3
     '@statewalker/shared-slots':
       specifier: ^0.2.0
-      version: 0.2.2
+      version: 0.2.3
     '@statewalker/webrun-files':
       specifier: ^0.10.0
-      version: 0.10.1
+      version: 0.10.2
     '@statewalker/webrun-files-composite':
       specifier: ^0.10.0
-      version: 0.10.2
+      version: 0.10.3
     '@statewalker/webrun-files-mem':
       specifier: ^0.10.0
-      version: 0.10.2
+      version: 0.10.3
     '@statewalker/workspace.core':
       specifier: ^0.5.0
-      version: 0.5.1
+      version: 0.5.2
     '@types/node':
       specifier: ^26.6.4
       version: 26.6.4
@@ -145,26 +145,26 @@ importers:
         version: link:../ai-agent.core
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/shared-commands':
         specifier: 'catalog:'
-        version: 0.2.3(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-registry':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/shared-slots':
         specifier: 'catalog:'
-        version: 0.2.2
+        version: 0.2.3
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.10.1
+        version: 0.10.2
       '@statewalker/workspace.core':
         specifier: 'catalog:'
-        version: 0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.10.2
+        version: 0.10.3
       ai:
         specifier: 'catalog:'
         version: 7.0.127(zod@4.6.5)
@@ -203,19 +203,19 @@ importers:
         version: 1.32.0(zod@4.6.5)
       '@statewalker/fsm':
         specifier: 'catalog:'
-        version: 0.38.1
+        version: 0.38.2
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/shared-ids':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.10.1
+        version: 0.10.2
       '@statewalker/webrun-files-composite':
         specifier: 'catalog:'
-        version: 0.10.2
+        version: 0.10.3
       ai:
         specifier: 'catalog:'
         version: 7.0.127(zod@4.6.5)
@@ -225,10 +225,10 @@ importers:
     devDependencies:
       '@statewalker/fsm-validator':
         specifier: 'catalog:'
-        version: 0.2.0
+        version: 0.2.1
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.10.2
+        version: 0.10.3
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.4
@@ -261,23 +261,23 @@ importers:
         version: 0.21.0(zod@4.6.5)
       '@statewalker/shared-commands':
         specifier: 'catalog:'
-        version: 0.2.3(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-registry':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.10.1
+        version: 0.10.2
       '@statewalker/workspace.core':
         specifier: 'catalog:'
-        version: 0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       ai:
         specifier: 'catalog:'
         version: 7.0.127(zod@4.6.5)
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.10.2
+        version: 0.10.3
       tsdown:
         specifier: 'catalog:'
         version: 0.23.0(tsx@4.23.15)(typescript@7.0.2)
@@ -298,7 +298,7 @@ importers:
         version: link:../ai-agent.core
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.10.1
+        version: 0.10.2
     devDependencies:
       '@browser-ai/transformers-js':
         specifier: 'catalog:'
@@ -338,29 +338,29 @@ importers:
         version: link:../ai-local-models.browser
       '@statewalker/settings.core':
         specifier: 'catalog:'
-        version: 0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/shared-commands':
         specifier: 'catalog:'
-        version: 0.2.3(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-registry':
         specifier: 'catalog:'
-        version: 0.1.2
+        version: 0.1.3
       '@statewalker/shared-slots':
         specifier: 'catalog:'
-        version: 0.2.2
+        version: 0.2.3
       '@statewalker/webrun-files':
         specifier: 'catalog:'
-        version: 0.10.1
+        version: 0.10.2
       '@statewalker/workspace.core':
         specifier: 'catalog:'
-        version: 0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     devDependencies:
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
-        version: 0.10.2
+        version: 0.10.3
       tsdown:
         specifier: 'catalog:'
         version: 0.23.0(tsx@4.23.15)(typescript@7.0.2)
@@ -1097,35 +1097,35 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@statewalker/fsm-validator@0.2.0':
-    resolution: {integrity: sha512-N09kadlE5q6A6lt+Cs4DBQgZ4M0IhNfAJOLgob5NA4/Bi+c61Kb5uS3s4El830xogrOt+iRKQ8K/BQgI9aTILQ==}
+  '@statewalker/fsm-validator@0.2.1':
+    resolution: {integrity: sha512-XEWAttfcf0KbvbGvKpt3uK4tR1SurKBmto1BaysGSlDqikUO6qD38cOeQRN7ipAK6Yf/SFEp3RGbNPPHH95ASQ==}
 
-  '@statewalker/fsm@0.38.1':
-    resolution: {integrity: sha512-+HXe9Uv6SAhjXnQzai6CiKYBXPjIdEKO6FCrfo3FM/lCVKERFgm5Q9xQxg4ROftjYxUAn9hw9k1rxcb1B/AARQ==}
+  '@statewalker/fsm@0.38.2':
+    resolution: {integrity: sha512-W346Eifd7eyUWjVGBqY3YGMOg3ad1MlLuWor4LofFh/koBq2IYJOGQSZ4ahYkGOeYD/iOgm8NLkFc6yVilLNdQ==}
 
-  '@statewalker/settings.core@0.5.1':
-    resolution: {integrity: sha512-StZ16GdqEb9qVACo7XarkadzN3upsTAbjeNVBDFOVvAEZeLHd7vnqHldp8JQVXPMyluIoPCE8bXki5jAYAGcMg==}
+  '@statewalker/settings.core@0.5.2':
+    resolution: {integrity: sha512-gtlCGEfvdaD4jr7WoOtuG7W1mbz7yYVbTfhs7v7Or/e0nJ9Gj9qbrt59yoglyqFesEVBtKYzO7OcfhNdxc/PTQ==}
 
   '@statewalker/shared-adapters@0.1.2':
     resolution: {integrity: sha512-1PIsx05Jv+9GMM6MtzVsU2Kp4nh+hxNfN/hX4sJZgY/CUjzJPWzFlGZc/BH1suHvUz6hIfR9LGgTFSzHidAoJg==}
 
-  '@statewalker/shared-baseclass@0.1.2':
-    resolution: {integrity: sha512-rlg8y3QBG4cLYwJMxP/1cz+emKOgwNdF3bb+p1zbZM5N8Su+W9aba1haJkBd0KTneKx1v4eGImL8PZd+4jVH+g==}
+  '@statewalker/shared-baseclass@0.1.3':
+    resolution: {integrity: sha512-/emx12zO5WQvyM/pAlB/lrmlQtgEeWakrUIbzYhCJFYbtDlNq8LcZWqnHbYXNGOYDJlQdPRbb2btNpn99AAEvA==}
 
-  '@statewalker/shared-commands@0.2.3':
-    resolution: {integrity: sha512-icb50PRNMZmkhc82BAu4/0CZp4ePeh3sXNdPsL2N4//U3impSC53RDbMnmMMQbe7uWfbIny9dujyu9IOtEMvOQ==}
+  '@statewalker/shared-commands@0.2.4':
+    resolution: {integrity: sha512-uVumbQjw4jQZaDy+eF7pyqW4pl00MW6xFDsqFnDSTcGe1V3QGItzd9eAmBPA+Hcz+dsoJyePJVu36qYjfhEBtQ==}
 
-  '@statewalker/shared-ids@0.1.2':
-    resolution: {integrity: sha512-/duE0yhVTG/T97DvZfIzGImYnenermpP72nfvYrM//hpm/8rPZtGvweQpeeQq43CTEjZuPvoPf7s/rJ+IO4z1A==}
+  '@statewalker/shared-ids@0.1.3':
+    resolution: {integrity: sha512-EY8dk+PHCSk4KgWf1NQqtzuQJFPlp16VfYqoGtT5I8lXokbQyayWgOHszsie9YZ24Ym9NespuwBr64SiCd7cIA==}
 
   '@statewalker/shared-logger@0.1.3':
     resolution: {integrity: sha512-VoyiUQ1ileNpwokLn3g5/sNi2GpqDigRzg5k4qGx/chWY3RN1km9cYlU4KEvypxBEn1HLl8SbJsP2kZFB+u30g==}
 
-  '@statewalker/shared-registry@0.1.2':
-    resolution: {integrity: sha512-x6/5Nx2pBF10+08/wPBZGtr5IFbF+B7PGtZ+6zZJ7ucmMDEE5rZYN8/3hI8e3i1UVQJDDP2/pAwiIoKD3weyzg==}
+  '@statewalker/shared-registry@0.1.3':
+    resolution: {integrity: sha512-JUNLccgnxp1x8EJdis6eSDwuS6umSXhhyjP6Ism1Yz+W2DL+jO7EXWS2t3DFTZf6QevBAbX3Hp1poCz9luihBQ==}
 
-  '@statewalker/shared-slots@0.2.2':
-    resolution: {integrity: sha512-aJlrWiJen5hcPQBP3C1sWSboJbqReAcJka/9m93Kh+QTxCgdLzZfBx75Zc6hcLiNW5dFLHDLHSAJ/gUbq2UqNg==}
+  '@statewalker/shared-slots@0.2.3':
+    resolution: {integrity: sha512-uL3wAg4ZKpngNsnBwluQlSbeI2gK5yCRCqeRhARrjKMZnHmeA1Bisv9Vx5EraByl6ZWN+cl3quiwrobxbKEDfA==}
 
   '@statewalker/webrun-builder@0.2.0':
     resolution: {integrity: sha512-JxWBE7IiFHAvdqY6eKS35UaC7P5lWJNc/hDd7Rc5hh7FW6QgroRL9AT+5SSJPOnAMPDKcASlKOiK54dyEqtWqQ==}
@@ -1133,17 +1133,17 @@ packages:
   '@statewalker/webrun-dataflow@0.1.2':
     resolution: {integrity: sha512-VEvFSDTlNkUf43LPG2DG+racpwGFYbee/dmEATeIbVPMcWGemdr0I5Sf56ZEvQCKCuXwQdCqc04yQPAsnBkBfA==}
 
-  '@statewalker/webrun-files-composite@0.10.2':
-    resolution: {integrity: sha512-4UkUPJc4QrRQObkRnDylwpwas9rA86hSsnP7iv1E8Y/cr1UWnXRU5BZJ+aYi2d6Hjh5jtbuDugaYD9VxNWbq7w==}
+  '@statewalker/webrun-files-composite@0.10.3':
+    resolution: {integrity: sha512-fpW7cq8FNCmuyD7J+qwEz1pSQ4a+Mc5VpJhmj92OReGlh551NzDeChdjyZ8Y25kqtm0Y4QLlGt8YfPed05RAag==}
 
-  '@statewalker/webrun-files-mem@0.10.2':
-    resolution: {integrity: sha512-y2d1d3DLHLom5IXrLRNDNyFCxJkQfnKOblH05YTFFvIwUllM6yb/ahKzOIiH7N2goeK2SS/gvpV0NKvBTdINIg==}
+  '@statewalker/webrun-files-mem@0.10.3':
+    resolution: {integrity: sha512-a6SnfQerlKqJybvK4oxd0VsvREHv91yo20JsU4s4EhiewdT3o6q3qzDKS9hZoMGBaOPOyqoQY9ViGnHjdXeiEA==}
 
-  '@statewalker/webrun-files@0.10.1':
-    resolution: {integrity: sha512-E2tQbiMHhGzRBHp3BK5zqsNSo7kUeg+kCUF2rZCxlWwFZrKorMAe5CEecWUqmyQffG7fWJgfNjyU9oEre2sKMA==}
+  '@statewalker/webrun-files@0.10.2':
+    resolution: {integrity: sha512-hqsaY8BwRqvV7f6v6n82iIFEfaFZTLHrBk03o8pwfOPYMXMvtAdk9RYT/pDwp9cWubmePylc0Xpyuh+JC4hVtw==}
 
-  '@statewalker/workspace.core@0.5.1':
-    resolution: {integrity: sha512-6XqPORDrxneXfladzGxjwc6RM6IQBPS5NxW0EPUhUBBVGKZzU3FzpBmU4Zqs8R4tjFxzq6DUKDl6rS96xr9HsA==}
+  '@statewalker/workspace.core@0.5.2':
+    resolution: {integrity: sha512-JmIPvymskFfSGod7IglhnJhBC2Yo1ozmz4CcQ6LM8Psf0/jzBWSzLqBYRzI9IfYvc77Z7GNR+6AqQ27DO4eZAA==}
 
   '@turbo/darwin-64@2.11.7':
     resolution: {integrity: sha512-Z2LFOxwbiJueD1miByXJS/BrW21vv6YaQXZustty5jEX4vQYw6zyh101Sz1QO7WG0mqBzKagZ/DoAeeujI0/Sw==}
@@ -1899,8 +1899,8 @@ packages:
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
 
-  nanoid@3.3.19:
-    resolution: {integrity: sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug==}
+  nanoid@3.3.20:
+    resolution: {integrity: sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
@@ -2000,8 +2000,8 @@ packages:
   platform@1.3.6:
     resolution: {integrity: sha512-fnWVljUchTro6RiCFvCXBbNhJc2NijN7oIQxbwsyL0buWJPG85v81ehlHI9fXrJsMNgTofEoWIQeClKpgxFLrg==}
 
-  postcss@8.5.28:
-    resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
+  postcss@8.5.29:
+    resolution: {integrity: sha512-49cGhUbXj8Qenv0iTMxA1cFBzxXoctpC9Ujd77t1WcbJIr6nF/eI7g/8MgxrYldFRuAXvja7xQRwavoW7kgrxQ==}
     engines: {node: ^10 || ^12 || >=14}
 
   protobufjs@7.6.6:
@@ -2913,17 +2913,17 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@statewalker/fsm-validator@0.2.0': {}
+  '@statewalker/fsm-validator@0.2.1': {}
 
-  '@statewalker/fsm@0.38.1': {}
+  '@statewalker/fsm@0.38.2': {}
 
-  '@statewalker/settings.core@0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@statewalker/settings.core@0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@statewalker/shared-baseclass': 0.1.2
-      '@statewalker/shared-commands': 0.2.3(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@statewalker/shared-registry': 0.1.2
-      '@statewalker/shared-slots': 0.2.2
-      '@statewalker/workspace.core': 0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@statewalker/shared-baseclass': 0.1.3
+      '@statewalker/shared-commands': 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@statewalker/shared-registry': 0.1.3
+      '@statewalker/shared-slots': 0.2.3
+      '@statewalker/workspace.core': 0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     transitivePeerDependencies:
       - '@types/json-schema'
       - '@valibot/to-json-schema'
@@ -2937,9 +2937,9 @@ snapshots:
 
   '@statewalker/shared-adapters@0.1.2': {}
 
-  '@statewalker/shared-baseclass@0.1.2': {}
+  '@statewalker/shared-baseclass@0.1.3': {}
 
-  '@statewalker/shared-commands@0.2.3(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@statewalker/shared-commands@0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@standard-community/standard-json': 0.3.6(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@standard-schema/spec': 1.1.0
@@ -2954,43 +2954,43 @@ snapshots:
       - zod
       - zod-to-json-schema
 
-  '@statewalker/shared-ids@0.1.2': {}
+  '@statewalker/shared-ids@0.1.3': {}
 
   '@statewalker/shared-logger@0.1.3':
     dependencies:
       '@statewalker/shared-adapters': 0.1.2
 
-  '@statewalker/shared-registry@0.1.2': {}
+  '@statewalker/shared-registry@0.1.3': {}
 
-  '@statewalker/shared-slots@0.2.2': {}
+  '@statewalker/shared-slots@0.2.3': {}
 
   '@statewalker/webrun-builder@0.2.0':
     dependencies:
       '@statewalker/webrun-dataflow': 0.1.2
-      '@statewalker/webrun-files': 0.10.1
+      '@statewalker/webrun-files': 0.10.2
 
   '@statewalker/webrun-dataflow@0.1.2': {}
 
-  '@statewalker/webrun-files-composite@0.10.2':
+  '@statewalker/webrun-files-composite@0.10.3':
     dependencies:
-      '@statewalker/webrun-files': 0.10.1
+      '@statewalker/webrun-files': 0.10.2
 
-  '@statewalker/webrun-files-mem@0.10.2':
+  '@statewalker/webrun-files-mem@0.10.3':
     dependencies:
-      '@statewalker/webrun-files': 0.10.1
+      '@statewalker/webrun-files': 0.10.2
 
-  '@statewalker/webrun-files@0.10.1': {}
+  '@statewalker/webrun-files@0.10.2': {}
 
-  '@statewalker/workspace.core@0.5.1(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@statewalker/workspace.core@0.5.2(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@statewalker/shared-adapters': 0.1.2
-      '@statewalker/shared-baseclass': 0.1.2
-      '@statewalker/shared-commands': 0.2.3(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@statewalker/shared-baseclass': 0.1.3
+      '@statewalker/shared-commands': 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-logger': 0.1.3
       '@statewalker/webrun-builder': 0.2.0
       '@statewalker/webrun-dataflow': 0.1.2
-      '@statewalker/webrun-files': 0.10.1
-      '@statewalker/webrun-files-composite': 0.10.2
+      '@statewalker/webrun-files': 0.10.2
+      '@statewalker/webrun-files-composite': 0.10.3
     transitivePeerDependencies:
       - '@types/json-schema'
       - '@valibot/to-json-schema'
@@ -3608,7 +3608,7 @@ snapshots:
 
   ms@2.1.3: {}
 
-  nanoid@3.3.19: {}
+  nanoid@3.3.20: {}
 
   negotiator@1.1.0:
     dependencies:
@@ -3672,9 +3672,9 @@ snapshots:
 
   platform@1.3.6: {}
 
-  postcss@8.5.28:
+  postcss@8.5.29:
     dependencies:
-      nanoid: 3.3.19
+      nanoid: 3.3.20
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
@@ -3983,7 +3983,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
-      postcss: 8.5.28
+      postcss: 8.5.29
       rolldown: 1.2.12
       tinyglobby: 0.2.17
     optionalDependencies:
