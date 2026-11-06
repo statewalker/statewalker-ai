@@ -3,7 +3,8 @@
  * — the {@link Connection} id, a colon, then the opaque model id (which may itself
  * contain `:` or `/`; the URI is split on the **first** colon only). This is the
  * Vercel AI SDK provider-registry convention, so the registry resolves it directly.
- * See `docs/adr/0001-model-reference-uri.md`.
+ * See
+ * https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-config.core/docs/adr/0001-model-reference-uri.md
  */
 export interface ModelReference {
   connectionId: string;

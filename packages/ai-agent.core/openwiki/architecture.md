@@ -117,4 +117,4 @@ See [Agent Loop](agent-loop.md) for full details.
 
 ## Where this package lives
 
-The package lives in the statewalker-ai repository and is published as `@statewalker/ai-agent.core`. It is a standalone, workspace-free library (its `@statewalker` dependencies are only `shared-*`, `webrun-files*` and `fsm`). [ADR 0001](../docs/adr/0001-ai-agent-stays-in-workbench.md) records the earlier decision to keep it in the workbench repository; that location part no longer applies.
+The package lives in the statewalker-ai repository and is published as `@statewalker/ai-agent.core`. It is a standalone, workspace-free library (its `@statewalker` dependencies are only `shared-*`, `webrun-files*` and `fsm`). [ADR 0001](https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-agent.core/docs/adr/0001-ai-agent-stays-in-workbench.md) records the earlier decision to keep it in the workbench repository; that location part no longer applies.

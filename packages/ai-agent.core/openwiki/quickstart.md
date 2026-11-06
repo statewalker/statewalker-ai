@@ -78,6 +78,6 @@ The bare `@statewalker/ai-agent.core` root is intentionally empty — use a sub-
 ## Existing documentation
 
 - [README.md](../README.md) — package README: usage, examples, API overview
-- [CONTEXT.md](../CONTEXT.md) — domain language glossary
+- [CONTEXT.md](https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-agent.core/CONTEXT.md) — domain language glossary
 - [README.draft.md](../README.draft.md) — v2 direction draft (Commands substrate, tree-mutation control surface)
-- [ADR 0001](../docs/adr/0001-ai-agent-stays-in-workbench.md) — why the package keeps the `.core` naming (superseded on location: it now lives in statewalker-ai)
+- [ADR 0001](https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-agent.core/docs/adr/0001-ai-agent-stays-in-workbench.md) — why the package keeps the `.core` naming (superseded on location: it now lives in statewalker-ai)
