@@ -187,7 +187,7 @@ Each session owns a `ContextWindow` that turns the conversation tree and active 
 - `@statewalker/shared-baseclass`, `@statewalker/shared-ids`: observable state objects and session ids.
 - `zod`: tool input schemas.
 
-More: [openwiki/](openwiki/quickstart.md) (architecture, state, context shaping, loop, tools, models) and [CONTEXT.md](CONTEXT.md) (glossary).
+More: [openwiki/](openwiki/quickstart.md) (architecture, state, context shaping, loop, tools, models) and [CONTEXT.md](https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-agent.core/CONTEXT.md) (glossary).
 
 ## License
 

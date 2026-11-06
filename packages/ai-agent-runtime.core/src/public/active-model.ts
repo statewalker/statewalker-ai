@@ -11,7 +11,8 @@ import type { ActiveModelValue } from "./types.js";
  * sessions inherit `ActiveModel` as their initial `modelRef`; the
  * adapter remains the workspace-singular pointer that determines
  * which provider the agent runtime builds against, but the user-facing
- * selection is per-session. See CONTEXT.md "Models and connections"
+ * selection is per-session. See "Models and connections" in
+ * https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-agent.core/CONTEXT.md
  * for the full contract.
  *
  * Reactive: `notify()` fires on every `set` / `clear`, so subscribers

@@ -11,7 +11,8 @@ export type AiConfigRegistrySource = Pick<AiConfig, "listConnections" | "getProv
  * Resolves a model-reference URI (`connectionId:modelId`) to a runtime model and
  * structurally matches consumers expecting `{ languageModel, textEmbeddingModel }`
  * (e.g. wiki's `LlmProvider`). Held by reference, so connection/key edits take
- * effect without the consumer re-registering. See `docs/adr/0001-model-reference-uri.md`.
+ * effect without the consumer re-registering. See
+ * https://github.com/statewalker/statewalker-ai/blob/c5c32a82ddd8caafeabb1e49477bfb698cab487d/packages/ai-config.core/docs/adr/0001-model-reference-uri.md
  */
 export interface LiveProviderRegistry {
   languageModel(reference: string): ReturnType<ProviderRegistryProvider["languageModel"]>;
