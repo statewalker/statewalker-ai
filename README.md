@@ -79,7 +79,7 @@ Before pushing, run what CI runs: `pnpm lint:check`, `pnpm format:check`, `pnpm 
 
 Internal dependencies use `workspace:^`. External dependencies use the pnpm catalog in `pnpm-workspace.yaml` (`catalog:`; optional peers use `catalog:peers`). Each package ships `dist/` (JavaScript and `.d.ts`) and its TypeScript `src/`; `exports` point at `dist/`.
 
-Packages are published to npm from CI with changesets. After CI passes on `main`, a job writes changesets for packages whose packed contents differ from npm and opens a "chore: version packages" PR; merging it publishes with npm provenance. Renovate opens dependency update PRs.
+Packages are published to npm from CI with changesets. Every merge to `main` releases: after CI passes, the `release` job of `.github/workflows/ci.yml` writes changesets for packages whose packed contents differ from npm, applies them, pushes the "chore: version packages" commit, and the `publish` job publishes what npm lacks with trusted publishing and provenance. Renovate opens dependency update PRs.
 
 ### License
 
