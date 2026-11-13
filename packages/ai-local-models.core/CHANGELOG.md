@@ -1,5 +1,21 @@
 # @statewalker/ai-local-models.core
 
+## 0.6.0
+
+### Minor Changes
+
+- Release of the changes since the last published version:
+  
+  - @statewalker/settings.core ^0.5.0 -> ^0.7.0
+  - @statewalker/workspace.core ^0.5.0 -> ^0.7.0
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+  - @statewalker/ai-agent.core@0.4.3
+  - @statewalker/ai-agent-runtime.core@0.6.0
+
 ## 0.5.2
 
 ### Patch Changes

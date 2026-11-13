@@ -1,5 +1,13 @@
 # @statewalker/ai-agent.core
 
+## 0.4.3
+
+### Patch Changes
+
+- Release of the changes since the last published version:
+  
+  - files changed: README.md
+
 ## 0.4.2
 
 ### Patch Changes
