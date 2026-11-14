@@ -1,5 +1,13 @@
 # @statewalker/ai-local-models.core
 
+## 0.6.1
+
+### Patch Changes
+
+- Release of the changes since the last published version:
+  
+  - @statewalker/ai-local-models.browser ^0.4.2 -> ^0.4.3
+
 ## 0.6.0
 
 ### Minor Changes
