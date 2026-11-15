@@ -50,7 +50,7 @@ catalogs:
       version: 0.38.2
     '@statewalker/fsm-validator':
       specifier: ^0.2.0
-      version: 0.2.1
+      version: 0.2.2
     '@statewalker/settings.core':
       specifier: ^0.7.0
       version: 0.7.0
@@ -225,7 +225,7 @@ importers:
     devDependencies:
       '@statewalker/fsm-validator':
         specifier: 'catalog:'
-        version: 0.2.1
+        version: 0.2.2
       '@statewalker/webrun-files-mem':
         specifier: 'catalog:'
         version: 0.10.5
@@ -1214,8 +1214,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@statewalker/fsm-validator@0.2.1':
-    resolution: {integrity: sha512-XEWAttfcf0KbvbGvKpt3uK4tR1SurKBmto1BaysGSlDqikUO6qD38cOeQRN7ipAK6Yf/SFEp3RGbNPPHH95ASQ==}
+  '@statewalker/fsm-validator@0.2.2':
+    resolution: {integrity: sha512-HpHmCfpCU+0J/eS5zHlv7DdKJsET11vN0G++OnPZf5upRhAy9DwMaupThZKxfIsk0r74YS5lTkqYFn6xqSsKUA==}
 
   '@statewalker/fsm@0.38.2':
     resolution: {integrity: sha512-W346Eifd7eyUWjVGBqY3YGMOg3ad1MlLuWor4LofFh/koBq2IYJOGQSZ4ahYkGOeYD/iOgm8NLkFc6yVilLNdQ==}
@@ -3141,7 +3141,7 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@statewalker/fsm-validator@0.2.1': {}
+  '@statewalker/fsm-validator@0.2.2': {}
 
   '@statewalker/fsm@0.38.2': {}
 
