@@ -1,5 +1,13 @@
 # @statewalker/ai-local-models.browser
 
+## 0.4.3
+
+### Patch Changes
+
+- Release of the changes since the last published version:
+  
+  - @statewalker/ai-agent.core ^0.4.2 -> ^0.4.3
+
 ## 0.4.2
 
 ### Patch Changes
