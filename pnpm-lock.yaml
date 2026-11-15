@@ -56,7 +56,7 @@ catalogs:
       version: 0.7.0
     '@statewalker/shared-baseclass':
       specifier: ^0.1.0
-      version: 0.1.3
+      version: 0.1.4
     '@statewalker/shared-commands':
       specifier: ^0.2.0
       version: 0.2.4
@@ -68,7 +68,7 @@ catalogs:
       version: 0.1.3
     '@statewalker/shared-slots':
       specifier: ^0.2.0
-      version: 0.2.3
+      version: 0.2.4
     '@statewalker/webrun-files':
       specifier: ^0.10.0
       version: 0.10.5
@@ -145,7 +145,7 @@ importers:
         version: link:../ai-agent.core
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
-        version: 0.1.3
+        version: 0.1.4
       '@statewalker/shared-commands':
         specifier: 'catalog:'
         version: 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
@@ -154,7 +154,7 @@ importers:
         version: 0.1.3
       '@statewalker/shared-slots':
         specifier: 'catalog:'
-        version: 0.2.3
+        version: 0.2.4
       '@statewalker/webrun-files':
         specifier: 'catalog:'
         version: 0.10.5
@@ -206,7 +206,7 @@ importers:
         version: 0.38.2
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
-        version: 0.1.3
+        version: 0.1.4
       '@statewalker/shared-ids':
         specifier: 'catalog:'
         version: 0.1.3
@@ -341,7 +341,7 @@ importers:
         version: 0.7.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-baseclass':
         specifier: 'catalog:'
-        version: 0.1.3
+        version: 0.1.4
       '@statewalker/shared-commands':
         specifier: 'catalog:'
         version: 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
@@ -350,7 +350,7 @@ importers:
         version: 0.1.3
       '@statewalker/shared-slots':
         specifier: 'catalog:'
-        version: 0.2.3
+        version: 0.2.4
       '@statewalker/webrun-files':
         specifier: 'catalog:'
         version: 0.10.5
@@ -1226,8 +1226,8 @@ packages:
   '@statewalker/shared-adapters@0.1.3':
     resolution: {integrity: sha512-hmF316wz5IwYcbHpKW42jwYJzssFZPcHgUz+jBOduYSPv+10TC/kA3NlnDjp2rSL+Woq0AJu57AdOJZDW6L6Pg==}
 
-  '@statewalker/shared-baseclass@0.1.3':
-    resolution: {integrity: sha512-/emx12zO5WQvyM/pAlB/lrmlQtgEeWakrUIbzYhCJFYbtDlNq8LcZWqnHbYXNGOYDJlQdPRbb2btNpn99AAEvA==}
+  '@statewalker/shared-baseclass@0.1.4':
+    resolution: {integrity: sha512-wJJj4vK5uM2p6C3rNeqd6kpNLUccoyfKHrLR4ZjZVCz5gxDvcMRG4hTYf9zXgpJUepHqJPpOx7urqn2LS6vljQ==}
 
   '@statewalker/shared-commands@0.2.4':
     resolution: {integrity: sha512-uVumbQjw4jQZaDy+eF7pyqW4pl00MW6xFDsqFnDSTcGe1V3QGItzd9eAmBPA+Hcz+dsoJyePJVu36qYjfhEBtQ==}
@@ -1235,14 +1235,14 @@ packages:
   '@statewalker/shared-ids@0.1.3':
     resolution: {integrity: sha512-EY8dk+PHCSk4KgWf1NQqtzuQJFPlp16VfYqoGtT5I8lXokbQyayWgOHszsie9YZ24Ym9NespuwBr64SiCd7cIA==}
 
-  '@statewalker/shared-logger@0.1.4':
-    resolution: {integrity: sha512-r893XNge/0TVLJgw+gIze7L0B6T1uElBCCBDnJ7dr/hXchFpRYHLKNC1LDx4LrAt0iCmE06djMakznE9WLlynQ==}
+  '@statewalker/shared-logger@0.1.5':
+    resolution: {integrity: sha512-72QhQTOqY7ertXw+dDwwj8HM+NZYG1aAULbyHHQvgMBP0vgMyNFhsI613XWF/JII5Xb3Dwt76iOTH3yzWPKTAw==}
 
   '@statewalker/shared-registry@0.1.3':
     resolution: {integrity: sha512-JUNLccgnxp1x8EJdis6eSDwuS6umSXhhyjP6Ism1Yz+W2DL+jO7EXWS2t3DFTZf6QevBAbX3Hp1poCz9luihBQ==}
 
-  '@statewalker/shared-slots@0.2.3':
-    resolution: {integrity: sha512-uL3wAg4ZKpngNsnBwluQlSbeI2gK5yCRCqeRhARrjKMZnHmeA1Bisv9Vx5EraByl6ZWN+cl3quiwrobxbKEDfA==}
+  '@statewalker/shared-slots@0.2.4':
+    resolution: {integrity: sha512-1U88fXm+kZHY84JKMY0+027EE9CvfBbIX7FryjWHWms98iNuuxIkT1JRilc/UzWQJyXOW3iSa0noneWHppWbCA==}
 
   '@statewalker/webrun-builder@0.4.2':
     resolution: {integrity: sha512-ikrHLSTIqxCA1HwGf2CrH6lcmaCqMtLJIpAmJDzGPXiQ0mDxU1a2zhJaDjYFyp/mm7OYHl13Bsa81CtYYBi7SA==}
@@ -3147,10 +3147,10 @@ snapshots:
 
   '@statewalker/settings.core@0.7.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@statewalker/shared-baseclass': 0.1.3
+      '@statewalker/shared-baseclass': 0.1.4
       '@statewalker/shared-commands': 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@statewalker/shared-registry': 0.1.3
-      '@statewalker/shared-slots': 0.2.3
+      '@statewalker/shared-slots': 0.2.4
       '@statewalker/workspace.core': 0.7.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     transitivePeerDependencies:
       - '@types/json-schema'
@@ -3165,7 +3165,7 @@ snapshots:
 
   '@statewalker/shared-adapters@0.1.3': {}
 
-  '@statewalker/shared-baseclass@0.1.3': {}
+  '@statewalker/shared-baseclass@0.1.4': {}
 
   '@statewalker/shared-commands@0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
@@ -3184,13 +3184,13 @@ snapshots:
 
   '@statewalker/shared-ids@0.1.3': {}
 
-  '@statewalker/shared-logger@0.1.4':
+  '@statewalker/shared-logger@0.1.5':
     dependencies:
       '@statewalker/shared-adapters': 0.1.3
 
   '@statewalker/shared-registry@0.1.3': {}
 
-  '@statewalker/shared-slots@0.2.3': {}
+  '@statewalker/shared-slots@0.2.4': {}
 
   '@statewalker/webrun-builder@0.4.2':
     dependencies:
@@ -3209,9 +3209,9 @@ snapshots:
   '@statewalker/workspace.core@0.7.0(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@statewalker/shared-adapters': 0.1.3
-      '@statewalker/shared-baseclass': 0.1.3
+      '@statewalker/shared-baseclass': 0.1.4
       '@statewalker/shared-commands': 0.2.4(@types/json-schema@7.0.15)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@statewalker/shared-logger': 0.1.4
+      '@statewalker/shared-logger': 0.1.5
       '@statewalker/webrun-builder': 0.4.2
       '@statewalker/webrun-files': 0.10.5
       '@statewalker/webrun-files-composite': 0.10.5
