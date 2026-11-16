@@ -5,8 +5,8 @@ packages:
 catalog:
   "@changesets/cli": "^3.0.3"
   "@json-render/core": ^0.22.0
-  "@statewalker/settings.core": "^0.7.0"
-  "@statewalker/workspace.core": "^0.7.0"
+  "@statewalker/settings.core": "^0.8.0"
+  "@statewalker/workspace.core": "^0.8.0"
   "openai": "^7.27.0"
   "@mlc-ai/web-llm": "^0.2.88"
   "@huggingface/transformers": "^4.3.2"
@@ -30,9 +30,9 @@ catalog:
   "@biomejs/biome": ^2.5.15
   "@statewalker/shared-baseclass": ^0.1.0
   "@statewalker/shared-registry": ^0.1.0
-  "@statewalker/webrun-files": "^0.10.0"
-  "@statewalker/webrun-files-composite": "^0.10.0"
-  "@statewalker/webrun-files-mem": "^0.10.0"
+  "@statewalker/webrun-files": "^0.12.0"
+  "@statewalker/webrun-files-composite": "^0.12.0"
+  "@statewalker/webrun-files-mem": "^0.12.0"
   "@types/node": ^26.6.4
   tsdown: ^0.23.0
   tsx: ^4.23.15
