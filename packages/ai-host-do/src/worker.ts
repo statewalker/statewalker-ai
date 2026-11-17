@@ -3,8 +3,9 @@
 // checks the caller's access token each time.
 import { codedError, statusOf } from "@statewalker/ai-access";
 import { bearerOf, bodyOf, createSessionApi, handleSessionRest } from "@statewalker/ai-sessions";
-import { type Env, issuerOf, workspaceName, workspaceOf } from "./env.js";
+import { agentOf, type Env, issuerOf, workspaceName, workspaceOf } from "./env.js";
 
+export { AgentSession } from "./agent-session-do.js";
 export { Issuer } from "./issuer-do.js";
 export { Workspace } from "./workspace-do.js";
 
@@ -13,7 +14,14 @@ const json = (value: unknown, status = 200) => Response.json(value, { status });
 function sessionApi(env: Env, token: string) {
   const ws = workspaceOf(env);
   return createSessionApi(token, {
-    workspace: { openUserSession: (t) => ws.openUserSession(t) },
+    workspace: {
+      openUserSession: (t) => ws.openUserSession(t),
+      startAgentSession: (t, req) => ws.startAgentSession(t, req),
+    },
+    agent: (id) => {
+      const agent = agentOf(env, id);
+      return { start: (config) => agent.start(config) };
+    },
   });
 }
 

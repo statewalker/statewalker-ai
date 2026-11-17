@@ -17,7 +17,8 @@
     "@statewalker/ai-access": "workspace:*",
     "@statewalker/ai-environment": "workspace:*",
     "@statewalker/ai-flue": "workspace:*",
-    "@statewalker/ai-sessions": "workspace:*"
+    "@statewalker/ai-sessions": "workspace:*",
+    "@statewalker/webrun-files": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

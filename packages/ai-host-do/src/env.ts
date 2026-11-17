@@ -1,3 +1,4 @@
+import type { AgentSession } from "./agent-session-do.js";
 import type { Issuer } from "./issuer-do.js";
 import type { Workspace } from "./workspace-do.js";
 
@@ -5,6 +6,7 @@ import type { Workspace } from "./workspace-do.js";
 export interface Env {
   ISSUER: DurableObjectNamespace<Issuer>;
   WORKSPACE: DurableObjectNamespace<Workspace>;
+  AGENT: DurableObjectNamespace<AgentSession>;
   WORKSPACE_NAME?: string;
   TOKEN_TTL_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
@@ -19,3 +21,5 @@ export const issuerOf = (env: Env) => env.ISSUER.get(env.ISSUER.idFromName("issu
 
 export const workspaceOf = (env: Env) =>
   env.WORKSPACE.get(env.WORKSPACE.idFromName(workspaceName(env)));
+
+export const agentOf = (env: Env, id: string) => env.AGENT.get(env.AGENT.idFromName(id));

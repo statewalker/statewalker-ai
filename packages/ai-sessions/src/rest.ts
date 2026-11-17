@@ -9,6 +9,8 @@ const json = (value: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
+const NOT_A_ROUTE = Symbol("not a route");
+
 /** The bearer token of a request ("" when there is none). */
 export const bearerOf = (request: Request): string =>
   /^Bearer\s+(.+)$/i.exec(request.headers.get("authorization") ?? "")?.[1]?.trim() ?? "";
@@ -25,17 +27,16 @@ export async function handleSessionRest(
   const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (parts[0] !== "v1") return undefined;
   const route = `${request.method} /${parts.slice(1).join("/")}`;
-  const call = (): Promise<unknown> | undefined => {
-    if (route === "GET /me") {
-      const api = open(bearerOf(request));
-      return api.me();
-    }
-    return undefined;
+  const api = () => open(bearerOf(request));
+  const call = async (): Promise<unknown> => {
+    if (route === "GET /me") return api().me();
+    if (route === "POST /sessions") return api().startSession((await bodyOf(request)) as never);
+    return NOT_A_ROUTE;
   };
   try {
-    const result = call();
-    if (!result) return undefined;
-    return json(await result);
+    const result = await call();
+    if (result === NOT_A_ROUTE) return undefined;
+    return json(result);
   } catch (e) {
     return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
   }

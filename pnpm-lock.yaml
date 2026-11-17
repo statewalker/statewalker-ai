@@ -216,6 +216,9 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:*
         version: link:../ai-sessions
+      '@statewalker/webrun-files':
+        specifier: 'catalog:'
+        version: 0.12.0
     devDependencies:
       '@cloudflare/workers-types':
         specifier: 'catalog:'

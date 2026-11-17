@@ -8,10 +8,11 @@
   "durable_objects": {
     "bindings": [
       { "name": "ISSUER", "class_name": "Issuer" },
-      { "name": "WORKSPACE", "class_name": "Workspace" }
+      { "name": "WORKSPACE", "class_name": "Workspace" },
+      { "name": "AGENT", "class_name": "AgentSession" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace"] }],
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace", "AgentSession"] }],
   "vars": {
     // The one workspace of this deployment, until workspaces come from configuration.
     "WORKSPACE_NAME": "default",
