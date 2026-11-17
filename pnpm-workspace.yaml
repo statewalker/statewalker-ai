@@ -28,3 +28,9 @@ overrides:
   # @flue/runtime asks for pi-ai ^1.1.0; 1.5 breaks it (see the catalog).
   "@earendil-works/pi-ai": ~1.4.0
   "@earendil-works/pi-agent-core": ~1.4.0
+  # Security fixes for transitive dependencies whose parents pin a vulnerable version; remove an
+  # entry once its parent ships a release with the fixed version.
+  # pi-ai → openai pins undici 7.x before the fixes.
+  "undici@<7.30.1": ^7.30.1
+  # @flue/runtime pins @modelcontextprotocol/client 2.0.0 (fixed in 2.3.0; the harness uses no MCP yet).
+  "@modelcontextprotocol/client@<2.3.0": ^2.3.0
