@@ -10,6 +10,7 @@ import {
   fakeModel,
   login,
   restClient,
+  rpcClient,
   type SessionClient,
   seed,
   startDeployment,
@@ -27,7 +28,18 @@ const FILES = {
 };
 
 type Connect = (deployment: Deployment, token: string) => Promise<SessionClient>;
-const transports: [string, Connect][] = [["REST", async (d, token) => restClient(d, token)]];
+const sockets: { close(): void }[] = [];
+const transports: [string, Connect][] = [
+  ["REST", async (d, token) => restClient(d, token)],
+  [
+    "RPC",
+    async (d, token) => {
+      const client = await rpcClient(d, token);
+      sockets.push(client);
+      return client;
+    },
+  ],
+];
 
 let model: FakeModel;
 let deployment: Deployment;
@@ -42,6 +54,7 @@ beforeAll(async () => {
   await seed(deployment, ADMIN_KEY, FILES);
 }, 120_000);
 afterAll(async () => {
+  for (const s of sockets) s.close();
   await deployment?.close();
   await model?.close();
 });

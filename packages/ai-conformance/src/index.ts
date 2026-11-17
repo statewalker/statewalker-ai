@@ -2,6 +2,7 @@
 // model, clients of the session API, and the threat-table check.
 export { type Deployment, startDeployment } from "./deployment.js";
 export { type FakeModel, fakeModel, type ModelRequest } from "./model.js";
+export { type RpcSessionClient, rpcClient } from "./rpc-client.js";
 export {
   type AgentSession,
   ApiError,
