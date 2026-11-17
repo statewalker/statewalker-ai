@@ -25,6 +25,9 @@ const FILES = {
   "/alpha/.system/access": JSON.stringify({ ann: "reader" }),
   "/beta/notes.md": "beta only\n",
   "/beta/.system/access": JSON.stringify({ bob: "owner" }),
+  // A sibling whose name starts with "alpha": not part of alpha.
+  "/alphabet/secret.md": "alphabet only\n",
+  "/alphabet/.system/access": JSON.stringify({ ann: "owner" }),
 };
 
 type Connect = (deployment: Deployment, token: string) => Promise<SessionClient>;
@@ -131,12 +134,19 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
   it("refuses the read tool a file outside the session's project", async () => {
     const ann = await as("ann");
     const session = await ann.startSession({ project: "alpha", agent: "tracer" });
-    for (const path of ["/beta/notes.md", "../beta/notes.md", "/alpha/../beta/notes.md"]) {
+    const outside = {
+      "/beta/notes.md": "beta only",
+      "../beta/notes.md": "beta only",
+      "/alpha/../beta/notes.md": "beta only",
+      // ann is an owner there, but this session is alpha's.
+      "/alphabet/secret.md": "alphabet only",
+    };
+    for (const [path, content] of Object.entries(outside)) {
       const turn = await ann.sendMessage(session.id, { content: read(path) });
       const [result] = toolResults(turn);
       expect(result).toMatchObject({ name: "read", isError: true });
       expect(result?.output).toMatch(/EACCES/);
-      expect(JSON.stringify(turn)).not.toContain("beta only");
+      expect(JSON.stringify(turn)).not.toContain(content);
     }
   });
 
