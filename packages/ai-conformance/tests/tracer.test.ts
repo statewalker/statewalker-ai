@@ -139,6 +139,38 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
     }
   });
 
+  it("lists the items of the session's turns, in order", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    expect((await ann.listItems(session.id)).items).toEqual([]);
+    const turn = await ann.sendMessage(session.id, { content: read("/alpha/readme.md") });
+    const { items } = await ann.listItems(session.id);
+    expect(items.map((i) => [i.kind, i.role ?? i.name])).toEqual([
+      ["message", "user"],
+      ["tool_call", "read"],
+      ["tool_result", "read"],
+      ["message", "assistant"],
+    ]);
+    expect(items.every((i) => i.turn === turn.id)).toBe(true);
+    expect(items.map((i) => i.seq)).toEqual([...items.map((i) => i.seq)].sort((a, b) => a - b));
+    expect(items[1]).toMatchObject({ args: { path: "/alpha/readme.md" } });
+    expect(items[2]).toMatchObject({ callId: items[1]?.callId, output: FILES["/alpha/readme.md"] });
+    const second = await ann.sendMessage(session.id, { content: "hello" });
+    const all = (await ann.listItems(session.id)).items;
+    expect(all.slice(0, 4)).toEqual(items);
+    expect(all.slice(4)).toMatchObject([
+      { turn: second.id, kind: "message", role: "user", text: "hello" },
+      { turn: second.id, kind: "message", role: "assistant", text: "OK" },
+    ]);
+  });
+
+  it("refuses to list another user's agent session", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    await expect(ann.listItems(session.id)).resolves.toEqual({ items: [] });
+    await expect((await as("bob")).listItems(session.id)).rejects.toMatchObject({ status: 404 });
+  });
+
   it("refuses a message to another user's agent session", async () => {
     const session = await (await as("ann")).startSession({ project: "alpha", agent: "tracer" });
     const bob = await as("bob");
