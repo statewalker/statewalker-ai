@@ -1,0 +1,8 @@
+{
+  // The smallest deployment the runner can start: it answers who it is and forwards one prompt
+  // to the model it was given. Replaced by the harness's own host once ai-host-do has one.
+  "name": "ai-conformance-smoke-host",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"]
+}
