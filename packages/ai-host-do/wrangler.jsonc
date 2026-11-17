@@ -1,0 +1,24 @@
+{
+  // The harness's deployment: the Worker and its Durable Objects. The conformance suite starts it
+  // on CellB Node in-process (packages/ai-conformance), with its vars overridden for the run.
+  "name": "ai-host-do",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ISSUER", "class_name": "Issuer" },
+      { "name": "WORKSPACE", "class_name": "Workspace" },
+      { "name": "AGENT", "class_name": "AgentSession" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace", "AgentSession"] }],
+  "vars": {
+    // The one workspace of this deployment, until workspaces come from configuration.
+    "WORKSPACE_NAME": "default",
+    "TOKEN_TTL_MS": "3600000"
+    // Test-only, never set in a real deployment:
+    //   DEV_LOGIN = "true"   POST /v1/login {user, ttlMs?} signs a token (stands in for an identity provider)
+    //   ADMIN_KEY = "<key>"  POST /admin/seed {files} with "Authorization: Bearer <key>" writes fixtures
+  }
+}

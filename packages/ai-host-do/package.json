@@ -13,10 +13,18 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@statewalker/ai-access": "workspace:^",
+    "@statewalker/ai-environment": "workspace:^",
+    "@statewalker/ai-flue": "workspace:^",
+    "@statewalker/ai-sessions": "workspace:^",
+    "@statewalker/webrun-files": "catalog:"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@cloudflare/workers-types": "catalog:"
   }
 }

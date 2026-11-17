@@ -13,7 +13,10 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@statewalker/ai-sessions": "workspace:^",
     "@statewalker/cellb": "catalog:",
+    "@statewalker/webrun-biscuit": "catalog:",
+    "@statewalker/webrun-rpc": "catalog:",
     "@types/node": "catalog:",
     "esbuild": "catalog:",
     "typescript": "catalog:",
