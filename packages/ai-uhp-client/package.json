@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-uhp-client",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Remote agent sessions: driving external harnesses behind UHP servers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

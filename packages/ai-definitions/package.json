@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-definitions",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Definitions: the plugin loader, the catalog, the per-role definitions mount, tool definitions in the restricted OpenAPI profile and their projections.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

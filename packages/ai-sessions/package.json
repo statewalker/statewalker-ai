@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-sessions",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Sessions: user and agent sessions, turns, items, summaries, the event log, and the session API as RPC methods.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-host-do",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The hosting layer: the Durable Object classes, REST and RPC entrypoints, and the bindings for CellB, CellD and Workers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

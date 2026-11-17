@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-flue",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The execution core adapter: Flue running on the harness's environment.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

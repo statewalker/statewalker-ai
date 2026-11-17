@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-openai-compat",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The OpenAI projection of the session API: Responses, Conversations and Chat Completions per agent base URL.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

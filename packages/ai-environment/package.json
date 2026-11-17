@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-environment",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The environment contract: files, databases, search, exec, tools, model gateway, store and attenuate; the gated file view, executors, the model gateway and secrets.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

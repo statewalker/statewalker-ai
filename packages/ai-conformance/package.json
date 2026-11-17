@@ -1,0 +1,22 @@
+{
+  "name": "@statewalker/ai-conformance",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The harness's conformance suite: scenarios run against a live deployment through the session API, on every hosting runtime; and the threat-table check.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@statewalker/cellb": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
