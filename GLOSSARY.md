@@ -1,0 +1,235 @@
+# Harness
+
+The AI harness: agents working over a user's files and data, on CellB, CellD and Cloudflare Workers, with every resource reached through capabilities. These terms were decided on the map "AI harness on CellB, CellD and Workers" (statewalker/statewalker-root#70).
+
+## Language
+
+### Data
+
+**Workspace**:
+The tenant unit: one file tree holding projects, named by a user's access token.
+_Avoid_: tenant, organization, workspace mount
+
+**Project**:
+A top-level folder of a workspace, with its own members and roles.
+_Avoid_: repo, space
+
+**Folder**:
+A folder inside a project. Folders and files sit in projects, never directly in the workspace.
+
+**System folder**:
+A project's hidden folder, the root for all project-specific information the harness keeps. It is never part of a file view, and agents reach it only through harness tools.
+_Avoid_: project settings, config folder, dot-folder
+
+**Ignore rules**:
+Patterns, in gitignore syntax, naming files that agents and tools never see.
+
+**Database**:
+A named SQL database belonging to a project, reached by agents and tools only through a capability.
+
+**Tool-private database**:
+A database a plugin's tools keep for themselves in a project, invisible to agents.
+
+### People
+
+**User**:
+An identity that holds an access token.
+_Avoid_: account
+
+**Service account**:
+A non-human user, such as a CI job or a scheduled agent, holding access tokens and project roles like any user.
+_Avoid_: bot, robot user
+
+**Member**:
+A user listed in a project.
+
+**Role**:
+A named set of permissions within one project, held by members.
+_Avoid_: ACL
+
+**Workspace admin**:
+The one workspace-level role, which manages projects and their members without reading their files.
+
+**Role source**:
+The pluggable provider of a project's members and roles.
+
+### Authority
+
+**Token issuer**:
+The part of a deployment that exchanges a proof of identity for an access token.
+_Avoid_: auth server, login service
+
+**Identity provider**:
+An external source of identity that the token issuer trusts, such as an OIDC provider.
+
+**Access token**:
+The short-lived token a user arrives with, naming only the user, the workspace, the issuer and its expiry.
+_Avoid_: key, credential
+
+**Capability**:
+Any narrowed authority the harness hands to a session, agent or tool. It can only narrow what it came from.
+_Avoid_: grant
+
+**Permission**:
+A named action of the form `area.action`, optionally narrowed to a target, which roles hold and capabilities carry.
+_Avoid_: capability key, scope, right
+
+**Secret**:
+A credential kept by the harness at the deployment, workspace, project or user level, used only by the gateway on calls its bindings allow.
+
+**Secret binding**:
+The plugins that may use a secret and the hosts it may be sent to.
+
+### Sessions
+
+**User session**:
+A user's authenticated presence in a workspace, which holds the mode, starts agent sessions and outlives any single access token.
+_Avoid_: system session
+
+**Agent session**:
+One agent's conversation, on an attenuated capability with its own tool set; turns and items belong to it.
+_Avoid_: thread, conversation, chat
+
+**Sub-agent**:
+An agent started by another agent's session, as a child agent session on a narrower capability.
+
+**Remote agent session**:
+An agent session whose core is an external harness reached over UHP: it works on copies of files, and its changes return through the capability.
+
+**Unattended session**:
+An agent session with no user to answer approvals, where every "ask" becomes a deny.
+
+**Message**:
+A user's input to an agent session, delivered as the next turn's prompt, as steering for the running turn, or as an interruption.
+
+**Turn**:
+One round of execution in an agent session, from a message to the agent's settled response.
+_Avoid_: run (accepted as a synonym)
+
+**Item**:
+One message, tool call, tool result, decision or approval in an agent session.
+
+**Summary**:
+A compacted stand-in for a range of a session's items or lower summaries; the items themselves are kept.
+
+**Tail**:
+The most recent items of a session, never compacted; its size is set by count or by tokens.
+
+### Policy
+
+**Mode**:
+A named bundle of permission rules, with a default for unmatched actions, that narrows what an agent session may do; switchable by the user.
+
+**Permission rule**:
+An allow, ask or deny rule matched by permission and target or by tool name.
+_Avoid_: policy, setting
+
+**Approval**:
+A user's decision on an action that an "ask" paused.
+_Avoid_: permission prompt, confirmation
+
+**Risk classifier**:
+The model that decides, in `auto` mode, whether an action no rule or safe class settles is allowed, asked about or denied; it never sees tool results.
+
+### Definitions
+
+**Agent**:
+A Markdown file (`agents/<name>.md`) of always-on instructions whose front matter names the models, skills, tools and sub-agents it asks for.
+_Avoid_: assistant, bot
+
+**Skill**:
+A packaged set of instructions and resources an agent loads on demand, defined by a `SKILL.md` file.
+
+**Tool**:
+A callable function with a schema that an agent can use.
+_Avoid_: plugin, function
+
+**Tool definition**:
+An OpenAPI document, in the harness's restricted profile, describing one tool: its input, its output, and how the harness reaches it.
+
+**Native tool**:
+A tool written as code (TS, JS, Python, …) in a plugin, built by the harness and run in an isolate.
+
+**Harness tool**:
+A tool the harness itself provides, such as managing a project's members; the only way an agent reaches a system folder.
+_Avoid_: built-in tool, internal tool
+
+**MCP server**:
+A server speaking the Model Context Protocol that supplies tools.
+
+### Plugins
+
+**Plugin**:
+A self-contained directory with a manifest and components, as the Agent Plugins specification defines it.
+_Avoid_: package, extension
+
+**Manifest**:
+A plugin's `plugin.json`.
+
+**Component**:
+A skill or an MCP server supplied by a plugin.
+
+**Extension namespace**:
+The reverse-domain identifier under which the harness keeps what the specification does not define, such as agents and tools.
+
+**Extension directory**:
+A plugin's top-level directory named by an extension namespace.
+
+**Plugin source**:
+A folder of agents, skills and native tools, as authored, in any supported layout.
+
+**Plugin loader**:
+What reads plugin sources, in their own layouts, and writes them into the catalog in the standard layout.
+
+**Plugin bundle**:
+A plugin ready to launch, its native tools prebuilt and described by OpenAPI documents, served through the harness.
+_Avoid_: compiled plugin, artifact
+
+**Catalog**:
+The full set of plugins a deployment offers, before any user's permissions filter it.
+
+### Files
+
+**Mount**:
+One file tree attached at a path in a session's file view.
+_Avoid_: volume, drive
+
+**Definitions mount**:
+The read-only folder in each project of a file view (`.agents/` by default) holding the agents, skills and tools the user may use there, generated from the catalog.
+
+**File view**:
+What one session sees: its workspace's visible projects, without system folders or ignored files, plus each project's definitions mount.
+_Avoid_: composite file system
+
+### Execution and models
+
+**Executor**:
+A place where an agent session's code runs, of one kind (shell, isolate, engine or pool), reaching files only through the session's capability.
+
+**Provider**:
+A connection to a model service, configured at some level, whose key is a secret.
+
+**Model alias**:
+A role name such as `fast` that agents ask for, served by whichever configured model the most specific level maps it to.
+
+### Architecture
+
+**Harness**:
+The whole system.
+
+**Execution core**:
+The agent loop that drives a model and tools.
+_Avoid_: runtime, engine
+
+**Environment**:
+Everything an execution core reaches through capabilities: the file view, databases, executors, tools, the model gateway and the store.
+_Avoid_: shell, sandbox
+
+**Definitions**:
+The agents, skills and tools loaded from plugins.
+
+**Conformance suite**:
+The scenarios every hosting runtime must pass, run against a live deployment through the session API.
+
+**Threat table**:
+The list of the harness's security properties, each with the tests that prove it.

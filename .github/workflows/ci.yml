@@ -19,7 +19,7 @@ jobs:
       # A publish step anywhere but the `publish` job below fails.
       release-path: true
       # Each public package's types against npm's latest: a breaking change needs a declared bump
-      # (a minor on 0.x). statewalker-ai is layer L5; the check reads only this project's own packages,
+      # (a minor on 0.x). statewalker-ai is layer L3; the check reads only this project's own packages,
       # so it does not wait for the layers below (statewalker/statewalker-root#69).
       api-diff: true
 

@@ -1,0 +1,20 @@
+{
+  "name": "@statewalker/ai-access",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Access: tokens and the issuer, roles and role sources, the permission language, modes and permission rules, approvals and the risk classifier.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

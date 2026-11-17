@@ -3,46 +3,14 @@ packages:
   - "apps/*"
 
 catalog:
-  "@changesets/cli": "^3.0.3"
-  "@json-render/core": ^0.22.0
-  "@statewalker/settings.core": "^0.8.0"
-  "@statewalker/workspace.core": "^0.8.0"
-  "openai": "^7.27.0"
-  "@mlc-ai/web-llm": "^0.2.88"
-  "@huggingface/transformers": "^4.3.2"
-  "@browser-ai/transformers-js": "^3.0.4"
-  "@modelcontextprotocol/sdk": "^1.32.0"
-  "@ai-sdk/mcp": "^2.0.66"
-  "@ai-sdk/anthropic": "^4.0.71"
-  # 0.1.7 and 0.2.0 on npm leak catalog:/workspace: specifiers and cannot install; 0.2.1 is clean.
-  "@statewalker/shared-ids": ^0.1.0
-  "@statewalker/shared-slots": ^0.2.0
-  "@statewalker/shared-commands": ^0.2.0
-  "@ai-sdk/google": ^4.0.87
-  "@ai-sdk/openai": ^4.0.83
-  "@ai-sdk/provider": ^4.0.21
-  # The tool factories' declarations name types from it (TS2883 without a direct dependency);
-  # exact, the version ai 7.0.127 pins, so there is one copy.
-  "@ai-sdk/provider-utils": "5.0.53"
-  "@statewalker/fsm": ^0.38.1
-  "@statewalker/fsm-validator": ^0.2.0
-  "ai": ^7.0.127
   "@biomejs/biome": ^2.5.15
-  "@statewalker/shared-baseclass": ^0.1.0
-  "@statewalker/shared-registry": ^0.1.0
-  "@statewalker/webrun-files": "^0.12.0"
-  "@statewalker/webrun-files-composite": "^0.12.0"
-  "@statewalker/webrun-files-mem": "^0.12.0"
+  "@changesets/cli": "^3.0.3"
+  # The in-process CellB host the conformance suite runs deployments on; esbuild is its peer.
+  "@statewalker/cellb": 0.8.8
   "@types/node": ^26.6.4
+  esbuild: ^0.28.2
   tsdown: ^0.23.0
   tsx: ^4.23.15
   turbo: ^2.11.7
   typescript: ^7.0.2
   vitest: ^5.0.3
-  zod: ^4.6.5
-
-catalogs:
-  peers:
-    "@browser-ai/transformers-js": "^2.2.2 || ^3.0.4"
-    "@huggingface/transformers": "^4.2.0"
-    "@mlc-ai/web-llm": "^0.2.83"

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.16.1",
-  "description": "Headless AI layer: agent runtime, agent core, model configuration, local models, OpenAI-compatible providers.",
+  "description": "The AI harness: agents over capability-filtered files and data on CellB, CellD and Cloudflare Workers.",
   "bugs": {
     "url": "https://github.com/statewalker/statewalker-ai/issues"
   },
