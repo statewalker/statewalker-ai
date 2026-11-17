@@ -148,6 +148,9 @@ importers:
 
   packages/ai-environment:
     dependencies:
+      '@statewalker/ai-access':
+        specifier: workspace:*
+        version: link:../ai-access
       '@statewalker/webrun-files':
         specifier: 'catalog:'
         version: 0.12.0
@@ -247,6 +250,9 @@ importers:
 
   packages/ai-sessions:
     dependencies:
+      '@statewalker/ai-access':
+        specifier: workspace:*
+        version: link:../ai-access
       '@statewalker/webrun-rpc':
         specifier: 'catalog:'
         version: 0.15.2
