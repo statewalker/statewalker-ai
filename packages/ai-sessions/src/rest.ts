@@ -31,6 +31,11 @@ export async function handleSessionRest(
   const call = async (): Promise<unknown> => {
     if (route === "GET /me") return api().me();
     if (route === "POST /sessions") return api().startSession((await bodyOf(request)) as never);
+    const [, collection, id, sub] = parts;
+    if (collection === "sessions" && id && parts.length === 4) {
+      if (request.method === "POST" && sub === "messages")
+        return api().sendMessage(id, (await bodyOf(request)) as never);
+    }
     return NOT_A_ROUTE;
   };
   try {

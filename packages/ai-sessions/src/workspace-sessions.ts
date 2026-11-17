@@ -66,6 +66,26 @@ export class WorkspaceSessions implements WorkspacePort {
     return { id: row.id, user, workspace: this.#o.workspace, created: Number(row.created) };
   }
 
+  async ownAgentSession(token: string, id: string): Promise<AgentSessionView> {
+    const us = await this.openUserSession(token);
+    const row = this.#one<AgentRow>(
+      "SELECT * FROM agent_sessions WHERE id = ? AND user_session = ?",
+      id,
+      us.id,
+    );
+    if (!row) throw codedError("ENOENT", "no such agent session");
+    return view(row);
+  }
+
+  /** The project and user of an agent session, for the gate (no token: the capability). */
+  sessionFacts(id: string): { project: string; user: string } | undefined {
+    return this.#one<{ project: string; user: string }>(
+      `SELECT a.project AS project, u.user AS user FROM agent_sessions a
+       JOIN user_sessions u ON u.id = a.user_session WHERE a.id = ?`,
+      id,
+    );
+  }
+
   async startAgentSession(
     token: string,
     req: StartSessionRequest,

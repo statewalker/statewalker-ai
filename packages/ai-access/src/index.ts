@@ -3,7 +3,12 @@
 // (statewalker/statewalker-root#111).
 
 export { fromBase64, type Keypair, toBase64 } from "@statewalker/webrun-biscuit";
-export { type StoredRootKey, WorkspaceAuthority } from "./capabilities.js";
+export {
+  type FileAction,
+  type FileRequest,
+  type StoredRootKey,
+  WorkspaceAuthority,
+} from "./capabilities.js";
 export { type CodedError, codedError, codeOf, type ErrorCode, statusOf } from "./errors.js";
 export {
   ACCESS_FILE,

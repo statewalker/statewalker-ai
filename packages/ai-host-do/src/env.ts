@@ -9,6 +9,9 @@ export interface Env {
   AGENT: DurableObjectNamespace<AgentSession>;
   WORKSPACE_NAME?: string;
   TOKEN_TTL_MS?: string;
+  /** The OpenAI-compatible model every agent uses, until the model gateway (a later ticket). */
+  LLM_BASE_URL?: string;
+  LLM_MODEL?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
   DEV_LOGIN?: string;
   /** Test-only: enables POST /admin/seed with this bearer key. */

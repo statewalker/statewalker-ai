@@ -18,6 +18,7 @@
     "@earendil-works/pi-ai": "catalog:",
     "@flue/runtime": "catalog:",
     "@statewalker/ai-environment": "workspace:*",
+    "@statewalker/ai-sessions": "workspace:*",
     "@statewalker/webrun-files": "catalog:",
     "just-bash": "catalog:"
   },

@@ -17,6 +17,38 @@ export interface AgentSessionView {
   created: number;
 }
 
+/** What a turn adds to its session, in order. */
+export interface ItemInput {
+  kind: "message" | "tool_call" | "tool_result";
+  role?: "user" | "assistant";
+  text?: string;
+  callId?: string;
+  name?: string;
+  args?: unknown;
+  output?: string;
+  isError?: boolean;
+}
+
+/** An item as stored and listed: numbered in its session, and tied to its turn. */
+export interface Item extends ItemInput {
+  seq: number;
+  id: string;
+  turn: string;
+}
+
+export interface TurnView {
+  id: string;
+  session: string;
+  status: "completed" | "failed";
+  /** Why a turn failed. */
+  error?: string;
+  items: Item[];
+}
+
+export interface SendMessageRequest {
+  content: string;
+}
+
 export interface StartSessionRequest {
   project: string;
   agent: string;
@@ -28,6 +60,8 @@ export interface SessionApi {
   me(): Promise<UserSessionView>;
   /** Starts an agent session in a project the caller is a member of. */
   startSession(req: StartSessionRequest): Promise<AgentSessionView>;
+  /** Sends a message to one of the caller's agent sessions: it runs one turn. */
+  sendMessage(sessionId: string, req: SendMessageRequest): Promise<TurnView>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -46,11 +80,14 @@ export interface WorkspacePort {
     token: string,
     req: StartSessionRequest,
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }>;
+  /** One of the caller's own agent sessions; ENOENT for any other. */
+  ownAgentSession(token: string, id: string): Promise<AgentSessionView>;
 }
 
 /** One agent session DO's side of the API. */
 export interface AgentPort {
   start(config: AgentSessionConfig): Promise<void>;
+  send(content: string): Promise<TurnView>;
 }
 
 export interface SessionApiPorts {
@@ -76,6 +113,13 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const { session, config } = await ports.workspace.startAgentSession(token, startRequest(req));
       await ports.agent(session.id).start(config);
       return session;
+    },
+    async sendMessage(sessionId, req) {
+      const content = (req as Partial<SendMessageRequest> | undefined)?.content;
+      if (typeof content !== "string" || !content)
+        throw codedError("EINVAL", "content must be a non-empty string");
+      const session = await ports.workspace.ownAgentSession(token, String(sessionId));
+      return ports.agent(session.id).send(content);
     },
   };
 }
