@@ -13,6 +13,7 @@ import {
   type SessionClient,
   seed,
   startDeployment,
+  type Turn,
 } from "../src/index.js";
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
@@ -90,6 +91,63 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
     await expect(ann.startSession({ project: "nowhere", agent: "tracer" })).rejects.toMatchObject({
       status: 403,
     });
+  });
+
+  const read = (path: string) => `CALL read ${JSON.stringify({ path })}`;
+  const toolResults = (turn: Turn) => turn.items.filter((i) => i.kind === "tool_result");
+
+  it("runs a turn in which Flue's read tool returns a project file through the gate", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    const turn = await ann.sendMessage(session.id, { content: read("/alpha/readme.md") });
+    expect(turn).toMatchObject({ session: session.id, status: "completed" });
+    expect(model.requests.at(-2)?.tools).toContain("read");
+    expect(toolResults(turn)).toEqual([
+      expect.objectContaining({ name: "read", isError: false, output: FILES["/alpha/readme.md"] }),
+    ]);
+    expect(turn.items.at(-1)).toMatchObject({
+      kind: "message",
+      role: "assistant",
+      text: `RESULT: ${FILES["/alpha/readme.md"]}`,
+    });
+    // A relative path is the project's: the session's working directory is /alpha.
+    const relative = await ann.sendMessage(session.id, { content: read("readme.md") });
+    expect(toolResults(relative)[0]).toMatchObject({ output: FILES["/alpha/readme.md"] });
+  });
+
+  it("refuses the read tool a file outside the session's project", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    for (const path of ["/beta/notes.md", "../beta/notes.md", "/alpha/../beta/notes.md"]) {
+      const turn = await ann.sendMessage(session.id, { content: read(path) });
+      const [result] = toolResults(turn);
+      expect(result).toMatchObject({ name: "read", isError: true });
+      expect(result?.output).toMatch(/EACCES/);
+      expect(JSON.stringify(turn)).not.toContain("beta only");
+    }
+  });
+
+  it("never lets the read tool see the project's system folder", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    for (const path of ["/alpha/.system/access", ".system/access", "/alpha/x/../.system/access"]) {
+      const turn = await ann.sendMessage(session.id, { content: read(path) });
+      const [result] = toolResults(turn);
+      expect(result).toMatchObject({ name: "read", isError: true });
+      expect(result?.output).toMatch(/ENOENT/);
+      expect(JSON.stringify(turn)).not.toContain("reader");
+    }
+  });
+
+  it("refuses a message to another user's agent session", async () => {
+    const session = await (await as("ann")).startSession({ project: "alpha", agent: "tracer" });
+    const bob = await as("bob");
+    await expect(
+      bob.sendMessage(session.id, { content: read("/alpha/readme.md") }),
+    ).rejects.toMatchObject({ status: 404 });
+    await expect(
+      (await connect(deployment, "")).sendMessage(session.id, { content: "hi" }),
+    ).rejects.toMatchObject({ status: 401 });
   });
 
   it("refuses to start an agent session without a valid access token", async () => {
