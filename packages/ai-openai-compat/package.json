@@ -9,11 +9,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "build": "tsdown",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }
