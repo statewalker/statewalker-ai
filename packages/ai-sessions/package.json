@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@statewalker/ai-access": "workspace:*",
+    "@statewalker/ai-access": "workspace:^",
     "@statewalker/webrun-rpc": "catalog:"
   },
   "devDependencies": {

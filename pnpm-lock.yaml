@@ -109,7 +109,7 @@ importers:
   packages/ai-conformance:
     devDependencies:
       '@statewalker/ai-sessions':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-sessions
       '@statewalker/cellb':
         specifier: 'catalog:'
@@ -151,7 +151,7 @@ importers:
   packages/ai-environment:
     dependencies:
       '@statewalker/ai-access':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-access
       '@statewalker/webrun-files':
         specifier: 'catalog:'
@@ -182,10 +182,10 @@ importers:
         specifier: 'catalog:'
         version: 2.3.0(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(typescript@7.0.2)(undici@7.30.2)(ws@8.23.0)(zod@4.6.7)
       '@statewalker/ai-environment':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-environment
       '@statewalker/ai-sessions':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-sessions
       '@statewalker/webrun-files':
         specifier: 'catalog:'
@@ -210,16 +210,16 @@ importers:
   packages/ai-host-do:
     dependencies:
       '@statewalker/ai-access':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-access
       '@statewalker/ai-environment':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-environment
       '@statewalker/ai-flue':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-flue
       '@statewalker/ai-sessions':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-sessions
       '@statewalker/webrun-files':
         specifier: 'catalog:'
@@ -259,7 +259,7 @@ importers:
   packages/ai-sessions:
     dependencies:
       '@statewalker/ai-access':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../ai-access
       '@statewalker/webrun-rpc':
         specifier: 'catalog:'
