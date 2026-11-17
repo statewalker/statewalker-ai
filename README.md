@@ -28,9 +28,19 @@ packages/
 
 The packages are private skeletons until their tickets give them content; a package's first
 version is published once, by a human, and later releases go through CI (statewalker-root's
-release rules). The previous agent stack (`ai-agent.core`, `ai-agent-runtime.core`,
-`ai-config.core`, `ai-local-models.core`, `ai-local-models.browser`, `ai-openai-compat.core`) is
-removed from this repository; its published versions stay on npm.
+release rules).
+
+The previous agent stack is removed from this repository; its published versions stay on npm.
+What replaces each package:
+
+| Removed package | Replaced by |
+|---|---|
+| `@statewalker/ai-agent.core` | `ai-sessions` (sessions, turns, items, compaction) and `ai-flue` (the agent loop, Flue) |
+| `@statewalker/ai-agent-runtime.core` | `ai-host-do` and `ai-sessions`: the harness is reached through the session API, not a workbench fragment |
+| `@statewalker/ai-config.core` | the model gateway and secrets in `ai-environment` |
+| `@statewalker/ai-local-models.core` | the gateway's `local` provider in `ai-environment` |
+| `@statewalker/ai-local-models.browser` | the gateway's `local` provider in `ai-environment` (browser engines) |
+| `@statewalker/ai-openai-compat.core` | `ai-openai-compat` |
 
 ## How to run it
 

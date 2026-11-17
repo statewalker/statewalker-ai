@@ -43,7 +43,13 @@ export async function startDeployment(
   delete config.$schema;
   const tmp = mkdtempSync(join(tmpdir(), "ai-conformance-"));
   writeFileSync(join(tmp, "wrangler.json"), JSON.stringify(config));
-  const project = await loadProject(tmp, { data: join(tmp, "data") });
+  let project: Awaited<ReturnType<typeof loadProject>>;
+  try {
+    project = await loadProject(tmp, { data: join(tmp, "data") });
+  } catch (e) {
+    rmSync(tmp, { recursive: true, force: true });
+    throw e;
+  }
   return {
     fetch: (path, init) => project.fetch(new Request(new URL(path, "http://localhost"), init)),
     close: async () => {

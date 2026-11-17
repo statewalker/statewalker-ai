@@ -17,7 +17,8 @@ export function parseThreatTable(markdown: string): ThreatRow[] {
       .match(/^\|(.*)\|$/)?.[1]
       ?.split("|")
       .map((c) => c.trim());
-    if (!cells || cells.length < 2) continue;
+    // A row with one cell is still a row: it names no test, and the check reports it.
+    if (!cells) continue;
     const [property = "", tests = ""] = cells;
     if (/^-+$/.test(property.replace(/:/g, "")) || property === "Property") continue;
     rows.push({
@@ -40,7 +41,34 @@ export function checkThreatTable(markdown: string, titlesOf: (pkg: string) => st
   return problems;
 }
 
-/** The titles of every `it`/`test`/`describe` in the test files under a folder. */
+/**
+ * `it(...)` / `test(...)`, also `.only`, `.concurrent`, `.sequential` and `.each([...])` forms.
+ * Not `describe` (a group title proves nothing), nor `.skip` / `.todo` (they don't run).
+ */
+const TEST_CALL =
+  /\b(?:it|test)(?:\.(?:only|concurrent|sequential))*(?:\.each\([^)]*\))?\(\s*(["'`])((?:(?!\1).)+)\1/g;
+
+/** The source with `//` and block comments blanked, leaving strings alone. */
+function withoutComments(source: string): string {
+  let out = "";
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const start = i;
+      for (i++; i < source.length && source[i] !== c; i++) if (source[i] === "\\") i++;
+      out += source.slice(start, i + 1);
+    } else if (c === "/" && source[i + 1] === "/") {
+      while (i < source.length && source[i] !== "\n") i++;
+      out += "\n";
+    } else if (c === "/" && source[i + 1] === "*") {
+      i = source.indexOf("*/", i + 2) + 1;
+      if (i === 0) break;
+    } else out += c;
+  }
+  return out;
+}
+
+/** The titles of every running `it` / `test` in the test files under a folder. */
 export function collectTestTitles(dir: URL): string[] {
   const titles: string[] = [];
   const walk = (d: URL) => {
@@ -54,9 +82,7 @@ export function collectTestTitles(dir: URL): string[] {
       const u = new URL(name, d);
       if (statSync(u).isDirectory()) walk(new URL(`${name}/`, d));
       else if (/\.test\.(ts|mts|js|mjs)$/.test(name))
-        for (const m of readFileSync(u, "utf8").matchAll(
-          /\b(?:it|test|describe)\(\s*(["'`])((?:(?!\1).)+)\1/g,
-        ))
+        for (const m of withoutComments(readFileSync(u, "utf8")).matchAll(TEST_CALL))
           titles.push(String(m[2]));
     }
   };
