@@ -70,4 +70,31 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
     const expired = await login(deployment, "ann", { ttlMs: -1000 });
     await expect((await connect(deployment, expired)).me()).rejects.toMatchObject({ status: 401 });
   });
+
+  it("starts an agent session in a project the user is a member of", async () => {
+    const session = await (await as("ann")).startSession({ project: "alpha", agent: "tracer" });
+    expect(session).toMatchObject({ id: expect.any(String), project: "alpha", agent: "tracer" });
+    // The session's capability stays on the server.
+    expect(JSON.stringify(session)).not.toMatch(/capability/i);
+  });
+
+  it("refuses to start an agent session for a user not in the project's access file", async () => {
+    const bob = await as("bob");
+    await expect(bob.startSession({ project: "alpha", agent: "tracer" })).rejects.toMatchObject({
+      status: 403,
+    });
+    const ann = await as("ann");
+    await expect(ann.startSession({ project: "beta", agent: "tracer" })).rejects.toMatchObject({
+      status: 403,
+    });
+    await expect(ann.startSession({ project: "nowhere", agent: "tracer" })).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
+  it("refuses to start an agent session without a valid access token", async () => {
+    await expect(
+      (await connect(deployment, "")).startSession({ project: "alpha", agent: "tracer" }),
+    ).rejects.toMatchObject({ status: 401 });
+  });
 });
