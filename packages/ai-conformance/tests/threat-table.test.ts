@@ -1,5 +1,8 @@
 // The threat table (docs/security.md): every row names the tests that prove it, and they exist.
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { checkThreatTable, collectTestTitles, parseThreatTable } from "../src/index.js";
 
@@ -36,6 +39,35 @@ describe("threat table", () => {
       () => ["something else"],
     );
     expect(problems).toEqual([`'Isolation': no test "isolates workspaces" in ai-access`]);
+  });
+
+  it("fails a row with a single cell, which names no test", () => {
+    expect(checkThreatTable("| Property | Tests |\n|---|---|\n| Lonely |", () => [])).toEqual([
+      "'Lonely' names no test",
+    ]);
+  });
+
+  it("counts only it/test titles, not describe groups or commented-out tests", () => {
+    const dir = mkdtempSync(join(tmpdir(), "threat-table-"));
+    try {
+      writeFileSync(
+        join(dir, "a.test.ts"),
+        [
+          'describe("a group", () => {',
+          '  it("a real test", () => {});',
+          '  test.each([1])("an each test %s", () => {});',
+          '  // it("a commented test", () => {});',
+          '  /* test("a block-commented test", () => {}); */',
+          "});",
+        ].join("\n"),
+      );
+      expect(collectTestTitles(pathToFileURL(`${dir}/`))).toEqual([
+        "a real test",
+        "an each test %s",
+      ]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("holds for this repository's docs/security.md", () => {
