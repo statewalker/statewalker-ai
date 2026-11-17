@@ -35,6 +35,7 @@ export async function handleSessionRest(
     if (collection === "sessions" && id && parts.length === 4) {
       if (request.method === "POST" && sub === "messages")
         return api().sendMessage(id, (await bodyOf(request)) as never);
+      if (request.method === "GET" && sub === "items") return api().listItems(id);
     }
     return NOT_A_ROUTE;
   };

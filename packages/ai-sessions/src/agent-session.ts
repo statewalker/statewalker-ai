@@ -71,6 +71,11 @@ export class AgentSessionCore implements AgentPort {
     return (rows as unknown as ItemRow[]).map(itemOf);
   }
 
+  /** Every item of the session, in order. */
+  async items(): Promise<Item[]> {
+    return this.#items();
+  }
+
   /** One turn: the user's message, then what the core does with it. */
   async send(content: string): Promise<TurnView> {
     const config = this.config();

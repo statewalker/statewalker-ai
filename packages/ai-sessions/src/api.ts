@@ -62,6 +62,8 @@ export interface SessionApi {
   startSession(req: StartSessionRequest): Promise<AgentSessionView>;
   /** Sends a message to one of the caller's agent sessions: it runs one turn. */
   sendMessage(sessionId: string, req: SendMessageRequest): Promise<TurnView>;
+  /** The items of one of the caller's agent sessions, in order. */
+  listItems(sessionId: string): Promise<{ items: Item[] }>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -88,6 +90,7 @@ export interface WorkspacePort {
 export interface AgentPort {
   start(config: AgentSessionConfig): Promise<void>;
   send(content: string): Promise<TurnView>;
+  items(): Promise<Item[]>;
 }
 
 export interface SessionApiPorts {
@@ -120,6 +123,10 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
         throw codedError("EINVAL", "content must be a non-empty string");
       const session = await ports.workspace.ownAgentSession(token, String(sessionId));
       return ports.agent(session.id).send(content);
+    },
+    async listItems(sessionId) {
+      const session = await ports.workspace.ownAgentSession(token, String(sessionId));
+      return { items: await ports.agent(session.id).items() };
     },
   };
 }

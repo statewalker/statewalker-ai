@@ -24,6 +24,7 @@ function sessionApi(env: Env, token: string) {
       return {
         start: (config) => agent.start(config),
         send: (content) => agent.send(content),
+        items: () => agent.items(),
       };
     },
   });

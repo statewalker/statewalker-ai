@@ -38,4 +38,8 @@ export class AgentSession extends DurableObject<Env> {
   send(content: string) {
     return this.#core.send(content);
   }
+
+  items() {
+    return this.#core.items();
+  }
 }
