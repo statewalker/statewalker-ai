@@ -115,6 +115,16 @@ A compacted stand-in for a range of a session's items or lower summaries; the it
 **Tail**:
 The most recent items of a session, never compacted; its size is set by count or by tokens.
 
+### Memory
+
+**Project memory**:
+What a project remembers across agent sessions, shared by every member and every agent working in it.
+_Avoid_: place memory, workspace memory
+
+**Agent memory**:
+What one agent remembers in one project across all its sessions, whoever started them. It is shared like project memory and grants no access of its own.
+_Avoid_: virtual actor, persona, role memory
+
 ### Policy
 
 **Mode**:
