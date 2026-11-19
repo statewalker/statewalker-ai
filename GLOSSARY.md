@@ -125,11 +125,14 @@ _Avoid_: place memory, workspace memory
 What one agent remembers in one project across all its sessions, whoever started them. It is shared like project memory and grants no access of its own.
 _Avoid_: virtual actor, persona, role memory
 
+**Profile**:
+A user's own folder in the deployment, holding their user preferences and their user memory for every project they work in. It belongs to the user, not to any workspace.
+
 **User memory**:
 What the agents learn about one user in one project. Only that user's sessions see it.
 
 **User preferences**:
-What one user explicitly asks every agent to follow, in every project of a workspace, such as language or tone. Only the user writes them; agents never learn into them.
+What one user explicitly asks every agent to follow, in every workspace and project, such as language or tone. Only the user writes them; agents never learn into them.
 _Avoid_: user memory, global memory, profile
 
 **Memory tool**:
