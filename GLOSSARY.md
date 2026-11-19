@@ -132,6 +132,15 @@ What the agents learn about one user in one project. Only that user's sessions s
 What one user explicitly asks every agent to follow, in every project of a workspace, such as language or tone. Only the user writes them; agents never learn into them.
 _Avoid_: user memory, global memory, profile
 
+**Memory tool**:
+The harness tool through which agents read and change every kind of memory. Memory never appears in a file view.
+
+**Memory entry**:
+One short item in a kind of memory, all of which are shown to the agent at the start of a session; it may refer to attachments.
+
+**Memory attachment**:
+A longer file that memory entries refer to, read on demand rather than shown at the start.
+
 ### Policy
 
 **Mode**:
