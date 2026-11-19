@@ -28,8 +28,10 @@ Memories belong to **places** and to **actors**:
   `reviewer` in project X, whichever user started it. It doesn't follow the part into other
   projects, and it holds no authority: in each performance it acts under the capability of the
   session that started it. This is **agent memory**.
-- **The real actor remembers.** A user's own memories are individual and are not shared with the
-  other actors. This is still being decided (statewalker/statewalker-root#157).
+- **The real actor remembers.** A user's own memories are individual, not shared with the other
+  actors. What an actor learns in a scene stays in that scene: this is **user memory**. Only what
+  the actor explicitly says about themselves goes with them from scene to scene: this is **user
+  preferences**.
 
 ## Where the picture stops
 
