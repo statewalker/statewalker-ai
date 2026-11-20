@@ -115,6 +115,10 @@ A compacted stand-in for a range of a session's items or lower summaries; the it
 **Tail**:
 The most recent items of a session, never compacted; its size is set by count or by tokens.
 
+**Session table of contents**:
+A session's topics, each pointing at the items that cover it: a view of the session by subject rather than by time. It is written while the session is summarized, belongs to the session, and is not memory.
+_Avoid_: session memory, index
+
 ### Memory
 
 **Project memory**:
