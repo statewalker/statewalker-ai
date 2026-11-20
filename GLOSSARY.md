@@ -115,6 +115,16 @@ A compacted stand-in for a range of a session's items or lower summaries; the it
 **Tail**:
 The most recent items of a session, never compacted; its size is set by count or by tokens.
 
+**Fork**:
+Starting a new agent session from another session's history up to the end of one of its turns; both then continue independently.
+
+**Rewind**:
+Moving an agent session back to before one of its turns, so the next message continues from there. The turns after it are kept as an inactive branch and can be returned to.
+_Avoid_: undo, truncate, delete
+
+**Branch**:
+One line of turns in an agent session; the session's turns form a tree, and the active branch is the path from its first turn to its head.
+
 **Session table of contents**:
 A session's topics, each pointing at the items that cover it: a view of the session by subject rather than by time. It is written while the session is summarized, belongs to the session, and is not memory.
 _Avoid_: session memory, index
