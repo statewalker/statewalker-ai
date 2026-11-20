@@ -155,6 +155,19 @@ Closing a memory entry so it is no longer shown or searched, while its earlier v
 Removing a memory entry together with its history and trace. Only a person erases, never an agent.
 _Avoid_: delete (ambiguous between forget and erase)
 
+### Usage and limits
+
+**Meter**:
+One kind of resource the harness counts, in its own unit, such as model spend, tool calls or storage.
+_Avoid_: credit, quota unit
+
+**Usage record**:
+One metered event, naming the workspace, project, user, session and turn it belongs to.
+
+**Limit**:
+A cap on one meter at one level (deployment, workspace, project, user in a workspace, user across the deployment, or agent session), optionally per period. A narrower level can only lower it; the tightest limit applies.
+_Avoid_: quota (as a separate concept), budget (except for model spend)
+
 ### Policy
 
 **Mode**:
