@@ -148,6 +148,13 @@ One short item in a kind of memory, all of which are shown to the agent at the s
 **Memory attachment**:
 A longer file that memory entries refer to, read on demand rather than shown at the start.
 
+**Forget**:
+Closing a memory entry so it is no longer shown or searched, while its earlier versions and a trace of the forgetting remain. Agents may forget.
+
+**Erase**:
+Removing a memory entry together with its history and trace. Only a person erases, never an agent.
+_Avoid_: delete (ambiguous between forget and erase)
+
 ### Policy
 
 **Mode**:
