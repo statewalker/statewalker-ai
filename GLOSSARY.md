@@ -126,7 +126,7 @@ What a project remembers across agent sessions, shared by every member and every
 _Avoid_: place memory, workspace memory
 
 **Agent memory**:
-What one agent remembers in one project across all its sessions, whoever started them. It is shared like project memory and grants no access of its own.
+What one agent remembers in one project across all its sessions, whoever started them. It is shared by every member of the project, used only by that agent's sessions, and grants no access of its own.
 _Avoid_: virtual actor, persona, role memory
 
 **Profile**:
