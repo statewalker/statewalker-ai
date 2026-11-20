@@ -115,6 +115,46 @@ A compacted stand-in for a range of a session's items or lower summaries; the it
 **Tail**:
 The most recent items of a session, never compacted; its size is set by count or by tokens.
 
+**Session table of contents**:
+A session's topics, each pointing at the items that cover it: a view of the session by subject rather than by time. It is written while the session is summarized, belongs to the session, and is not memory.
+_Avoid_: session memory, index
+
+### Memory
+
+**Project memory**:
+What a project remembers across agent sessions, shared by every member and every agent working in it.
+_Avoid_: place memory, workspace memory
+
+**Agent memory**:
+What one agent remembers in one project across all its sessions, whoever started them. It is shared by every member of the project, used only by that agent's sessions, and grants no access of its own.
+_Avoid_: virtual actor, persona, role memory
+
+**Profile**:
+A user's own folder in the deployment, holding their user preferences and their user memory for every project they work in. It belongs to the user, not to any workspace.
+
+**User memory**:
+What the agents learn about one user in one project. Only that user's sessions see it.
+
+**User preferences**:
+What one user explicitly asks every agent to follow, in every workspace and project, such as language or tone. Only the user writes them; agents never learn into them.
+_Avoid_: user memory, global memory, profile
+
+**Memory tool**:
+The harness tool through which agents read and change every kind of memory. Memory never appears in a file view.
+
+**Memory entry**:
+One short item in a kind of memory, all of which are shown to the agent at the start of a session; it may refer to attachments.
+
+**Memory attachment**:
+A longer file that memory entries refer to, read on demand rather than shown at the start.
+
+**Forget**:
+Closing a memory entry so it is no longer shown or searched, while its earlier versions and a trace of the forgetting remain. Agents may forget.
+
+**Erase**:
+Removing a memory entry together with its history and trace. Only a person erases, never an agent.
+_Avoid_: delete (ambiguous between forget and erase)
+
 ### Policy
 
 **Mode**:
