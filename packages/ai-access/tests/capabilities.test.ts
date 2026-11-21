@@ -3,10 +3,11 @@
 // and session from the capability alone and authorizes each file action.
 import { Biscuit } from "@statewalker/webrun-biscuit";
 import { describe, expect, it } from "vitest";
-import { attenuateForAgentSession, WorkspaceAuthority } from "../src/index.js";
+import { attenuateForAgentSession, resolveRoles, WorkspaceAuthority } from "../src/index.js";
 
 const authority = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
 const grant = { session: "as-1", project: "alpha", agent: "reviewer", mode: "default" };
+const roles = (...held: string[]) => resolveRoles(held, {}).grants;
 
 describe("capabilities", () => {
   it("reads an agent session's user, project and session from its capability alone", async () => {
@@ -17,7 +18,7 @@ describe("capabilities", () => {
         action: "read",
         path: "/alpha/readme.md",
         project: "alpha",
-        role: "reader",
+        grants: roles("reader"),
       }),
     ).resolves.toBeUndefined();
   });
@@ -36,7 +37,7 @@ describe("capabilities", () => {
           action: "read",
           path: "/beta/notes.md",
           project: "beta",
-          role: "owner",
+          grants: roles("owner"),
         }),
       ).rejects.toThrow(/EACCES/);
   });
@@ -48,6 +49,19 @@ describe("capabilities", () => {
     const foreign = attenuateForAgentSession(elsewhere.mintUser("ann"), grant);
     await expect(authority.agentSessionOf(foreign)).rejects.toThrow(/EACCES/);
     await expect(authority.userOf(foreign)).rejects.toThrow(/EACCES/);
+  });
+
+  it("authorizes each file action by the permissions the member's roles grant at that moment", async () => {
+    const capability = attenuateForAgentSession(authority.mintUser("ann"), grant);
+    const custom = resolveRoles(["drafts"], { drafts: "files.read:/drafts/**" }).grants;
+    const at = (action: "read" | "list", path: string, grants: typeof custom) =>
+      authority.authorize(capability, { action, path, project: "alpha", grants });
+    await expect(at("read", "/alpha/drafts/a.md", custom)).resolves.toBeUndefined();
+    await expect(at("read", "/alpha/readme.md", custom)).rejects.toThrow(/EACCES/);
+    await expect(at("list", "/alpha/drafts", custom)).rejects.toThrow(/EACCES/);
+    await expect(at("list", "/alpha", roles("reader"))).resolves.toBeUndefined();
+    await expect(at("read", "/alpha/readme.md", [])).rejects.toThrow(/EACCES/);
+    await expect(at("read", "/alpha/readme.md", roles("admin"))).rejects.toThrow(/EACCES/);
   });
 
   it("mints no capability for a user name that is not one path segment", () => {

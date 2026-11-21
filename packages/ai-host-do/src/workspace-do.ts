@@ -1,4 +1,5 @@
-// One Workspace DO per workspace: the store, the role source (each project's access file), the
+// One Workspace DO per workspace: the store, the role sources (each project's access file and the
+// workspace's SQL, as the deployment's ROLE_SOURCES var chains them), the
 // workspace's root key (it never leaves this DO), and the gate every file call of every agent
 // session goes through. Its name is the workspace. It mints a user capability for a user session
 // that a User DO opens with the user's access token, and the gate reads user, project and session
@@ -6,10 +7,14 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
-  accessFilePath,
+  accessOf,
+  chainRoleSources,
   codedError,
   DEFAULT_SYSTEM_FOLDER,
-  parseAccessFile,
+  fileRoleSource,
+  type RoleEntries,
+  type RoleSource,
+  SqlRoleSource,
   type StoredRootKey,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
@@ -27,6 +32,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #name: string;
   readonly #store: SqlFiles;
   readonly #authority: WorkspaceAuthority;
+  readonly #sqlRoles: SqlRoleSource;
+  readonly #roles: RoleSource;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -46,6 +53,15 @@ export class Workspace extends DurableObject<Env> {
       sql.exec("INSERT INTO ws_keys VALUES ('root', ?)", JSON.stringify(root));
     }
     this.#authority = WorkspaceAuthority.fromStored(root);
+    this.#sqlRoles = new SqlRoleSource(sql);
+    const files = fileRoleSource((path) => tryReadText(this.#store, path), DEFAULT_SYSTEM_FOLDER);
+    const sources: RoleSource[] = [];
+    for (const name of (env.ROLE_SOURCES || "file").split(",").map((s) => s.trim())) {
+      if (name === "file") sources.push(files);
+      else if (name === "sql") sources.push(this.#sqlRoles);
+      else if (name) throw codedError("EIO", `unknown role source '${name}'`);
+    }
+    this.#roles = chainRoleSources(sources);
   }
 
   /**
@@ -59,33 +75,59 @@ export class Workspace extends DurableObject<Env> {
     return this.#authority.mintUser(claims.user);
   }
 
-  /** The role in a project of the user a user capability names; EACCES for a non-member. */
-  async memberRole(capability: string, project: string): Promise<string> {
+  /**
+   * The roles in a project of the user a user capability names, from the role sources now;
+   * EACCES for a non-member (membership gives visibility).
+   */
+  async memberRoles(capability: string, project: string): Promise<string[]> {
     const user = await this.#authority.userOf(capability);
-    const role = await this.#roleOf(project, user);
-    if (!role) throw codedError("EACCES", `${user} is not a member of ${project}`);
-    return role;
+    const access = await this.#access(project, user);
+    if (!access.member) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    return access.grants.map((g) => g.role);
   }
 
-  #roleOf(project: string, user: string) {
-    return tryReadText(this.#store, accessFilePath(project)).then((t) => parseAccessFile(t)[user]);
+  async #access(project: string, user: string) {
+    const access = await accessOf(this.#roles, project, user);
+    // Unknown roles, permissions and cycles are reported here and grant nothing.
+    if (access.problems.length)
+      console.warn(`roles of ${user} in ${project}: ${access.problems.join("; ")}`);
+    return access;
   }
 
   /**
    * The gate: one file call of the agent session the capability names, decided now. User and
-   * project come from the capability itself; the role is read from the access file at this
-   * moment, never fixed at the session's start.
+   * project come from the capability itself; the user's roles are read from the role sources at
+   * this moment, never fixed at the session's start, so a demotion reaches the next call.
    */
   async fileCall(capability: string, call: FileCall): Promise<unknown> {
     const facts = await this.#authority.agentSessionOf(capability);
-    const role = await this.#roleOf(facts.project, facts.user);
+    const { grants } = await this.#access(facts.project, facts.user);
     const view = gatedFiles(this.#store, {
       project: facts.project,
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       authorize: (action, path) =>
-        this.#authority.authorize(capability, { action, path, project: facts.project, role }),
+        this.#authority.authorize(capability, { action, path, project: facts.project, grants }),
     });
     return answerFileCall(view, call);
+  }
+
+  /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): writes the workspace's SQL role
+   * source. Harness tools, allowed to owners, replace this in a later ticket.
+   */
+  async setAccess(fixture: {
+    project?: string;
+    members?: Record<string, string[]>;
+    roles?: Record<string, RoleEntries | null>;
+    workspaceRoles?: Record<string, string[]>;
+  }): Promise<void> {
+    const { project } = fixture;
+    if ((fixture.members || fixture.roles) && !project)
+      throw codedError("EINVAL", "members and roles belong to a project");
+    if (project && fixture.members) this.#sqlRoles.setMembers(project, fixture.members);
+    if (project && fixture.roles) this.#sqlRoles.setRoles(project, fixture.roles);
+    for (const [user, roles] of Object.entries(fixture.workspaceRoles ?? {}))
+      this.#sqlRoles.setWorkspaceRoles(user, roles);
   }
 
   /** Test-only fixtures (the Worker admits this only with the ADMIN_KEY). */
