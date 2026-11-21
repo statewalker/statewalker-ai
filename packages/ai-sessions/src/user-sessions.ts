@@ -20,8 +20,8 @@ import type { SqlLike } from "./sql.js";
 export interface WorkspaceGrants {
   /** The user capability of the access token's user, signed by the workspace's root key. */
   userCapability(token: string): Promise<string>;
-  /** The user's role in the project now; EACCES for a non-member. */
-  memberRole(userCapability: string, project: string): Promise<string>;
+  /** The user's roles in the project now; EACCES for a non-member. */
+  memberRoles(userCapability: string, project: string): Promise<string[]>;
 }
 
 export interface UserSessionsOptions {
@@ -143,7 +143,7 @@ export class UserSessions implements UserPort {
     req: StartSessionRequest,
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
     const us = await this.#userSession(token);
-    await this.#o.workspace(us.workspace).memberRole(us.capability, req.project);
+    await this.#o.workspace(us.workspace).memberRoles(us.capability, req.project);
     const row: AgentRow = {
       id: `as-${crypto.randomUUID()}`,
       workspace: us.workspace,

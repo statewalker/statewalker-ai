@@ -27,7 +27,7 @@ export class User extends DurableObject<Env> {
         const ws = workspaceOf(env, name);
         return {
           userCapability: (token) => ws.userCapability(token),
-          memberRole: (capability, project) => ws.memberRole(capability, project),
+          memberRoles: (capability, project) => ws.memberRoles(capability, project),
         };
       },
     });

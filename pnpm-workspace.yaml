@@ -18,6 +18,8 @@ catalog:
   "@statewalker/webrun-rpc": ^0.15.2
   "@types/node": ^26.6.4
   esbuild: ^0.28.2
+  # Property-based tests (the spec names it for ai-access).
+  fast-check: 4.10.2
   just-bash: ^3.6.0
   tsdown: ^0.23.0
   tsx: ^4.23.15
