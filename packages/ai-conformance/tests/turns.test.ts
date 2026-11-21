@@ -316,6 +316,82 @@ describe.each(transports)("turns over %s", (name, connect) => {
     expect(tail.events.map((e) => e.seq)).toEqual([4, 5]);
     await expect((await as("bob")).readEvents(session.id)).rejects.toMatchObject({ status: 404 });
   });
+
+  it("searches the caller's sessions by metadata and status", async () => {
+    const ann = await as("ann");
+    const tag = `search-${t}-${Date.now()}`;
+    const red = await ann.startSession({ project: "alpha", agent: "a", metadata: { tag, color: "red" } });
+    const blue = await ann.startSession({ project: "alpha", agent: "a", metadata: { tag, color: "blue" } });
+    expect(red.metadata).toEqual({ tag, color: "red" });
+    const ids = async (q: Parameters<SessionClient["listSessions"]>[0]) =>
+      (await ann.listSessions(q)).sessions.map((s) => s.id);
+    expect(await ids({ metadata: { tag } })).toEqual([red.id, blue.id]);
+    expect(await ids({ metadata: { tag, color: "blue" } })).toEqual([blue.id]);
+    expect(await ann.updateSession(red.id, { metadata: { tag, color: "green" } })).toMatchObject({
+      metadata: { tag, color: "green" },
+    });
+    expect(await ids({ metadata: { color: "green", tag } })).toEqual([red.id]);
+    const h = hold();
+    const running = await ann.postMessage(blue.id, { content: `HOLD ${h}` });
+    await model.held(h);
+    expect(await ids({ metadata: { tag }, status: "running" })).toEqual([blue.id]);
+    expect(await ids({ metadata: { tag }, status: "idle" })).toEqual([red.id]);
+    expect(await ann.getSession(blue.id)).toMatchObject({ id: blue.id, status: "running" });
+    model.release(h);
+    await ann.waitTurn(running);
+    // Another user's search never finds them; bad metadata is refused.
+    expect((await (await as("bob")).listSessions({ metadata: { tag } })).sessions).toEqual([]);
+    await expect(
+      ann.startSession({ project: "alpha", agent: "a", metadata: { "bad key": "x" } }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(
+      ann.updateSession(red.id, { metadata: { n: 1 as never } }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect((await as("bob")).updateSession(red.id, { metadata: {} })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+
+  it("archives a session: its turns end, its history is kept, and it takes no more messages", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a", metadata: { kept: "yes" } });
+    const h = hold();
+    const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
+    await model.held(h);
+    const queued = await ann.postMessage(session.id, { content: "queued" });
+    const archived = await ann.archiveSession(session.id);
+    expect(archived).toMatchObject({ id: session.id, archived: expect.any(Number), status: "idle" });
+    expect(await ann.getTurn(running.turn_id)).toMatchObject({ status: "cancelled" });
+    expect(await ann.getTurn(queued.turn_id)).toMatchObject({ status: "cancelled" });
+    await expect(ann.postMessage(session.id, { content: "more" })).rejects.toMatchObject({
+      status: 409,
+    });
+    expect((await ann.listItems(session.id)).items.map((i) => i.text)).toEqual([`HOLD ${h}`]);
+    expect((await ann.readEvents(session.id)).events.at(-1)).toMatchObject({ type: "session.archived" });
+    const listed = (await ann.listSessions()).sessions.map((s) => s.id);
+    expect(listed).not.toContain(session.id);
+    expect((await ann.listSessions({ status: "archived" })).sessions.map((s) => s.id)).toContain(
+      session.id,
+    );
+    model.release(h);
+  });
+
+  it("deletes a session and its history, but not while it runs", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const h = hold();
+    const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
+    await model.held(h);
+    await expect(ann.deleteSession(session.id)).rejects.toMatchObject({ status: 409 });
+    await expect((await as("bob")).deleteSession(session.id)).rejects.toMatchObject({ status: 404 });
+    model.release(h);
+    await ann.waitTurn(running);
+    expect(await ann.deleteSession(session.id)).toEqual({ deleted: true });
+    await expect(ann.getSession(session.id)).rejects.toMatchObject({ status: 404 });
+    await expect(ann.listItems(session.id)).rejects.toMatchObject({ status: 404 });
+    await expect(ann.getTurn(running.turn_id)).rejects.toMatchObject({ status: 404 });
+    expect((await ann.listSessions()).sessions.map((s) => s.id)).not.toContain(session.id);
+  });
 });
 
 /** An SSE response's frames, with the reader that ends the connection. */
