@@ -1,6 +1,7 @@
 // The scripted model: an OpenAI-compatible chat-completions endpoint (streaming or not) whose
 // replies follow commands in the last user message, so scenarios are deterministic and offline.
 //   CALL <tool> <json args>   one tool call, then "RESULT: <tool output>"
+//   FAIL                      the model refuses the request (HTTP 400): the turn fails
 //   HOLD <name>               "OK", once the scenario releases <name> (a turn that stays running)
 //   anything else             "OK"
 import { createServer, type IncomingMessage } from "node:http";
@@ -76,6 +77,11 @@ export async function fakeModel(): Promise<FakeModel> {
       lastUserText,
       model: json.model,
     });
+    if (lastUserText === "FAIL" && messages.at(-1)?.role === "user") {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "the scripted model refuses", type: "invalid_request_error" } }));
+      return;
+    }
     const held = /^HOLD\s+(\S+)/.exec(lastUserText);
     if (held && messages.at(-1)?.role === "user") {
       const h = hold(String(held[1]));

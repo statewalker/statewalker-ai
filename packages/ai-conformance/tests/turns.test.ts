@@ -171,4 +171,92 @@ describe.each(transports)("turns over %s", (name, connect) => {
     ]);
     model.release(h);
   });
+
+  it("cancels only that turn, running or queued; the other queued messages stay", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const h1 = hold();
+    const running = await ann.postMessage(session.id, { content: `HOLD ${h1}` });
+    await model.held(h1);
+    const h2 = hold();
+    const next = await ann.postMessage(session.id, { content: `HOLD ${h2}` });
+    const later = await ann.postMessage(session.id, { content: "later" });
+    expect(await ann.cancelTurn(running.turn_id)).toMatchObject({
+      status: "cancelled",
+      stop_reason: { type: "cancelled" },
+    });
+    await model.held(h2);
+    expect(await ann.getTurn(next.turn_id)).toMatchObject({ status: "running" });
+    // A queued turn is cancelled without running.
+    expect(await ann.cancelTurn(later.turn_id)).toMatchObject({ status: "cancelled", items: [] });
+    model.release(h2);
+    expect(await ann.waitTurn(next)).toMatchObject({ status: "completed" });
+    // A turn that already ended can't be cancelled; another user's can't be reached.
+    await expect(ann.cancelTurn(next.turn_id)).rejects.toMatchObject({ status: 409 });
+    const bob = await as("bob");
+    await expect(bob.getTurn(next.turn_id)).rejects.toMatchObject({ status: 404 });
+    await expect(bob.cancelTurn(next.turn_id)).rejects.toMatchObject({ status: 404 });
+    await expect(ann.getTurn("no-such-turn")).rejects.toMatchObject({ status: 404 });
+    model.release(h1);
+  });
+
+  it("ends every turn with a terminal event carrying the full turn", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const accepted = await ann.postMessage(session.id, { content: "hello" });
+    const turn = await ann.waitTurn(accepted);
+    const { events } = await ann.readEvents(session.id, { since: accepted.offset });
+    expect(events.map((e) => e.type)).toEqual([
+      "turn.queued",
+      "turn.started",
+      "item.created",
+      "item.created",
+      "turn.completed",
+    ]);
+    expect(events.at(-1)?.data).toEqual(turn);
+    expect(turn).toMatchObject({
+      id: accepted.turn_id,
+      status: "completed",
+      stop_reason: { type: "end_turn" },
+      model: "default",
+      items: [
+        { kind: "message", role: "user", text: "hello" },
+        { kind: "message", role: "assistant", text: "OK" },
+      ],
+    });
+    // A failed turn says why.
+    const failed = await ann.sendMessage(session.id, { content: "FAIL" });
+    expect(failed).toMatchObject({
+      status: "failed",
+      stop_reason: { type: "error", message: expect.stringMatching(/EIO/) },
+    });
+  });
+
+  it("reports the request fields it ignored and the model it used instead of the one asked for", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const accepted = await ann.postMessage(session.id, {
+      content: "hello",
+      model: "gpt-unheard-of",
+      temperature: 2,
+      tools: [],
+    });
+    expect(accepted.ignored).toEqual(["temperature", "tools"]);
+    const turn = await ann.waitTurn(accepted);
+    expect(turn).toMatchObject({
+      status: "completed",
+      ignored: ["temperature", "tools"],
+      model: "default",
+      model_substitution: { requested: "gpt-unheard-of", used: "default", reason: expect.any(String) },
+    });
+    expect(model.requests.at(-1)?.model).toBe("default");
+    const plain = await ann.sendMessage(session.id, { content: "hello" });
+    expect(plain.ignored).toBeUndefined();
+    expect(plain.model_substitution).toBeUndefined();
+    // A malformed message is refused.
+    await expect(ann.postMessage(session.id, { content: "" })).rejects.toMatchObject({ status: 400 });
+    await expect(
+      ann.postMessage(session.id, { content: "x", delivery: "later" as never }),
+    ).rejects.toMatchObject({ status: 400 });
+  });
 });
