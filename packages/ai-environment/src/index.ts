@@ -23,6 +23,18 @@ export {
   streamChecks,
 } from "./gated-files.js";
 export { IGNORE_FILE, ignoreRules } from "./ignore-rules.js";
+export {
+  type ApprovalMethod,
+  ApprovalPending,
+  approvalAware,
+  approvalError,
+  approvalOf,
+  type ModeGate,
+  type ModeVerdict,
+  modeGated,
+  runStoredCall,
+  type StoredCall,
+} from "./mode-gate.js";
 export { nameOf, normalise, parentOf } from "./paths.js";
 export {
   mountProfiles,

@@ -4,12 +4,26 @@
 // workspaces. Opening a user session obtains, from the Workspace DO, a capability narrowed to the
 // user; the User DO attenuates it for each agent session it starts. Calls go only from here to a
 // workspace: a Workspace DO never calls a User DO.
-import { type AccessClaims, attenuateForAgentSession, codedError } from "@statewalker/ai-access";
+import {
+  type AccessClaims,
+  type ApprovalGrant,
+  type ApprovalRequest,
+  attenuateForAgentSession,
+  codedError,
+  DEFAULT_MODE,
+  isMode,
+  type ModeDefinition,
+  PERMISSION_RULES_FILE,
+  type PermissionRules,
+  parseRules,
+} from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import type {
   AgentSessionConfig,
   AgentSessionView,
+  ApprovalAnswer,
+  ApprovalView,
   DeleteSecretRequest,
   Metadata,
   ProfileView,
@@ -28,6 +42,13 @@ export interface WorkspaceGrants {
   userCapability(token: string): Promise<string>;
   /** The user's roles in the project now; EACCES for a non-member. */
   memberRoles(userCapability: string, project: string): Promise<string[]>;
+  /** Tells the gate the user session's mode and the user's own rules. */
+  setUserSession(
+    userCapability: string,
+    state: { mode: string; rules: PermissionRules },
+  ): Promise<void>;
+  /** Tells the gate an approval the user granted. */
+  grantApproval(userCapability: string, grant: ApprovalGrant): Promise<void>;
   /** One files-RPC call on the file view a capability holds, at the workspace's gate. */
   files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** The secrets of one level the user manages there; EACCES without `secrets.write:<level>`. */
@@ -52,10 +73,26 @@ export interface UserSessionsOptions {
   verifyToken(token: string): Promise<AccessClaims>;
   /** The Workspace DO of a workspace. */
   workspace(name: string): WorkspaceGrants;
+  /** The deployment's own modes, beside the built-in ones. */
+  modes?: Readonly<Record<string, ModeDefinition>>;
+  /** How long a pending approval waits before it counts as denied. */
+  approvalTtlMs: number;
+  /** The clock (tests). */
+  now?: () => number;
 }
 
-/** The mode a new user session starts in (modes and their rules: a later ticket). */
-export const DEFAULT_MODE = "default";
+export { DEFAULT_MODE };
+
+interface ApprovalRow {
+  id: string;
+  workspace: string;
+  session: string;
+  project: string;
+  request: string;
+  status: string;
+  created: number;
+  expires: number;
+}
 
 interface UserSessionRow {
   workspace: string;
@@ -108,9 +145,49 @@ export class UserSessions implements UserPort {
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_sessions (
       id TEXT PRIMARY KEY, workspace TEXT NOT NULL, project TEXT NOT NULL, agent TEXT NOT NULL,
       created INTEGER NOT NULL)`);
+    // One row per approval (keyed by the action, so per session): a retried identical action
+    // reopens the same row once it was answered or expired.
+    this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS approvals (
+      id TEXT NOT NULL, workspace TEXT NOT NULL, session TEXT NOT NULL, project TEXT NOT NULL,
+      request TEXT NOT NULL, status TEXT NOT NULL, created INTEGER NOT NULL,
+      expires INTEGER NOT NULL, PRIMARY KEY (workspace, id))`);
     // statewalker/statewalker-root#125: metadata and archiving, beside the index.
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_session_meta (
       id TEXT PRIMARY KEY, metadata TEXT NOT NULL, archived INTEGER)`);
+  }
+
+  #now(): number {
+    return this.#o.now?.() ?? Date.now();
+  }
+
+  #approvalView(row: ApprovalRow): ApprovalView {
+    const expired = row.status === "pending" && Number(row.expires) <= this.#now();
+    return {
+      ...(JSON.parse(row.request) as ApprovalRequest),
+      workspace: row.workspace,
+      status: expired ? "expired" : (row.status as ApprovalView["status"]),
+      created: Number(row.created),
+      expires: Number(row.expires),
+    };
+  }
+
+  #approvals(workspace: string): ApprovalView[] {
+    const rows = this.#o.sql
+      .exec("SELECT * FROM approvals WHERE workspace = ? ORDER BY created, rowid", workspace)
+      .toArray() as unknown as ApprovalRow[];
+    return rows.map((r) => this.#approvalView(r));
+  }
+
+  /** The user's own rules, from their profile (none when it holds none). */
+  async #userRules(): Promise<PermissionRules> {
+    return parseRules(await tryReadText(this.#o.profile, `/${PERMISSION_RULES_FILE}`));
+  }
+
+  /** Tells the workspace's gate the user session's mode and the user's rules, as they are now. */
+  async #pushUserSession(us: UserSessionRow, mode = us.mode): Promise<void> {
+    await this.#o
+      .workspace(us.workspace)
+      .setUserSession(us.capability, { mode, rules: await this.#userRules() });
   }
 
   #one<T>(query: string, ...args: unknown[]): T | undefined {
@@ -155,15 +232,113 @@ export class UserSessions implements UserPort {
     ) as UserSessionRow;
   }
 
-  async openUserSession(token: string): Promise<UserSessionView> {
-    const row = await this.#userSession(token);
+  #userSessionView(row: UserSessionRow): UserSessionView {
     return {
       id: row.id,
       user: this.#o.user,
       workspace: row.workspace,
       mode: row.mode,
       created: Number(row.created),
+      approvals: this.#approvals(row.workspace).filter((a) => a.status === "pending"),
     };
+  }
+
+  async openUserSession(token: string): Promise<UserSessionView> {
+    return this.#userSessionView(await this.#userSession(token));
+  }
+
+  /**
+   * Switches the user session's mode. The gate is told first, so running agent sessions follow at
+   * their next action; only the user's own token reaches here.
+   */
+  async setMode(token: string, mode: string): Promise<UserSessionView> {
+    if (!isMode(mode, this.#o.modes)) throw codedError("EINVAL", `no mode '${mode}'`);
+    const us = await this.#userSession(token);
+    await this.#pushUserSession(us, mode);
+    this.#o.sql.exec("UPDATE user_sessions SET mode = ? WHERE workspace = ?", mode, us.workspace);
+    return this.#userSessionView({ ...us, mode });
+  }
+
+  /**
+   * Records the approvals a waiting turn of one of this user's agent sessions waits on. Told by
+   * the agent session's DO (an agent session → user call; a Workspace DO never calls here), for a
+   * session in this user's index only.
+   */
+  async recordApprovals(session: string, requests: ApprovalRequest[]): Promise<ApprovalView[]> {
+    const row = this.#one<AgentRow>("SELECT * FROM agent_sessions WHERE id = ?", String(session));
+    if (!row) throw codedError("ENOENT", "no such agent session");
+    const own = view(row);
+    const now = this.#now();
+    const out: ApprovalView[] = [];
+    for (const request of requests) {
+      if (request.session !== own.id || request.project !== own.project)
+        throw codedError("EINVAL", "an approval of another session");
+      const row = this.#one<ApprovalRow>(
+        "SELECT * FROM approvals WHERE workspace = ? AND id = ?",
+        own.workspace,
+        request.id,
+      );
+      // A retried identical action waits on the same approval while it is pending.
+      if (row?.status !== "pending" || Number(row.expires) <= now)
+        this.#o.sql.exec(
+          "INSERT OR REPLACE INTO approvals VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)",
+          request.id,
+          own.workspace,
+          own.id,
+          own.project,
+          JSON.stringify(request),
+          now,
+          now + this.#o.approvalTtlMs,
+        );
+      out.push(
+        this.#approvalView(
+          this.#one<ApprovalRow>(
+            "SELECT * FROM approvals WHERE workspace = ? AND id = ?",
+            own.workspace,
+            request.id,
+          ) as ApprovalRow,
+        ),
+      );
+    }
+    return out;
+  }
+
+  async listApprovals(token: string): Promise<{ approvals: ApprovalView[] }> {
+    const { workspace } = await this.claims(token);
+    return { approvals: this.#approvals(workspace) };
+  }
+
+  /**
+   * Answers one of the caller's pending approvals. An allow is granted at the gate (with the
+   * user capability), which re-checks it against the mode and roles when the action runs.
+   */
+  async answerApproval(token: string, id: string, answer: ApprovalAnswer): Promise<ApprovalView> {
+    const us = await this.#userSession(token);
+    const row = this.#one<ApprovalRow>(
+      "SELECT * FROM approvals WHERE workspace = ? AND id = ?",
+      us.workspace,
+      id,
+    );
+    if (!row) throw codedError("ENOENT", "no such approval");
+    const current = this.#approvalView(row);
+    if (current.status === "expired") throw codedError("EINVAL", "the approval expired");
+    if (current.status !== "pending") throw codedError("EINVAL", "the approval was answered");
+    const status = answer.decision === "allow" ? "allowed" : "denied";
+    if (status === "allowed")
+      await this.#o.workspace(us.workspace).grantApproval(us.capability, {
+        id,
+        session: current.session,
+        scope: answer.scope,
+        permission: current.permission,
+        expires: current.expires,
+      });
+    this.#o.sql.exec(
+      "UPDATE approvals SET status = ? WHERE workspace = ? AND id = ? AND status = 'pending'",
+      status,
+      us.workspace,
+      id,
+    );
+    return { ...current, status };
   }
 
   async startAgentSession(
@@ -183,8 +358,9 @@ export class UserSessions implements UserPort {
       session: row.id,
       project: row.project,
       agent: row.agent,
-      mode: us.mode,
     });
+    // The gate decides every action by the user session's current mode, so it is told now.
+    await this.#pushUserSession(us);
     this.#o.sql.exec(
       "INSERT INTO agent_sessions VALUES (?, ?, ?, ?, ?)",
       row.id,
@@ -203,6 +379,7 @@ export class UserSessions implements UserPort {
       session: view({ ...row, metadata: JSON.stringify(metadata), archived: null }),
       config: {
         id: row.id,
+        user: this.#o.user,
         workspace: row.workspace,
         project: row.project,
         agent: row.agent,

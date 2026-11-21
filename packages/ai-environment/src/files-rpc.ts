@@ -23,6 +23,7 @@ import {
   type StreamChecks,
   streamChecks,
 } from "./gated-files.js";
+import { type ModeGate, modeGated } from "./mode-gate.js";
 import { normalise } from "./paths.js";
 
 /** The protocol's methods: the only ones a files-RPC endpoint answers. */
@@ -149,11 +150,18 @@ function guarded(
   };
 }
 
-/** The gate's files-RPC endpoint over a store, for one holder: the gated view, chunk by chunk. */
-export function gatedFilesRpc(store: FilesApi, options: GatedFilesOptions): FilesRpcEndpoint {
+/**
+ * The gate's files-RPC endpoint over a store, for one holder: the gated view, chunk by chunk; for
+ * an agent session, with every operation decided by the mode too (`modeGate`).
+ */
+export function gatedFilesRpc(
+  store: FilesApi,
+  options: GatedFilesOptions,
+  modeGate?: ModeGate,
+): FilesRpcEndpoint {
   const blockSize = options.blockSize ?? DEFAULT_BLOCK_SIZE;
   const server = newFilesRpcServer({
-    fs: gatedFiles(store, options),
+    fs: modeGate ? modeGated(gatedFiles(store, options), modeGate) : gatedFiles(store, options),
     chunkSize: blockSize,
     maxChunkSize: Math.max(blockSize, 4 * 1024 * 1024),
   });

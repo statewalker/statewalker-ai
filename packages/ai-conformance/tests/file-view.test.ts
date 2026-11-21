@@ -209,6 +209,8 @@ describe.each(transports)("the file view over %s", (t, connect, openFiles) => {
   });
 
   it("never lets an agent's tools see or change the system folder: readdir, glob, rm -r, cp, mv", async () => {
+    // The view is under test, not the mode: a mode that never asks lets every change reach it.
+    await (await as("ann")).setMode({ mode: "bypassPermissions" });
     const a = await agent("ann", alpha);
     const ls = await a.run("bash", { command: `ls -a /${alpha}` });
     expect(ls?.output).toContain("readme.md");
@@ -236,6 +238,7 @@ describe.each(transports)("the file view over %s", (t, connect, openFiles) => {
     expect(await readText(await filesOf("rex"), `/${alpha}/readme.md`)).toBe("# alpha\n");
     await ann.write(`/${alpha}/docs/guide.md`, [enc.encode("the guide\n")]);
     await ann.write(`/${alpha}/docs/.env`, [enc.encode("TOKEN=deployment-ignored\n")]);
+    await (await as("ann")).setMode({ mode: "default" });
   });
 
   it("hides files the ignore rules name from agent sessions, but not from the user's own session", async () => {

@@ -8,6 +8,8 @@ import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { filesOverRpc } from "@statewalker/ai-environment";
 import {
+  type ApprovalAnswer,
+  type ApprovalRequest,
   type DeleteSecretRequest,
   type Metadata,
   type SecretScope,
@@ -15,7 +17,16 @@ import {
   type StartSessionRequest,
   UserSessions,
 } from "@statewalker/ai-sessions";
-import { blockSizeOf, type Env, nameOf, profilesOf, verifyToken, workspaceOf } from "./env.js";
+import {
+  approvalTtlMs,
+  blockSizeOf,
+  deploymentModes,
+  type Env,
+  nameOf,
+  profilesOf,
+  verifyToken,
+  workspaceOf,
+} from "./env.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
@@ -38,6 +49,8 @@ export class User extends DurableObject<Env> {
         return {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
+          setUserSession: (capability, state) => ws.setUserSession(capability, state),
+          grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
           files: (capability, method, args) => ws.files(capability, method, args),
           listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
           setSecret: (capability, req) => ws.setSecret(capability, req),
@@ -45,6 +58,8 @@ export class User extends DurableObject<Env> {
           eraseUserSecrets: (capability) => ws.eraseUserSecrets(capability),
         };
       },
+      modes: deploymentModes(env),
+      approvalTtlMs: approvalTtlMs(env),
     });
   }
 
@@ -97,6 +112,27 @@ export class User extends DurableObject<Env> {
   async eraseUser(token: string) {
     await this.#reachable();
     return this.#sessions.eraseUser(token);
+  }
+
+  async setMode(token: string, mode: string) {
+    await this.#reachable();
+    return this.#sessions.setMode(token, mode);
+  }
+
+  /** Told by an agent session's DO: the approvals its waiting turn waits on. */
+  async recordApprovals(session: string, requests: ApprovalRequest[]) {
+    await this.#reachable();
+    return this.#sessions.recordApprovals(session, requests);
+  }
+
+  async listApprovals(token: string) {
+    await this.#reachable();
+    return this.#sessions.listApprovals(token);
+  }
+
+  async answerApproval(token: string, id: string, answer: ApprovalAnswer) {
+    await this.#reachable();
+    return this.#sessions.answerApproval(token, id, answer);
   }
 
   async files(token: string, method: FilesRpcMethod, args: unknown[]) {
