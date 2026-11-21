@@ -19,7 +19,8 @@ export {
   gatedFiles,
   type IgnoreMatcher,
   inSystemFolder,
-  stillAllowed,
+  type StreamChecks,
+  streamChecks,
 } from "./gated-files.js";
 export { IGNORE_FILE, ignoreRules } from "./ignore-rules.js";
 export { nameOf, normalise, parentOf } from "./paths.js";

@@ -20,7 +20,8 @@ import {
   type FileAction,
   type GatedFilesOptions,
   gatedFiles,
-  stillAllowed,
+  type StreamChecks,
+  streamChecks,
 } from "./gated-files.js";
 import { normalise } from "./paths.js";
 
@@ -74,13 +75,20 @@ const MAX_TRACKED = 1024;
 /** A server whose every chunk is authorized again before it is answered or taken. */
 function guarded(
   server: FilesRpcServer,
-  allowed: (action: FileAction, path: string) => Promise<void>,
+  checks: StreamChecks,
 ): FilesRpc & { close(): Promise<void> } {
-  const streams = new Map<string, { action: FileAction; path: string }>();
-  const track = (id: string, action: FileAction, path: string) => {
-    streams.set(id, { action, path: normalise(path) });
+  const streams = new Map<string, { action: FileAction; path: string; hidden: boolean }>();
+  /** What a stream is opened for, and whether its path was hidden then. */
+  const pathOf = async (raw: string) => {
+    const path = normalise(raw);
+    return { path, hidden: await checks.hidden(path) };
+  };
+  const track = (id: string, action: FileAction, p: { path: string; hidden: boolean }) => {
+    streams.set(id, { action, ...p });
     if (streams.size > MAX_TRACKED) streams.delete(streams.keys().next().value as string);
   };
+  const allowed = (s: { action: FileAction; path: string; hidden: boolean }) =>
+    checks.allowed(s.action, s.path, s.hidden);
   return {
     stats: (p) => server.stats(p),
     exists: (p) => server.exists(p),
@@ -90,14 +98,15 @@ function guarded(
     copy: (s, t, o) => server.copy(s, t, o),
     list: (p, o) => server.list(p, o),
     async openRead(path, options) {
+      const p = await pathOf(path);
       const opened = await server.openRead(path, options);
-      track(opened.streamId, "read", path);
+      track(opened.streamId, "read", p);
       return opened;
     },
     async readChunk(streamId, chunkId) {
       const s = streams.get(streamId);
       if (s)
-        await allowed(s.action, s.path).catch(async (e) => {
+        await allowed(s).catch(async (e) => {
           streams.delete(streamId);
           await server.closeRead(streamId);
           throw e;
@@ -110,14 +119,15 @@ function guarded(
       await server.closeRead(streamId);
     },
     async openWrite(path, options) {
+      const p = await pathOf(path);
       const opened = await server.openWrite(path, options);
-      track(opened.streamId, "write", path);
+      track(opened.streamId, "write", p);
       return opened;
     },
     async writeChunk(streamId, chunkId, data) {
       const s = streams.get(streamId);
       if (s)
-        await allowed(s.action, s.path).catch(async (e) => {
+        await allowed(s).catch(async (e) => {
           streams.delete(streamId);
           await server.abortWrite(streamId, String((e as Error)?.message ?? e));
           throw e;
@@ -147,7 +157,7 @@ export function gatedFilesRpc(store: FilesApi, options: GatedFilesOptions): File
     chunkSize: blockSize,
     maxChunkSize: Math.max(blockSize, 4 * 1024 * 1024),
   });
-  return filesRpcEndpoint(guarded(server, stillAllowed(options)));
+  return filesRpcEndpoint(guarded(server, streamChecks(options)));
 }
 
 /** A files-RPC endpoint per holder, kept while used, so streams live across calls. */

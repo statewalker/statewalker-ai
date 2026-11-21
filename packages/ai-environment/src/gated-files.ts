@@ -75,14 +75,27 @@ async function* blocks(source: AsyncIterable<Uint8Array>, size: number) {
 const isUnder = (path: string, dir: string) =>
   dir === "/" ? path !== "/" : path.startsWith(`${dir}/`);
 
-/**
- * Whether the holder may still take an action on a path, decided now: a hidden path passes, since
- * nothing of it is ever given. Used to authorize each block of a stream already open.
- */
-export function stillAllowed(options: GatedFilesOptions) {
-  return async (action: FileAction, path: string): Promise<void> => {
-    if (await scopeOf(options).hidden(path)) return;
-    await options.authorize(action, path);
+/** The checks of each block of a stream already open, decided now. */
+export interface StreamChecks {
+  /** Whether a normalised path is hidden from the holder now. */
+  hidden(path: string): Promise<boolean>;
+  /**
+   * Throws unless the holder may still take the action on the path. A stream opened on a hidden
+   * path passes (it gives nothing, as a missing file would); one whose path became hidden since
+   * (a removal from the project, a new ignore rule) is ENOENT.
+   */
+  allowed(action: FileAction, path: string, hiddenAtOpen: boolean): Promise<void>;
+}
+
+export function streamChecks(options: GatedFilesOptions): StreamChecks {
+  const hidden = (path: string) => scopeOf(options).hidden(path);
+  return {
+    hidden,
+    async allowed(action, path, hiddenAtOpen) {
+      if (hiddenAtOpen) return;
+      if (await hidden(path)) throw enoent(path);
+      await options.authorize(action, path);
+    },
   };
 }
 

@@ -57,6 +57,33 @@ describe("files-RPC to the gate", () => {
     await expect(server.call("readChunk", [streamId, 1])).rejects.toThrow(/EACCES/);
   });
 
+  it("stops a read at the next chunk once the holder is removed from the project", async () => {
+    const store = new MemFilesApi();
+    await store.write("/alpha/big.bin", [new Uint8Array(64 * 1024).fill(3)]);
+    let member = true;
+    const server = gatedFilesRpc(store, {
+      systemFolder: ".system",
+      blockSize: 1024,
+      visible: async (p) => p === "alpha" && member,
+      authorize: async () => {},
+    });
+    const { streamId } = (await server.call("openRead", ["/alpha/big.bin"])) as {
+      streamId: string;
+    };
+    await server.call("readChunk", [streamId, 0]);
+    await new Promise((r) => setTimeout(r, 10));
+    member = false;
+    await expect(server.call("readChunk", [streamId, 1])).rejects.toThrow(/ENOENT/);
+  });
+
+  it("answers a stream opened on a hidden path as a missing file, not as an error", async () => {
+    const { server } = await fixture();
+    const { streamId } = (await server.call("openRead", ["/alpha/.system/access"])) as {
+      streamId: string;
+    };
+    expect(await server.call("readChunk", [streamId, 0])).toMatchObject({ done: true });
+  });
+
   it("stops a write at the next chunk after a revocation", async () => {
     const { server, revoke, store } = await fixture();
     const { streamId } = (await server.call("openWrite", ["/alpha/w.bin"])) as { streamId: string };
