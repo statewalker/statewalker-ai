@@ -57,7 +57,8 @@ const term = (t: unknown) => (t as { v: unknown }).v;
 export async function verifyAccessToken(
   token: string,
   issuerPublicKey: Uint8Array,
-  expected: { workspace: string; now?: number },
+  /** The workspace the token must name, or the workspaces the deployment serves. */
+  expected: { workspace: string | readonly string[]; now?: number },
 ): Promise<AccessClaims> {
   let facts: unknown[] | undefined;
   try {
@@ -71,7 +72,8 @@ export async function verifyAccessToken(
   }
   if (!facts) throw codedError("EAUTH", "invalid access token");
   const [user, workspace, issuer, expires] = facts;
-  if (workspace !== expected.workspace)
+  const served = typeof expected.workspace === "string" ? [expected.workspace] : expected.workspace;
+  if (!served.includes(String(workspace)))
     throw codedError("EAUTH", "the access token is for another workspace");
   if (Number(expires) <= (expected.now ?? Date.now()))
     throw codedError("EAUTH", "access token expired");

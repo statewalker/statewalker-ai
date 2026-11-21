@@ -9,16 +9,28 @@
     "bindings": [
       { "name": "ISSUER", "class_name": "Issuer" },
       { "name": "WORKSPACE", "class_name": "Workspace" },
+      { "name": "USER", "class_name": "User" },
+      { "name": "PROFILES", "class_name": "Profiles" },
       { "name": "AGENT", "class_name": "AgentSession" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace", "AgentSession"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace", "AgentSession"] },
+    { "tag": "v2", "new_sqlite_classes": ["User", "Profiles"] }
+  ],
   "vars": {
-    // The one workspace of this deployment, until workspaces come from configuration.
-    "WORKSPACE_NAME": "default",
+    // The workspaces this deployment serves, comma-separated; the first is the default. A token
+    // for any other workspace is refused.
+    "WORKSPACES": "default",
+    // The profiles file system's backend: "sql" (SqlFs on the Profiles DO's SQLite) or "memory".
+    "PROFILES_BACKEND": "sql",
     "TOKEN_TTL_MS": "3600000"
     // Test-only, never set in a real deployment:
-    //   DEV_LOGIN = "true"   POST /v1/login {user, ttlMs?} signs a token (stands in for an identity provider)
-    //   ADMIN_KEY = "<key>"  POST /admin/seed {files} with "Authorization: Bearer <key>" writes fixtures
+    //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
+    //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":
+    //                        POST /admin/seed {files, workspace?} writes fixtures into a workspace
+    //                        POST /admin/profiles {files} writes fixtures into the profiles file system
+    //                        POST /admin/users/<user>/unreachable makes that User DO refuse every call
+    //                        POST /admin/sessions/<id>/messages {content} runs a turn past the User DO
   }
 }

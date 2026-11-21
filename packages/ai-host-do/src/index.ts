@@ -3,5 +3,7 @@
 export { AgentSession } from "./agent-session-do.js";
 export type { Env } from "./env.js";
 export { Issuer } from "./issuer-do.js";
+export { Profiles } from "./profiles-do.js";
+export { User } from "./user-do.js";
 export { default as worker } from "./worker.js";
 export { Workspace } from "./workspace-do.js";

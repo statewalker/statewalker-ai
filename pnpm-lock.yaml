@@ -27,6 +27,9 @@ catalogs:
     '@statewalker/webrun-files':
       specifier: ^0.12.0
       version: 0.12.0
+    '@statewalker/webrun-files-mem':
+      specifier: ^0.12.0
+      version: 0.12.0
     '@statewalker/webrun-rpc':
       specifier: ^0.15.2
       version: 0.15.2
@@ -156,6 +159,9 @@ importers:
       '@statewalker/webrun-files':
         specifier: 'catalog:'
         version: 0.12.0
+      '@statewalker/webrun-files-mem':
+        specifier: 'catalog:'
+        version: 0.12.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -261,6 +267,9 @@ importers:
       '@statewalker/ai-access':
         specifier: workspace:^
         version: link:../ai-access
+      '@statewalker/webrun-files':
+        specifier: 'catalog:'
+        version: 0.12.0
       '@statewalker/webrun-rpc':
         specifier: 'catalog:'
         version: 0.15.2
@@ -1081,6 +1090,9 @@ packages:
 
   '@statewalker/webrun-files-mem@0.10.5':
     resolution: {integrity: sha512-wqG60HcJHexyC/hClsHoSg+fRCfdYJ52/2R0PXkrMRaGmvwEUjhlQerTxYAHNSrvJwt61RIAsEWVFYRK980hfg==}
+
+  '@statewalker/webrun-files-mem@0.12.0':
+    resolution: {integrity: sha512-q8UZAUs3YIvJDPkYKHFvOhBTas0IKP41SJKDVQwxJbmcGrMyH2AbNRltX086VfA6PhO5TXoQW/UQNAEhUOGGUA==}
 
   '@statewalker/webrun-files-node@0.10.5':
     resolution: {integrity: sha512-2sasny+kCBJa5JblXND9N0fhfDJ1gkG5I38gpr9WY4QQOq0BDQIaGX+WZnSTX6IOPlQFc9+QzisJSaZuVsohjQ==}
@@ -3259,6 +3271,10 @@ snapshots:
   '@statewalker/webrun-files-mem@0.10.5':
     dependencies:
       '@statewalker/webrun-files': 0.10.5
+
+  '@statewalker/webrun-files-mem@0.12.0':
+    dependencies:
+      '@statewalker/webrun-files': 0.12.0
 
   '@statewalker/webrun-files-node@0.10.5':
     dependencies:

@@ -1,5 +1,6 @@
-// One DO per agent session: it holds the session's capability (never the access token) and runs
-// its turns on Flue, whose file view is the Workspace DO's gate reached with that capability.
+// One DO per agent session: it holds the session's capability (the user capability its User DO
+// attenuated for it; never the access token) and runs its turns on Flue, whose file view is the
+// Workspace DO's gate reached with that capability.
 
 import { DurableObject } from "cloudflare:workers";
 import { filesOverCalls } from "@statewalker/ai-environment";
