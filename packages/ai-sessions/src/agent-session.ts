@@ -7,12 +7,17 @@
 //   is read from the event log;
 // - the event log is durable and numbered; every stream is a cursor read of it, so a reader
 //   going away never cancels anything, and each turn ends with a terminal event carrying the
-//   full turn.
-import { codedError } from "@statewalker/ai-access";
+//   full turn;
+// - a change the mode asks about ends the turn `waiting` (statewalker/statewalker-root#124): the
+//   exact call is stored in an `approval` item, the user's User DO is told, and the user's answer
+//   continues the session as a turn that runs the stored call again (re-checked at the gate) or
+//   tells the model the denial.
+import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 import type {
   AgentMessage,
   AgentPort,
   AgentSessionConfig,
+  ApprovalAnswer,
   Delivery,
   EventsPage,
   EventsQuery,
@@ -24,6 +29,7 @@ import type {
   SessionEvent,
   SessionStatus,
   StopReason,
+  StoredAction,
   TurnStatus,
   TurnView,
 } from "./api.js";
@@ -49,7 +55,58 @@ export interface TurnRun {
    * waiting first. The core reports one it took as a user message item carrying its `steer` id.
    */
   onSteer(listener: (steer: Steer) => void): void;
+  /** Reports a change the gate stopped for an approval, with the exact call to store. */
+  onApproval(request: ApprovalRequest, call: ActionCall): void;
+  /** Whether a change of this turn waits on an approval: the core then ends the turn. */
+  waiting(): boolean;
 }
+
+/** A change a turn made, exactly: what an approval stores and runs again. */
+export interface ActionCall {
+  method: StoredAction["method"];
+  path: string;
+  target?: string;
+  content?: Uint8Array;
+}
+
+/**
+ * Runs one stored change again through the gate, which re-checks it against the current mode and
+ * roles: the gate's answer, or `{$approval}` when it still asks; throws its refusal.
+ */
+export type RunAction = (config: AgentSessionConfig, call: ActionCall) => Promise<unknown>;
+
+/** Tells the session's User DO the approvals a turn waits on. */
+export type RecordApprovals = (
+  config: AgentSessionConfig,
+  requests: ApprovalRequest[],
+) => Promise<void>;
+
+const toBase64 = (bytes: Uint8Array) => {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin);
+};
+const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
+
+function storedOf(call: ActionCall): StoredAction {
+  return {
+    method: call.method,
+    path: call.path,
+    ...(call.target !== undefined ? { target: call.target } : {}),
+    ...(call.content instanceof Uint8Array ? { content: toBase64(call.content) } : {}),
+  };
+}
+
+function callOf(stored: StoredAction): ActionCall {
+  return {
+    method: stored.method,
+    path: stored.path,
+    ...(stored.target !== undefined ? { target: stored.target } : {}),
+    ...(stored.method === "write" ? { content: fromBase64(stored.content ?? "") } : {}),
+  };
+}
+
+type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;
 
 /** What the core reports when a turn ends. */
 export interface TurnOutcome {
@@ -122,8 +179,8 @@ const eventOf = (row: EventRow): SessionEvent => ({
   created: Number(row.created),
 });
 
-const TERMINAL: readonly string[] = ["completed", "failed", "cancelled", "interrupted"];
-const KINDS: readonly string[] = ["message", "tool_call", "tool_result"];
+const TERMINAL: readonly string[] = ["waiting", "completed", "failed", "cancelled", "interrupted"];
+const KINDS: readonly string[] = ["message", "tool_call", "tool_result", "approval"];
 const MAX_PAGE = 1000;
 const MAX_WAIT_MS = 60_000;
 
@@ -137,12 +194,21 @@ function pageSize(limit: unknown, fallback: number): number {
 export class AgentSessionCore implements AgentPort {
   readonly #sql: SqlLike;
   readonly #runTurn: RunTurn;
+  readonly #runAction: RunAction;
+  readonly #recordApprovals: RecordApprovals;
   #running: Running | undefined;
   readonly #waiters = new Set<() => void>();
 
-  constructor(options: { sql: SqlLike; runTurn: RunTurn }) {
+  constructor(options: {
+    sql: SqlLike;
+    runTurn: RunTurn;
+    runAction: RunAction;
+    recordApprovals: RecordApprovals;
+  }) {
     this.#sql = options.sql;
     this.#runTurn = options.runTurn;
+    this.#runAction = options.runAction;
+    this.#recordApprovals = options.recordApprovals;
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS agent_config (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS agent_turns (id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -152,7 +218,9 @@ export class AgentSessionCore implements AgentPort {
       CREATE TABLE IF NOT EXISTS items (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
         turn TEXT NOT NULL, kind TEXT NOT NULL, body TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL,
-        turn TEXT, data TEXT NOT NULL, created INTEGER NOT NULL);`);
+        turn TEXT, data TEXT NOT NULL, created INTEGER NOT NULL);
+      CREATE TABLE IF NOT EXISTS approval_answers (turn TEXT PRIMARY KEY, approval TEXT NOT NULL,
+        decision TEXT NOT NULL, message TEXT);`);
     this.#recover();
   }
 
@@ -337,28 +405,46 @@ export class AgentSessionCore implements AgentPort {
       row.id,
     );
     this.#log("turn.started", row.id, { id: row.id });
-    this.#append(row.id, { kind: "message", role: "user", text: row.content });
+    const answer = this.#one<{ approval: string; decision: string; message: string | null }>(
+      "SELECT * FROM approval_answers WHERE turn = ?",
+      row.id,
+    );
+    const pending: Pending = new Map();
     let error: string | undefined;
     let outcome: TurnOutcome | undefined;
-    try {
-      outcome = await this.#runTurn(
-        {
-          config,
-          content: row.content,
-          ...(row.model_requested ? { model: row.model_requested } : {}),
-          signal: running.abort.signal,
-          onSteer: (listener) => {
-            running.listeners.push(listener);
-            for (const steer of running.steers) listener(steer);
+    if (answer) {
+      try {
+        await this.#answerTurn(config, row.id, answer, pending);
+      } catch (e) {
+        error = String((e as Error)?.message ?? e);
+      }
+    } else {
+      this.#append(row.id, { kind: "message", role: "user", text: row.content });
+      try {
+        outcome = await this.#runTurn(
+          {
+            config,
+            content: row.content,
+            ...(row.model_requested ? { model: row.model_requested } : {}),
+            signal: running.abort.signal,
+            onSteer: (listener) => {
+              running.listeners.push(listener);
+              for (const steer of running.steers) listener(steer);
+            },
+            onApproval: (request, call) => {
+              if (!pending.has(request.id))
+                pending.set(request.id, { request, stored: storedOf(call) });
+            },
+            waiting: () => pending.size > 0,
           },
-        },
-        (item) => {
-          if (item.steer) running.applied.add(item.steer);
-          this.#append(row.id, item);
-        },
-      );
-    } catch (e) {
-      error = String((e as Error)?.message ?? e);
+          (item) => {
+            if (item.steer) running.applied.add(item.steer);
+            this.#append(row.id, item);
+          },
+        );
+      } catch (e) {
+        error = String((e as Error)?.message ?? e);
+      }
     }
     // Steering the turn did not take before it ended runs next, in the order it came; after an
     // interruption, queued as next messages (behind the interrupting one). An archived session
@@ -370,6 +456,20 @@ export class AgentSessionCore implements AgentPort {
         this.#queue(config, { content: steer.text, delivery: "steer", ignored: [] }, first);
     }
     const model = outcome?.model;
+    // The changes the turn waits on: stored in its items, and told to the user's User DO before
+    // the turn ends, so the turn's terminal event and the user's approvals agree.
+    if (!running.endAs && !error && pending.size) {
+      for (const { request, stored } of pending.values())
+        this.#append(row.id, { kind: "approval", approval: request.id, request, stored });
+      try {
+        await this.#recordApprovals(
+          config,
+          [...pending.values()].map((p) => p.request),
+        );
+      } catch (e) {
+        error = `the approvals could not be recorded: ${String((e as Error)?.message ?? e)}`;
+      }
+    }
     if (running.endAs)
       this.#finish(row.id, running.endAs, { type: running.endAs }, model ? { model } : {});
     else if (error)
@@ -379,7 +479,49 @@ export class AgentSessionCore implements AgentPort {
         { type: "error", message: error },
         { error, ...(model ? { model } : {}) },
       );
+    else if (pending.size)
+      this.#finish(
+        row.id,
+        "waiting",
+        { type: "approval", approval_ids: [...pending.keys()] },
+        model ? { model } : {},
+      );
     else this.#finish(row.id, "completed", { type: "end_turn" }, model ? { model } : {});
+  }
+
+  /**
+   * A turn continuing the session with the user's answer to an approval: a denial is told as the
+   * call's result, with the user's message; an allow runs exactly the stored call again through
+   * the gate, which re-checks it against the current mode and roles.
+   */
+  async #answerTurn(
+    config: AgentSessionConfig,
+    turn: string,
+    answer: { approval: string; decision: string; message: string | null },
+    pending: Pending,
+  ): Promise<void> {
+    const item = this.#rows<ItemRow>(
+      "SELECT * FROM items WHERE kind = 'approval' ORDER BY seq DESC",
+    )
+      .map(itemOf)
+      .find((i) => i.approval === answer.approval);
+    if (!item?.stored || !item.request) throw codedError("ENOENT", "no such approval");
+    const { method, path, target } = item.stored;
+    const result = (output: string, isError: boolean) =>
+      this.#append(turn, { kind: "tool_result", approval: answer.approval, output, isError });
+    if (answer.decision !== "allow") {
+      result(`denied by the user${answer.message ? `: ${answer.message}` : ""}`, true);
+      return;
+    }
+    try {
+      const done = await this.#runAction(config, callOf(item.stored));
+      if (done && typeof done === "object" && "$approval" in done) {
+        const request = (done as { $approval: ApprovalRequest }).$approval;
+        pending.set(request.id, { request, stored: item.stored });
+      } else result(`${method} ${path}${target ? ` ${target}` : ""}: done`, false);
+    } catch (e) {
+      result(String((e as Error)?.message ?? e), true);
+    }
   }
 
   /** Cuts the running turn short, and waits for it to end. */
@@ -437,6 +579,31 @@ export class AgentSessionCore implements AgentPort {
       offset,
       ...(message.ignored.length ? { ignored: message.ignored } : {}),
     };
+  }
+
+  /** Queues the turn that continues the session with the user's answer to an approval. */
+  async answer(
+    approval: string,
+    answer: ApprovalAnswer,
+  ): Promise<Omit<MessageAccepted, "stream_url">> {
+    const config = this.#started();
+    if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
+    const offset = this.#offset();
+    const known = this.#rows<ItemRow>("SELECT * FROM items WHERE kind = 'approval'")
+      .map(itemOf)
+      .some((i) => i.approval === approval);
+    if (!known) throw codedError("ENOENT", "no such approval");
+    const content = `${answer.decision === "allow" ? "allowed" : "denied"}: ${approval}`;
+    const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false);
+    this.#sql.exec(
+      "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
+      id,
+      approval,
+      answer.decision,
+      answer.message ?? null,
+    );
+    this.#pump();
+    return { turn_id: id, session_id: config.id, delivery: "next", offset };
   }
 
   async turn(turnId: string): Promise<TurnView> {
@@ -548,10 +715,11 @@ export class AgentSessionCore implements AgentPort {
     this.#started();
     if (this.#one("SELECT id FROM agent_turns WHERE status IN ('running', 'queued') LIMIT 1"))
       return "running";
-    if (this.#one("SELECT id FROM agent_turns WHERE status = 'waiting' LIMIT 1")) return "waiting";
     const last = this.#one<{ status: string }>(
       "SELECT status FROM agent_turns WHERE ended IS NOT NULL ORDER BY ended DESC, rowid DESC LIMIT 1",
     );
+    // Waiting while its last turn waits on approvals: an answer continues it.
+    if (last?.status === "waiting") return "waiting";
     return last?.status === "failed" ? "error" : "idle";
   }
 
@@ -570,7 +738,7 @@ export class AgentSessionCore implements AgentPort {
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

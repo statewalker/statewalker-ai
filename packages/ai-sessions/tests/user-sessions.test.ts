@@ -23,6 +23,7 @@ function sessionsOver(sql: SqlLike) {
   const workspace = {
     userCapability: async () => USER_CAP,
     memberRoles: async () => ["reader"],
+    setUserSession: async () => {},
     revoke: async (owner: string, target: string) => {
       revoked.push([owner, target]);
     },
@@ -30,7 +31,9 @@ function sessionsOver(sql: SqlLike) {
   const sessions = new UserSessions({
     sql,
     user: "ann",
-    profile: {} as never,
+    // An empty profile: no user rules.
+    profile: { exists: async () => false } as never,
+    approvalTtlMs: 60_000,
     eraseProfile: async () => {},
     eraseStorage: async () => {},
     verifyToken: async () => ({ user: "ann", workspace: "default", issuer: "i", expires: 0 }),

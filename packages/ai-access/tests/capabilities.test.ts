@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { attenuateForAgentSession, resolveRoles, WorkspaceAuthority } from "../src/index.js";
 
 const authority = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
-const grant = { session: "as-1", project: "alpha", agent: "reviewer", mode: "default" };
+const grant = { session: "as-1", project: "alpha", agent: "reviewer" };
 const roles = (...held: string[]) => resolveRoles(held, {}).grants;
 
 describe("capabilities", () => {
@@ -70,6 +70,28 @@ describe("capabilities", () => {
     await expect(at("list", "/alpha", roles("reader"))).resolves.toBeUndefined();
     await expect(at("read", "/alpha/readme.md", [])).rejects.toThrow(/EACCES/);
     await expect(at("read", "/alpha/readme.md", roles("admin"))).rejects.toThrow(/EACCES/);
+  });
+
+  it("takes the user session's own decisions (mode, rules, approvals) only from a bare user capability", async () => {
+    const user = authority.mintUser("ann");
+    expect(await authority.userOfUserCapability(user)).toBe("ann");
+    // An agent session holds an attenuated capability: it can neither switch modes nor approve.
+    const agent = attenuateForAgentSession(user, grant);
+    await expect(authority.userOfUserCapability(agent)).rejects.toThrow(/EACCES/);
+    const elsewhere = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
+    await expect(authority.userOfUserCapability(elsewhere.mintUser("ann"))).rejects.toThrow(
+      /EACCES/,
+    );
+  });
+
+  it("authorizes writes and deletes by the roles, like reads", async () => {
+    const capability = attenuateForAgentSession(authority.mintUser("ann"), grant);
+    const at = (action: "write" | "delete", grants: ReturnType<typeof roles>) =>
+      authority.authorize(capability, { action, path: "/alpha/a.md", project: "alpha", grants });
+    await expect(at("write", roles("editor"))).resolves.toBeUndefined();
+    await expect(at("delete", roles("editor"))).resolves.toBeUndefined();
+    await expect(at("write", roles("reader"))).rejects.toThrow(/EACCES/);
+    await expect(at("delete", roles("reader"))).rejects.toThrow(/EACCES/);
   });
 
   it("mints no capability for a user name that is not one path segment", () => {

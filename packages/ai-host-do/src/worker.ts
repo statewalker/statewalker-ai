@@ -52,6 +52,9 @@ function sessionApi(env: Env, token: string) {
       deleteAgentSession: async (t, id) => (await user()).deleteAgentSession(t, id),
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
+      setMode: async (t, mode) => (await user()).setMode(t, mode),
+      listApprovals: async (t) => (await user()).listApprovals(t),
+      answerApproval: async (t, id, answer) => (await user()).answerApproval(t, id, answer),
       files: async (t, method, args) => (await user()).files(t, method, args),
       listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
       setSecret: async (t, req) => (await user()).setSecret(t, req),
@@ -75,6 +78,7 @@ function sessionApi(env: Env, token: string) {
         status: () => agent.status(),
         archive: () => agent.archive(),
         purge: () => agent.purge(),
+        answer: (approval, answer) => agent.answer(approval, answer),
       };
     },
   });

@@ -16,7 +16,7 @@ import {
   WorkspaceAuthority,
 } from "../src/index.js";
 
-const grant = { session: "as-1", project: "alpha", agent: "reviewer", mode: "default" };
+const grant = { session: "as-1", project: "alpha", agent: "reviewer" };
 const roles = (...held: string[]) => resolveRoles(held, {}).grants;
 
 /** An authority with a revocation list held in memory, as the Workspace DO holds it in SQLite. */

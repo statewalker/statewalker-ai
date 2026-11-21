@@ -7,18 +7,30 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  type AgentSessionFacts,
+  type ApprovalGrant,
+  ApprovalRegistry,
   accessOf,
   chainRoleSources,
   codedError,
+  DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
   decide,
+  decideMode,
   fileRoleSource,
+  isMode,
+  type ModeDefinition,
+  modeOf,
+  PERMISSION_RULES_FILE,
+  type PermissionRules,
+  parseRules,
   type RoleEntries,
   type RoleGrant,
   type RoleSource,
   resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
+  settleAsk,
   WORKSPACE_ROLES,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
@@ -32,6 +44,7 @@ import {
   gatewayFetch,
   IGNORE_FILE,
   ignoreRules,
+  type ModeGate,
   normalise,
   type OutgoingRequest,
   type SecretInfo,
@@ -48,7 +61,15 @@ import type {
   SetSecretRequest,
 } from "@statewalker/ai-sessions";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
-import { blockSizeOf, type Env, issuerOf, nameOf, verifyToken } from "./env.js";
+import {
+  blockSizeOf,
+  deploymentModes,
+  deploymentRules,
+  type Env,
+  issuerOf,
+  nameOf,
+  verifyToken,
+} from "./env.js";
 import { mountWorkspace } from "./workspace-store.js";
 
 export class Workspace extends DurableObject<Env> {
@@ -59,6 +80,9 @@ export class Workspace extends DurableObject<Env> {
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
+  readonly #registry: ApprovalRegistry;
+  readonly #modes: Record<string, ModeDefinition>;
+  readonly #deploymentRules: PermissionRules;
   readonly #secrets: SecretStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -108,6 +132,9 @@ export class Workspace extends DurableObject<Env> {
       else if (name) throw codedError("EIO", `unknown role source '${name}'`);
     }
     this.#roles = chainRoleSources(sources);
+    this.#registry = new ApprovalRegistry(sql);
+    this.#modes = deploymentModes(env);
+    this.#deploymentRules = deploymentRules(env);
     // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
     this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
   }
@@ -157,6 +184,11 @@ export class Workspace extends DurableObject<Env> {
    * project the user is a member of, without them. Membership and roles are read from the role
    * sources at every action, never fixed when the view opens, so a demotion or removal reaches the
    * next call and the next block of a stream.
+   * For an agent session, every operation is then decided by the permission rules of the
+   * deployment, the project, the user and the agent session, and the user session's current mode
+   * (statewalker/statewalker-root#124), read from the registry at every call: a mode switch reaches
+   * the next action of a running session. A change the mode asks about waits on an approval,
+   * unless the user granted that exact action.
    */
   async #fileView(capability: string) {
     const store = await this.#store;
@@ -183,7 +215,7 @@ export class Workspace extends DurableObject<Env> {
           }
         : {}),
     };
-    return gatedFilesRpc(store, options);
+    return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
   }
 
   /**
@@ -193,6 +225,64 @@ export class Workspace extends DurableObject<Env> {
    */
   async files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
     return this.#files.call(capability, method, args);
+  }
+
+  /** The mode and the rules of one agent session, as the gate decides them at every call. */
+  #modeGate(facts: AgentSessionFacts, store: FilesApi): ModeGate {
+    return {
+      session: facts.session,
+      project: facts.project,
+      decide: async (checks) => {
+        const root = `/${facts.project}`;
+        // Read once per operation: the user session's mode and rules, and the project's rules.
+        const state = this.#registry.userSession(facts.user);
+        const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
+        const mode = modeOf(name, this.#modes);
+        const projectRules = parseRules(
+          await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
+        );
+        const layers = [
+          { source: "deployment", rules: this.#deploymentRules },
+          { source: "project", rules: projectRules },
+          { source: "user", rules: state?.rules ?? {} },
+          this.#registry.sessionLayer(facts.session, facts.user),
+        ];
+        return checks.map(([action, path]) =>
+          // Outside the project nothing is decided here: the roles and the capability refuse it.
+          path !== root && !path.startsWith(`${root}/`)
+            ? { verdict: "allow" as const, reason: "outside the project" }
+            : // An unattended session has nobody to ask: its asks are denies with a reason
+              // (statewalker/statewalker-root#127), and the agent carries on.
+              settleAsk(
+                decideMode(
+                  { area: "files", action, target: path === root ? "/" : path.slice(root.length) },
+                  { mode, layers },
+                ),
+                facts,
+              ),
+        );
+      },
+      consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
+    };
+  }
+
+  /**
+   * The user session's mode and the user's own rules, pushed by their User DO with its user
+   * capability (an agent session's capability is refused: only the user switches modes).
+   */
+  async setUserSession(
+    userCapability: string,
+    state: { mode: string; rules: PermissionRules },
+  ): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    if (!isMode(state.mode, this.#modes)) throw codedError("EINVAL", `no mode '${state.mode}'`);
+    this.#registry.setUserSession(user, { mode: state.mode, rules: parseRules(state.rules) });
+  }
+
+  /** An approval the user granted, pushed by their User DO with its user capability. */
+  async grantApproval(userCapability: string, grant: ApprovalGrant): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    this.#registry.grant(user, grant);
   }
 
   #deploymentSecrets() {

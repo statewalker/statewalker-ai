@@ -236,6 +236,37 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
         bob.startSession({ project: "alpha", agent: "x", unattended: "yes" as never }),
       ).rejects.toMatchObject({ status: 400 });
     });
+    it("turns every ask into a deny with a reason, and the agent carries on", async () => {
+      const ann = await as(u("ann"));
+      expect((await ann.me()).mode).toBe("default");
+      const write = (path: string) =>
+        `CALL write ${JSON.stringify({ path, content: "unattended\n" })}`;
+      // Attended, the default mode asks before a write: the turn waits on an approval.
+      const attended = await ann.startSession({ project: "alpha", agent: "daily" });
+      expect((await ann.sendMessage(attended.id, { content: write(`a-${t}.md`) })).status).toBe(
+        "waiting",
+      );
+      const before = (await ann.listApprovals()).approvals.length;
+      // Unattended, the same ask is a deny that says why, and the turn completes.
+      const session = await ann.startSession({
+        project: "alpha",
+        agent: "nightly",
+        unattended: true,
+      });
+      const turn = await ann.sendMessage(session.id, { content: write(`u-${t}.md`) });
+      expect(turn.status).toBe("completed");
+      expect(results(turn)).toEqual([
+        expect.objectContaining({ isError: true, output: expect.stringMatching(/unattended/) }),
+      ]);
+      // The model got the refusal and answered.
+      expect(turn.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
+      expect((await ann.listApprovals()).approvals).toHaveLength(before);
+      // Nothing was written, and what the mode allows still runs.
+      const after = await ann.sendMessage(session.id, { content: read(`/alpha/u-${t}.md`) });
+      expect(results(after)).toEqual([expect.objectContaining({ isError: true })]);
+      const ok = await ann.sendMessage(session.id, { content: read("/alpha/readme.md") });
+      expect(results(ok)).toEqual([expect.objectContaining({ isError: false })]);
+    });
   });
 
   describe("revocation", () => {
