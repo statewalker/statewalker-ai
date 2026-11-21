@@ -1,5 +1,5 @@
 // The harness's Worker: the session API over REST, and over RPC on a WebSocket at /v1/rpc
-// (webrun-rpc; the access token in the first message); the user's own file view over REST
+// (msgpack frames through webrun-wire, webrun-rpc methods; the access token in the first call); the user's own file view over REST
 // (/v1/files/<path>) and over files-RPC on a WebSocket at /v1/files; and the test-only routes a conformance
 // run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
 // user the caller's access token names, which checks the token each time.
@@ -12,7 +12,6 @@ import {
   handleSessionRest,
   serveFilesRpc,
   serveSessionRpc,
-  webSocketPort,
 } from "@statewalker/ai-sessions";
 import {
   agentOf,
@@ -48,6 +47,9 @@ function sessionApi(env: Env, token: string) {
       startAgentSession: async (t, req) => (await user()).startAgentSession(t, req),
       ownAgentSession: async (t, id) => (await user()).ownAgentSession(t, id),
       listAgentSessions: async (t) => (await user()).listAgentSessions(t),
+      updateAgentSession: async (t, id, m) => (await user()).updateAgentSession(t, id, m),
+      archiveAgentSession: async (t, id) => (await user()).archiveAgentSession(t, id),
+      deleteAgentSession: async (t, id) => (await user()).deleteAgentSession(t, id),
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
       files: async (t, method, args) => (await user()).files(t, method, args),
@@ -64,8 +66,15 @@ function sessionApi(env: Env, token: string) {
       const agent = agentOf(env, id);
       return {
         start: (config) => agent.start(config),
-        send: (content) => agent.send(content),
-        items: () => agent.items(),
+        send: (message) => agent.send(message),
+        turn: (turnId) => agent.turn(turnId),
+        cancel: (turnId) => agent.cancel(turnId),
+        items: (query) => agent.items(query),
+        item: (itemId) => agent.item(itemId),
+        events: (query) => agent.events(query),
+        status: () => agent.status(),
+        archive: () => agent.archive(),
+        purge: () => agent.purge(),
       };
     },
   });
@@ -139,7 +148,9 @@ async function devRoutes(request: Request, env: Env, path: string) {
   if (collection === "sessions" && id && sub === "messages") {
     // Past the User DO, straight to the agent session: its turn's file calls go to the gate.
     if (typeof body.content !== "string") throw codedError("EINVAL", "content is required");
-    return json(await agentOf(env, id).send(body.content));
+    const agent = agentOf(env, id);
+    const { turn_id } = await agent.send({ content: body.content, delivery: "next", ignored: [] });
+    return json(await agent.waitTurn(turn_id));
   }
   return undefined;
 }
@@ -150,7 +161,7 @@ function rpcChannel(request: Request, env: Env): Response {
     return json({ error: "EINVAL: /v1/rpc takes a WebSocket" }, 426);
   const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
   server.accept();
-  const stop = serveSessionRpc(webSocketPort(server as never), (token) => sessionApi(env, token));
+  const stop = serveSessionRpc(server as never, (token) => sessionApi(env, token));
   server.addEventListener("close", () => stop());
   return new Response(null, { status: 101, webSocket: client });
 }
@@ -179,7 +190,9 @@ export default {
       if (token) return token;
       const dev = await devRoutes(request, env, path);
       if (dev) return dev;
-      const rest = await handleSessionRest(request, (token) => sessionApi(env, token));
+      const rest = await handleSessionRest(request, (token) => sessionApi(env, token), {
+        keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
+      });
       if (rest) return rest;
       return json({ error: "ENOENT: no such route" }, 404);
     } catch (e) {

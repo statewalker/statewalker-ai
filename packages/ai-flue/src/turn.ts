@@ -14,7 +14,7 @@ import {
   createWriteTool,
   bash as flueBash,
 } from "@flue/runtime";
-import type { ItemInput } from "@statewalker/ai-sessions";
+import type { ItemInput, Steer, TurnOutcome } from "@statewalker/ai-sessions";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
 import { FilesFs } from "./files-fs.js";
@@ -56,6 +56,13 @@ export interface FlueTurn {
   content: string;
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
+  /** Aborts the turn: it stops at once, keeping what it reported so far. */
+  signal?: AbortSignal;
+  /**
+   * Steering: each message is handed to the loop (pi-agent-core's `steer()`), which takes it at
+   * its next step boundary; the turn reports it as a user message item with its `steer` id.
+   */
+  onSteer?(listener: (steer: Steer) => void): void;
 }
 
 /**
@@ -126,37 +133,44 @@ const textOf = (content: Message["content"]) =>
         .map((p) => p.text ?? "")
         .join("");
 
-/** The items of the loop's messages after the user's own; `secrets` by tool call id. */
-function* itemsOf(
-  messages: Message[],
-  secrets: ReadonlyMap<string, string[]>,
-): Generator<ItemInput> {
-  for (const m of messages) {
-    if (m.role === "assistant") {
-      if (m.stopReason === "error" || m.stopReason === "aborted")
-        throw new Error(`EIO: the model failed: ${m.errorMessage ?? m.stopReason}`);
-      const text = textOf(m.content);
-      if (text) yield { kind: "message", role: "assistant", text };
-      for (const p of Array.isArray(m.content) ? m.content : [])
-        if (p.type === "toolCall")
-          yield { kind: "tool_call", callId: p.id, name: p.name, args: p.arguments };
-    } else if (m.role === "toolResult") {
-      yield {
-        kind: "tool_result",
-        callId: m.toolCallId,
-        name: m.toolName,
-        output: textOf(m.content),
-        isError: !!m.isError,
-        ...(secrets.get(String(m.toolCallId))?.length
-          ? { secrets: secrets.get(String(m.toolCallId)) }
-          : {}),
-      };
+/** The items of one message of the loop; `secrets` by tool call id. */
+function* itemsOf(m: Message, secrets: ReadonlyMap<string, string[]>): Generator<ItemInput> {
+  if (m.role === "assistant") {
+    const text = textOf(m.content);
+    if (m.stopReason === "aborted") {
+      // Cut short: what the model had said so far, marked incomplete.
+      if (text) yield { kind: "message", role: "assistant", text, incomplete: true };
+      return;
     }
+    if (m.stopReason === "error") return;
+    if (text) yield { kind: "message", role: "assistant", text };
+    for (const p of Array.isArray(m.content) ? m.content : [])
+      if (p.type === "toolCall")
+        yield { kind: "tool_call", callId: p.id, name: p.name, args: p.arguments };
+  } else if (m.role === "toolResult") {
+    yield {
+      kind: "tool_result",
+      callId: m.toolCallId,
+      name: m.toolName,
+      output: textOf(m.content),
+      isError: !!m.isError,
+      ...(secrets.get(String(m.toolCallId))?.length
+        ? { secrets: secrets.get(String(m.toolCallId)) }
+        : {}),
+    };
   }
 }
 
-/** Runs one turn and reports its items, in order, after the user's message. */
-export async function runFlueTurn(turn: FlueTurn, emit: (item: ItemInput) => void): Promise<void> {
+/**
+ * Runs one turn, reporting its items as each message of the loop ends, after the user's message.
+ * Aborting the signal stops the loop; steering joins it at its next step.
+ */
+export async function runFlueTurn(
+  turn: FlueTurn,
+  emit: (item: ItemInput) => void,
+): Promise<TurnOutcome> {
+  const outcome: TurnOutcome = { model: turn.model.model };
+  if (turn.signal?.aborted) return outcome;
   const sandbox = await flueBash(
     () => new Bash({ fs: new FilesFs(turn.files) as never, cwd: `/${turn.project}` }) as never,
   ).createSandbox({ id: turn.id });
@@ -184,10 +198,41 @@ export async function runFlueTurn(turn: FlueTurn, emit: (item: ItemInput) => voi
       tools: tools as never,
       messages: [],
     },
+    // Everything steered since the last step joins at the next one.
+    steeringMode: "all",
   } as never);
-  await agent.prompt(turn.content);
-  await agent.waitForIdle();
-  const messages = (agent.state as unknown as { messages: Message[] }).messages;
-  const start = messages.findIndex((m) => m.role === "user");
-  for (const item of itemsOf(messages.slice(start + 1), secrets)) emit(item);
+  // Steered messages by identity: the loop reports the very message object it was handed.
+  const steered = new Map<unknown, Steer>();
+  let failure: string | undefined;
+  let prompted = false;
+  agent.subscribe((event) => {
+    if (event.type !== "message_end") return;
+    const m = event.message as unknown as Message;
+    if (m.role === "user") {
+      const steer = steered.get(event.message);
+      if (steer) emit({ kind: "message", role: "user", text: steer.text, steer: steer.id });
+      else prompted = true;
+      return;
+    }
+    if (!prompted) return;
+    if (m.role === "assistant" && m.stopReason === "error")
+      failure = `EIO: the model failed: ${m.errorMessage ?? m.stopReason}`;
+    for (const item of itemsOf(m, secrets)) emit(item);
+  });
+  turn.onSteer?.((steer) => {
+    const message = { role: "user", content: steer.text, timestamp: Date.now() };
+    steered.set(message, steer);
+    agent.steer(message as never);
+  });
+  const abort = () => agent.abort();
+  turn.signal?.addEventListener("abort", abort);
+  try {
+    if (turn.signal?.aborted) return outcome;
+    await agent.prompt(turn.content);
+    await agent.waitForIdle();
+  } finally {
+    turn.signal?.removeEventListener("abort", abort);
+  }
+  if (failure && !turn.signal?.aborted) throw new Error(failure);
+  return outcome;
 }

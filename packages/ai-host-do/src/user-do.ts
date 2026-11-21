@@ -9,6 +9,7 @@ import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { filesOverRpc } from "@statewalker/ai-environment";
 import {
   type DeleteSecretRequest,
+  type Metadata,
   type SecretScope,
   type SetSecretRequest,
   type StartSessionRequest,
@@ -75,6 +76,21 @@ export class User extends DurableObject<Env> {
   async listAgentSessions(token: string) {
     await this.#reachable();
     return this.#sessions.listAgentSessions(token);
+  }
+
+  async updateAgentSession(token: string, id: string, metadata: Metadata) {
+    await this.#reachable();
+    return this.#sessions.updateAgentSession(token, id, metadata);
+  }
+
+  async archiveAgentSession(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.archiveAgentSession(token, id);
+  }
+
+  async deleteAgentSession(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.deleteAgentSession(token, id);
   }
 
   async profile(token: string) {

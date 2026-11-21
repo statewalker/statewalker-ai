@@ -46,6 +46,7 @@
     //   DEPLOYMENT_SECRETS   {"NAME": {"plugins": [...], "hosts": [...]}}: the runtime secrets that are
     //                        deployment-level secrets, and their bindings (the values are the NAME secrets)
     // Test-only, never set in a real deployment:
+    //   SSE_KEEPALIVE_MS     the event streams' keep-alive interval (30000 otherwise)
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":
     //                        POST /admin/seed {files, workspace?} writes fixtures into a workspace
@@ -54,6 +55,7 @@
     //                        POST /admin/profiles {files} writes fixtures into the profiles file system
     //                        POST /admin/users/<user>/unreachable makes that User DO refuse every call
     //                        POST /admin/sessions/<id>/messages {content} runs a turn past the User DO
+    //                          and answers it once it ended
     //                        POST /admin/users/<user>/revoke revokes a user everywhere, at the issuer (the operator's)
     //                        POST /admin/workspaces/<ws>/user-session {token} hands a token straight to that
     //                          workspace's DO, past the routing by the token's workspace
