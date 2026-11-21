@@ -89,7 +89,12 @@ export class ApprovalRegistry {
       user,
       grant.expires,
     );
-    if (grant.scope === "session")
+    // A session rule is a permission pattern: a target holding `*` (a file named so) would cover
+    // more than the one target approved, so such an approval counts once only.
+    if (
+      grant.scope === "session" &&
+      !grant.permission.slice(grant.permission.indexOf(":") + 1).includes("*")
+    )
       this.#sql.exec(
         "INSERT OR IGNORE INTO gate_session_rules VALUES (?, ?, ?)",
         grant.session,

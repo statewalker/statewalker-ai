@@ -3,8 +3,10 @@
 // deployment, the project, the user, the agent session and the mode; deny beats ask, and ask beats
 // allow. The built-in modes follow Claude Code's identifiers. `auto` is `default` until the risk
 // classifier (#137).
+
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { BUILT_IN_MODES, decideMode, modeOf, parseModes } from "../src/index.js";
+import { ApprovalRegistry, BUILT_IN_MODES, decideMode, modeOf, parseModes } from "../src/index.js";
 
 const files = (action: string, target: string) => ({ area: "files", action, target });
 const verdict = (mode: string, req: ReturnType<typeof files>, layers = []) =>
@@ -104,5 +106,46 @@ describe("modes", () => {
     expect(Object.keys(BUILT_IN_MODES).sort()).toEqual(
       ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"].sort(),
     );
+  });
+});
+
+describe("the approval registry", () => {
+  // The Workspace DO's SQLite, stood in for by Node's: only what the registry asks of it.
+  const sqlOf = () => {
+    const db = new DatabaseSync(":memory:");
+    return {
+      exec(query: string, ...bindings: unknown[]) {
+        const statement = db.prepare(query);
+        const rows = statement.columns().length
+          ? statement.all(...(bindings as never[]))
+          : statement.run(...(bindings as never[])) && [];
+        return { toArray: () => rows as Record<string, unknown>[] };
+      },
+    };
+  };
+
+  it("an approval for the session covers only its own target, never a pattern a file name spells", () => {
+    const registry = new ApprovalRegistry(sqlOf());
+    const expires = Date.now() + 60_000;
+    registry.grant("ann", {
+      id: "ap-1",
+      session: "as-1",
+      scope: "session",
+      permission: "files.write:/notes/*.md",
+      expires,
+    });
+    expect(registry.sessionRules("as-1", "ann")).toEqual({ allow: [] });
+    registry.grant("ann", {
+      id: "ap-2",
+      session: "as-1",
+      scope: "session",
+      permission: "files.write:/notes/a.md",
+      expires,
+    });
+    expect(registry.sessionRules("as-1", "ann")).toEqual({ allow: ["files.write:/notes/a.md"] });
+    expect(registry.sessionRules("as-1", "bob")).toEqual({ allow: [] });
+    expect(registry.consume("ap-1", "as-1", "ann")).toBe(true);
+    expect(registry.consume("ap-1", "as-1", "ann")).toBe(false);
+    expect(registry.consume("ap-2", "as-2", "ann")).toBe(false);
   });
 });
