@@ -24,6 +24,10 @@
     "WORKSPACES": "default",
     // The profiles file system's backend: "sql" (SqlFs on the Profiles DO's SQLite) or "memory".
     "PROFILES_BACKEND": "sql",
+    // The role sources, asked in order: "file" (each project's access file, `.system/access`, with
+    // custom roles in `.system/roles`; the workspace's admins in `/.system/access`) and "sql" (the
+    // workspace's SQL). Each project is answered by the first source that knows it.
+    "ROLE_SOURCES": "file",
     "TOKEN_TTL_MS": "3600000"
     // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:
     //   SECRETS_KEY          seals workspace, project and user secrets in each Workspace DO's SQLite
@@ -33,6 +37,8 @@
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":
     //                        POST /admin/seed {files, workspace?} writes fixtures into a workspace
+    //                        POST /admin/access {workspace?, project?, members?, roles?, workspaceRoles?}
+    //                          writes the workspace's SQL role source
     //                        POST /admin/profiles {files} writes fixtures into the profiles file system
     //                        POST /admin/users/<user>/unreachable makes that User DO refuse every call
     //                        POST /admin/sessions/<id>/messages {content} runs a turn past the User DO

@@ -1,4 +1,5 @@
-// One Workspace DO per workspace: the store, the role source (each project's access file), the
+// One Workspace DO per workspace: the store, the role sources (each project's access file and the
+// workspace's SQL, as the deployment's ROLE_SOURCES var chains them), the
 // workspace's root key (it never leaves this DO), and the gate every file call of every agent
 // session goes through. Its name is the workspace. It mints a user capability for a user session
 // that a User DO opens with the user's access token, and the gate reads user, project and session
@@ -6,11 +7,19 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
-  accessFilePath,
+  accessOf,
+  chainRoleSources,
   codedError,
   DEFAULT_SYSTEM_FOLDER,
-  parseAccessFile,
+  decide,
+  fileRoleSource,
+  type RoleEntries,
+  type RoleGrant,
+  type RoleSource,
+  resolveRoles,
+  SqlRoleSource,
   type StoredRootKey,
+  WORKSPACE_ROLES,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
@@ -41,6 +50,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #name: string;
   readonly #store: SqlFiles;
   readonly #authority: WorkspaceAuthority;
+  readonly #sqlRoles: SqlRoleSource;
+  readonly #roles: RoleSource;
   readonly #secrets: SecretStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
@@ -61,6 +72,15 @@ export class Workspace extends DurableObject<Env> {
       sql.exec("INSERT INTO ws_keys VALUES ('root', ?)", JSON.stringify(root));
     }
     this.#authority = WorkspaceAuthority.fromStored(root);
+    this.#sqlRoles = new SqlRoleSource(sql);
+    const files = fileRoleSource((path) => tryReadText(this.#store, path), DEFAULT_SYSTEM_FOLDER);
+    const sources: RoleSource[] = [];
+    for (const name of (env.ROLE_SOURCES || "file").split(",").map((s) => s.trim())) {
+      if (name === "file") sources.push(files);
+      else if (name === "sql") sources.push(this.#sqlRoles);
+      else if (name) throw codedError("EIO", `unknown role source '${name}'`);
+    }
+    this.#roles = chainRoleSources(sources);
     // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
     this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
   }
@@ -76,31 +96,38 @@ export class Workspace extends DurableObject<Env> {
     return this.#authority.mintUser(claims.user);
   }
 
-  /** The role in a project of the user a user capability names; EACCES for a non-member. */
-  async memberRole(capability: string, project: string): Promise<string> {
+  /**
+   * The roles in a project of the user a user capability names, from the role sources now;
+   * EACCES for a non-member (membership gives visibility).
+   */
+  async memberRoles(capability: string, project: string): Promise<string[]> {
     const user = await this.#authority.userOf(capability);
-    const role = await this.#roleOf(project, user);
-    if (!role) throw codedError("EACCES", `${user} is not a member of ${project}`);
-    return role;
+    const access = await this.#access(project, user);
+    if (!access.member) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    return access.grants.map((g) => g.role);
   }
 
-  #roleOf(project: string, user: string) {
-    return tryReadText(this.#store, accessFilePath(project)).then((t) => parseAccessFile(t)[user]);
+  async #access(project: string, user: string) {
+    const access = await accessOf(this.#roles, project, user);
+    // Unknown roles, permissions and cycles are reported here and grant nothing.
+    if (access.problems.length)
+      console.warn(`roles of ${user} in ${project}: ${access.problems.join("; ")}`);
+    return access;
   }
 
   /**
    * The gate: one file call of the agent session the capability names, decided now. User and
-   * project come from the capability itself; the role is read from the access file at this
-   * moment, never fixed at the session's start.
+   * project come from the capability itself; the user's roles are read from the role sources at
+   * this moment, never fixed at the session's start, so a demotion reaches the next call.
    */
   async fileCall(capability: string, call: FileCall): Promise<unknown> {
     const facts = await this.#authority.agentSessionOf(capability);
-    const role = await this.#roleOf(facts.project, facts.user);
+    const { grants } = await this.#access(facts.project, facts.user);
     const view = gatedFiles(this.#store, {
       project: facts.project,
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       authorize: (action, path) =>
-        this.#authority.authorize(capability, { action, path, project: facts.project, role }),
+        this.#authority.authorize(capability, { action, path, project: facts.project, grants }),
     });
     return answerFileCall(view, call);
   }
@@ -112,18 +139,13 @@ export class Workspace extends DurableObject<Env> {
     );
   }
 
-  async #isWorkspaceAdmin(user: string): Promise<boolean> {
-    const text = await tryReadText(this.#store, `/${DEFAULT_SYSTEM_FOLDER}/access`);
-    return parseAccessFile(text)[user] === "admin";
-  }
-
   /**
-   * `secrets.write:<level>` for a user capability's user, and the scope its rows are kept under:
-   * the user manages their own, a project's owner its project's, the workspace admin the
-   * workspace's. Deployment secrets are the runtime's: the admin may list them, nobody writes them.
+   * `secrets.write:<level>` for a user capability's user, and the scope its rows are kept under.
+   * Users manage their own secrets; a project's are managed with a project role granting
+   * `secrets.write:project` (owners), the workspace's with a workspace role granting
+   * `secrets.write:workspace` (the admin). Deployment secrets are the runtime's: listed with
+   * `secrets.write:workspace`, written by nobody.
    */
-  // A minimal check until the permission language (statewalker/statewalker-root#123) carries a
-  // `secrets` area; then this asks the member's role grants instead.
   async #secretScope(
     capability: string,
     scope: SecretScope,
@@ -131,20 +153,29 @@ export class Workspace extends DurableObject<Env> {
   ): Promise<{ level: StoredLevel | "deployment"; scope: string }> {
     const user = await this.#authority.userOfUserCapability(capability);
     const refuse = () => codedError("EACCES", `${user} may not manage ${scope.level} secrets here`);
+    const holds = (grants: readonly RoleGrant[], target: string) =>
+      decide(grants, { area: "secrets", action: "write", target });
     switch (scope.level) {
       case "user":
         return { level: "user", scope: user };
       case "project": {
         const project = String(scope.project);
-        if ((await this.#roleOf(project, user)) !== "owner") throw refuse();
+        const access = await this.#access(project, user);
+        // Only project roles: a workspace role never reaches a project's secrets.
+        const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+        if (!access.member || !holds(grants, "project")) throw refuse();
         return { level: "project", scope: project };
       }
       case "workspace":
-        if (!(await this.#isWorkspaceAdmin(user))) throw refuse();
-        return { level: "workspace", scope: "" };
-      case "deployment":
-        if (write || !(await this.#isWorkspaceAdmin(user))) throw refuse();
-        return { level: "deployment", scope: "" };
+      case "deployment": {
+        // Only workspace roles: a project's custom role can't grant `secrets.write:workspace`.
+        const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+          Object.hasOwn(WORKSPACE_ROLES, r),
+        );
+        if (!holds(resolveRoles(held, {}).grants, "workspace")) throw refuse();
+        if (scope.level === "deployment" && write) throw refuse();
+        return { level: scope.level, scope: "" };
+      }
       default:
         throw codedError("EINVAL", "no such secret level");
     }
@@ -204,10 +235,29 @@ export class Workspace extends DurableObject<Env> {
     call: { plugin: string; request: OutgoingRequest },
   ): Promise<GatewayResult> {
     const facts = await this.#authority.agentSessionOf(capability);
-    if (!(await this.#roleOf(facts.project, facts.user)))
+    if (!(await this.#access(facts.project, facts.user)).member)
       throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
     const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
     return gatewayFetch(call.request, String(call.plugin), lookup);
+  }
+
+  /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): writes the workspace's SQL role
+   * source. Harness tools, allowed to owners, replace this in a later ticket.
+   */
+  async setAccess(fixture: {
+    project?: string;
+    members?: Record<string, string[]>;
+    roles?: Record<string, RoleEntries | null>;
+    workspaceRoles?: Record<string, string[]>;
+  }): Promise<void> {
+    const { project } = fixture;
+    if ((fixture.members || fixture.roles) && !project)
+      throw codedError("EINVAL", "members and roles belong to a project");
+    if (project && fixture.members) this.#sqlRoles.setMembers(project, fixture.members);
+    if (project && fixture.roles) this.#sqlRoles.setRoles(project, fixture.roles);
+    for (const [user, roles] of Object.entries(fixture.workspaceRoles ?? {}))
+      this.#sqlRoles.setWorkspaceRoles(user, roles);
   }
 
   /** Test-only fixtures (the Worker admits this only with the ADMIN_KEY). */

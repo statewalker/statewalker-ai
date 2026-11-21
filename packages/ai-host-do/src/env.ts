@@ -14,6 +14,11 @@ export interface Env {
   AGENT: DurableObjectNamespace<AgentSession>;
   /** The workspaces this deployment serves, comma-separated; the first is the default. */
   WORKSPACES?: string;
+  /**
+   * The role sources, comma-separated, asked in order: "file" (each project's access file, the
+   * default), "sql" (the workspace's SQL). Each project is answered by the first that knows it.
+   */
+  ROLE_SOURCES?: string;
   /** The profiles file system's backend: "sql" (the default) or "memory". */
   PROFILES_BACKEND?: string;
   TOKEN_TTL_MS?: string;

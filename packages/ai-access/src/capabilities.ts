@@ -4,7 +4,9 @@
 // (agent, project, mode) with one block, offline; the agent session holds that capability, never
 // the access token. The gate reads user, project and session from the capability itself (the user
 // from the root-signed authority block, the rest from the first attenuation block), so it never
-// asks the User DO, and authorizes every file action with the member's role read at that moment.
+// asks the User DO, and authorizes every file action with the permissions the member's roles grant
+// at that moment (statewalker/statewalker-root#123), each role decided on its own so a role's
+// checks narrow only that role.
 import {
   Biscuit,
   fromBase64,
@@ -15,8 +17,10 @@ import {
   type VerifiedBiscuit,
 } from "@statewalker/webrun-biscuit";
 import { codedError } from "./errors.js";
+import { type RoleGrant, roleAuthorizer } from "./permissions.js";
 
-export type FileAction = "read";
+/** The file actions the gate authorizes: `files.read` and `files.list` for now. */
+export type FileAction = "read" | "list";
 
 /** A file action of an agent session, with the facts the Workspace DO knows when it happens. */
 export interface FileRequest {
@@ -25,8 +29,8 @@ export interface FileRequest {
   path: string;
   /** The session's project, as its capability names it. */
   project: string;
-  /** The member's role in the project now, if any. */
-  role: string | undefined;
+  /** What the member's roles grant in the project now (none for a non-member). */
+  grants: readonly RoleGrant[];
 }
 
 /** What the User DO narrows a user capability to for one agent session. */
@@ -42,12 +46,12 @@ export interface AgentSessionFacts extends AgentSessionGrant {
   user: string;
 }
 
-// The roles' file permissions, as Datalog over the capability. `resource` and `root` end in "/",
-// so a project's prefix never matches a sibling ("/alpha/" is no prefix of "/alphabet/").
-const POLICY = `
-allow if operation("read"), role($r), {"reader", "editor", "owner"}.contains($r), resource($p), root($x), $p.starts_with($x);
-deny if true;
-`;
+// The facts of a file action the capability's blocks check. `resource` and `root` end in "/", so a
+// project's prefix never matches a sibling ("/alpha/" is no prefix of "/alphabet/"); the role
+// policy also requires the resource to be under the project's root.
+const FILE_FACTS = `resource({path});
+root({root});
+check if resource($p), root($x), $p.starts_with($x);`;
 
 // The agent session's block: its grant as facts, which the gate reads, and a check that binds
 // every resource to the project's folder, whatever any later block or the gate says.
@@ -181,21 +185,34 @@ export class WorkspaceAuthority {
     };
   }
 
-  /** Authorizes one file action under a capability; EACCES when refused. */
+  /**
+   * Authorizes one file action under a capability: allowed when one of the member's roles grants
+   * `files.<action>` on the path relative to the project, within that role's checks, and every
+   * block of the capability agrees; EACCES otherwise.
+   */
   async authorize(capability: string, req: FileRequest): Promise<void> {
     let ok = false;
     try {
       const verified = await this.#verify(capability);
-      const facts = `operation({op});\nresource({path});\nroot({root});\n${req.role ? "role({role});\n" : ""}`;
+      const root = `/${req.project}/`;
+      const resource = req.path === "/" ? "/" : `${req.path}/`;
+      const inProject = resource.startsWith(root);
+      const target = inProject ? `/${resource.slice(root.length)}`.replace(/(.)\/$/, "$1") : "";
+      const extra = { code: FILE_FACTS, params: { path: resource, root } };
       ok =
-        verified.authorize(facts + POLICY, {
-          params: {
-            op: req.action,
-            path: req.path === "/" ? "/" : `${req.path}/`,
-            root: `/${req.project}/`,
-            ...(req.role ? { role: req.role } : {}),
-          },
-        }).kind === "ok";
+        inProject &&
+        req.grants.some((grant) => {
+          const { code, params } = roleAuthorizer(
+            grant,
+            { area: "files", action: req.action, target },
+            extra,
+          );
+          try {
+            return verified.authorize(code, { params }).kind === "ok";
+          } catch {
+            return false;
+          }
+        });
     } catch {
       ok = false;
     }

@@ -33,7 +33,7 @@ export class User extends DurableObject<Env> {
         const ws = workspaceOf(env, name);
         return {
           userCapability: (token) => ws.userCapability(token),
-          memberRole: (capability, project) => ws.memberRole(capability, project),
+          memberRoles: (capability, project) => ws.memberRoles(capability, project),
           listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
           setSecret: (capability, req) => ws.setSecret(capability, req),
           deleteSecret: (capability, req) => ws.deleteSecret(capability, req),

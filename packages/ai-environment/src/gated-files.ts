@@ -18,7 +18,7 @@ export interface GatedFilesOptions {
   /** The project's system folder's name (default `.system`). */
   systemFolder: string;
   /** Throws (EACCES) unless the session may take this action on this normalised path now. */
-  authorize(action: "read", path: string): Promise<void>;
+  authorize(action: "read" | "list", path: string): Promise<void>;
 }
 
 /** Whether a normalised path is a system folder or under one. */
@@ -32,10 +32,10 @@ const readOnly = (): never => {
 export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesApi {
   const hidden = (path: string) => inSystemFolder(path, options.systemFolder);
   /** The normalised path, after the structural check and authorization. */
-  const check = async (raw: string): Promise<string> => {
+  const check = async (raw: string, action: "read" | "list" = "read"): Promise<string> => {
     const path = normalise(raw);
     if (hidden(path)) throw codedError("ENOENT", `no such file or directory, '${raw}'`);
-    await options.authorize("read", path);
+    await options.authorize(action, path);
     return path;
   };
   return {
@@ -43,7 +43,7 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
       yield* store.read(await check(raw), readOptions);
     },
     async *list(raw: string, listOptions?: ListOptions): AsyncIterable<FileInfo> {
-      for await (const entry of store.list(await check(raw), listOptions))
+      for await (const entry of store.list(await check(raw, "list"), listOptions))
         if (!hidden(entry.path)) yield entry;
     },
     async stats(raw: string): Promise<FileStats | undefined> {

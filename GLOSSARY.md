@@ -50,8 +50,14 @@ _Avoid_: ACL
 **Workspace admin**:
 The one workspace-level role, which manages projects and their members without reading their files.
 
+**Custom role**:
+A role a project defines in its role source, from permissions, other roles included with `role:`, and checks that only narrow.
+
 **Role source**:
-The pluggable provider of a project's members and roles.
+The pluggable provider of a project's members and roles: the workspace's SQL or each project's access file, alone or chained.
+
+**Access file**:
+The file in a project's system folder naming its members and their roles, with its custom roles beside it.
 
 ### Authority
 

@@ -216,3 +216,28 @@ export async function sendPastUser(
     content,
   });
 }
+
+/** What the workspace's SQL role source is told to hold (see `setAccess`). */
+export interface AccessFixture {
+  /** The workspace, the deployment's default unless named. */
+  workspace?: string;
+  project?: string;
+  /** Members' roles in `project`; an empty list removes the member. */
+  members?: Record<string, string[]>;
+  /** Custom roles of `project`; `null` removes one. */
+  roles?: Record<string, string | string[] | null>;
+  /** Workspace-level roles; an empty list removes them. */
+  workspaceRoles?: Record<string, string[]>;
+}
+
+/**
+ * Writes members, custom roles and workspace-level roles into a workspace's SQL role source
+ * (test-only, behind `ADMIN_KEY`); harness tools for owners replace this in a later ticket.
+ */
+export async function setAccess(
+  deployment: Deployment,
+  adminKey: string,
+  fixture: AccessFixture,
+): Promise<void> {
+  await admin(deployment, adminKey, "/admin/access", fixture);
+}

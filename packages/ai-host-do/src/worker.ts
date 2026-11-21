@@ -80,6 +80,13 @@ async function devRoutes(request: Request, env: Env, path: string) {
     const files = body.files as Record<string, string>;
     return json({ written: await workspaceOf(env, workspace).seed(files) });
   }
+  if (path === "/admin/access") {
+    const workspace = typeof body.workspace === "string" ? body.workspace : defaultWorkspace(env);
+    if (!workspacesOf(env).includes(workspace))
+      throw codedError("EINVAL", `this deployment does not serve '${workspace}'`);
+    await workspaceOf(env, workspace).setAccess(body as never);
+    return json({ ok: true });
+  }
   if (path === "/admin/profiles") {
     const files = body.files as Record<string, string>;
     return json({ written: await profilesOf(env).seed(files) });

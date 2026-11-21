@@ -5,6 +5,7 @@ export { type FakeModel, fakeModel, type ModelRequest } from "./model.js";
 export { type FakeRest, fakeRest, type RestRequest } from "./rest-server.js";
 export { type RpcSessionClient, rpcClient } from "./rpc-client.js";
 export {
+  type AccessFixture,
   type AgentSession,
   ApiError,
   type Item,
@@ -21,6 +22,7 @@ export {
   seed,
   seedProfiles,
   sendPastUser,
+  setAccess,
   type Turn,
   type UserSession,
 } from "./session-client.js";

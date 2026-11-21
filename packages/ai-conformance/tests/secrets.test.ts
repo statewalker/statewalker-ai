@@ -83,7 +83,8 @@ beforeAll(async () => {
     "/.system/access": perTransport({ wendy: "admin" }),
     "/alpha/readme.md": "# alpha\n",
     "/alpha/.system/access": perTransport({ ann: "owner", bob: "editor" }),
-    "/beta/.system/access": perTransport({ ann: "owner", bob: "owner" }),
+    "/beta/.system/access": perTransport({ ann: "owner", bob: "owner", cara: "keymaster" }),
+    "/beta/.system/roles": JSON.stringify({ keymaster: "files.read, secrets.write:workspace" }),
   });
 }, 120_000);
 afterAll(async () => {
@@ -156,6 +157,9 @@ describe.each(transports)("secrets over %s", (name, connect) => {
     });
     // Workspace secrets: the workspace admin only.
     await expect(ann.setSecret(secret("workspace"))).rejects.toMatchObject({ status: 403 });
+    // A project's custom role cannot grant a workspace-level permission.
+    const cara = await as("cara");
+    await expect(cara.setSecret(secret("workspace"))).rejects.toMatchObject({ status: 403 });
     await expect(ann.listSecrets({ level: "workspace" })).rejects.toMatchObject({ status: 403 });
     await expect(wendy.setSecret(secret("workspace"))).resolves.toMatchObject({
       level: "workspace",
