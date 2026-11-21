@@ -12,7 +12,11 @@ const roles = (...held: string[]) => resolveRoles(held, {}).grants;
 describe("capabilities", () => {
   it("reads an agent session's user, project and session from its capability alone", async () => {
     const capability = attenuateForAgentSession(authority.mintUser("ann"), grant);
-    expect(await authority.agentSessionOf(capability)).toEqual({ user: "ann", ...grant });
+    expect(await authority.agentSessionOf(capability)).toEqual({
+      user: "ann",
+      ...grant,
+      unattended: false,
+    });
     await expect(
       authority.authorize(capability, {
         action: "read",
@@ -29,7 +33,11 @@ describe("capabilities", () => {
     const widened = Biscuit.fromBase64(capability)
       .attenuate('agent_session("as-2");\nproject("beta");\nuser("bob");')
       .toBase64();
-    expect(await authority.agentSessionOf(widened)).toEqual({ user: "ann", ...grant });
+    expect(await authority.agentSessionOf(widened)).toEqual({
+      user: "ann",
+      ...grant,
+      unattended: false,
+    });
     // Even a gate told "beta" refuses: the session's own block binds every resource to /alpha/.
     for (const cap of [capability, widened])
       await expect(
