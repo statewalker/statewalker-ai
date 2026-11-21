@@ -1,17 +1,18 @@
 // One DO per agent session: it holds the session's capability (the user capability its User DO
 // attenuated for it; never the access token) and runs its turns on Flue, whose file view is the
-// Workspace DO's gate reached with that capability. A file call the gate answers with an
-// approval request ends the turn waiting on it; the user's answer continues the session.
+// Workspace DO's gate reached with that capability: a webrun-files-rpc client whose calls travel on
+// the Workspace DO's stub. A file call the gate stops for an approval ends the turn waiting on it;
+// the user's answer continues the session.
 
 import { DurableObject } from "cloudflare:workers";
-import { filesOverCalls } from "@statewalker/ai-environment";
+import { approvalAware, filesOverRpc, runStoredCall } from "@statewalker/ai-environment";
 import { runFlueTurn } from "@statewalker/ai-flue";
 import {
   type AgentSessionConfig,
   AgentSessionCore,
   type ApprovalAnswer,
 } from "@statewalker/ai-sessions";
-import type { Env } from "./env.js";
+import { blockSizeOf, type Env } from "./env.js";
 import { restTools } from "./rest-tools.js";
 
 export class AgentSession extends DurableObject<Env> {
@@ -28,8 +29,10 @@ export class AgentSession extends DurableObject<Env> {
             id: config.id,
             agent: config.agent,
             project: config.project,
-            files: filesOverCalls(
-              (call) => workspace.fileCall(config.capability, call),
+            files: approvalAware(
+              filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
+                blockSize: blockSizeOf(env),
+              }),
               onApproval,
             ),
             model: { baseUrl: String(env.LLM_BASE_URL), model: env.LLM_MODEL || "default" },
@@ -42,11 +45,14 @@ export class AgentSession extends DurableObject<Env> {
           emit,
         );
       },
-      runAction: (config, call) =>
-        env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace)).fileCall(
-          config.capability,
-          call,
-        ),
+      runAction: (config, call) => {
+        const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+        const files = filesOverRpc(
+          (method, args) => workspace.files(config.capability, method, args),
+          { blockSize: blockSizeOf(env) },
+        );
+        return runStoredCall(files, call);
+      },
     });
   }
 

@@ -27,6 +27,22 @@ export interface Env {
    * default), "sql" (the workspace's SQL). Each project is answered by the first that knows it.
    */
   ROLE_SOURCES?: string;
+  /** Each workspace's store: "sql" (the default), "memory", "local" or "s3" (./workspace-store.ts). */
+  WORKSPACE_BACKEND?: string;
+  /** "local": the folder holding one folder per workspace. */
+  WORKSPACE_ROOT?: string;
+  /** "s3": the bucket, and optionally the endpoint, region and key prefix. */
+  WORKSPACE_S3_BUCKET?: string;
+  WORKSPACE_S3_ENDPOINT?: string;
+  WORKSPACE_S3_REGION?: string;
+  WORKSPACE_S3_PREFIX?: string;
+  /** "s3": its keys, set as secrets. */
+  WORKSPACE_S3_ACCESS_KEY_ID?: string;
+  WORKSPACE_S3_SECRET_ACCESS_KEY?: string;
+  /** The workspace's default ignore rules for agent sessions, in gitignore syntax. */
+  IGNORE?: string;
+  /** Bytes per block of a file stream (default 1 MiB). */
+  FILE_BLOCK_SIZE?: string;
   /** The profiles file system's backend: "sql" (the default) or "memory". */
   PROFILES_BACKEND?: string;
   TOKEN_TTL_MS?: string;
@@ -61,6 +77,12 @@ export interface Env {
   DEV_LOGIN?: string;
   /** Test-only: enables the /admin/* routes with this bearer key. */
   ADMIN_KEY?: string;
+}
+
+/** Bytes per block of every file stream in the deployment. */
+export function blockSizeOf(env: Env): number {
+  const n = Number(env.FILE_BLOCK_SIZE);
+  return Number.isInteger(n) && n > 0 ? n : 1024 * 1024;
 }
 
 export const workspacesOf = (env: Env): string[] =>

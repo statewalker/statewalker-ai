@@ -28,7 +28,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Each test uses its own users, suffixed by transport, so modes switched in one never reach another.
 const USERS = [
   ...["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kit", "lee"],
-  ...["mo", "ned", "oz"],
+  ...["mo", "ned", "oz", "pat"],
 ];
 const TRANSPORTS = ["rest", "rpc"];
 
@@ -48,11 +48,14 @@ function fixtures(): Record<string, string> {
     }),
   };
   for (const t of TRANSPORTS) {
+    files[`/proj/drafts-${t}/old.md`] = "an old draft\n";
     files[`/proj/guarded-${t}/keep.md`] = "keep me\n";
     files[`/proj/guarded-${t}/other.md`] = "other\n";
     files[`/proj/tidy-${t}/a.md`] = "a\n";
     files[`/proj/tidy-${t}/keep/b.md`] = "b\n";
     files[`/demote-${t}/notes/a.md`] = "a\n";
+    files[`/bare-${t}/readme.md`] = "# bare\n";
+    files[`/bare-${t}/.system/access`] = JSON.stringify({ [`mo-${t}`]: "editor" });
     files[`/demote-${t}/.system/access`] = JSON.stringify({ [`dan-${t}`]: "editor" });
   }
   return files;
@@ -345,11 +348,12 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("never lets an agent remove its project's folder, even where the mode never asks", async () => {
     const mo = await as("mo");
     await mo.setMode({ mode: "bypassPermissions" });
-    const s = await mo.startSession({ project: "proj", agent: "modes" });
-    const turn = await mo.sendMessage(s.id, { content: bash("rm -r /proj") });
+    // A project with no rules of its own: only the gate's own guard stands in the way.
+    const s = await mo.startSession({ project: `bare-${t}`, agent: "modes" });
+    const turn = await mo.sendMessage(s.id, { content: bash(`rm -r /bare-${t}`) });
     expect(turn.status).toBe("completed");
     expect(toolResult(turn)?.output).toMatch(/EACCES/);
-    expect(await contentOf(mo, s.id, "readme.md")).toBe("# proj\n");
+    expect(await contentOf(mo, s.id, "readme.md")).toBe("# bare\n");
   });
 
   it("decides a folder's removal by every entry inside it: a denied or asking file inside denies or asks", async () => {
@@ -376,6 +380,30 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     const made = approvalOf(await oz.sendMessage(s.id, { content: bash(`mkdir /proj/src-${t}`) }));
     await oz.answerApproval(made.id, { decision: "allow", scope: "session" });
     approvalOf(await oz.sendMessage(s.id, { content: write(`src-${t}/run.sh`, "echo hi\n") }));
+  });
+
+  it("asks about a move, keyed by source and target, and approving runs exactly that move", async () => {
+    const pat = await as("pat");
+    const s = await pat.startSession({ project: "proj", agent: "modes" });
+    const moved = approvalOf(
+      await pat.sendMessage(s.id, {
+        content: bash(`mv /proj/drafts-${t}/old.md /proj/drafts-${t}/new.md`),
+      }),
+    );
+    expect(moved.action).toMatchObject({
+      method: "move",
+      path: `/proj/drafts-${t}/old.md`,
+      target: `/proj/drafts-${t}/new.md`,
+    });
+    const other = approvalOf(
+      await pat.sendMessage(s.id, {
+        content: bash(`mv /proj/drafts-${t}/old.md /proj/drafts-${t}/x.md`),
+      }),
+    );
+    expect(other.id).not.toBe(moved.id);
+    const answered = await pat.answerApproval(moved.id, { decision: "allow", scope: "once" });
+    expect(toolResult(answered.turn)).toMatchObject({ isError: false });
+    expect(await contentOf(pat, s.id, `drafts-${t}/new.md`)).toBe("an old draft\n");
   });
 
   it("an approval is answered only by its own user", async () => {

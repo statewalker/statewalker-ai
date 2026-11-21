@@ -3,6 +3,8 @@
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
+
 export type { ApprovalRequest };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
@@ -71,8 +73,10 @@ export interface ItemInput {
 
 /** The exact file call an approval runs, as the agent session stores it in its items. */
 export interface StoredAction {
-  method: "write" | "mkdir" | "remove";
+  method: "write" | "mkdir" | "remove" | "copy" | "move";
   path: string;
+  /** A copy's or move's target. */
+  target?: string;
   /** A write's content, base64. */
   content?: string;
 }
@@ -169,6 +173,8 @@ export interface SessionApi {
     id: string,
     answer: ApprovalAnswer,
   ): Promise<{ approval: ApprovalView; turn: TurnView }>;
+  /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
+  files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /**
    * The secrets of one level the caller manages (`secrets.write:<level>`; a project's for project
    * secrets): names, levels, bindings and update times, never values.
@@ -210,6 +216,8 @@ export interface UserPort {
   listApprovals(token: string): Promise<{ approvals: ApprovalView[] }>;
   /** Answers one of the caller's pending approvals; an allow is granted at the gate first. */
   answerApproval(token: string, id: string, answer: ApprovalAnswer): Promise<ApprovalView>;
+  /** One files-RPC call on the user's own file view of the token's workspace. */
+  files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   setSecret(token: string, req: SetSecretRequest): Promise<SecretView>;
   deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }>;
@@ -328,6 +336,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const turn = await ports.agent(approval.session).answer(approval.id, checked);
       return { approval, turn: await view(approval.session, turn) };
     },
+    files: (method, args) => ports.user.files(token, method, args),
     listSecrets: async (scope) => ports.user.listSecrets(token, secretScope(scope)),
     setSecret: async (req) => ports.user.setSecret(token, setSecretRequest(req)),
     deleteSecret: async (req) =>

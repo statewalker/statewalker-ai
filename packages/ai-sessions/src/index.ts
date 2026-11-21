@@ -36,6 +36,12 @@ export {
   type UserPort,
   type UserSessionView,
 } from "./api.js";
+export {
+  type FilesRpcConnection,
+  filesRpcClient,
+  handleFilesRest,
+  serveFilesRpc,
+} from "./files.js";
 export { bearerOf, bodyOf, handleSessionRest } from "./rest.js";
 export { serveSessionRpc, sessionRpcClient } from "./rpc.js";
 export type { SqlLike } from "./sql.js";

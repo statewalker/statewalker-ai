@@ -29,7 +29,8 @@ export interface ApprovalRequest {
   id: string;
   session: string;
   project: string;
-  action: { method: string; path: string; size?: number };
+  /** The method, its normalised path (and a copy's or move's target, a write's size). */
+  action: { method: string; path: string; target?: string; size?: number };
   /** The permission asked for, with its target relative to the project. */
   permission: string;
   reason: string;

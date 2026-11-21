@@ -5,7 +5,8 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
-import { filesOverCalls } from "@statewalker/ai-environment";
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import { filesOverRpc } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
@@ -17,6 +18,7 @@ import {
 } from "@statewalker/ai-sessions";
 import {
   approvalTtlMs,
+  blockSizeOf,
   deploymentModes,
   type Env,
   nameOf,
@@ -35,7 +37,9 @@ export class User extends DurableObject<Env> {
       sql: ctx.storage.sql,
       user,
       // Only this user's folder of the profiles file system: the Profiles DO roots every call there.
-      profile: filesOverCalls((call) => profilesOf(env).fileCall(user, call)),
+      profile: filesOverRpc((method, args) => profilesOf(env).files(user, method, args), {
+        blockSize: blockSizeOf(env),
+      }),
       eraseProfile: () => profilesOf(env).erase(user),
       eraseStorage: () => ctx.storage.deleteAll(),
       verifyToken: (token) => verifyToken(env, token),
@@ -46,6 +50,7 @@ export class User extends DurableObject<Env> {
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
+          files: (capability, method, args) => ws.files(capability, method, args),
           listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
           setSecret: (capability, req) => ws.setSecret(capability, req),
           deleteSecret: (capability, req) => ws.deleteSecret(capability, req),
@@ -111,6 +116,11 @@ export class User extends DurableObject<Env> {
   async answerApproval(token: string, id: string, answer: ApprovalAnswer) {
     await this.#reachable();
     return this.#sessions.answerApproval(token, id, answer);
+  }
+
+  async files(token: string, method: FilesRpcMethod, args: unknown[]) {
+    await this.#reachable();
+    return this.#sessions.files(token, method, args);
   }
 
   async listSecrets(token: string, scope: SecretScope) {

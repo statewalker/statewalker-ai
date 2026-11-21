@@ -1,4 +1,4 @@
-// One Workspace DO per workspace: the store, the role sources (each project's access file and the
+// One Workspace DO per workspace: the store (from the deployment's configuration), the role sources (each project's access file and the
 // workspace's SQL, as the deployment's ROLE_SOURCES var chains them), the
 // workspace's root key (it never leaves this DO), and the gate every file call of every agent
 // session goes through. Its name is the workspace. It mints a user capability for a user session
@@ -10,16 +10,13 @@ import {
   type AgentSessionFacts,
   type ApprovalGrant,
   ApprovalRegistry,
-  type ApprovalRequest,
   accessOf,
-  approvalId,
   chainRoleSources,
   codedError,
   DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
   decide,
   decideMode,
-  type FileAction,
   fileRoleSource,
   isMode,
   type ModeDefinition,
@@ -37,18 +34,20 @@ import {
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
-  answerFileCall,
   deploymentSecrets,
-  type FileCall,
-  type FileOp,
+  FilesRpcHost,
+  type FilesRpcMethod,
+  type GatedFilesOptions,
   type GatewayResult,
-  gatedFiles,
+  gatedFilesRpc,
   gatewayFetch,
+  IGNORE_FILE,
+  ignoreRules,
+  type ModeGate,
   normalise,
   type OutgoingRequest,
   type SecretInfo,
   SecretStore,
-  SqlFiles,
   type StoredLevel,
   sessionSecrets,
 } from "@statewalker/ai-environment";
@@ -58,19 +57,22 @@ import type {
   SecretView,
   SetSecretRequest,
 } from "@statewalker/ai-sessions";
-import { tryReadText } from "@statewalker/webrun-files";
-import { deploymentModes, deploymentRules, type Env, nameOf, verifyToken } from "./env.js";
-
-/** Thrown inside the gate when the mode or a rule asks; the call answers with the request. */
-class NeedsApproval extends Error {
-  constructor(readonly request: ApprovalRequest) {
-    super(`needs approval ${request.id}`);
-  }
-}
+import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
+import {
+  blockSizeOf,
+  deploymentModes,
+  deploymentRules,
+  type Env,
+  nameOf,
+  verifyToken,
+} from "./env.js";
+import { mountWorkspace } from "./workspace-store.js";
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
-  readonly #store: SqlFiles;
+  readonly #store: Promise<FilesApi>;
+  /** One files-RPC server per capability that holds a file view, so streams live across calls. */
+  readonly #files: FilesRpcHost;
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
@@ -83,7 +85,9 @@ export class Workspace extends DurableObject<Env> {
     super(ctx, env);
     this.#name = nameOf(ctx);
     const sql = ctx.storage.sql;
-    this.#store = new SqlFiles(sql);
+    this.#store = mountWorkspace(env, ctx.storage, this.#name);
+    this.#store.catch(() => {});
+    this.#files = new FilesRpcHost((capability) => this.#fileView(capability));
     sql.exec("CREATE TABLE IF NOT EXISTS ws_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
     // The tracer kept user and agent sessions here; they live in User DOs now. No release held
     // them, so their rows are dropped rather than migrated.
@@ -98,7 +102,10 @@ export class Workspace extends DurableObject<Env> {
     }
     this.#authority = WorkspaceAuthority.fromStored(root);
     this.#sqlRoles = new SqlRoleSource(sql);
-    const files = fileRoleSource((path) => tryReadText(this.#store, path), DEFAULT_SYSTEM_FOLDER);
+    const files = fileRoleSource(
+      async (path) => tryReadText(await this.#store, path),
+      DEFAULT_SYSTEM_FOLDER,
+    );
     const sources: RoleSource[] = [];
     for (const name of (env.ROLE_SOURCES || "file").split(",").map((s) => s.trim())) {
       if (name === "file") sources.push(files);
@@ -143,88 +150,96 @@ export class Workspace extends DurableObject<Env> {
     return access;
   }
 
-  /**
-   * The gate: one file call of the agent session the capability names, decided now. User and
-   * project come from the capability itself; the user's roles are read from the role sources at
-   * this moment, never fixed at the session's start, so a demotion reaches the next call. Then
-   * the permission rules of the deployment, the project, the user and the agent session, and the
-   * user session's current mode decide (statewalker/statewalker-root#124): a mode switch reaches
-   * the next call too. A call the mode asks about answers `{$approval}` unless the user granted
-   * that exact action.
-   */
-  async fileCall(capability: string, call: FileCall): Promise<unknown> {
-    const facts = await this.#authority.agentSessionOf(capability);
-    const { grants } = await this.#access(facts.project, facts.user);
-    const view = gatedFiles(this.#store, {
-      project: facts.project,
-      systemFolder: DEFAULT_SYSTEM_FOLDER,
-      authorize: async (action, path, op) => {
-        // A folder's removal is decided for the folder and for every entry under it.
-        for (const p of [path, ...(op.covers ?? [])])
-          await this.#authority.authorize(capability, {
-            action,
-            path: p,
-            project: facts.project,
-            grants,
-          });
-        await this.#decide(facts, action, path, op);
-      },
-    });
+  /** Whether a user sees a project: membership, from the role sources now. */
+  async #member(project: string, user: string): Promise<boolean> {
     try {
-      return await answerFileCall(view, call);
-    } catch (e) {
-      if (e instanceof NeedsApproval) return { $approval: e.request };
-      throw e;
+      return (await this.#access(project, user)).member;
+    } catch {
+      return false;
     }
   }
 
-  /** The mode and the rules on an action the roles allow: allowed, EACCES, or NeedsApproval. */
-  async #decide(
-    facts: AgentSessionFacts,
-    action: FileAction,
-    path: string,
-    op: FileOp,
-  ): Promise<void> {
-    const state = this.#registry.userSession(facts.user);
-    const modeName = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
-    const mode = modeOf(modeName, this.#modes);
-    const root = `/${facts.project}`;
-    const target = path === root ? "/" : path.slice(root.length);
-    const projectRules = parseRules(
-      await tryReadText(this.#store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
-    );
-    const layers = [
-      { source: "deployment", rules: this.#deploymentRules },
-      { source: "project", rules: projectRules },
-      { source: "user", rules: state?.rules ?? {} },
-      this.#registry.sessionLayer(facts.session, facts.user),
-    ];
-    const targetOf = (p: string) => (p === root ? "/" : p.slice(root.length));
-    // The strictest verdict over the path and, for a folder's removal, every entry under it.
-    const rank = { allow: 0, ask: 1, deny: 2 } as const;
-    let decision = decideMode({ area: "files", action, target }, { mode, layers });
-    for (const p of op.covers ?? []) {
-      const inner = decideMode({ area: "files", action, target: targetOf(p) }, { mode, layers });
-      if (rank[inner.verdict] > rank[decision.verdict])
-        decision = { ...inner, reason: `${inner.reason} (on ${p}, inside)` };
-    }
-    if (decision.verdict === "allow") return;
-    if (decision.verdict === "deny")
-      throw codedError("EACCES", `may not ${action} '${path}': ${decision.reason}`);
-    const id = await approvalId(facts.session, op.method, path, op.content);
-    if (this.#registry.consume(id, facts.session, facts.user)) return;
-    throw new NeedsApproval({
-      id,
+  /**
+   * The gated view a capability holds, as a files-RPC endpoint. An agent session's capability sees
+   * its project, with the ignore rules applied; the user capability of a user session sees every
+   * project the user is a member of, without them. Membership and roles are read from the role
+   * sources at every action, never fixed when the view opens, so a demotion or removal reaches the
+   * next call and the next block of a stream.
+   * For an agent session, every operation is then decided by the permission rules of the
+   * deployment, the project, the user and the agent session, and the user session's current mode
+   * (statewalker/statewalker-root#124), read from the registry at every call: a mode switch reaches
+   * the next action of a running session. A change the mode asks about waits on an approval,
+   * unless the user granted that exact action.
+   */
+  async #fileView(capability: string) {
+    const store = await this.#store;
+    const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
+    const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
+    const options: GatedFilesOptions = {
+      systemFolder: DEFAULT_SYSTEM_FOLDER,
+      blockSize: blockSizeOf(this.env),
+      visible: (project) => this.#member(project, user),
+      authorize: async (action, path) => {
+        // An agent session acts in its project only; the user's own session in the path's.
+        const project = agent?.project ?? path.split("/")[1] ?? "";
+        if (!project) throw codedError("EACCES", `may not ${action} '${path}'`);
+        const { grants } = await this.#access(project, user);
+        await this.#authority.authorize(capability, { action, path, project, grants });
+      },
+      ...(agent
+        ? {
+            ignoreRules: async (project: string) =>
+              ignoreRules([
+                this.env.IGNORE,
+                await tryReadText(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/${IGNORE_FILE}`),
+              ]),
+          }
+        : {}),
+    };
+    return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
+  }
+
+  /**
+   * The gate: one files-RPC call on the file view a capability holds (an agent session's, or a
+   * user session's own), decided now. User, project and session come from the capability itself;
+   * a capability this workspace did not sign is refused (EACCES).
+   */
+  async files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
+    return this.#files.call(capability, method, args);
+  }
+
+  /** The mode and the rules of one agent session, as the gate decides them at every call. */
+  #modeGate(facts: AgentSessionFacts, store: FilesApi): ModeGate {
+    return {
       session: facts.session,
       project: facts.project,
-      action: {
-        method: op.method,
-        path,
-        ...(op.content ? { size: op.content.length } : {}),
+      decide: async (checks) => {
+        const root = `/${facts.project}`;
+        // Read once per operation: the user session's mode and rules, and the project's rules.
+        const state = this.#registry.userSession(facts.user);
+        const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
+        const mode = modeOf(name, this.#modes);
+        const projectRules = parseRules(
+          await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
+        );
+        const layers = [
+          { source: "deployment", rules: this.#deploymentRules },
+          { source: "project", rules: projectRules },
+          { source: "user", rules: state?.rules ?? {} },
+          this.#registry.sessionLayer(facts.session, facts.user),
+        ];
+        return checks.map(([action, path]) =>
+          // Outside the project nothing is decided here: the roles and the capability refuse it.
+          path !== root && !path.startsWith(`${root}/`)
+            ? { verdict: "allow" as const, reason: "outside the project" }
+            : decideMode(
+                { area: "files", action, target: path === root ? "/" : path.slice(root.length) },
+                { mode, layers },
+              ),
+        );
       },
-      permission: `files.${action}:${target}`,
-      reason: decision.reason,
-    });
+      consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
+    };
   }
 
   /**
@@ -377,8 +392,9 @@ export class Workspace extends DurableObject<Env> {
   /** Test-only fixtures (the Worker admits this only with the ADMIN_KEY). */
   async seed(files: Record<string, string>): Promise<number> {
     const enc = new TextEncoder();
+    const store = await this.#store;
     for (const [path, text] of Object.entries(files))
-      await this.#store.write(normalise(path), [enc.encode(text)]);
+      await store.write(normalise(path), [enc.encode(text)]);
     return Object.keys(files).length;
   }
 }

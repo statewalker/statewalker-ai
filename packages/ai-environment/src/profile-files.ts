@@ -3,10 +3,11 @@
 // its user's folder, as a FilesApi rooted there: every path is normalised inside that root, so no
 // path form reaches another user's folder, and a user name must be one path segment.
 import { codedError } from "@statewalker/ai-access";
+import type { Db } from "@statewalker/db-api";
 import type { FileInfo, FilesApi, ListOptions } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
+import { SqliteFilesApi } from "@statewalker/webrun-files-sqlite";
 import { normalise } from "./paths.js";
-import { SqlFiles, type SqlLike } from "./sql-files.js";
 
 /** The folder of the profiles file system that holds every user's profile. */
 export const PROFILES_ROOT = "/profiles";
@@ -59,11 +60,16 @@ export function profileFiles(profiles: FilesApi, user: string): FilesApi {
 export type ProfilesBackend = "sql" | "memory";
 
 /**
- * The profiles file system from the deployment's configuration: SqlFs on the hosting Durable
- * Object's SQLite (the default), or memory, which a restart empties.
+ * The profiles file system from the deployment's configuration: SqlFs (webrun-files-sqlite) on the
+ * hosting Durable Object's SQLite (the default), or memory, which a restart empties. `db` opens the
+ * database, only for the SQL backend.
  */
-export function mountProfiles(backend: string | undefined, sql: SqlLike): FilesApi {
-  if (backend === undefined || backend === "" || backend === "sql") return new SqlFiles(sql);
+export async function mountProfiles(backend: string | undefined, db: () => Db): Promise<FilesApi> {
+  if (backend === undefined || backend === "" || backend === "sql") {
+    const files = new SqliteFilesApi(db(), { tablePrefix: "profiles_" });
+    await files.init();
+    return files;
+  }
   if (backend === "memory") return new MemFilesApi();
   throw codedError("EINVAL", `unknown profiles backend '${backend}'`);
 }

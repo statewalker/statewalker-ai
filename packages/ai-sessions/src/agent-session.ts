@@ -13,11 +13,13 @@ import type {
 } from "./api.js";
 import type { SqlLike } from "./sql.js";
 
-/** A file call a turn made, as the gate's file protocol carries it. */
-export type ActionCall =
-  | { method: "write"; path: string; content: Uint8Array }
-  | { method: "mkdir"; path: string }
-  | { method: "remove"; path: string };
+/** A change a turn made, exactly: what an approval stores and runs again. */
+export interface ActionCall {
+  method: StoredAction["method"];
+  path: string;
+  target?: string;
+  content?: Uint8Array;
+}
 
 /**
  * Runs one turn of the session's core (Flue), reporting each item as it happens. A file call the
@@ -28,7 +30,7 @@ export type RunTurn = (
   turn: {
     config: AgentSessionConfig;
     content: string;
-    onApproval(request: ApprovalRequest, call: { method: string; path: string }): void;
+    onApproval(request: ApprovalRequest, call: ActionCall): void;
     waiting(): boolean;
   },
   emit: (item: ItemInput) => void,
@@ -47,20 +49,22 @@ const toBase64 = (bytes: Uint8Array) => {
 };
 const fromBase64 = (text: string) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 
-function storedOf(call: { method: string; path: string; content?: unknown }): StoredAction {
-  if (call.method !== "write" && call.method !== "mkdir" && call.method !== "remove")
-    throw codedError("EINVAL", `no approval stores a '${call.method}'`);
+function storedOf(call: ActionCall): StoredAction {
   return {
     method: call.method,
     path: call.path,
+    ...(call.target !== undefined ? { target: call.target } : {}),
     ...(call.content instanceof Uint8Array ? { content: toBase64(call.content) } : {}),
   };
 }
 
 function callOf(stored: StoredAction): ActionCall {
-  if (stored.method === "write")
-    return { method: "write", path: stored.path, content: fromBase64(stored.content ?? "") };
-  return { method: stored.method, path: stored.path };
+  return {
+    method: stored.method,
+    path: stored.path,
+    ...(stored.target !== undefined ? { target: stored.target } : {}),
+    ...(stored.method === "write" ? { content: fromBase64(stored.content ?? "") } : {}),
+  };
 }
 
 interface ItemRow {
@@ -227,7 +231,7 @@ export class AgentSessionCore implements AgentPort {
           this.#append(turn, {
             kind: "tool_result",
             approval,
-            output: `${method} ${path}: done`,
+            output: `${method} ${path}${stored.stored.target ? ` ${stored.stored.target}` : ""}: done`,
             isError: false,
           });
       } catch (e) {

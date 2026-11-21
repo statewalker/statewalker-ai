@@ -17,6 +17,7 @@ import {
   type PermissionRules,
   parseRules,
 } from "@statewalker/ai-access";
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import type {
   AgentSessionConfig,
@@ -47,6 +48,8 @@ export interface WorkspaceGrants {
   ): Promise<void>;
   /** Tells the gate an approval the user granted. */
   grantApproval(userCapability: string, grant: ApprovalGrant): Promise<void>;
+  /** One files-RPC call on the file view a capability holds, at the workspace's gate. */
+  files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** The secrets of one level the user manages there; EACCES without `secrets.write:<level>`. */
   listSecrets(userCapability: string, scope: SecretScope): Promise<SecretView[]>;
   setSecret(userCapability: string, req: SetSecretRequest): Promise<SecretView>;
@@ -405,6 +408,15 @@ export class UserSessions implements UserPort {
     await this.#o.eraseStorage();
     this.createTables();
     return { erased: true };
+  }
+
+  /**
+   * One files-RPC call on the user's own file view of the token's workspace: the gate decides it
+   * with the user capability of their user session (no ignore rules apply to it).
+   */
+  async files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).files(us.capability, method, args);
   }
 
   async listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }> {

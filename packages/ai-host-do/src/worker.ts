@@ -1,5 +1,6 @@
 // The harness's Worker: the session API over REST, and over RPC on a WebSocket at /v1/rpc
-// (webrun-rpc; the access token in the first message); and the test-only routes a conformance
+// (webrun-rpc; the access token in the first message); the user's own file view over REST
+// (/v1/files/<path>) and over files-RPC on a WebSocket at /v1/files; and the test-only routes a conformance
 // run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
 // user the caller's access token names, which checks the token each time.
 import { codedError, statusOf } from "@statewalker/ai-access";
@@ -7,12 +8,15 @@ import {
   bearerOf,
   bodyOf,
   createSessionApi,
+  handleFilesRest,
   handleSessionRest,
+  serveFilesRpc,
   serveSessionRpc,
   webSocketPort,
 } from "@statewalker/ai-sessions";
 import {
   agentOf,
+  blockSizeOf,
   defaultWorkspace,
   type Env,
   issuerOf,
@@ -51,6 +55,7 @@ function sessionApi(env: Env, token: string) {
         (await user()).recordApprovals(t, session, requests),
       listApprovals: async (t) => (await user()).listApprovals(t),
       answerApproval: async (t, id, answer) => (await user()).answerApproval(t, id, answer),
+      files: async (t, method, args) => (await user()).files(t, method, args),
       listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
       setSecret: async (t, req) => (await user()).setSecret(t, req),
       deleteSecret: async (t, req) => (await user()).deleteSecret(t, req),
@@ -121,11 +126,26 @@ function rpcChannel(request: Request, env: Env): Response {
   return new Response(null, { status: 101, webSocket: client });
 }
 
+/** The user's own file view over files-RPC: a WebSocket this Worker serves until it closes. */
+function filesChannel(env: Env): Response {
+  const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+  server.accept();
+  const stop = serveFilesRpc(server as never, (token) => sessionApi(env, token));
+  server.addEventListener("close", () => stop());
+  return new Response(null, { status: 101, webSocket: client });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const path = new URL(request.url).pathname;
     try {
       if (path === "/v1/rpc") return rpcChannel(request, env);
+      if (path === "/v1/files" && request.headers.get("upgrade")?.toLowerCase() === "websocket")
+        return filesChannel(env);
+      const files = await handleFilesRest(request, (token) => sessionApi(env, token), {
+        blockSize: blockSizeOf(env),
+      });
+      if (files) return files;
       const dev = await devRoutes(request, env, path);
       if (dev) return dev;
       const rest = await handleSessionRest(request, (token) => sessionApi(env, token));

@@ -1,17 +1,15 @@
 // just-bash's IFileSystem over a FilesApi: what Flue's sandbox runs on. The FilesApi is the gated
 // file view the agent session holds (every call goes to the Workspace DO's gate), so there is no
-// other file system underneath. Reads, writes, folders and deletes go to the gate, which decides
-// each by the roles, the rules and the mode (statewalker/statewalker-root#124); copy and move wait
-// for the view to take them.
+// other file system underneath: whatever a command does (ls, globs, rm -r, cp, mv) is an operation
+// the gate decides, entry by entry. No symbolic or hard links.
 // Ported from statewalker-sandbox apps/flue-capfs-do/src/capfs.ts.
 import { normalise } from "@statewalker/ai-environment";
 import { type FilesApi, readFile } from "@statewalker/webrun-files";
 
 const enoent = (p: string) => new Error(`ENOENT: no such file or directory, '${p}'`);
-const notYet = async (): Promise<never> => {
-  throw new Error("ENOSYS: not supported by the file view yet");
+const noLinks = async (): Promise<never> => {
+  throw new Error("ENOSYS: the file view has no links");
 };
-
 const bytesOf = (content: string | Uint8Array) =>
   typeof content === "string" ? new TextEncoder().encode(content) : content;
 
@@ -92,44 +90,63 @@ export class FilesFs {
   }
 
   async writeFile(p: string, content: string | Uint8Array): Promise<void> {
-    await this.#files.write(normalise(p), [bytesOf(content)]);
+    await this.#files.write(p, [bytesOf(content)]);
   }
 
   async appendFile(p: string, content: string | Uint8Array): Promise<void> {
-    const before = (await this.#files.stats(p)) ? await this.readFileBuffer(p) : new Uint8Array();
-    const add = bytesOf(content);
-    const all = new Uint8Array(before.length + add.length);
+    const before = (await this.#files.exists(p)) ? await this.readFileBuffer(p) : new Uint8Array();
+    const added = bytesOf(content);
+    const all = new Uint8Array(before.length + added.length);
     all.set(before);
-    all.set(add, before.length);
-    await this.#files.write(normalise(p), [all]);
+    all.set(added, before.length);
+    await this.#files.write(p, [all]);
   }
 
-  /** `mkdir -p` of an existing folder is sent too: the gate answers it without asking. */
   async mkdir(p: string, options?: { recursive?: boolean }): Promise<void> {
-    if (!options?.recursive && (await this.#files.stats(p)))
-      throw new Error(`EEXIST: file already exists, mkdir '${p}'`);
-    await this.#files.mkdir(normalise(p));
+    const s = await this.#files.stats(p);
+    if (s) {
+      if (options?.recursive && s.kind === "directory") return;
+      throw new Error(`EEXIST: file already exists, '${p}'`);
+    }
+    const parent = normalise(p).replace(/\/[^/]*$/, "") || "/";
+    if (!options?.recursive && (await this.#files.stats(parent))?.kind !== "directory")
+      throw enoent(p);
+    await this.#files.mkdir(p);
   }
 
   async rm(p: string, options?: { recursive?: boolean; force?: boolean }): Promise<void> {
-    const stats = await this.#files.stats(p);
-    if (!stats) {
+    const s = await this.#files.stats(p);
+    if (!s) {
       if (options?.force) return;
       throw enoent(p);
     }
-    if (stats.kind === "directory" && !options?.recursive) {
-      for await (const _ of this.#files.list(p))
-        throw new Error(`ENOTEMPTY: directory not empty, rm '${p}'`);
-    }
-    await this.#files.remove(normalise(p));
+    if (s.kind === "directory" && !options?.recursive)
+      throw new Error(`EISDIR: is a directory, '${p}'`);
+    await this.#files.remove(p);
   }
 
-  cp = notYet;
-  mv = notYet;
-  chmod = notYet;
-  utimes = notYet;
-  symlink = notYet;
-  link = notYet;
+  async cp(src: string, dest: string, options?: { recursive?: boolean }): Promise<void> {
+    const s = await this.#files.stats(src);
+    if (!s) throw enoent(src);
+    if (s.kind === "directory" && !options?.recursive)
+      throw new Error(`EISDIR: is a directory, '${src}'`);
+    if (!(await this.#files.copy(src, dest))) throw enoent(src);
+  }
+
+  async mv(src: string, dest: string): Promise<void> {
+    if (!(await this.#files.move(src, dest))) throw enoent(src);
+  }
+
+  async chmod(p: string): Promise<void> {
+    await this.stat(p);
+  }
+
+  async utimes(p: string): Promise<void> {
+    await this.stat(p);
+  }
+
+  symlink = noLinks;
+  link = noLinks;
   async readlink(p: string): Promise<string> {
     throw new Error(`EINVAL: not a symlink '${p}'`);
   }
