@@ -146,14 +146,12 @@ export class WorkspaceAuthority {
   }
 
   /**
-   * The user of a bare user capability (the one a User DO holds for a user session), signed by
-   * this workspace's root key; EACCES for any other, an agent session's included. Only a user
-   * session switches its mode, sets its rules and answers its approvals.
+   * The user of a bare user capability (the one a user session holds); an agent session's, or
+   * any other attenuated capability, is refused, so only a user session manages what is the user's.
    */
-  async userSessionOf(capability: string): Promise<string> {
+  async userOfUserCapability(capability: string): Promise<string> {
     const verified = await this.#verify(capability);
-    if (verified.token.blocks.length !== 1)
-      throw codedError("EACCES", "not a user session's capability");
+    if (verified.token.blocks.length !== 1) throw codedError("EACCES", "not a user capability");
     return this.#userOf(verified);
   }
 

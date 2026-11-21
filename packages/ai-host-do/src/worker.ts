@@ -51,6 +51,9 @@ function sessionApi(env: Env, token: string) {
         (await user()).recordApprovals(t, session, requests),
       listApprovals: async (t) => (await user()).listApprovals(t),
       answerApproval: async (t, id, answer) => (await user()).answerApproval(t, id, answer),
+      listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
+      setSecret: async (t, req) => (await user()).setSecret(t, req),
+      deleteSecret: async (t, req) => (await user()).deleteSecret(t, req),
     },
     agent: (id) => {
       const agent = agentOf(env, id);

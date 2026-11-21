@@ -9,6 +9,9 @@ import { filesOverCalls } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
+  type DeleteSecretRequest,
+  type SecretScope,
+  type SetSecretRequest,
   type StartSessionRequest,
   UserSessions,
 } from "@statewalker/ai-sessions";
@@ -43,6 +46,10 @@ export class User extends DurableObject<Env> {
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
+          listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
+          setSecret: (capability, req) => ws.setSecret(capability, req),
+          deleteSecret: (capability, req) => ws.deleteSecret(capability, req),
+          eraseUserSecrets: (capability) => ws.eraseUserSecrets(capability),
         };
       },
       modes: deploymentModes(env),
@@ -104,6 +111,21 @@ export class User extends DurableObject<Env> {
   async answerApproval(token: string, id: string, answer: ApprovalAnswer) {
     await this.#reachable();
     return this.#sessions.answerApproval(token, id, answer);
+  }
+
+  async listSecrets(token: string, scope: SecretScope) {
+    await this.#reachable();
+    return this.#sessions.listSecrets(token, scope);
+  }
+
+  async setSecret(token: string, req: SetSecretRequest) {
+    await this.#reachable();
+    return this.#sessions.setSecret(token, req);
+  }
+
+  async deleteSecret(token: string, req: DeleteSecretRequest) {
+    await this.#reachable();
+    return this.#sessions.deleteSecret(token, req);
   }
 
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */

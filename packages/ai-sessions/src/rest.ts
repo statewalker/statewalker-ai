@@ -38,7 +38,19 @@ export async function handleSessionRest(
     if (route === "GET /approvals") return api().listApprovals();
     if (request.method === "POST" && parts[1] === "approvals" && parts[2] && parts.length === 3)
       return api().answerApproval(parts[2], (await bodyOf(request)) as never);
+    if (route === "GET /secrets")
+      return api().listSecrets({
+        level: url.searchParams.get("level") ?? "",
+        project: url.searchParams.get("project") ?? undefined,
+      } as never);
     const [, collection, id, sub] = parts;
+    if (collection === "secrets" && id && sub && parts.length === 4) {
+      const project = url.searchParams.get("project") ?? undefined;
+      if (request.method === "PUT")
+        return api().setSecret({ ...(await bodyOf(request)), level: id, name: sub } as never);
+      if (request.method === "DELETE")
+        return api().deleteSecret({ level: id, name: sub, project } as never);
+    }
     if (collection === "sessions" && id && parts.length === 4) {
       if (request.method === "POST" && sub === "messages")
         return api().sendMessage(id, (await bodyOf(request)) as never);

@@ -34,6 +34,9 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     setMode: (req) => api.setMode(req).catch(refusal) as never,
     listApprovals: () => api.listApprovals().catch(refusal) as never,
     answerApproval: (id, answer) => api.answerApproval(id, answer).catch(refusal) as never,
+    listSecrets: (scope) => api.listSecrets(scope).catch(refusal),
+    setSecret: (req) => api.setSecret(req).catch(refusal),
+    deleteSecret: (req) => api.deleteSecret(req).catch(refusal),
     close: () => ws.close(1000, "done"),
   };
 }

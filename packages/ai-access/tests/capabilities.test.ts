@@ -66,12 +66,14 @@ describe("capabilities", () => {
 
   it("takes the user session's own decisions (mode, rules, approvals) only from a bare user capability", async () => {
     const user = authority.mintUser("ann");
-    expect(await authority.userSessionOf(user)).toBe("ann");
+    expect(await authority.userOfUserCapability(user)).toBe("ann");
     // An agent session holds an attenuated capability: it can neither switch modes nor approve.
     const agent = attenuateForAgentSession(user, grant);
-    await expect(authority.userSessionOf(agent)).rejects.toThrow(/EACCES/);
+    await expect(authority.userOfUserCapability(agent)).rejects.toThrow(/EACCES/);
     const elsewhere = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
-    await expect(authority.userSessionOf(elsewhere.mintUser("ann"))).rejects.toThrow(/EACCES/);
+    await expect(authority.userOfUserCapability(elsewhere.mintUser("ann"))).rejects.toThrow(
+      /EACCES/,
+    );
   });
 
   it("authorizes writes and deletes by the roles, like reads", async () => {

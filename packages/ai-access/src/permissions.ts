@@ -63,6 +63,9 @@ export const AREAS: Readonly<Record<string, AreaSpec>> = {
   agents: { actions: ["use"], target: "name", byName: true },
   // Workspace-level: the workspace admin's.
   projects: { actions: ["create"], target: "name", byName: true },
+  // `secrets.write:<level>` (#104, #133): the level is the target (workspace, project). Granted only
+  // by name, so a role of `*.*` does not hand out keys; users manage their own without a grant.
+  secrets: { actions: ["write"], target: "name", byName: true },
 };
 
 const SEGMENT = /^(?:[a-z][a-z0-9_-]*|\*)$/;

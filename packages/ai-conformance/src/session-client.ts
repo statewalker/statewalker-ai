@@ -17,6 +17,8 @@ export interface Item {
   isError?: boolean;
   /** The approval an `approval` item waits on, or a resumed `tool_result` answers. */
   approval?: string;
+  /** The names of the secrets a tool call used (never their values). */
+  secrets?: string[];
 }
 
 /** An action waiting on the user's answer, as the session API lists it. */
@@ -40,6 +42,35 @@ export interface ApprovalAnswer {
   decision: "allow" | "deny";
   scope: "once" | "session";
   message?: string;
+}
+
+export type SecretLevel = "deployment" | "workspace" | "project" | "user";
+
+/** Which plugins may use a secret, and which hosts it may be sent to. */
+export interface SecretBinding {
+  plugins: string[];
+  hosts: string[];
+}
+
+/** A secret as the session API lists it: never its value. */
+export interface SecretView {
+  name: string;
+  level: SecretLevel;
+  project?: string;
+  bindings: SecretBinding;
+  updated: number;
+}
+
+/** Which secrets a call names: a level, and the project for project secrets. */
+export interface SecretScope {
+  level: SecretLevel;
+  project?: string;
+}
+
+export interface SetSecretRequest extends SecretScope {
+  name: string;
+  value: string;
+  bindings: SecretBinding;
 }
 
 export interface UserSession {
@@ -90,6 +121,11 @@ export interface SessionClient {
   listApprovals(): Promise<{ approvals: Approval[] }>;
   /** Answers an approval: the stored action runs (re-checked) or is refused. */
   answerApproval(id: string, answer: ApprovalAnswer): Promise<{ approval: Approval; turn: Turn }>;
+  /** The secrets of one level (and project) the caller manages: names, bindings, update times. */
+  listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
+  /** Sets or replaces a secret; the answer never holds its value. */
+  setSecret(req: SetSecretRequest): Promise<SecretView>;
+  deleteSecret(req: SecretScope & { name: string }): Promise<{ deleted: true }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -129,6 +165,15 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     setMode: (req) => call("PUT", "/v1/me/mode", req),
     listApprovals: () => call("GET", "/v1/approvals"),
     answerApproval: (id, answer) => call("POST", `/v1/approvals/${encodeURIComponent(id)}`, answer),
+    listSecrets: ({ level, project }) =>
+      call("GET", `/v1/secrets?${new URLSearchParams({ level, ...(project ? { project } : {}) })}`),
+    setSecret: ({ level, name, ...rest }) =>
+      call("PUT", `/v1/secrets/${encodeURIComponent(level)}/${encodeURIComponent(name)}`, rest),
+    deleteSecret: ({ level, name, project }) =>
+      call(
+        "DELETE",
+        `/v1/secrets/${encodeURIComponent(level)}/${encodeURIComponent(name)}${project ? `?project=${encodeURIComponent(project)}` : ""}`,
+      ),
   };
 }
 

@@ -39,6 +39,10 @@
     //   MODES = "{}"
     // How long a pending approval waits before it counts as denied, in ms (default 24 hours).
     "APPROVAL_TTL_MS": "86400000"
+    // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:
+    //   SECRETS_KEY          seals workspace, project and user secrets in each Workspace DO's SQLite
+    //   DEPLOYMENT_SECRETS   {"NAME": {"plugins": [...], "hosts": [...]}}: the runtime secrets that are
+    //                        deployment-level secrets, and their bindings (the values are the NAME secrets)
     // Test-only, never set in a real deployment:
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":
