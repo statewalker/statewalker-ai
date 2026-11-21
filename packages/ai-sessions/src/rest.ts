@@ -51,7 +51,8 @@ export async function handleSessionRest(
     }
     if (collection === "sessions" && id && parts.length === 3) {
       if (request.method === "GET") return api().getSession(id);
-      if (request.method === "PATCH") return api().updateSession(id, (await bodyOf(request)) as never);
+      if (request.method === "PATCH")
+        return api().updateSession(id, (await bodyOf(request)) as never);
       if (request.method === "DELETE") return api().deleteSession(id);
     }
     if (collection === "sessions" && id && parts.length === 4) {

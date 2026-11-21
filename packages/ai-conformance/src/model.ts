@@ -79,7 +79,11 @@ export async function fakeModel(): Promise<FakeModel> {
     });
     if (lastUserText === "FAIL" && messages.at(-1)?.role === "user") {
       res.writeHead(400, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: { message: "the scripted model refuses", type: "invalid_request_error" } }));
+      res.end(
+        JSON.stringify({
+          error: { message: "the scripted model refuses", type: "invalid_request_error" },
+        }),
+      );
       return;
     }
     const held = /^HOLD\s+(\S+)/.exec(lastUserText);

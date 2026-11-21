@@ -125,7 +125,12 @@ export type MessageRequest = {
 } & Record<string, unknown>;
 
 /** The event types a turn ends with; the event carries the full turn. */
-export const TERMINAL_EVENTS = ["turn.completed", "turn.failed", "turn.cancelled", "turn.interrupted"];
+export const TERMINAL_EVENTS = [
+  "turn.completed",
+  "turn.failed",
+  "turn.cancelled",
+  "turn.interrupted",
+];
 
 export interface SessionClient {
   me(): Promise<UserSession>;
@@ -204,7 +209,8 @@ export async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerat
             const i = line.indexOf(":");
             const field = i < 0 ? line : line.slice(0, i);
             const value = i < 0 ? "" : line.slice(i + 1).replace(/^ /, "");
-            if (field === "data") frame.data = frame.data === undefined ? value : `${frame.data}\n${value}`;
+            if (field === "data")
+              frame.data = frame.data === undefined ? value : `${frame.data}\n${value}`;
             else if (field === "id" || field === "event") frame[field] = value;
           }
         }
@@ -220,7 +226,12 @@ export async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerat
 /** An SSE frame as a logged event (frames without an id are markers or keep-alives). */
 export const eventOf = (frame: SseFrame): SessionEvent | undefined =>
   frame.id && frame.event
-    ? { seq: Number(frame.id), type: frame.event, data: JSON.parse(frame.data ?? "null"), created: 0 }
+    ? {
+        seq: Number(frame.id),
+        type: frame.event,
+        data: JSON.parse(frame.data ?? "null"),
+        created: 0,
+      }
     : undefined;
 
 const itemsSearch = (q: ItemsQuery = {}) => {

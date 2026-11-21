@@ -29,7 +29,6 @@ import type {
 } from "./api.js";
 import type { SqlLike } from "./sql.js";
 
-
 /** A message handed to the running turn, to take at its next step. */
 export interface Steer {
   id: string;
@@ -62,7 +61,7 @@ export interface TurnOutcome {
 export type RunTurn = (
   turn: TurnRun,
   emit: (item: ItemInput) => void,
-) => Promise<TurnOutcome | undefined | void>;
+) => Promise<TurnOutcome | undefined>;
 
 interface ItemRow {
   seq: number;
@@ -169,9 +168,7 @@ export class AgentSessionCore implements AgentPort {
 
   /** The session's configuration, once started. */
   config(): AgentSessionConfig | undefined {
-    const row = this.#one<{ value: string }>(
-      "SELECT value FROM agent_config WHERE key = 'config'",
-    );
+    const row = this.#one<{ value: string }>("SELECT value FROM agent_config WHERE key = 'config'");
     return row ? (JSON.parse(String(row.value)) as AgentSessionConfig) : undefined;
   }
 
@@ -342,7 +339,7 @@ export class AgentSessionCore implements AgentPort {
     this.#log("turn.started", row.id, { id: row.id });
     this.#append(row.id, { kind: "message", role: "user", text: row.content });
     let error: string | undefined;
-    let outcome: TurnOutcome | undefined | void;
+    let outcome: TurnOutcome | undefined;
     try {
       outcome = await this.#runTurn(
         {
@@ -497,9 +494,7 @@ export class AgentSessionCore implements AgentPort {
     return {
       items,
       has_more: rows.length > limit,
-      ...(items.length
-        ? { first_id: items[0]?.id, last_id: items[items.length - 1]?.id }
-        : {}),
+      ...(items.length ? { first_id: items[0]?.id, last_id: items[items.length - 1]?.id } : {}),
     };
   }
 

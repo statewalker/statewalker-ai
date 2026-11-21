@@ -25,7 +25,12 @@ const TRANSPORTS = ["rest", "rpc"];
 const FILES = {
   "/alpha/readme.md": "# alpha\n",
   "/alpha/.system/access": JSON.stringify(
-    Object.fromEntries(TRANSPORTS.flatMap((t) => [[`ann-${t}`, "editor"], [`bob-${t}`, "reader"]])),
+    Object.fromEntries(
+      TRANSPORTS.flatMap((t) => [
+        [`ann-${t}`, "editor"],
+        [`bob-${t}`, "reader"],
+      ]),
+    ),
   ),
 };
 
@@ -249,14 +254,20 @@ describe.each(transports)("turns over %s", (name, connect) => {
       status: "completed",
       ignored: ["temperature", "tools"],
       model: "default",
-      model_substitution: { requested: "gpt-unheard-of", used: "default", reason: expect.any(String) },
+      model_substitution: {
+        requested: "gpt-unheard-of",
+        used: "default",
+        reason: expect.any(String),
+      },
     });
     expect(model.requests.at(-1)?.model).toBe("default");
     const plain = await ann.sendMessage(session.id, { content: "hello" });
     expect(plain.ignored).toBeUndefined();
     expect(plain.model_substitution).toBeUndefined();
     // A malformed message is refused.
-    await expect(ann.postMessage(session.id, { content: "" })).rejects.toMatchObject({ status: 400 });
+    await expect(ann.postMessage(session.id, { content: "" })).rejects.toMatchObject({
+      status: 400,
+    });
     await expect(
       ann.postMessage(session.id, { content: "x", delivery: "later" as never }),
     ).rejects.toMatchObject({ status: 400 });
@@ -265,11 +276,20 @@ describe.each(transports)("turns over %s", (name, connect) => {
   it("pages and filters the session's items, and reads one alone", async () => {
     const ann = await as("ann");
     const session = await ann.startSession({ project: "alpha", agent: "a" });
-    await ann.sendMessage(session.id, { content: `CALL read ${JSON.stringify({ path: "readme.md" })}` });
+    await ann.sendMessage(session.id, {
+      content: `CALL read ${JSON.stringify({ path: "readme.md" })}`,
+    });
     await ann.sendMessage(session.id, { content: "two" });
     const all = (await ann.listItems(session.id)).items;
     const kinds = all.map((i) => i.text ?? i.kind);
-    expect(kinds).toEqual(["CALL read {\"path\":\"readme.md\"}", "tool_call", "tool_result", "RESULT: # alpha\n", "two", "OK"]);
+    expect(kinds).toEqual([
+      'CALL read {"path":"readme.md"}',
+      "tool_call",
+      "tool_result",
+      "RESULT: # alpha\n",
+      "two",
+      "OK",
+    ]);
     const ids = all.map((i) => i.id);
 
     const first = await ann.listItems(session.id, { limit: 2 });
@@ -320,8 +340,16 @@ describe.each(transports)("turns over %s", (name, connect) => {
   it("searches the caller's sessions by metadata and status", async () => {
     const ann = await as("ann");
     const tag = `search-${t}-${Date.now()}`;
-    const red = await ann.startSession({ project: "alpha", agent: "a", metadata: { tag, color: "red" } });
-    const blue = await ann.startSession({ project: "alpha", agent: "a", metadata: { tag, color: "blue" } });
+    const red = await ann.startSession({
+      project: "alpha",
+      agent: "a",
+      metadata: { tag, color: "red" },
+    });
+    const blue = await ann.startSession({
+      project: "alpha",
+      agent: "a",
+      metadata: { tag, color: "blue" },
+    });
     expect(red.metadata).toEqual({ tag, color: "red" });
     const ids = async (q: Parameters<SessionClient["listSessions"]>[0]) =>
       (await ann.listSessions(q)).sessions.map((s) => s.id);
@@ -344,9 +372,9 @@ describe.each(transports)("turns over %s", (name, connect) => {
     await expect(
       ann.startSession({ project: "alpha", agent: "a", metadata: { "bad key": "x" } }),
     ).rejects.toMatchObject({ status: 400 });
-    await expect(
-      ann.updateSession(red.id, { metadata: { n: 1 as never } }),
-    ).rejects.toMatchObject({ status: 400 });
+    await expect(ann.updateSession(red.id, { metadata: { n: 1 as never } })).rejects.toMatchObject({
+      status: 400,
+    });
     await expect((await as("bob")).updateSession(red.id, { metadata: {} })).rejects.toMatchObject({
       status: 404,
     });
@@ -354,20 +382,30 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("archives a session: its turns end, its history is kept, and it takes no more messages", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a", metadata: { kept: "yes" } });
+    const session = await ann.startSession({
+      project: "alpha",
+      agent: "a",
+      metadata: { kept: "yes" },
+    });
     const h = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
     const queued = await ann.postMessage(session.id, { content: "queued" });
     const archived = await ann.archiveSession(session.id);
-    expect(archived).toMatchObject({ id: session.id, archived: expect.any(Number), status: "idle" });
+    expect(archived).toMatchObject({
+      id: session.id,
+      archived: expect.any(Number),
+      status: "idle",
+    });
     expect(await ann.getTurn(running.turn_id)).toMatchObject({ status: "cancelled" });
     expect(await ann.getTurn(queued.turn_id)).toMatchObject({ status: "cancelled" });
     await expect(ann.postMessage(session.id, { content: "more" })).rejects.toMatchObject({
       status: 409,
     });
     expect((await ann.listItems(session.id)).items.map((i) => i.text)).toEqual([`HOLD ${h}`]);
-    expect((await ann.readEvents(session.id)).events.at(-1)).toMatchObject({ type: "session.archived" });
+    expect((await ann.readEvents(session.id)).events.at(-1)).toMatchObject({
+      type: "session.archived",
+    });
     const listed = (await ann.listSessions()).sessions.map((s) => s.id);
     expect(listed).not.toContain(session.id);
     expect((await ann.listSessions({ status: "archived" })).sessions.map((s) => s.id)).toContain(
@@ -383,7 +421,9 @@ describe.each(transports)("turns over %s", (name, connect) => {
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
     await expect(ann.deleteSession(session.id)).rejects.toMatchObject({ status: 409 });
-    await expect((await as("bob")).deleteSession(session.id)).rejects.toMatchObject({ status: 404 });
+    await expect((await as("bob")).deleteSession(session.id)).rejects.toMatchObject({
+      status: 404,
+    });
     model.release(h);
     await ann.waitTurn(running);
     expect(await ann.deleteSession(session.id)).toEqual({ deleted: true });
@@ -428,7 +468,10 @@ describe("the event stream over SSE", () => {
     const session = await client.startSession({ project: "alpha", agent: "a" });
     await client.sendMessage(session.id, { content: "one" });
     const path = `/v1/sessions/${session.id}/events`;
-    const backlog = await until(await openEvents(`${path}?since=0`, token), (f) => f.event === "up-to-date");
+    const backlog = await until(
+      await openEvents(`${path}?since=0`, token),
+      (f) => f.event === "up-to-date",
+    );
     const events = backlog.filter((f) => f.id);
     expect(events.map((f) => [f.id, f.event])).toEqual([
       ["1", "turn.queued"],
@@ -437,14 +480,20 @@ describe("the event stream over SSE", () => {
       ["4", "item.created"],
       ["5", "turn.completed"],
     ]);
-    expect(backlog.at(-1)).toMatchObject({ event: "up-to-date", data: JSON.stringify({ offset: 5 }) });
+    expect(backlog.at(-1)).toMatchObject({
+      event: "up-to-date",
+      data: JSON.stringify({ offset: 5 }),
+    });
     // A reconnecting client repeats its URL; its Last-Event-ID wins.
     const resumed = await until(
       await openEvents(`${path}?since=0`, token, { "last-event-id": "3" }),
       (f) => f.event === "up-to-date",
     );
     expect(resumed.filter((f) => f.id).map((f) => f.id)).toEqual(["4", "5"]);
-    const since = await until(await openEvents(`${path}?since=4`, token), (f) => f.event === "up-to-date");
+    const since = await until(
+      await openEvents(`${path}?since=4`, token),
+      (f) => f.event === "up-to-date",
+    );
     expect(since.filter((f) => f.id).map((f) => f.id)).toEqual(["5"]);
     // Live: an event logged after the marker arrives on the open stream.
     const live = await openEvents(`${path}?since=5`, token);
@@ -484,7 +533,10 @@ describe("the event stream over SSE", () => {
     const seen: SseFrame[] = [];
     for await (const f of await openEvents(accepted.stream_url, token)) seen.push(f);
     expect(seen.at(-1)).toMatchObject({ event: "turn.completed" });
-    expect(JSON.parse(String(seen.at(-1)?.data))).toMatchObject({ id: accepted.turn_id, items: [{}, {}] });
+    expect(JSON.parse(String(seen.at(-1)?.data))).toMatchObject({
+      id: accepted.turn_id,
+      items: [{}, {}],
+    });
     // Read again from the end of the log: the stream still ends with the terminal turn.
     const after: SseFrame[] = [];
     for await (const f of await openEvents(
@@ -510,7 +562,8 @@ describe("the event stream over SSE", () => {
     const client = restClient(deployment, token);
     const session = await client.startSession({ project: "alpha", agent: "a" });
     const seen: SseFrame[] = [];
-    for await (const f of await openEvents(`/v1/sessions/${session.id}/events`, token)) seen.push(f);
+    for await (const f of await openEvents(`/v1/sessions/${session.id}/events`, token))
+      seen.push(f);
     expect(seen.at(-1)).toMatchObject({ event: "error" });
     expect(JSON.parse(String(seen.at(-1)?.data))).toMatchObject({ status: 401 });
   });

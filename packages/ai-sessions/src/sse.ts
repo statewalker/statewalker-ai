@@ -7,7 +7,7 @@
 // full turn); without, the session's `session.archived`; and `error` when the stream can't go on
 // (the token expired, the session was purged).
 import { codeOf, statusOf } from "@statewalker/ai-access";
-import { TERMINAL_TURN_STATUSES, type SessionApi, type SessionEvent } from "./api.js";
+import { type SessionApi, type SessionEvent, TERMINAL_TURN_STATUSES } from "./api.js";
 
 export const DEFAULT_KEEP_ALIVE_MS = 30_000;
 const PAGE = 1000;
