@@ -1,16 +1,16 @@
 // One Workspace DO per workspace: the store, the role source (each project's access file), the
-// user and agent sessions, the workspace's root key (it never leaves this DO), and the gate every
-// file call of every agent session goes through.
+// workspace's root key (it never leaves this DO), and the gate every file call of every agent
+// session goes through. Its name is the workspace. It mints a user capability for a user session
+// that a User DO opens with the user's access token, and the gate reads user, project and session
+// from each call's capability: it never calls a User DO (statewalker/statewalker-root#157).
 
 import { DurableObject } from "cloudflare:workers";
 import {
   accessFilePath,
   codedError,
   DEFAULT_SYSTEM_FOLDER,
-  fromBase64,
   parseAccessFile,
   type StoredRootKey,
-  verifyAccessToken,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
@@ -20,22 +20,24 @@ import {
   normalise,
   SqlFiles,
 } from "@statewalker/ai-environment";
-import { type StartSessionRequest, WorkspaceSessions } from "@statewalker/ai-sessions";
 import { tryReadText } from "@statewalker/webrun-files";
-import { type Env, issuerOf, workspaceName } from "./env.js";
+import { type Env, nameOf, verifyToken } from "./env.js";
 
 export class Workspace extends DurableObject<Env> {
+  readonly #name: string;
   readonly #store: SqlFiles;
-  readonly #sessions: WorkspaceSessions;
   readonly #authority: WorkspaceAuthority;
-  #issuerKey?: Promise<Uint8Array>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    const workspace = workspaceName(env);
+    this.#name = nameOf(ctx);
     const sql = ctx.storage.sql;
     this.#store = new SqlFiles(sql);
     sql.exec("CREATE TABLE IF NOT EXISTS ws_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    // The tracer kept user and agent sessions here; they live in User DOs now. No release held
+    // them, so their rows are dropped rather than migrated.
+    sql.exec("DROP TABLE IF EXISTS user_sessions");
+    sql.exec("DROP TABLE IF EXISTS agent_sessions");
     const stored = sql.exec("SELECT value FROM ws_keys WHERE name = 'root'").toArray()[0];
     let root: StoredRootKey;
     if (stored) root = JSON.parse(String(stored.value));
@@ -44,30 +46,25 @@ export class Workspace extends DurableObject<Env> {
       sql.exec("INSERT INTO ws_keys VALUES ('root', ?)", JSON.stringify(root));
     }
     this.#authority = WorkspaceAuthority.fromStored(root);
-    this.#sessions = new WorkspaceSessions({
-      sql,
-      workspace,
-      verifyToken: async (token) => {
-        this.#issuerKey ??= issuerOf(env)
-          .publicKey()
-          .then((k) => fromBase64(k));
-        return verifyAccessToken(token, await this.#issuerKey, { workspace });
-      },
-      roleOf: (project, user) => this.#roleOf(project, user),
-      mintCapability: (id) => this.#authority.mint(id),
-    });
   }
 
-  openUserSession(token: string) {
-    return this.#sessions.openUserSession(token);
+  /**
+   * The user capability for the user session of the access token's user, which must be for this
+   * workspace: signed here, so the root key stays here.
+   */
+  async userCapability(token: string): Promise<string> {
+    const claims = await verifyToken(this.env, token);
+    if (claims.workspace !== this.#name)
+      throw codedError("EAUTH", "the access token is for another workspace");
+    return this.#authority.mintUser(claims.user);
   }
 
-  startAgentSession(token: string, req: StartSessionRequest) {
-    return this.#sessions.startAgentSession(token, req);
-  }
-
-  ownAgentSession(token: string, id: string) {
-    return this.#sessions.ownAgentSession(token, id);
+  /** The role in a project of the user a user capability names; EACCES for a non-member. */
+  async memberRole(capability: string, project: string): Promise<string> {
+    const user = await this.#authority.userOf(capability);
+    const role = await this.#roleOf(project, user);
+    if (!role) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    return role;
   }
 
   #roleOf(project: string, user: string) {
@@ -75,24 +72,18 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * The gate: one file call of the agent session the capability names, decided now. The role is
-   * read from the access file at this moment, never fixed at the session's start.
+   * The gate: one file call of the agent session the capability names, decided now. User and
+   * project come from the capability itself; the role is read from the access file at this
+   * moment, never fixed at the session's start.
    */
   async fileCall(capability: string, call: FileCall): Promise<unknown> {
-    const session = await this.#authority.sessionOf(capability);
-    const facts = this.#sessions.sessionFacts(session);
-    if (!facts) throw codedError("EACCES", "unknown agent session");
+    const facts = await this.#authority.agentSessionOf(capability);
     const role = await this.#roleOf(facts.project, facts.user);
     const view = gatedFiles(this.#store, {
       project: facts.project,
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       authorize: (action, path) =>
-        this.#authority.authorize(capability, session, {
-          action,
-          path,
-          project: facts.project,
-          role,
-        }),
+        this.#authority.authorize(capability, { action, path, project: facts.project, role }),
     });
     return answerFileCall(view, call);
   }

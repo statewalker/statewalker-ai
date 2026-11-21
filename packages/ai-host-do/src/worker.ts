@@ -1,7 +1,7 @@
 // The harness's Worker: the session API over REST, and over RPC on a WebSocket at /v1/rpc
 // (webrun-rpc; the access token in the first message); and the test-only routes a conformance
-// run enables through vars (see wrangler.jsonc). Every session call goes to the Workspace DO, which
-// checks the caller's access token each time.
+// run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
+// user the caller's access token names, which checks the token each time.
 import { codedError, statusOf } from "@statewalker/ai-access";
 import {
   bearerOf,
@@ -11,21 +11,41 @@ import {
   serveSessionRpc,
   webSocketPort,
 } from "@statewalker/ai-sessions";
-import { agentOf, type Env, issuerOf, workspaceName, workspaceOf } from "./env.js";
+import {
+  agentOf,
+  defaultWorkspace,
+  type Env,
+  issuerOf,
+  profilesOf,
+  userOf,
+  verifyToken,
+  workspaceOf,
+  workspacesOf,
+} from "./env.js";
 
 export { AgentSession } from "./agent-session-do.js";
 export { Issuer } from "./issuer-do.js";
+export { Profiles } from "./profiles-do.js";
+export { User } from "./user-do.js";
 export { Workspace } from "./workspace-do.js";
 
 const json = (value: unknown, status = 200) => Response.json(value, { status });
 
 function sessionApi(env: Env, token: string) {
-  const ws = workspaceOf(env);
+  // The token is verified here only to find its user's User DO, which verifies it again.
+  let stub: Promise<ReturnType<typeof userOf>> | undefined;
+  const user = () => {
+    stub ??= verifyToken(env, token).then((claims) => userOf(env, claims.user));
+    return stub;
+  };
   return createSessionApi(token, {
-    workspace: {
-      openUserSession: (t) => ws.openUserSession(t),
-      startAgentSession: (t, req) => ws.startAgentSession(t, req),
-      ownAgentSession: (t, id) => ws.ownAgentSession(t, id),
+    user: {
+      openUserSession: async (t) => (await user()).openUserSession(t),
+      startAgentSession: async (t, req) => (await user()).startAgentSession(t, req),
+      ownAgentSession: async (t, id) => (await user()).ownAgentSession(t, id),
+      listAgentSessions: async (t) => (await user()).listAgentSessions(t),
+      profile: async (t) => (await user()).profile(t),
+      eraseUser: async (t) => (await user()).eraseUser(t),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -44,12 +64,32 @@ async function devRoutes(request: Request, env: Env, path: string) {
     const body = await bodyOf(request);
     if (typeof body.user !== "string" || !body.user) throw codedError("EINVAL", "user is required");
     const ttlMs = typeof body.ttlMs === "number" ? body.ttlMs : undefined;
-    return json(await issuerOf(env).issue(body.user, workspaceName(env), ttlMs));
+    const workspace = typeof body.workspace === "string" ? body.workspace : defaultWorkspace(env);
+    return json(await issuerOf(env).issue(body.user, workspace, ttlMs));
   }
-  if (path === "/admin/seed" && request.method === "POST" && env.ADMIN_KEY) {
-    if (bearerOf(request) !== env.ADMIN_KEY) throw codedError("EAUTH", "admin only");
-    const body = await bodyOf(request);
-    return json({ written: await workspaceOf(env).seed(body.files as Record<string, string>) });
+  if (!path.startsWith("/admin/") || request.method !== "POST" || !env.ADMIN_KEY) return undefined;
+  if (bearerOf(request) !== env.ADMIN_KEY) throw codedError("EAUTH", "admin only");
+  const body = await bodyOf(request);
+  if (path === "/admin/seed") {
+    const workspace = typeof body.workspace === "string" ? body.workspace : defaultWorkspace(env);
+    if (!workspacesOf(env).includes(workspace))
+      throw codedError("EINVAL", `this deployment does not serve '${workspace}'`);
+    const files = body.files as Record<string, string>;
+    return json({ written: await workspaceOf(env, workspace).seed(files) });
+  }
+  if (path === "/admin/profiles") {
+    const files = body.files as Record<string, string>;
+    return json({ written: await profilesOf(env).seed(files) });
+  }
+  const [, , collection, id, sub] = path.split("/").map(decodeURIComponent);
+  if (collection === "users" && id && sub === "unreachable") {
+    await userOf(env, id).makeUnreachable();
+    return json({ unreachable: id });
+  }
+  if (collection === "sessions" && id && sub === "messages") {
+    // Past the User DO, straight to the agent session: its turn's file calls go to the gate.
+    if (typeof body.content !== "string") throw codedError("EINVAL", "content is required");
+    return json(await agentOf(env, id).send(body.content));
   }
   return undefined;
 }

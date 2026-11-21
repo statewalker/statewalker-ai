@@ -1,20 +1,30 @@
 // The session API (statewalker/statewalker-root#83), implemented once as methods. REST
 // (./rest.ts) and RPC (./rpc.ts) are thin routers onto these methods; every call is made with the
-// caller's access token, checked by the Workspace DO each time.
+// caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { codedError } from "@statewalker/ai-access";
 
 export interface UserSessionView {
   id: string;
   user: string;
   workspace: string;
+  /** The user session's mode (modes and their rules: a later ticket). */
+  mode: string;
   created: number;
 }
 
 export interface AgentSessionView {
   id: string;
+  workspace: string;
   project: string;
   agent: string;
   created: number;
+}
+
+/** A user's profile, as the session API shows it. */
+export interface ProfileView {
+  user: string;
+  /** The projects the profile holds user memory of. */
+  projects: { workspace: string; project: string }[];
 }
 
 /** What a turn adds to its session, in order. */
@@ -64,6 +74,12 @@ export interface SessionApi {
   sendMessage(sessionId: string, req: SendMessageRequest): Promise<TurnView>;
   /** The items of one of the caller's agent sessions, in order. */
   listItems(sessionId: string): Promise<{ items: Item[] }>;
+  /** The caller's agent sessions in the workspace their token names, from the session index. */
+  listSessions(): Promise<{ sessions: AgentSessionView[] }>;
+  /** The caller's profile. */
+  profile(): Promise<ProfileView>;
+  /** Erases the caller: their profile and everything their User DO holds. */
+  eraseUser(): Promise<{ erased: true }>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -75,8 +91,8 @@ export interface AgentSessionConfig {
   capability: string;
 }
 
-/** The Workspace DO's side of the API: everything that needs the token checked. */
-export interface WorkspacePort {
+/** The caller's User DO's side of the API: everything that needs the token checked. */
+export interface UserPort {
   openUserSession(token: string): Promise<UserSessionView>;
   startAgentSession(
     token: string,
@@ -84,6 +100,9 @@ export interface WorkspacePort {
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }>;
   /** One of the caller's own agent sessions; ENOENT for any other. */
   ownAgentSession(token: string, id: string): Promise<AgentSessionView>;
+  listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }>;
+  profile(token: string): Promise<ProfileView>;
+  eraseUser(token: string): Promise<{ erased: true }>;
 }
 
 /** One agent session DO's side of the API. */
@@ -94,7 +113,7 @@ export interface AgentPort {
 }
 
 export interface SessionApiPorts {
-  workspace: WorkspacePort;
+  user: UserPort;
   agent(id: string): AgentPort;
 }
 
@@ -111,9 +130,9 @@ function startRequest(req: unknown): StartSessionRequest {
 
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
   return {
-    me: () => ports.workspace.openUserSession(token),
+    me: () => ports.user.openUserSession(token),
     async startSession(req) {
-      const { session, config } = await ports.workspace.startAgentSession(token, startRequest(req));
+      const { session, config } = await ports.user.startAgentSession(token, startRequest(req));
       await ports.agent(session.id).start(config);
       return session;
     },
@@ -121,12 +140,15 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const content = (req as Partial<SendMessageRequest> | undefined)?.content;
       if (typeof content !== "string" || !content)
         throw codedError("EINVAL", "content must be a non-empty string");
-      const session = await ports.workspace.ownAgentSession(token, String(sessionId));
+      const session = await ports.user.ownAgentSession(token, String(sessionId));
       return ports.agent(session.id).send(content);
     },
     async listItems(sessionId) {
-      const session = await ports.workspace.ownAgentSession(token, String(sessionId));
+      const session = await ports.user.ownAgentSession(token, String(sessionId));
       return { items: await ports.agent(session.id).items() };
     },
+    listSessions: () => ports.user.listAgentSessions(token),
+    profile: () => ports.user.profile(token),
+    eraseUser: () => ports.user.eraseUser(token),
   };
 }

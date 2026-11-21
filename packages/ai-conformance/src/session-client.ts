@@ -21,12 +21,21 @@ export interface UserSession {
   id: string;
   user: string;
   workspace: string;
+  mode: string;
 }
 
 export interface AgentSession {
   id: string;
   project: string;
   agent: string;
+  workspace: string;
+}
+
+/** The caller's profile, as the session API shows it. */
+export interface Profile {
+  user: string;
+  /** The projects the profile holds user memory of. */
+  projects: { workspace: string; project: string }[];
 }
 
 export interface Turn {
@@ -41,6 +50,11 @@ export interface SessionClient {
   startSession(req: { project: string; agent: string }): Promise<AgentSession>;
   sendMessage(sessionId: string, req: { content: string }): Promise<Turn>;
   listItems(sessionId: string): Promise<{ items: Item[] }>;
+  /** The caller's agent sessions in the workspace their token names, from the session index. */
+  listSessions(): Promise<{ sessions: AgentSession[] }>;
+  profile(): Promise<Profile>;
+  /** Erases the caller: their profile and their User DO's storage. */
+  eraseUser(): Promise<{ erased: true }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -74,6 +88,9 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     startSession: (req) => call("POST", "/v1/sessions", req),
     sendMessage: (id, req) => call("POST", `/v1/sessions/${encodeURIComponent(id)}/messages`, req),
     listItems: (id) => call("GET", `/v1/sessions/${encodeURIComponent(id)}/items`),
+    listSessions: () => call("GET", "/v1/sessions"),
+    profile: () => call("GET", "/v1/me/profile"),
+    eraseUser: () => call("DELETE", "/v1/me"),
   };
 }
 
@@ -84,7 +101,7 @@ export function restClient(deployment: Deployment, token: string): SessionClient
 export async function login(
   deployment: Deployment,
   user: string,
-  options: { ttlMs?: number } = {},
+  options: { ttlMs?: number; workspace?: string } = {},
 ): Promise<string> {
   const res = await deployment.fetch("/v1/login", {
     method: "POST",
@@ -94,16 +111,63 @@ export async function login(
   return (await answer<{ token: string }>(res)).token;
 }
 
-/** Writes fixture files into the deployment's workspace (test-only, behind `ADMIN_KEY`). */
+const admin = async <T>(deployment: Deployment, adminKey: string, path: string, body: unknown) =>
+  answer<T>(
+    await deployment.fetch(path, {
+      method: "POST",
+      headers: { authorization: `Bearer ${adminKey}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
+
+/**
+ * Writes fixture files into one of the deployment's workspaces, the default one unless named
+ * (test-only, behind `ADMIN_KEY`).
+ */
 export async function seed(
   deployment: Deployment,
   adminKey: string,
   files: Record<string, string>,
+  workspace?: string,
 ): Promise<void> {
-  const res = await deployment.fetch("/admin/seed", {
-    method: "POST",
-    headers: { authorization: `Bearer ${adminKey}`, "content-type": "application/json" },
-    body: JSON.stringify({ files }),
+  await admin(deployment, adminKey, "/admin/seed", { files, workspace });
+}
+
+/**
+ * Writes fixture files into the deployment's profiles file system, at paths such as
+ * `/profiles/<user>/...` (test-only, behind `ADMIN_KEY`).
+ */
+export async function seedProfiles(
+  deployment: Deployment,
+  adminKey: string,
+  files: Record<string, string>,
+): Promise<void> {
+  await admin(deployment, adminKey, "/admin/profiles", { files });
+}
+
+/**
+ * Makes a user's User DO refuse every call from now on, so a scenario can show what keeps working
+ * without it (test-only, behind `ADMIN_KEY`).
+ */
+export async function makeUserUnreachable(
+  deployment: Deployment,
+  adminKey: string,
+  user: string,
+): Promise<void> {
+  await admin(deployment, adminKey, `/admin/users/${encodeURIComponent(user)}/unreachable`, {});
+}
+
+/**
+ * Sends a message straight to an agent session's DO, past the user's User DO (test-only, behind
+ * `ADMIN_KEY`): the turn's file calls still go to the Workspace DO's gate.
+ */
+export async function sendPastUser(
+  deployment: Deployment,
+  adminKey: string,
+  sessionId: string,
+  content: string,
+): Promise<Turn> {
+  return admin(deployment, adminKey, `/admin/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    content,
   });
-  await answer(res);
 }

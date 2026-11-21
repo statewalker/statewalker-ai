@@ -4,6 +4,9 @@
 
 export { fromBase64, type Keypair, toBase64 } from "@statewalker/webrun-biscuit";
 export {
+  type AgentSessionFacts,
+  type AgentSessionGrant,
+  attenuateForAgentSession,
   type FileAction,
   type FileRequest,
   type StoredRootKey,

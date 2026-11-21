@@ -6,7 +6,15 @@ import { callPort, listenPort, type MessageTarget } from "@statewalker/webrun-rp
 import type { SessionApi, UserSessionView } from "./api.js";
 
 const CHANNEL = "statewalker-ai/session-api/v1";
-const METHODS = ["me", "startSession", "sendMessage", "listItems"] as const;
+const METHODS = [
+  "me",
+  "startSession",
+  "sendMessage",
+  "listItems",
+  "listSessions",
+  "profile",
+  "eraseUser",
+] as const;
 type Method = (typeof METHODS)[number];
 type Call = { method: "authenticate" | Method; args: unknown[] };
 
@@ -21,8 +29,8 @@ export function serveSessionRpc(
   port: MessageTarget,
   open: (token: string) => SessionApi,
 ): () => void {
-  // Set once the first message's token is accepted. Each call still goes to the Workspace DO with
-  // the token, so it is checked again every time (expiry included).
+  // Set once the first message's token is accepted. Each call still goes to the caller's User DO
+  // with the token, so it is checked again every time (expiry included).
   let api: SessionApi | undefined;
   return listenPort<Call>(
     port,
@@ -61,5 +69,8 @@ export function sessionRpcClient(port: MessageTarget, token: string): SessionApi
     startSession: after("startSession"),
     sendMessage: after("sendMessage"),
     listItems: after("listItems"),
+    listSessions: after("listSessions"),
+    profile: after("profile"),
+    eraseUser: after("eraseUser"),
   } as SessionApi;
 }

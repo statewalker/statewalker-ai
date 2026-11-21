@@ -8,9 +8,13 @@ export {
   ApiError,
   type Item,
   login,
+  makeUserUnreachable,
+  type Profile,
   restClient,
   type SessionClient,
   seed,
+  seedProfiles,
+  sendPastUser,
   type Turn,
   type UserSession,
 } from "./session-client.js";

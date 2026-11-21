@@ -30,7 +30,10 @@ export async function handleSessionRest(
   const api = () => open(bearerOf(request));
   const call = async (): Promise<unknown> => {
     if (route === "GET /me") return api().me();
+    if (route === "GET /me/profile") return api().profile();
+    if (route === "DELETE /me") return api().eraseUser();
     if (route === "POST /sessions") return api().startSession((await bodyOf(request)) as never);
+    if (route === "GET /sessions") return api().listSessions();
     const [, collection, id, sub] = parts;
     if (collection === "sessions" && id && parts.length === 4) {
       if (request.method === "POST" && sub === "messages")

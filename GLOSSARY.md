@@ -75,7 +75,7 @@ A named action of the form `area.action`, optionally narrowed to a target, which
 _Avoid_: capability key, scope, right
 
 **Secret**:
-A credential kept by the harness at the deployment, workspace, project or user level, used only by the gateway on calls its bindings allow.
+A credential kept by the harness at the deployment, workspace, project or user level, used only by the egress gateway or the model gateway on calls its bindings allow.
 
 **Secret binding**:
 The plugins that may use a secret and the hosts it may be sent to.

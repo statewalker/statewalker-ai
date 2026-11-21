@@ -1,13 +1,18 @@
-// Capabilities (statewalker/statewalker-root#78, #80): each workspace's root key, held only by its
-// Workspace DO, signs one capability per agent session. The session holds its capability, never
-// the user's access token, and every file action it takes is authorized against it, with the
-// member's role read at that moment.
+// Capabilities (statewalker/statewalker-root#78, #80, amended by #157): each workspace's root key,
+// held only by its Workspace DO, signs one capability per user: the user capability, which the
+// user's User DO keeps in their user session. The User DO attenuates it for each agent session
+// (agent, project, mode) with one block, offline; the agent session holds that capability, never
+// the access token. The gate reads user, project and session from the capability itself (the user
+// from the root-signed authority block, the rest from the first attenuation block), so it never
+// asks the User DO, and authorizes every file action with the member's role read at that moment.
 import {
   Biscuit,
   fromBase64,
   generateKeypair,
   type Keypair,
+  type Term,
   toBase64,
+  type VerifiedBiscuit,
 } from "@statewalker/webrun-biscuit";
 import { codedError } from "./errors.js";
 
@@ -18,21 +23,65 @@ export interface FileRequest {
   action: FileAction;
   /** Normalised, absolute in the workspace. */
   path: string;
-  /** The session's project. */
+  /** The session's project, as its capability names it. */
   project: string;
   /** The member's role in the project now, if any. */
   role: string | undefined;
 }
 
+/** What the User DO narrows a user capability to for one agent session. */
+export interface AgentSessionGrant {
+  session: string;
+  project: string;
+  agent: string;
+  mode: string;
+}
+
+/** What an agent session's capability says: its user (root-signed) and its grant. */
+export interface AgentSessionFacts extends AgentSessionGrant {
+  user: string;
+}
+
 // The roles' file permissions, as Datalog over the capability. `resource` and `root` end in "/",
 // so a project's prefix never matches a sibling ("/alpha/" is no prefix of "/alphabet/").
 const POLICY = `
-check if agent_session({session});
 allow if operation("read"), role($r), {"reader", "editor", "owner"}.contains($r), resource($p), root($x), $p.starts_with($x);
 deny if true;
 `;
 
+// The agent session's block: its grant as facts, which the gate reads, and a check that binds
+// every resource to the project's folder, whatever any later block or the gate says.
+const AGENT_BLOCK = `agent_session({session});
+project({project});
+agent({agent});
+mode({mode});
+check if resource($p), $p.starts_with({root});`;
+
+const GRANT_FACTS = ["agent_session", "project", "agent", "mode"] as const;
+
+/** A first-level folder or a user's name: one path segment, never "." or "..". */
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/;
+
 const term = (t: unknown) => (t as { v: unknown }).v;
+
+/**
+ * The user capability narrowed to one agent session, by appending one block: no key is needed,
+ * and nothing in a later block can widen it.
+ */
+export function attenuateForAgentSession(userCapability: string, grant: AgentSessionGrant): string {
+  if (!NAME.test(grant.project)) throw codedError("EINVAL", "project must be a project's name");
+  return Biscuit.fromBase64(userCapability)
+    .attenuate(AGENT_BLOCK, {
+      params: {
+        session: grant.session,
+        project: grant.project,
+        agent: grant.agent,
+        mode: grant.mode,
+        root: `/${grant.project}/`,
+      },
+    })
+    .toBase64();
+}
 
 /** Serialisable root keys, for the Workspace DO to keep in its own storage. */
 export interface StoredRootKey {
@@ -40,7 +89,7 @@ export interface StoredRootKey {
   public: string;
 }
 
-/** The authority of one workspace: its root key, minting and checking agent capabilities. */
+/** The authority of one workspace: its root key, minting and checking capabilities. */
 export class WorkspaceAuthority {
   readonly #keys: Keypair;
 
@@ -61,31 +110,72 @@ export class WorkspaceAuthority {
     });
   }
 
-  /** The capability of one agent session. */
-  mint(agentSession: string): string {
-    return Biscuit.build(this.#keys.secretKey, "agent_session({id});", {
-      params: { id: agentSession },
-    }).toBase64();
+  /** The capability of one user in this workspace, for their user session. */
+  mintUser(user: string): string {
+    if (!NAME.test(user)) throw codedError("EINVAL", "invalid user name");
+    return Biscuit.build(this.#keys.secretKey, "user({user});", { params: { user } }).toBase64();
   }
 
-  /** The agent session a capability signed by this workspace's root key names; else EACCES. */
-  async sessionOf(capability: string): Promise<string> {
+  async #verify(capability: string): Promise<VerifiedBiscuit> {
     try {
-      const verified = await Biscuit.fromBase64(capability).verifyAsync(this.#keys.publicKey);
-      const id = verified.evaluate("allow if true;").query("s($id) <- agent_session($id)")[0]
-        ?.terms[0];
-      if (id !== undefined) return String(term(id));
+      return await Biscuit.fromBase64(capability).verifyAsync(this.#keys.publicKey);
+    } catch {
+      throw codedError("EACCES", "invalid capability");
+    }
+  }
+
+  #userOf(verified: VerifiedBiscuit): string {
+    let user: unknown;
+    try {
+      user = verified.evaluate("allow if true;").query("u($u) <- user($u)")[0]?.terms[0];
     } catch {
       // falls through to the refusal
     }
-    throw codedError("EACCES", "invalid capability");
+    if (user === undefined) throw codedError("EACCES", "invalid capability");
+    return String(term(user));
   }
 
-  /** Authorizes one file action of the session the capability names; EACCES when refused. */
-  async authorize(capability: string, session: string, req: FileRequest): Promise<void> {
+  /** The user a capability signed by this workspace's root key names; else EACCES. */
+  async userOf(capability: string): Promise<string> {
+    return this.#userOf(await this.#verify(capability));
+  }
+
+  /**
+   * What an agent session's capability says: the user from its root-signed authority block, and
+   * the session, project, agent and mode from its first attenuation block, which the User DO
+   * wrote. A capability without that block (a bare user capability) is refused: only agent
+   * sessions reach the gate.
+   */
+  async agentSessionOf(capability: string): Promise<AgentSessionFacts> {
+    const verified = await this.#verify(capability);
+    const user = this.#userOf(verified);
+    const block = verified.token.blocks[1];
+    if (!block || block.externalKey !== undefined)
+      throw codedError("EACCES", "not an agent session's capability");
+    const values: Record<string, string> = {};
+    for (const name of GRANT_FACTS) {
+      const facts = block.facts.filter((f) => f.predicate.name === name);
+      const t = facts[0]?.predicate.terms[0] as Term | undefined;
+      if (facts.length !== 1 || facts[0]?.predicate.terms.length !== 1 || t?.t !== "str")
+        throw codedError("EACCES", "not an agent session's capability");
+      values[name] = t.v;
+    }
+    const project = String(values.project);
+    if (!NAME.test(project)) throw codedError("EACCES", "not an agent session's capability");
+    return {
+      user,
+      session: String(values.agent_session),
+      project,
+      agent: String(values.agent),
+      mode: String(values.mode),
+    };
+  }
+
+  /** Authorizes one file action under a capability; EACCES when refused. */
+  async authorize(capability: string, req: FileRequest): Promise<void> {
     let ok = false;
     try {
-      const verified = await Biscuit.fromBase64(capability).verifyAsync(this.#keys.publicKey);
+      const verified = await this.#verify(capability);
       const facts = `operation({op});\nresource({path});\nroot({root});\n${req.role ? "role({role});\n" : ""}`;
       ok =
         verified.authorize(facts + POLICY, {
@@ -93,7 +183,6 @@ export class WorkspaceAuthority {
             op: req.action,
             path: req.path === "/" ? "/" : `${req.path}/`,
             root: `/${req.project}/`,
-            session,
             ...(req.role ? { role: req.role } : {}),
           },
         }).kind === "ok";
