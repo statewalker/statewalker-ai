@@ -177,6 +177,20 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       });
     });
 
+    it("a token of a deleted service account is not renewed once one of the same name is made again", async () => {
+      const wes = await as(u("wes"));
+      const { key: oldKey } = await wes.createServiceAccount({ name: `again-${t}` });
+      const old = await serviceAccountToken(deployment, oldKey);
+      await wes.deleteServiceAccount(`again-${t}`);
+      await sleep(5);
+      const { key } = await wes.createServiceAccount({ name: `again-${t}` });
+      await expect(renewToken(deployment, old)).rejects.toMatchObject({ status: 401 });
+      await expect(serviceAccountToken(deployment, oldKey)).rejects.toMatchObject({ status: 401 });
+      await expect(
+        renewToken(deployment, await serviceAccountToken(deployment, key)),
+      ).resolves.toMatch(/./);
+    });
+
     it("only a workspace admin manages service accounts", async () => {
       const ann = await as(u("ann"));
       await expect(ann.createServiceAccount({ name: `nope-${t}` })).rejects.toMatchObject({

@@ -108,7 +108,12 @@ export class Issuer extends DurableObject<Env> {
     this.#refuseRevoked(claims.user);
     if (isServiceAccount(claims.user)) {
       const account = this.#account(claims.user);
-      if (account?.workspace !== claims.workspace)
+      // A service account's tokens always last the issuer's TTL, so their expiry tells when they
+      // were signed: one signed before this account was made belongs to a deleted account of the
+      // same name, and is not renewed. (An access token carries only user, workspace, issuer and
+      // expiry, statewalker/statewalker-root#78.)
+      const signed = claims.expires - issuer.ttlMs;
+      if (account?.workspace !== claims.workspace || signed < Number(account.created))
         throw codedError("EAUTH", "this service account was deleted");
       return issuer.issueServiceAccount(claims.user, claims.workspace);
     }

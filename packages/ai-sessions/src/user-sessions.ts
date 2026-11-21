@@ -318,10 +318,14 @@ export class UserSessions implements UserPort {
     );
     if (!row) throw codedError("ENOENT", "no such agent session");
     if (!row.revoked) {
-      // A session started under an earlier user session holds a capability this one cannot name;
-      // that user session was revoked, and the session with it.
-      if (row.capability)
-        await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
+      // A session recorded before its capability was kept cannot be named on the revocation
+      // list alone; answering "revoked" while the gate still accepts it would be a lie.
+      if (!row.capability)
+        throw codedError(
+          "EINVAL",
+          "this agent session predates per-session revocation: revoke the user session instead",
+        );
+      await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
       this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE id = ?", id);
     }
     return { revoked: true };
