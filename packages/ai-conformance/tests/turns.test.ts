@@ -259,4 +259,44 @@ describe.each(transports)("turns over %s", (name, connect) => {
       ann.postMessage(session.id, { content: "x", delivery: "later" as never }),
     ).rejects.toMatchObject({ status: 400 });
   });
+
+  it("pages and filters the session's items, and reads one alone", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    await ann.sendMessage(session.id, { content: `CALL read ${JSON.stringify({ path: "readme.md" })}` });
+    await ann.sendMessage(session.id, { content: "two" });
+    const all = (await ann.listItems(session.id)).items;
+    const kinds = all.map((i) => i.text ?? i.kind);
+    expect(kinds).toEqual(["CALL read {\"path\":\"readme.md\"}", "tool_call", "tool_result", "RESULT: # alpha\n", "two", "OK"]);
+    const ids = all.map((i) => i.id);
+
+    const first = await ann.listItems(session.id, { limit: 2 });
+    expect(first).toMatchObject({ has_more: true, first_id: ids[0], last_id: ids[1] });
+    expect(first.items.map((i) => i.id)).toEqual(ids.slice(0, 2));
+    const second = await ann.listItems(session.id, { limit: 2, after: first.last_id });
+    expect(second.items.map((i) => i.id)).toEqual(ids.slice(2, 4));
+    const last = await ann.listItems(session.id, { limit: 2, after: second.last_id });
+    expect(last).toMatchObject({ has_more: false });
+    expect(last.items.map((i) => i.id)).toEqual(ids.slice(4));
+
+    const desc = await ann.listItems(session.id, { order: "desc", limit: 3 });
+    expect(desc.items.map((i) => i.id)).toEqual([ids[5], ids[4], ids[3]]);
+    const descNext = await ann.listItems(session.id, { order: "desc", after: desc.last_id });
+    expect(descNext.items.map((i) => i.id)).toEqual([ids[2], ids[1], ids[0]]);
+    const before = await ann.listItems(session.id, { before: ids[2] });
+    expect(before.items.map((i) => i.id)).toEqual(ids.slice(0, 2));
+
+    const tools = await ann.listItems(session.id, { types: ["tool_call", "tool_result"] });
+    expect(tools.items.map((i) => i.kind)).toEqual(["tool_call", "tool_result"]);
+
+    expect(await ann.getItem(session.id, String(ids[2]))).toEqual(all[2]);
+    await expect(ann.getItem(session.id, "it-none")).rejects.toMatchObject({ status: 404 });
+    await expect((await as("bob")).getItem(session.id, String(ids[2]))).rejects.toMatchObject({
+      status: 404,
+    });
+    await expect(ann.listItems(session.id, { limit: 0 })).rejects.toMatchObject({ status: 400 });
+    await expect(ann.listItems(session.id, { types: ["secret" as never] })).rejects.toMatchObject({
+      status: 400,
+    });
+  });
 });
