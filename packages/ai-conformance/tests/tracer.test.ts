@@ -134,18 +134,21 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
   it("refuses the read tool a file outside the session's project", async () => {
     const ann = await as("ann");
     const session = await ann.startSession({ project: "alpha", agent: "tracer" });
-    const outside = {
-      "/beta/notes.md": "beta only",
-      "../beta/notes.md": "beta only",
-      "/alpha/../beta/notes.md": "beta only",
+    // A project ann is no member of is not there (ENOENT); one she is, but not this session's,
+    // is refused (EACCES).
+    const outside: Record<string, [string, RegExp]> = {
+      "/beta/notes.md": ["beta only", /ENOENT/],
+      "../beta/notes.md": ["beta only", /ENOENT/],
+      "/alpha/../beta/notes.md": ["beta only", /ENOENT/],
       // ann is an owner there, but this session is alpha's.
-      "/alphabet/secret.md": "alphabet only",
+      "/alphabet/secret.md": ["alphabet only", /EACCES/],
+      "../alphabet/secret.md": ["alphabet only", /EACCES/],
     };
-    for (const [path, content] of Object.entries(outside)) {
+    for (const [path, [content, code]] of Object.entries(outside)) {
       const turn = await ann.sendMessage(session.id, { content: read(path) });
       const [result] = toolResults(turn);
       expect(result).toMatchObject({ name: "read", isError: true });
-      expect(result?.output).toMatch(/EACCES/);
+      expect(result?.output).toMatch(code);
       expect(JSON.stringify(turn)).not.toContain(content);
     }
   });

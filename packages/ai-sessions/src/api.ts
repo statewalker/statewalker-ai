@@ -2,6 +2,7 @@
 // (./rest.ts) and RPC (./rpc.ts) are thin routers onto these methods; every call is made with the
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { codedError } from "@statewalker/ai-access";
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
 
 export interface UserSessionView {
   id: string;
@@ -80,6 +81,8 @@ export interface SessionApi {
   profile(): Promise<ProfileView>;
   /** Erases the caller: their profile and everything their User DO holds. */
   eraseUser(): Promise<{ erased: true }>;
+  /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
+  files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -103,6 +106,8 @@ export interface UserPort {
   listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }>;
   profile(token: string): Promise<ProfileView>;
   eraseUser(token: string): Promise<{ erased: true }>;
+  /** One files-RPC call on the user's own file view of the token's workspace. */
+  files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
 }
 
 /** One agent session DO's side of the API. */
@@ -150,5 +155,6 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     listSessions: () => ports.user.listAgentSessions(token),
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
+    files: (method, args) => ports.user.files(token, method, args),
   };
 }

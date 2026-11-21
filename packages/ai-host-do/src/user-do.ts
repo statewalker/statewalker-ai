@@ -5,9 +5,10 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
-import { filesOverCalls } from "@statewalker/ai-environment";
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import { filesOverRpc } from "@statewalker/ai-environment";
 import { type StartSessionRequest, UserSessions } from "@statewalker/ai-sessions";
-import { type Env, nameOf, profilesOf, verifyToken, workspaceOf } from "./env.js";
+import { blockSizeOf, type Env, nameOf, profilesOf, verifyToken, workspaceOf } from "./env.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
@@ -19,7 +20,9 @@ export class User extends DurableObject<Env> {
       sql: ctx.storage.sql,
       user,
       // Only this user's folder of the profiles file system: the Profiles DO roots every call there.
-      profile: filesOverCalls((call) => profilesOf(env).fileCall(user, call)),
+      profile: filesOverRpc((method, args) => profilesOf(env).files(user, method, args), {
+        blockSize: blockSizeOf(env),
+      }),
       eraseProfile: () => profilesOf(env).erase(user),
       eraseStorage: () => ctx.storage.deleteAll(),
       verifyToken: (token) => verifyToken(env, token),
@@ -28,6 +31,7 @@ export class User extends DurableObject<Env> {
         return {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
+          files: (capability, method, args) => ws.files(capability, method, args),
         };
       },
     });
@@ -67,6 +71,11 @@ export class User extends DurableObject<Env> {
   async eraseUser(token: string) {
     await this.#reachable();
     return this.#sessions.eraseUser(token);
+  }
+
+  async files(token: string, method: FilesRpcMethod, args: unknown[]) {
+    await this.#reachable();
+    return this.#sessions.files(token, method, args);
   }
 
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */

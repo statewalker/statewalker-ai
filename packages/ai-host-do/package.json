@@ -18,7 +18,15 @@
     "@statewalker/ai-environment": "workspace:^",
     "@statewalker/ai-flue": "workspace:^",
     "@statewalker/ai-sessions": "workspace:^",
-    "@statewalker/webrun-files": "catalog:"
+    "@statewalker/webrun-files": "catalog:",
+    "@aws-sdk/client-s3": "catalog:",
+    "@statewalker/db-sqlite-do": "catalog:",
+    "@statewalker/webrun-files-mem": "catalog:",
+    "@statewalker/webrun-files-node": "catalog:",
+    "@statewalker/webrun-files-s3": "catalog:",
+    "@statewalker/webrun-files-sqlite": "catalog:",
+    "@statewalker/webrun-files-rpc": "catalog:",
+    "aws4fetch": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

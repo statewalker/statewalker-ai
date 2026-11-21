@@ -1,6 +1,9 @@
 // A user's profile (statewalker/statewalker-root#157): their own folder `profiles/<user>/` of the
 // deployment's profiles file system, seen as a FilesApi rooted there. No path form reaches another
 // user's folder, and no user name places the folder anywhere else.
+
+import { newDoSqliteDb } from "@statewalker/db-sqlite-do";
+import { newFakeDoStorage } from "@statewalker/db-sqlite-do/fake";
 import { readText, writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -63,12 +66,22 @@ describe("profile files", () => {
 });
 
 describe("profiles backend", () => {
-  const noSql = { exec: () => ({ toArray: () => [] }) };
+  const noDb = () => {
+    throw new Error("no database for this backend");
+  };
 
   it("mounts the profiles file system from the configured backend", async () => {
-    const memory = mountProfiles("memory", noSql);
+    const memory = await mountProfiles("memory", noDb);
     await writeText(profileFiles(memory, "ann"), "/x.md", "kept in memory");
     expect(await readText(memory, "/profiles/ann/x.md")).toBe("kept in memory");
-    expect(() => mountProfiles("floppy", noSql)).toThrow(/EINVAL/);
+    await expect(mountProfiles("floppy", noDb)).rejects.toThrow(/EINVAL/);
+  });
+
+  it("mounts SqlFs on a Durable Object's SQLite by default, kept across mounts", async () => {
+    const storage = newFakeDoStorage();
+    const first = await mountProfiles(undefined, () => newDoSqliteDb(storage));
+    await writeText(profileFiles(first, "ann"), "/x.md", "kept in SQLite");
+    const again = await mountProfiles("sql", () => newDoSqliteDb(storage));
+    expect(await readText(again, "/profiles/ann/x.md")).toBe("kept in SQLite");
   });
 });
