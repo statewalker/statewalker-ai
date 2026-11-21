@@ -34,7 +34,13 @@ const forEach = (roles: Record<string, string>) =>
   Object.fromEntries(
     TRANSPORTS.flatMap((t) => Object.entries(roles).map(([user, role]) => [`${user}-${t}`, role])),
   );
-const ACCESS = forEach({ ann: "editor", bob: "reader", gus: "reader", ida: "reader" });
+const ACCESS = forEach({
+  ann: "editor",
+  bob: "reader",
+  eve: "reader",
+  gus: "reader",
+  ida: "reader",
+});
 const DEFAULT_FILES = {
   "/alpha/readme.md": "# alpha\n",
   "/alpha/.system/access": JSON.stringify(ACCESS),
@@ -273,6 +279,16 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       // Another user cannot revoke it.
       const ann = await as(u("ann"));
       await expect(ann.revokeSession(kept.id)).rejects.toMatchObject({ status: 404 });
+    });
+
+    it("erasing a user revokes their running agent sessions", async () => {
+      const eve = await as(u("eve"));
+      const session = await eve.startSession({ project: "alpha", agent: "doomed" });
+      await eve.eraseUser();
+      const past = await sendPastUser(deployment, ADMIN_KEY, session.id, read("/alpha/readme.md"));
+      expect(results(past)).toEqual([
+        expect.objectContaining({ isError: true, output: expect.stringMatching(/EACCES/) }),
+      ]);
     });
 
     it("revoking the user session stops all its agent sessions; the next call opens a new one", async () => {

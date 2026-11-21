@@ -268,8 +268,11 @@ export class UserSessions implements UserPort {
     const sessions = this.#o.sql
       .exec("SELECT * FROM user_sessions")
       .toArray() as unknown as UserSessionRow[];
-    for (const us of sessions)
+    // Their user sessions are revoked there too, so no agent session they started acts on.
+    for (const us of sessions) {
       await this.#o.workspace(us.workspace).eraseUserSecrets(us.capability);
+      await this.#o.workspace(us.workspace).revoke(us.capability, us.capability);
+    }
     await this.#o.eraseProfile();
     await this.#o.eraseStorage();
     this.createTables();
