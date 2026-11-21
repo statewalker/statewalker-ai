@@ -121,7 +121,7 @@ describe.each(transports)("user DO over %s", (name, connect) => {
     expect(await ids(inOther)).toEqual([there.id]);
     // A session is reached only with a token for its own workspace.
     await expect(inDefault.listItems(there.id)).rejects.toMatchObject({ status: 404 });
-    await expect(inOther.listItems(there.id)).resolves.toEqual({ items: [] });
+    await expect(inOther.listItems(there.id)).resolves.toMatchObject({ items: [] });
     // One user session per workspace.
     expect((await inOther.me()).id).not.toBe((await inDefault.me()).id);
     expect(await inOther.me()).toMatchObject({ workspace: "other", mode: "default" });

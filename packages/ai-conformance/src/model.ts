@@ -1,6 +1,8 @@
 // The scripted model: an OpenAI-compatible chat-completions endpoint (streaming or not) whose
 // replies follow commands in the last user message, so scenarios are deterministic and offline.
 //   CALL <tool> <json args>   one tool call, then "RESULT: <tool output>"
+//   FAIL                      the model refuses the request (HTTP 400): the turn fails
+//   HOLD <name>               "OK", once the scenario releases <name> (a turn that stays running)
 //   anything else             "OK"
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -8,12 +10,18 @@ import type { AddressInfo } from "node:net";
 export interface ModelRequest {
   tools: string[];
   lastUserText: string;
+  /** The model the request named. */
+  model?: string;
 }
 
 export interface FakeModel {
   /** The OpenAI-compatible base URL (ends in /v1). */
   url: string;
   requests: ModelRequest[];
+  /** Resolves once a `HOLD <name>` request has arrived (it is then held). */
+  held(name: string): Promise<void>;
+  /** Answers the `HOLD <name>` request (now, or as soon as it arrives). */
+  release(name: string): void;
   close(): Promise<void>;
 }
 
@@ -28,8 +36,31 @@ async function body(req: IncomingMessage): Promise<string> {
   return b;
 }
 
+interface Hold {
+  arrived: Promise<void>;
+  arrive(): void;
+  released: Promise<void>;
+  release(): void;
+}
+
 export async function fakeModel(): Promise<FakeModel> {
   const requests: ModelRequest[] = [];
+  const holds = new Map<string, Hold>();
+  const hold = (name: string): Hold => {
+    let h = holds.get(name);
+    if (!h) {
+      const d = { arrive: () => {}, release: () => {} };
+      const arrived = new Promise<void>((ok) => {
+        d.arrive = ok;
+      });
+      const released = new Promise<void>((ok) => {
+        d.release = ok;
+      });
+      h = { arrived, released, ...d };
+      holds.set(name, h);
+    }
+    return h;
+  };
   const server = createServer(async (req, res) => {
     const json = JSON.parse((await body(req)) || "{}") as {
       model?: string;
@@ -41,7 +72,26 @@ export async function fakeModel(): Promise<FakeModel> {
     const lastUserText = text(
       [...messages].reverse().find((m) => m.role === "user")?.content,
     ).trim();
-    requests.push({ tools: (json.tools ?? []).map((t) => String(t.function?.name)), lastUserText });
+    requests.push({
+      tools: (json.tools ?? []).map((t) => String(t.function?.name)),
+      lastUserText,
+      model: json.model,
+    });
+    if (lastUserText === "FAIL" && messages.at(-1)?.role === "user") {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: { message: "the scripted model refuses", type: "invalid_request_error" },
+        }),
+      );
+      return;
+    }
+    const held = /^HOLD\s+(\S+)/.exec(lastUserText);
+    if (held && messages.at(-1)?.role === "user") {
+      const h = hold(String(held[1]));
+      h.arrive();
+      await h.released;
+    }
     const call = /^CALL\s+(\S+)\s*([\s\S]*)$/.exec(lastUserText);
     let message: Record<string, unknown>;
     let finish: string;
@@ -89,6 +139,13 @@ export async function fakeModel(): Promise<FakeModel> {
   return {
     url: `http://127.0.0.1:${port}/v1`,
     requests,
-    close: () => new Promise<void>((ok) => server.close(() => ok())),
+    held: (name) => hold(name).arrived,
+    release: (name) => hold(name).release(),
+    close: () =>
+      new Promise<void>((ok) => {
+        for (const h of holds.values()) h.release();
+        server.close(() => ok());
+        server.closeAllConnections();
+      }),
   };
 }

@@ -73,6 +73,8 @@ export interface Env {
    * to every agent, `[{plugin, name, method?, url, headers?, query?}]`, called through the gateway.
    */
   REST_TOOLS?: string;
+  /** Test-only: the SSE keep-alive interval in ms (30 s otherwise). */
+  SSE_KEEPALIVE_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
   DEV_LOGIN?: string;
   /** Test-only: enables the /admin/* routes with this bearer key. */

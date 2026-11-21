@@ -1,6 +1,27 @@
 // The session API as a client sees it, over REST. Scenarios are written against `SessionClient`,
 // so the same scenario runs over every transport (REST here, RPC in ./rpc-client.ts).
+import type {
+  EventsPage,
+  EventsQuery,
+  ItemsQuery,
+  MessageAccepted,
+  Metadata,
+  SessionEvent,
+  SessionsQuery,
+  StopReason,
+} from "@statewalker/ai-sessions";
 import type { Deployment } from "./deployment.js";
+
+export type {
+  EventsPage,
+  EventsQuery,
+  ItemsQuery,
+  MessageAccepted,
+  Metadata,
+  SessionEvent,
+  SessionsQuery,
+  StopReason,
+};
 
 /** An item of a turn, as the session API lists it. */
 export interface Item {
@@ -19,6 +40,10 @@ export interface Item {
   approval?: string;
   /** The names of the secrets a tool call used (never their values). */
   secrets?: string[];
+  /** A user message that steered a running turn. */
+  steer?: string;
+  /** The partial assistant message of a turn cut short. */
+  incomplete?: true;
 }
 
 /** An action waiting on the user's answer, as the session API lists it. */
@@ -87,6 +112,9 @@ export interface AgentSession {
   project: string;
   agent: string;
   workspace: string;
+  metadata: Metadata;
+  archived?: number;
+  status?: "idle" | "running" | "waiting" | "error";
 }
 
 /** The caller's profile, as the session API shows it. */
@@ -100,18 +128,59 @@ export interface Turn {
   id: string;
   session: string;
   status: string;
+  delivery: string;
+  stop_reason?: StopReason;
+  error?: string;
+  model?: string;
+  model_substitution?: { requested: string; used: string; reason: string };
+  ignored?: string[];
   items: Item[];
-  /** The approvals a pending turn waits on. */
-  approvals?: Approval[];
 }
+
+export interface ItemsPage {
+  items: Item[];
+  has_more: boolean;
+  first_id?: string;
+  last_id?: string;
+}
+
+/** A message request; any other field is reported as ignored. */
+export type MessageRequest = {
+  content: string;
+  delivery?: "next" | "steer" | "interrupt";
+  model?: string;
+} & Record<string, unknown>;
+
+/** The event types a turn ends with; the event carries the full turn. */
+export const TERMINAL_EVENTS = [
+  "turn.waiting",
+  "turn.completed",
+  "turn.failed",
+  "turn.cancelled",
+  "turn.interrupted",
+];
 
 export interface SessionClient {
   me(): Promise<UserSession>;
-  startSession(req: { project: string; agent: string }): Promise<AgentSession>;
-  sendMessage(sessionId: string, req: { content: string }): Promise<Turn>;
-  listItems(sessionId: string): Promise<{ items: Item[] }>;
+  startSession(req: { project: string; agent: string; metadata?: Metadata }): Promise<AgentSession>;
+  getSession(id: string): Promise<AgentSession>;
+  updateSession(id: string, req: { metadata: Metadata }): Promise<AgentSession>;
+  archiveSession(id: string): Promise<AgentSession>;
+  deleteSession(id: string): Promise<{ deleted: true }>;
   /** The caller's agent sessions in the workspace their token names, from the session index. */
-  listSessions(): Promise<{ sessions: AgentSession[] }>;
+  listSessions(query?: SessionsQuery): Promise<{ sessions: AgentSession[] }>;
+  /** Posts a message: accepted (REST `202`), the turn runs on its own. */
+  postMessage(sessionId: string, req: MessageRequest): Promise<MessageAccepted>;
+  /** Posts a message and follows its turn's events to the terminal one: the full turn. */
+  sendMessage(sessionId: string, req: MessageRequest): Promise<Turn>;
+  /** Follows an accepted message's turn to its terminal event, and returns the full turn. */
+  waitTurn(accepted: MessageAccepted): Promise<Turn>;
+  getTurn(turnId: string): Promise<Turn>;
+  cancelTurn(turnId: string): Promise<Turn>;
+  listItems(sessionId: string, query?: ItemsQuery): Promise<ItemsPage>;
+  getItem(sessionId: string, itemId: string): Promise<Item>;
+  /** Reads the event log after `since` up to its end. */
+  readEvents(sessionId: string, query?: EventsQuery): Promise<EventsPage>;
   profile(): Promise<Profile>;
   /** Erases the caller: their profile and their User DO's storage. */
   eraseUser(): Promise<{ erased: true }>;
@@ -119,8 +188,14 @@ export interface SessionClient {
   setMode(req: { mode: string }): Promise<UserSession>;
   /** The approvals of the caller's agent sessions in the workspace, pending or answered. */
   listApprovals(): Promise<{ approvals: Approval[] }>;
-  /** Answers an approval: the stored action runs (re-checked) or is refused. */
-  answerApproval(id: string, answer: ApprovalAnswer): Promise<{ approval: Approval; turn: Turn }>;
+  /**
+   * Answers an approval: the answer continues the agent session as a turn (the stored action runs
+   * again, re-checked, or the denial is told), accepted like a message.
+   */
+  answerApproval(
+    id: string,
+    answer: ApprovalAnswer,
+  ): Promise<{ approval: Approval; accepted: MessageAccepted }>;
   /** The secrets of one level (and project) the caller manages: names, bindings, update times. */
   listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   /** Sets or replaces a secret; the answer never holds its value. */
@@ -145,21 +220,130 @@ async function answer<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+/** One frame of an SSE stream: an event (with its id, if any), or a comment (a keep-alive). */
+export interface SseFrame {
+  id?: string;
+  event?: string;
+  data?: string;
+  comment?: string;
+}
+
+/** The frames of an SSE response body, as they arrive. Cancel the reader to disconnect. */
+export async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncGenerator<SseFrame> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      buffer += decoder.decode(value, { stream: true });
+      let end = buffer.indexOf("\n\n");
+      while (end >= 0) {
+        const block = buffer.slice(0, end);
+        buffer = buffer.slice(end + 2);
+        const frame: SseFrame = {};
+        for (const line of block.split("\n")) {
+          if (line.startsWith(":")) frame.comment = line.slice(1).trim();
+          else {
+            const i = line.indexOf(":");
+            const field = i < 0 ? line : line.slice(0, i);
+            const value = i < 0 ? "" : line.slice(i + 1).replace(/^ /, "");
+            if (field === "data")
+              frame.data = frame.data === undefined ? value : `${frame.data}\n${value}`;
+            else if (field === "id" || field === "event") frame[field] = value;
+          }
+        }
+        yield frame;
+        end = buffer.indexOf("\n\n");
+      }
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
+
+/** An SSE frame as a logged event (frames without an id are markers or keep-alives). */
+export const eventOf = (frame: SseFrame): SessionEvent | undefined =>
+  frame.id && frame.event
+    ? {
+        seq: Number(frame.id),
+        type: frame.event,
+        data: JSON.parse(frame.data ?? "null"),
+        created: 0,
+      }
+    : undefined;
+
+const itemsSearch = (q: ItemsQuery = {}) => {
+  const p = new URLSearchParams();
+  for (const k of ["after", "before", "limit", "order"] as const)
+    if (q[k] !== undefined) p.set(k, String(q[k]));
+  for (const t of q.types ?? []) p.append("types[]", t);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
+
+const sessionsSearch = (q: SessionsQuery = {}) => {
+  const p = new URLSearchParams();
+  if (q.status) p.set("status", q.status);
+  for (const [k, v] of Object.entries(q.metadata ?? {})) p.set(`metadata.${k}`, v);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
+
 export function restClient(deployment: Deployment, token: string): SessionClient {
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const call = <T>(method: string, path: string, body?: unknown) =>
     deployment
       .fetch(path, {
         method,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        headers,
         body: body === undefined ? undefined : JSON.stringify(body),
       })
       .then((res) => answer<T>(res));
-  return {
+  const stream = async (path: string) => {
+    const res = await deployment.fetch(path, { headers });
+    if (!res.ok || !res.body) await answer(res);
+    return sseFrames(res.body as ReadableStream<Uint8Array>);
+  };
+  const s = (id: string) => `/v1/sessions/${encodeURIComponent(id)}`;
+  const client: SessionClient = {
     me: () => call("GET", "/v1/me"),
     startSession: (req) => call("POST", "/v1/sessions", req),
-    sendMessage: (id, req) => call("POST", `/v1/sessions/${encodeURIComponent(id)}/messages`, req),
-    listItems: (id) => call("GET", `/v1/sessions/${encodeURIComponent(id)}/items`),
-    listSessions: () => call("GET", "/v1/sessions"),
+    getSession: (id) => call("GET", s(id)),
+    updateSession: (id, req) => call("PATCH", s(id), req),
+    archiveSession: (id) => call("POST", `${s(id)}/archive`),
+    deleteSession: (id) => call("DELETE", s(id)),
+    listSessions: (q) => call("GET", `/v1/sessions${sessionsSearch(q)}`),
+    postMessage: (id, req) => call("POST", `${s(id)}/messages`, req),
+    sendMessage: async (id, req) => client.waitTurn(await client.postMessage(id, req)),
+    async waitTurn(accepted) {
+      for await (const frame of await stream(accepted.stream_url)) {
+        // A turn that ended before the stream's offset ends it with an unnumbered terminal event.
+        if (frame.event && TERMINAL_EVENTS.includes(frame.event)) {
+          const turn = JSON.parse(frame.data ?? "null") as Turn;
+          if (turn.id === accepted.turn_id) return turn;
+        }
+      }
+      throw new ApiError(500, "the stream ended before the turn's terminal event");
+    },
+    getTurn: (id) => call("GET", `/v1/turns/${encodeURIComponent(id)}`),
+    cancelTurn: (id) => call("POST", `/v1/turns/${encodeURIComponent(id)}/cancel`),
+    listItems: (id, q) => call("GET", `${s(id)}/items${itemsSearch(q)}`),
+    getItem: (id, itemId) => call("GET", `${s(id)}/items/${encodeURIComponent(itemId)}`),
+    async readEvents(id, q = {}) {
+      const events: SessionEvent[] = [];
+      let offset = q.since ?? 0;
+      for await (const frame of await stream(`${s(id)}/events?since=${offset}`)) {
+        const event = eventOf(frame);
+        if (event) {
+          events.push(event);
+          offset = event.seq;
+        }
+        if (frame.event === "up-to-date") break;
+      }
+      return { events, offset, up_to_date: true };
+    },
     profile: () => call("GET", "/v1/me/profile"),
     eraseUser: () => call("DELETE", "/v1/me"),
     setMode: (req) => call("PUT", "/v1/me/mode", req),
@@ -175,6 +359,7 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         `/v1/secrets/${encodeURIComponent(level)}/${encodeURIComponent(name)}${project ? `?project=${encodeURIComponent(project)}` : ""}`,
       ),
   };
+  return client;
 }
 
 /**
@@ -250,6 +435,7 @@ export async function sendPastUser(
   sessionId: string,
   content: string,
 ): Promise<Turn> {
+  // The route waits for the turn to end, and answers the full turn.
   return admin(deployment, adminKey, `/admin/sessions/${encodeURIComponent(sessionId)}/messages`, {
     content,
   });

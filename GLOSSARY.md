@@ -115,6 +115,10 @@ _Avoid_: run (accepted as a synonym)
 **Item**:
 One message, tool call, tool result, decision or approval in an agent session.
 
+**Event log**:
+An agent session's durable, numbered record of what happened in it (turns queued, started and ended, items created); every stream of the session is a cursor read of it, so a reader going away never cancels anything.
+_Avoid_: event stream (a stream is one read of the log)
+
 **Summary**:
 A compacted stand-in for a range of a session's items or lower summaries; the items themselves are kept.
 

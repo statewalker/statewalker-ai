@@ -11,6 +11,7 @@ import {
   type ApprovalAnswer,
   type ApprovalRequest,
   type DeleteSecretRequest,
+  type Metadata,
   type SecretScope,
   type SetSecretRequest,
   type StartSessionRequest,
@@ -88,6 +89,21 @@ export class User extends DurableObject<Env> {
     return this.#sessions.listAgentSessions(token);
   }
 
+  async updateAgentSession(token: string, id: string, metadata: Metadata) {
+    await this.#reachable();
+    return this.#sessions.updateAgentSession(token, id, metadata);
+  }
+
+  async archiveAgentSession(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.archiveAgentSession(token, id);
+  }
+
+  async deleteAgentSession(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.deleteAgentSession(token, id);
+  }
+
   async profile(token: string) {
     await this.#reachable();
     return this.#sessions.profile(token);
@@ -103,9 +119,10 @@ export class User extends DurableObject<Env> {
     return this.#sessions.setMode(token, mode);
   }
 
-  async recordApprovals(token: string, session: string, requests: ApprovalRequest[]) {
+  /** Told by an agent session's DO: the approvals its waiting turn waits on. */
+  async recordApprovals(session: string, requests: ApprovalRequest[]) {
     await this.#reachable();
-    return this.#sessions.recordApprovals(token, session, requests);
+    return this.#sessions.recordApprovals(session, requests);
   }
 
   async listApprovals(token: string) {

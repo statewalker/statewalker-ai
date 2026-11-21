@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Approval,
+  type ApprovalAnswer,
   type Deployment,
   type FakeModel,
   fakeModel,
@@ -120,10 +121,20 @@ const write = (path: string, content: string) => call("write", { path, content }
 const bash = (command: string) => call("bash", { command });
 const read = (path: string) => call("read", { path });
 const toolResult = (turn: Turn) => turn.items.find((i) => i.kind === "tool_result");
-const approvalOf = (turn: Turn): Approval => {
-  expect(turn.status).toBe("pending");
-  expect(turn.approvals).toHaveLength(1);
-  return turn.approvals?.[0] as Approval;
+/** The one approval a turn ended waiting on, as the user's approvals list it. */
+const approvalOf = async (client: SessionClient, turn: Turn): Promise<Approval> => {
+  expect(turn.status).toBe("waiting");
+  expect(turn.stop_reason).toMatchObject({ type: "approval" });
+  expect(turn.stop_reason?.approval_ids).toHaveLength(1);
+  const id = turn.stop_reason?.approval_ids?.[0];
+  const found = (await client.listApprovals()).approvals.find((a) => a.id === id);
+  expect(found).toBeDefined();
+  return found as Approval;
+};
+/** Answers an approval and follows the turn that continues the session to its end. */
+const answer = async (client: SessionClient, id: string, a: ApprovalAnswer) => {
+  const { approval, accepted } = await client.answerApproval(id, a);
+  return { approval, turn: await client.waitTurn(accepted) };
 };
 
 describe.each(transports)("modes and approvals over %s", (name, connect) => {
@@ -138,7 +149,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect((await ann.me()).mode).toBe("default");
     const s = await ann.startSession({ project: "proj", agent: "modes" });
     const turn = await ann.sendMessage(s.id, { content: write("notes/a.md", "from ann\n") });
-    const approval = approvalOf(turn);
+    const approval = await approvalOf(ann, turn);
     expect(approval).toMatchObject({
       session: s.id,
       project: "proj",
@@ -164,10 +175,11 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("approving runs exactly the stored action, once", async () => {
     const bob = await as("bob");
     const s = await bob.startSession({ project: "proj", agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      bob,
       await bob.sendMessage(s.id, { content: write("notes/b.md", "stored\n") }),
     );
-    const answered = await bob.answerApproval(approval.id, { decision: "allow", scope: "once" });
+    const answered = await answer(bob, approval.id, { decision: "allow", scope: "once" });
     expect(answered.approval).toMatchObject({ id: approval.id, status: "allowed" });
     expect(answered.turn.status).toBe("completed");
     expect(toolResult(answered.turn)).toMatchObject({ isError: false, approval: approval.id });
@@ -177,7 +189,8 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     await expect(
       bob.answerApproval(approval.id, { decision: "allow", scope: "once" }),
     ).rejects.toMatchObject({ status: 400 });
-    const again = approvalOf(
+    const again = await approvalOf(
+      bob,
       await bob.sendMessage(s.id, { content: write("notes/b.md", "stored\n") }),
     );
     expect(again.id).toBe(approval.id);
@@ -187,10 +200,11 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("denying returns the user's message to the model and writes nothing", async () => {
     const cy = await as("cy");
     const s = await cy.startSession({ project: "proj", agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      cy,
       await cy.sendMessage(s.id, { content: write("notes/c.md", "no\n") }),
     );
-    const answered = await cy.answerApproval(approval.id, {
+    const answered = await answer(cy, approval.id, {
       decision: "deny",
       scope: "once",
       message: "not there, please",
@@ -204,10 +218,19 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("a repeated identical action waits on the same approval", async () => {
     const dee = await as("dee");
     const s = await dee.startSession({ project: "proj", agent: "modes" });
-    const first = approvalOf(await dee.sendMessage(s.id, { content: write("notes/d.md", "x\n") }));
-    const second = approvalOf(await dee.sendMessage(s.id, { content: write("notes/d.md", "x\n") }));
+    const first = await approvalOf(
+      dee,
+      await dee.sendMessage(s.id, { content: write("notes/d.md", "x\n") }),
+    );
+    const second = await approvalOf(
+      dee,
+      await dee.sendMessage(s.id, { content: write("notes/d.md", "x\n") }),
+    );
     expect(second.id).toBe(first.id);
-    const other = approvalOf(await dee.sendMessage(s.id, { content: write("notes/d.md", "y\n") }));
+    const other = await approvalOf(
+      dee,
+      await dee.sendMessage(s.id, { content: write("notes/d.md", "y\n") }),
+    );
     expect(other.id).not.toBe(first.id);
     expect((await dee.listApprovals()).approvals.map((a) => a.id).sort()).toEqual(
       [first.id, other.id].sort(),
@@ -219,15 +242,18 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     const s = await eli.startSession({ project: "proj", agent: "modes" });
     const turn = await eli.sendMessage(s.id, { content: bash("mkdir -p /proj/notes") });
     expect(turn.status).toBe("completed");
-    expect(turn.approvals ?? []).toEqual([]);
+    expect(turn.stop_reason).toMatchObject({ type: "end_turn" });
     const fresh = await eli.sendMessage(s.id, { content: bash("mkdir -p /proj/fresh") });
-    expect(approvalOf(fresh).action).toMatchObject({ method: "mkdir", path: "/proj/fresh" });
+    expect((await approvalOf(eli, fresh)).action).toMatchObject({
+      method: "mkdir",
+      path: "/proj/fresh",
+    });
   });
 
   it("a mode switch reaches a running session at its next action", async () => {
     const fay = await as("fay");
     const s = await fay.startSession({ project: "proj", agent: "modes" });
-    approvalOf(await fay.sendMessage(s.id, { content: write("notes/f.md", "1\n") }));
+    await approvalOf(fay, await fay.sendMessage(s.id, { content: write("notes/f.md", "1\n") }));
 
     expect(await fay.setMode({ mode: "acceptEdits" })).toMatchObject({ mode: "acceptEdits" });
     expect((await fay.me()).mode).toBe("acceptEdits");
@@ -235,12 +261,13 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(edited.status).toBe("completed");
     expect(await contentOf(fay, s.id, "notes/f.md")).toBe("2\n");
     // acceptEdits still asks about deletes.
-    approvalOf(await fay.sendMessage(s.id, { content: bash("rm /proj/notes/f.md") }));
+    await approvalOf(fay, await fay.sendMessage(s.id, { content: bash("rm /proj/notes/f.md") }));
 
     await fay.setMode({ mode: "plan" });
     const planned = await fay.sendMessage(s.id, { content: write("plans/p.md", "plan\n") });
     expect(planned.status).toBe("completed");
-    const outside = approvalOf(
+    const outside = await approvalOf(
+      fay,
       await fay.sendMessage(s.id, { content: write("notes/f.md", "3\n") }),
     );
     expect(outside.reason).toMatch(/plan mode writes only in \/plans.*widen.*switch/);
@@ -258,7 +285,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
     // auto is default until the risk classifier.
     await fay.setMode({ mode: "auto" });
-    approvalOf(await fay.sendMessage(s.id, { content: write("notes/f.md", "5\n") }));
+    await approvalOf(fay, await fay.sendMessage(s.id, { content: write("notes/f.md", "5\n") }));
   });
 
   it("only the user switches modes, to a mode that exists, for their own sessions", async () => {
@@ -271,17 +298,18 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     await gus.setMode({ mode: "bypassPermissions" });
     const s = await hal.startSession({ project: "proj", agent: "modes" });
     expect((await hal.me()).mode).toBe("default");
-    approvalOf(await hal.sendMessage(s.id, { content: write("notes/h.md", "h\n") }));
+    await approvalOf(hal, await hal.sendMessage(s.id, { content: write("notes/h.md", "h\n") }));
   });
 
   it("approving re-checks the stored action against the current mode", async () => {
     const ivy = await as("ivy");
     const s = await ivy.startSession({ project: "proj", agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      ivy,
       await ivy.sendMessage(s.id, { content: write("notes/i.md", "i\n") }),
     );
     await ivy.setMode({ mode: "dontAsk" });
-    const answered = await ivy.answerApproval(approval.id, { decision: "allow", scope: "once" });
+    const answered = await answer(ivy, approval.id, { decision: "allow", scope: "once" });
     expect(toolResult(answered.turn)).toMatchObject({ isError: true });
     expect(toolResult(answered.turn)?.output).toMatch(/EACCES/);
     await ivy.setMode({ mode: "default" });
@@ -292,13 +320,14 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     const project = `demote-${t}`;
     const dan = await as("dan");
     const s = await dan.startSession({ project, agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      dan,
       await dan.sendMessage(s.id, { content: write("notes/a.md", "changed\n") }),
     );
     await seed(deployment, ADMIN_KEY, {
       [`/${project}/.system/access`]: JSON.stringify({ [`dan-${t}`]: "reader" }),
     });
-    const answered = await dan.answerApproval(approval.id, { decision: "allow", scope: "once" });
+    const answered = await answer(dan, approval.id, { decision: "allow", scope: "once" });
     expect(toolResult(answered.turn)?.output).toMatch(/EACCES/);
     expect(await contentOf(dan, s.id, "notes/a.md")).toBe("a\n");
   });
@@ -306,18 +335,19 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("approving for the session lets the same action on the same target run for the rest of it", async () => {
     const jo = await as("jo");
     const s = await jo.startSession({ project: "proj", agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      jo,
       await jo.sendMessage(s.id, { content: write("notes/j.md", "1\n") }),
     );
-    await jo.answerApproval(approval.id, { decision: "allow", scope: "session" });
+    await answer(jo, approval.id, { decision: "allow", scope: "session" });
     expect(await contentOf(jo, s.id, "notes/j.md")).toBe("1\n");
     const later = await jo.sendMessage(s.id, { content: write("notes/j.md", "2\n") });
     expect(later.status).toBe("completed");
     expect(await contentOf(jo, s.id, "notes/j.md")).toBe("2\n");
     // Another target, or another session, still asks.
-    approvalOf(await jo.sendMessage(s.id, { content: write("notes/other.md", "x\n") }));
+    await approvalOf(jo, await jo.sendMessage(s.id, { content: write("notes/other.md", "x\n") }));
     const s2 = await jo.startSession({ project: "proj", agent: "modes" });
-    approvalOf(await jo.sendMessage(s2.id, { content: write("notes/j.md", "3\n") }));
+    await approvalOf(jo, await jo.sendMessage(s2.id, { content: write("notes/j.md", "3\n") }));
   });
 
   it("decides by the rules of the deployment, the project, the user and the mode: deny beats ask, ask beats allow", async () => {
@@ -327,7 +357,10 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect((await kit.sendMessage(s.id, { content: write("scratch/a.md", "a\n") })).status).toBe(
       "completed",
     );
-    approvalOf(await kit.sendMessage(s.id, { content: write("scratch/keep/a.md", "a\n") }));
+    await approvalOf(
+      kit,
+      await kit.sendMessage(s.id, { content: write("scratch/keep/a.md", "a\n") }),
+    );
     // The deployment denies /secret, even where the mode never asks.
     await kit.setMode({ mode: "bypassPermissions" });
     const secret = await kit.sendMessage(s.id, { content: write("secret/a.md", "a\n") });
@@ -365,27 +398,35 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(await contentOf(ned, s.id, `guarded-${t}/keep.md`)).toBe("keep me\n");
     expect(await contentOf(ned, s.id, `guarded-${t}/other.md`)).toBe("other\n");
     await ned.setMode({ mode: "default" });
-    const asked = approvalOf(
+    const asked = await approvalOf(
+      ned,
       await ned.sendMessage(s.id, { content: bash(`rm -r /proj/tidy-${t}`) }),
     );
     expect(asked.action).toMatchObject({ method: "remove", path: `/proj/tidy-${t}` });
     expect(await contentOf(ned, s.id, `tidy-${t}/keep/b.md`)).toBe("b\n");
-    await ned.answerApproval(asked.id, { decision: "allow", scope: "once" });
+    await answer(ned, asked.id, { decision: "allow", scope: "once" });
     expect(await contentOf(ned, s.id, `tidy-${t}/keep/b.md`)).toMatch(/ENOENT/);
   });
 
   it("approving a folder for the session never covers the files later written inside it", async () => {
     const oz = await as("oz");
     const s = await oz.startSession({ project: "proj", agent: "modes" });
-    const made = approvalOf(await oz.sendMessage(s.id, { content: bash(`mkdir /proj/src-${t}`) }));
-    await oz.answerApproval(made.id, { decision: "allow", scope: "session" });
-    approvalOf(await oz.sendMessage(s.id, { content: write(`src-${t}/run.sh`, "echo hi\n") }));
+    const made = await approvalOf(
+      oz,
+      await oz.sendMessage(s.id, { content: bash(`mkdir /proj/src-${t}`) }),
+    );
+    await answer(oz, made.id, { decision: "allow", scope: "session" });
+    await approvalOf(
+      oz,
+      await oz.sendMessage(s.id, { content: write(`src-${t}/run.sh`, "echo hi\n") }),
+    );
   });
 
   it("asks about a move, keyed by source and target, and approving runs exactly that move", async () => {
     const pat = await as("pat");
     const s = await pat.startSession({ project: "proj", agent: "modes" });
-    const moved = approvalOf(
+    const moved = await approvalOf(
+      pat,
       await pat.sendMessage(s.id, {
         content: bash(`mv /proj/drafts-${t}/old.md /proj/drafts-${t}/new.md`),
       }),
@@ -395,13 +436,14 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
       path: `/proj/drafts-${t}/old.md`,
       target: `/proj/drafts-${t}/new.md`,
     });
-    const other = approvalOf(
+    const other = await approvalOf(
+      pat,
       await pat.sendMessage(s.id, {
         content: bash(`mv /proj/drafts-${t}/old.md /proj/drafts-${t}/x.md`),
       }),
     );
     expect(other.id).not.toBe(moved.id);
-    const answered = await pat.answerApproval(moved.id, { decision: "allow", scope: "once" });
+    const answered = await answer(pat, moved.id, { decision: "allow", scope: "once" });
     expect(toolResult(answered.turn)).toMatchObject({ isError: false });
     expect(await contentOf(pat, s.id, `drafts-${t}/new.md`)).toBe("an old draft\n");
   });
@@ -409,7 +451,8 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("an approval is answered only by its own user", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project: "proj", agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      ann,
       await ann.sendMessage(s.id, { content: write("notes/mine.md", "m\n") }),
     );
     const bob = await as("bob");
@@ -425,7 +468,8 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("approvals expire after their time and then count as denied", async () => {
     const ann = await as("ann", shortLived);
     const s = await ann.startSession({ project: "proj", agent: "modes" });
-    const approval = approvalOf(
+    const approval = await approvalOf(
+      ann,
       await ann.sendMessage(s.id, { content: write("notes/late.md", "late\n") }),
     );
     expect(approval.expires - approval.created).toBe(400);
