@@ -291,6 +291,10 @@ A connection to a model service, configured at some level, whose key is a secret
 **Model alias**:
 A role name such as `fast` that agents ask for, served by whichever configured model the most specific level maps it to.
 
+**Egress gateway**:
+The single host-side point through which all network requests from executed code leave the harness; it checks each request against the capability and the mode, blocks internal addresses, adds bound secrets and records the request.
+_Avoid_: proxy, firewall
+
 ### Architecture
 
 **Harness**:
