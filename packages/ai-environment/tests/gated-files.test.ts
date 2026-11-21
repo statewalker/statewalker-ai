@@ -126,6 +126,16 @@ describe("the gated file view", () => {
     expect(await store.exists("/alpha/readme.md")).toBe(false);
   });
 
+  it("refuses to copy or move a folder onto a folder above it, and changes nothing", async () => {
+    const files = view();
+    await expect(files.copy("/alpha/docs", "/alpha")).rejects.toThrow(/EINVAL/);
+    await writeText(store, "/alpha/docs/sub/x.md", "x");
+    for (const op of ["copy", "move"] as const)
+      await expect(files[op]("/alpha/docs/sub", "/alpha/docs")).rejects.toThrow(/EINVAL/);
+    expect(await readText(store, "/alpha/docs/guide.md")).toBe("the guide");
+    expect(await readText(store, "/alpha/docs/sub/x.md")).toBe("x");
+  });
+
   it("authorizes every entry an operation touches before changing anything", async () => {
     const files = view({
       authorize: async (action, path) => {

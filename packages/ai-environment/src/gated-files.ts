@@ -270,6 +270,9 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
     if (await s.hidden(to)) throw enoent(target);
     if (to === from || isUnder(to, from))
       throw codedError("EINVAL", `cannot ${move ? "move" : "copy"} '${source}' into itself`);
+    // Replacing a folder above the source would remove the source with it.
+    if (isUnder(from, to))
+      throw codedError("EINVAL", `cannot ${move ? "move" : "copy"} '${source}' onto '${target}'`);
     await authorize("read", from);
     if (move) await authorize("delete", from);
     await authorize("write", to);
