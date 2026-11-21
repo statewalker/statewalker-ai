@@ -179,6 +179,26 @@ describe.each(transports)("turns over %s", (name, connect) => {
     model.release(h);
   });
 
+  it("runs a steer the turn did not take after the message that interrupted it", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const h = hold();
+    const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
+    await model.held(h);
+    await ann.postMessage(session.id, { content: "steered", delivery: "steer" });
+    const now = await ann.postMessage(session.id, { content: "now", delivery: "interrupt" });
+    expect(await ann.waitTurn(running)).toMatchObject({ status: "interrupted" });
+    await ann.waitTurn(now);
+    const texts = async () =>
+      (await ann.listItems(session.id, { types: ["message"] })).items
+        .filter((i) => i.role === "user")
+        .map((i) => i.text);
+    for (let i = 0; i < 100 && (await texts()).length < 3; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(await texts()).toEqual([`HOLD ${h}`, "now", "steered"]);
+    model.release(h);
+  });
+
   it("cancels only that turn, running or queued; the other queued messages stay", async () => {
     const ann = await as("ann");
     const session = await ann.startSession({ project: "alpha", agent: "a" });
@@ -391,6 +411,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
     const queued = await ann.postMessage(session.id, { content: "queued" });
+    const steer = await ann.postMessage(session.id, { content: "steered", delivery: "steer" });
     const archived = await ann.archiveSession(session.id);
     expect(archived).toMatchObject({
       id: session.id,
@@ -402,6 +423,10 @@ describe.each(transports)("turns over %s", (name, connect) => {
     await expect(ann.postMessage(session.id, { content: "more" })).rejects.toMatchObject({
       status: 409,
     });
+    expect((await ann.listItems(session.id)).items.map((i) => i.text)).toEqual([`HOLD ${h}`]);
+    // A steer waiting on the cancelled turn never runs in the archived session.
+    expect(steer.turn_id).toBe(running.turn_id);
+    await new Promise((r) => setTimeout(r, 100));
     expect((await ann.listItems(session.id)).items.map((i) => i.text)).toEqual([`HOLD ${h}`]);
     expect((await ann.readEvents(session.id)).events.at(-1)).toMatchObject({
       type: "session.archived",

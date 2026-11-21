@@ -306,7 +306,7 @@ export class AgentSessionCore implements AgentPort {
 
   /** Starts the next queued turn when none runs. */
   #pump(): void {
-    if (this.#running) return;
+    if (this.#running || this.#archived()) return;
     const config = this.config();
     if (!config) return;
     const next = this.#one<TurnRow>(
@@ -360,10 +360,15 @@ export class AgentSessionCore implements AgentPort {
     } catch (e) {
       error = String((e as Error)?.message ?? e);
     }
-    // Steering the turn did not take before it ended runs next, in the order it came.
+    // Steering the turn did not take before it ended runs next, in the order it came; after an
+    // interruption, queued as next messages (behind the interrupting one). An archived session
+    // runs nothing more.
     const left = running.steers.filter((s) => !running.applied.has(s.id));
-    for (const steer of left.reverse())
-      this.#queue(config, { content: steer.text, delivery: "steer", ignored: [] }, true);
+    if (!this.#archived()) {
+      const first = running.endAs !== "interrupted";
+      for (const steer of first ? left.reverse() : left)
+        this.#queue(config, { content: steer.text, delivery: "steer", ignored: [] }, first);
+    }
     const model = outcome?.model;
     if (running.endAs)
       this.#finish(row.id, running.endAs, { type: running.endAs }, model ? { model } : {});
