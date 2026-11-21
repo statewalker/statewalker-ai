@@ -199,6 +199,25 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
     });
   });
 
+  describe("unattended sessions", () => {
+    it("starts a session unattended, as its view and the session index show", async () => {
+      const bob = await as(u("bob"));
+      const session = await bob.startSession({
+        project: "alpha",
+        agent: "nightly",
+        unattended: true,
+      });
+      expect(session).toMatchObject({ unattended: true, revoked: false });
+      const attended = await bob.startSession({ project: "alpha", agent: "daily" });
+      expect(attended).toMatchObject({ unattended: false });
+      const { sessions } = await bob.listSessions();
+      expect(sessions.find((s) => s.id === session.id)).toMatchObject({ unattended: true });
+      await expect(
+        bob.startSession({ project: "alpha", agent: "x", unattended: "yes" as never }),
+      ).rejects.toMatchObject({ status: 400 });
+    });
+  });
+
   describe("revocation", () => {
     it("a user revoked everywhere: the issuer stops renewing, and existing tokens expire soon", async () => {
       const token = await login(deployment, u("gus"), { ttlMs: 1500 });
