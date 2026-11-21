@@ -159,12 +159,14 @@ export class Workspace extends DurableObject<Env> {
       project: facts.project,
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       authorize: async (action, path, op) => {
-        await this.#authority.authorize(capability, {
-          action,
-          path,
-          project: facts.project,
-          grants,
-        });
+        // A folder's removal is decided for the folder and for every entry under it.
+        for (const p of [path, ...(op.covers ?? [])])
+          await this.#authority.authorize(capability, {
+            action,
+            path: p,
+            project: facts.project,
+            grants,
+          });
         await this.#decide(facts, action, path, op);
       },
     });
@@ -191,18 +193,21 @@ export class Workspace extends DurableObject<Env> {
     const projectRules = parseRules(
       await tryReadText(this.#store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
     );
-    const decision = decideMode(
-      { area: "files", action, target },
-      {
-        mode,
-        layers: [
-          { source: "deployment", rules: this.#deploymentRules },
-          { source: "project", rules: projectRules },
-          { source: "user", rules: state?.rules ?? {} },
-          { source: "session", rules: this.#registry.sessionRules(facts.session, facts.user) },
-        ],
-      },
-    );
+    const layers = [
+      { source: "deployment", rules: this.#deploymentRules },
+      { source: "project", rules: projectRules },
+      { source: "user", rules: state?.rules ?? {} },
+      this.#registry.sessionLayer(facts.session, facts.user),
+    ];
+    const targetOf = (p: string) => (p === root ? "/" : p.slice(root.length));
+    // The strictest verdict over the path and, for a folder's removal, every entry under it.
+    const rank = { allow: 0, ask: 1, deny: 2 } as const;
+    let decision = decideMode({ area: "files", action, target }, { mode, layers });
+    for (const p of op.covers ?? []) {
+      const inner = decideMode({ area: "files", action, target: targetOf(p) }, { mode, layers });
+      if (rank[inner.verdict] > rank[decision.verdict])
+        decision = { ...inner, reason: `${inner.reason} (on ${p}, inside)` };
+    }
     if (decision.verdict === "allow") return;
     if (decision.verdict === "deny")
       throw codedError("EACCES", `may not ${action} '${path}': ${decision.reason}`);

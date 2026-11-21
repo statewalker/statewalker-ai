@@ -31,6 +31,11 @@ export interface GatedFilesOptions {
 export interface FileOp {
   method: "read" | "list" | "stats" | "exists" | "write" | "mkdir" | "remove";
   content?: Uint8Array;
+  /**
+   * A folder's removal: every entry under it (normalised), each authorized as `files.delete` too,
+   * so a rule or role on a file inside is never skipped by removing its folder.
+   */
+  covers?: string[];
 }
 
 async function collect(content: Iterable<Uint8Array> | AsyncIterable<Uint8Array>) {
@@ -100,8 +105,11 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
       await store.mkdir(await check(raw, "write", { method: "mkdir" }));
     },
     async remove(raw) {
-      changeable(raw);
-      return store.remove(await check(raw, "delete", { method: "remove" }));
+      const path = changeable(raw);
+      const covers: string[] = [];
+      if (!hidden(path) && (await store.stats(path))?.kind === "directory")
+        for await (const entry of store.list(path, { recursive: true })) covers.push(entry.path);
+      return store.remove(await check(raw, "delete", { method: "remove", covers }));
     },
     move: notYet,
     copy: notYet,

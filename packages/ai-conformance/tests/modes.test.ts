@@ -28,7 +28,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Each test uses its own users, suffixed by transport, so modes switched in one never reach another.
 const USERS = [
   ...["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kit", "lee"],
-  "mo",
+  ...["mo", "ned", "oz"],
 ];
 const TRANSPORTS = ["rest", "rpc"];
 
@@ -42,11 +42,16 @@ function fixtures(): Record<string, string> {
     "/proj/.system/access": JSON.stringify(access),
     // The project's rules (in its system folder, invisible to agents).
     "/proj/.system/permission-rules": JSON.stringify({
-      allow: ["files.write:/scratch/**"],
-      ask: ["files.write:/scratch/keep/**"],
+      allow: ["files.write:/scratch/**", "files.delete:/tidy-*/**"],
+      ask: ["files.write:/scratch/keep/**", "files.delete:/tidy-*/keep/**"],
+      deny: ["files.delete:/guarded-*/keep.md"],
     }),
   };
   for (const t of TRANSPORTS) {
+    files[`/proj/guarded-${t}/keep.md`] = "keep me\n";
+    files[`/proj/guarded-${t}/other.md`] = "other\n";
+    files[`/proj/tidy-${t}/a.md`] = "a\n";
+    files[`/proj/tidy-${t}/keep/b.md`] = "b\n";
     files[`/demote-${t}/notes/a.md`] = "a\n";
     files[`/demote-${t}/.system/access`] = JSON.stringify({ [`dan-${t}`]: "editor" });
   }
@@ -345,6 +350,32 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(turn.status).toBe("completed");
     expect(toolResult(turn)?.output).toMatch(/EACCES/);
     expect(await contentOf(mo, s.id, "readme.md")).toBe("# proj\n");
+  });
+
+  it("decides a folder's removal by every entry inside it: a denied or asking file inside denies or asks", async () => {
+    const ned = await as("ned");
+    await ned.setMode({ mode: "bypassPermissions" });
+    const s = await ned.startSession({ project: "proj", agent: "modes" });
+    const denied = await ned.sendMessage(s.id, { content: bash(`rm -r /proj/guarded-${t}`) });
+    expect(toolResult(denied)?.output).toMatch(/EACCES/);
+    expect(await contentOf(ned, s.id, `guarded-${t}/keep.md`)).toBe("keep me\n");
+    expect(await contentOf(ned, s.id, `guarded-${t}/other.md`)).toBe("other\n");
+    await ned.setMode({ mode: "default" });
+    const asked = approvalOf(
+      await ned.sendMessage(s.id, { content: bash(`rm -r /proj/tidy-${t}`) }),
+    );
+    expect(asked.action).toMatchObject({ method: "remove", path: `/proj/tidy-${t}` });
+    expect(await contentOf(ned, s.id, `tidy-${t}/keep/b.md`)).toBe("b\n");
+    await ned.answerApproval(asked.id, { decision: "allow", scope: "once" });
+    expect(await contentOf(ned, s.id, `tidy-${t}/keep/b.md`)).toMatch(/ENOENT/);
+  });
+
+  it("approving a folder for the session never covers the files later written inside it", async () => {
+    const oz = await as("oz");
+    const s = await oz.startSession({ project: "proj", agent: "modes" });
+    const made = approvalOf(await oz.sendMessage(s.id, { content: bash(`mkdir /proj/src-${t}`) }));
+    await oz.answerApproval(made.id, { decision: "allow", scope: "session" });
+    approvalOf(await oz.sendMessage(s.id, { content: write(`src-${t}/run.sh`, "echo hi\n") }));
   });
 
   it("an approval is answered only by its own user", async () => {

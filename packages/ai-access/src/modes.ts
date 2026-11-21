@@ -20,6 +20,12 @@ export interface PermissionRules {
 export interface RuleLayer {
   source: string;
   rules: PermissionRules;
+  /**
+   * Whether the layer's targets match only themselves, never as patterns: "approve for this
+   * session" covers the same permission on the same target, not a folder's subtree or what a file
+   * name holding `*` would spell.
+   */
+  exact?: boolean;
 }
 
 export interface ModeDefinition {
@@ -260,8 +266,14 @@ export interface ModeDecision {
   reason: string;
 }
 
-const matches = (rule: CompiledRule, req: ModeRequest) =>
-  "tool" in rule ? req.tool === rule.tool : permits([rule.permission], req);
+const matches = (rule: CompiledRule, req: ModeRequest, exact = false) =>
+  "tool" in rule
+    ? req.tool === rule.tool
+    : exact
+      ? rule.permission.area === req.area &&
+        rule.permission.action === req.action &&
+        rule.permission.target === req.target
+      : permits([rule.permission], req);
 
 /**
  * Decides one action under a mode and the rules of every layer: deny beats ask, ask beats allow,
@@ -281,7 +293,7 @@ export function decideMode(
   for (const verdict of VERDICTS) {
     if (mode[verdict].some((r) => matches(r, req))) sources[verdict] ??= "mode";
     for (const layer of layers)
-      if (compile(layer.rules[verdict], [], problems).some((r) => matches(r, req)))
+      if (compile(layer.rules[verdict], [], problems).some((r) => matches(r, req, layer.exact)))
         sources[verdict] ??= layer.source;
   }
   const found = VERDICTS.find((v) => sources[v] !== undefined);

@@ -5,7 +5,7 @@
 // The gate reads them at every action, so a mode switch reaches a running agent session at its
 // next call. An approval is keyed by the action itself (agent session, method, path, content), so
 // a retried identical action waits on, or is answered by, the same approval.
-import type { PermissionRules } from "./modes.js";
+import type { PermissionRules, RuleLayer } from "./modes.js";
 import type { SqlLike } from "./sql-roles.js";
 
 /** The approval answering one exact action of one agent session. */
@@ -89,12 +89,7 @@ export class ApprovalRegistry {
       user,
       grant.expires,
     );
-    // A session rule is a permission pattern: a target holding `*` (a file named so) would cover
-    // more than the one target approved, so such an approval counts once only.
-    if (
-      grant.scope === "session" &&
-      !grant.permission.slice(grant.permission.indexOf(":") + 1).includes("*")
-    )
+    if (grant.scope === "session")
       this.#sql.exec(
         "INSERT OR IGNORE INTO gate_session_rules VALUES (?, ?, ?)",
         grant.session,
@@ -103,8 +98,15 @@ export class ApprovalRegistry {
       );
   }
 
-  /** The allow rules "approve for this session" added to one agent session of one user. */
-  sessionRules(session: string, user: string): PermissionRules {
+  /**
+   * The allow rules "approve for this session" added to one agent session of one user, as an exact
+   * layer: each covers its own permission on its own target only.
+   */
+  sessionLayer(session: string, user: string): RuleLayer {
+    return { source: "session", rules: this.#sessionRules(session, user), exact: true };
+  }
+
+  #sessionRules(session: string, user: string): PermissionRules {
     const rows = this.#sql
       .exec(
         "SELECT permission FROM gate_session_rules WHERE session = ? AND user = ? ORDER BY rowid",
