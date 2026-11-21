@@ -51,6 +51,9 @@ function sessionApi(env: Env, token: string) {
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
       files: async (t, method, args) => (await user()).files(t, method, args),
+      listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
+      setSecret: async (t, req) => (await user()).setSecret(t, req),
+      deleteSecret: async (t, req) => (await user()).deleteSecret(t, req),
     },
     agent: (id) => {
       const agent = agentOf(env, id);

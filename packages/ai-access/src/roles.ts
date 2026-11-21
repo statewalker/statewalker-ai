@@ -16,7 +16,7 @@ export type RoleEntries = string | readonly string[];
 
 /** The built-in roles of every project. */
 export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
-  owner: ["*.*"],
+  owner: ["*.*", "secrets.write:project"],
   editor: [
     "files.read",
     "files.list",
@@ -48,6 +48,7 @@ export const WORKSPACE_ROLES: Readonly<Record<string, readonly string[]>> = {
     "limits.write:project",
     "limits.write:member",
     "triggers.write:project",
+    "secrets.write:workspace",
   ],
 };
 

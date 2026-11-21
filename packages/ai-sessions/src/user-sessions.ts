@@ -10,7 +10,11 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import type {
   AgentSessionConfig,
   AgentSessionView,
+  DeleteSecretRequest,
   ProfileView,
+  SecretScope,
+  SecretView,
+  SetSecretRequest,
   StartSessionRequest,
   UserPort,
   UserSessionView,
@@ -25,6 +29,12 @@ export interface WorkspaceGrants {
   memberRoles(userCapability: string, project: string): Promise<string[]>;
   /** One files-RPC call on the file view a capability holds, at the workspace's gate. */
   files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
+  /** The secrets of one level the user manages there; EACCES without `secrets.write:<level>`. */
+  listSecrets(userCapability: string, scope: SecretScope): Promise<SecretView[]>;
+  setSecret(userCapability: string, req: SetSecretRequest): Promise<SecretView>;
+  deleteSecret(userCapability: string, req: DeleteSecretRequest): Promise<void>;
+  /** Deletes every user-level secret of the user there (the user is being erased). */
+  eraseUserSecrets(userCapability: string): Promise<void>;
 }
 
 export interface UserSessionsOptions {
@@ -213,6 +223,13 @@ export class UserSessions implements UserPort {
    */
   async eraseUser(token: string): Promise<{ erased: true }> {
     await this.claims(token);
+    // The user's own secrets live in each workspace's DO: erased there first, through each user
+    // session's capability.
+    const sessions = this.#o.sql
+      .exec("SELECT * FROM user_sessions")
+      .toArray() as unknown as UserSessionRow[];
+    for (const us of sessions)
+      await this.#o.workspace(us.workspace).eraseUserSecrets(us.capability);
     await this.#o.eraseProfile();
     await this.#o.eraseStorage();
     this.createTables();
@@ -226,6 +243,22 @@ export class UserSessions implements UserPort {
   async files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
     const us = await this.#userSession(token);
     return this.#o.workspace(us.workspace).files(us.capability, method, args);
+  }
+
+  async listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }> {
+    const us = await this.#userSession(token);
+    return { secrets: await this.#o.workspace(us.workspace).listSecrets(us.capability, scope) };
+  }
+
+  async setSecret(token: string, req: SetSecretRequest): Promise<SecretView> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).setSecret(us.capability, req);
+  }
+
+  async deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }> {
+    const us = await this.#userSession(token);
+    await this.#o.workspace(us.workspace).deleteSecret(us.capability, req);
+    return { deleted: true };
   }
 
   async listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }> {

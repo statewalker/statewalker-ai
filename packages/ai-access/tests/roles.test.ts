@@ -71,6 +71,19 @@ describe("built-in roles", () => {
     }
   });
 
+  it("grant secrets.write only by name: the owner a project's, the admin the workspace's", () => {
+    const grants = (role: string) => resolveRoles([role], {}).grants;
+    expect(can(grants("owner"), "secrets", "write", "project")).toBe(true);
+    expect(can(grants("owner"), "secrets", "write", "workspace")).toBe(false);
+    expect(can(grants("admin"), "secrets", "write", "workspace")).toBe(true);
+    expect(can(grants("admin"), "secrets", "write", "project")).toBe(false);
+    for (const role of ["editor", "reader"])
+      expect(can(grants(role), "secrets", "write", "project")).toBe(false);
+    // `*.*` in a custom role reaches no secrets.
+    const custom = resolveRoles(["all"], { all: "*.*" }).grants;
+    expect(can(custom, "secrets", "write", "project")).toBe(false);
+  });
+
   it("let the workspace admin manage projects and members but not read files", () => {
     const { grants: admin } = resolveRoles(["admin"], {});
     expect(can(admin, "projects", "create")).toBe(true);

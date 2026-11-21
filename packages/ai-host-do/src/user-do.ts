@@ -7,7 +7,13 @@ import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { filesOverRpc } from "@statewalker/ai-environment";
-import { type StartSessionRequest, UserSessions } from "@statewalker/ai-sessions";
+import {
+  type DeleteSecretRequest,
+  type SecretScope,
+  type SetSecretRequest,
+  type StartSessionRequest,
+  UserSessions,
+} from "@statewalker/ai-sessions";
 import { blockSizeOf, type Env, nameOf, profilesOf, verifyToken, workspaceOf } from "./env.js";
 
 export class User extends DurableObject<Env> {
@@ -32,6 +38,10 @@ export class User extends DurableObject<Env> {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
           files: (capability, method, args) => ws.files(capability, method, args),
+          listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
+          setSecret: (capability, req) => ws.setSecret(capability, req),
+          deleteSecret: (capability, req) => ws.deleteSecret(capability, req),
+          eraseUserSecrets: (capability) => ws.eraseUserSecrets(capability),
         };
       },
     });
@@ -76,6 +86,21 @@ export class User extends DurableObject<Env> {
   async files(token: string, method: FilesRpcMethod, args: unknown[]) {
     await this.#reachable();
     return this.#sessions.files(token, method, args);
+  }
+
+  async listSecrets(token: string, scope: SecretScope) {
+    await this.#reachable();
+    return this.#sessions.listSecrets(token, scope);
+  }
+
+  async setSecret(token: string, req: SetSecretRequest) {
+    await this.#reachable();
+    return this.#sessions.setSecret(token, req);
+  }
+
+  async deleteSecret(token: string, req: DeleteSecretRequest) {
+    await this.#reachable();
+    return this.#sessions.deleteSecret(token, req);
   }
 
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */

@@ -28,7 +28,23 @@
     // custom roles in `.system/roles`; the workspace's admins in `/.system/access`) and "sql" (the
     // workspace's SQL). Each project is answered by the first source that knows it.
     "ROLE_SOURCES": "file",
+    // Each workspace's store, one FilesApi whose first-level folders are its projects: "sql" (SqlFs
+    // on the Workspace DO's SQLite), "memory", "local" (WORKSPACE_ROOT/<workspace>/, CellB Node and
+    // CellD only) or "s3" (WORKSPACE_S3_BUCKET, optional WORKSPACE_S3_ENDPOINT, WORKSPACE_S3_REGION,
+    // WORKSPACE_S3_PREFIX; keys below).
+    "WORKSPACE_BACKEND": "sql",
+    // The workspace's default ignore rules (gitignore syntax, one pattern per line), hiding files
+    // from agent sessions and tool calls; each project's `.system/ignore` adds to them.
+    "IGNORE": "",
+    // Bytes per block of every file stream; each block is authorized again.
+    "FILE_BLOCK_SIZE": "1048576",
     "TOKEN_TTL_MS": "3600000"
+    // The S3 workspace backend's keys, set as runtime secrets, never vars:
+    //   WORKSPACE_S3_ACCESS_KEY_ID, WORKSPACE_S3_SECRET_ACCESS_KEY
+    // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:
+    //   SECRETS_KEY          seals workspace, project and user secrets in each Workspace DO's SQLite
+    //   DEPLOYMENT_SECRETS   {"NAME": {"plugins": [...], "hosts": [...]}}: the runtime secrets that are
+    //                        deployment-level secrets, and their bindings (the values are the NAME secrets)
     // Test-only, never set in a real deployment:
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":

@@ -41,6 +41,21 @@ export interface Env {
   /** The OpenAI-compatible model every agent uses, until the model gateway (a later ticket). */
   LLM_BASE_URL?: string;
   LLM_MODEL?: string;
+  /**
+   * The deployment's key for workspace, project and user secrets (a runtime secret). Without it
+   * the deployment keeps no secrets below deployment level.
+   */
+  SECRETS_KEY?: string;
+  /**
+   * The deployment secrets: JSON `{"NAME": {"plugins": [...], "hosts": [...]}}` naming runtime
+   * variables (Worker secrets, `.dev.vars`, the Node environment) and their bindings.
+   */
+  DEPLOYMENT_SECRETS?: string;
+  /**
+   * Test-only, until tool definitions (statewalker/statewalker-root#129): JSON REST tools offered
+   * to every agent, `[{plugin, name, method?, url, headers?, query?}]`, called through the gateway.
+   */
+  REST_TOOLS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
   DEV_LOGIN?: string;
   /** Test-only: enables the /admin/* routes with this bearer key. */

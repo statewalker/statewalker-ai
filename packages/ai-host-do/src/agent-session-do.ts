@@ -8,6 +8,7 @@ import { filesOverRpc } from "@statewalker/ai-environment";
 import { runFlueTurn } from "@statewalker/ai-flue";
 import { type AgentSessionConfig, AgentSessionCore } from "@statewalker/ai-sessions";
 import { blockSizeOf, type Env } from "./env.js";
+import { restTools } from "./rest-tools.js";
 
 export class AgentSession extends DurableObject<Env> {
   readonly #core: AgentSessionCore;
@@ -29,6 +30,9 @@ export class AgentSession extends DurableObject<Env> {
             ),
             model: { baseUrl: String(env.LLM_BASE_URL), model: env.LLM_MODEL || "default" },
             content,
+            tools: restTools(env.REST_TOOLS, (call) =>
+              workspace.gatewayFetch(config.capability, call),
+            ),
           },
           emit,
         );

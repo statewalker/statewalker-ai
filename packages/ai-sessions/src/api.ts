@@ -38,6 +38,8 @@ export interface ItemInput {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** The names of the secrets a tool call used, never their values. */
+  secrets?: string[];
 }
 
 /** An item as stored and listed: numbered in its session, and tied to its turn. */
@@ -65,6 +67,40 @@ export interface StartSessionRequest {
   agent: string;
 }
 
+export type SecretLevel = "deployment" | "workspace" | "project" | "user";
+
+/** Which plugins may use a secret, and which hosts it may be sent to. */
+export interface SecretBinding {
+  plugins: string[];
+  hosts: string[];
+}
+
+/** A secret as the session API lists it: never its value. */
+export interface SecretView {
+  name: string;
+  level: SecretLevel;
+  /** The project of a project secret. */
+  project?: string;
+  bindings: SecretBinding;
+  updated: number;
+}
+
+/** Which secrets a call names: a level, and the project for project secrets. */
+export interface SecretScope {
+  level: SecretLevel;
+  project?: string;
+}
+
+export interface SetSecretRequest extends SecretScope {
+  name: string;
+  value: string;
+  bindings: SecretBinding;
+}
+
+export interface DeleteSecretRequest extends SecretScope {
+  name: string;
+}
+
 /** The session API, as one caller (one access token) sees it. */
 export interface SessionApi {
   /** Opens the caller's user session in the workspace, or resumes it. */
@@ -83,6 +119,14 @@ export interface SessionApi {
   eraseUser(): Promise<{ erased: true }>;
   /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
   files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
+  /**
+   * The secrets of one level the caller manages (`secrets.write:<level>`; a project's for project
+   * secrets): names, levels, bindings and update times, never values.
+   */
+  listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
+  /** Sets or replaces one secret; write-only, so the answer never holds its value. */
+  setSecret(req: SetSecretRequest): Promise<SecretView>;
+  deleteSecret(req: DeleteSecretRequest): Promise<{ deleted: true }>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -108,6 +152,9 @@ export interface UserPort {
   eraseUser(token: string): Promise<{ erased: true }>;
   /** One files-RPC call on the user's own file view of the token's workspace. */
   files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
+  listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }>;
+  setSecret(token: string, req: SetSecretRequest): Promise<SecretView>;
+  deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }>;
 }
 
 /** One agent session DO's side of the API. */
@@ -133,6 +180,43 @@ function startRequest(req: unknown): StartSessionRequest {
   return { project, agent };
 }
 
+const LEVELS: readonly string[] = ["deployment", "workspace", "project", "user"];
+
+function secretScope(req: unknown): SecretScope {
+  const { level, project } = (req ?? {}) as Record<string, unknown>;
+  if (typeof level !== "string" || !LEVELS.includes(level))
+    throw codedError("EINVAL", "level must be deployment, workspace, project or user");
+  if (level === "project") {
+    if (typeof project !== "string" || !NAME.test(project))
+      throw codedError("EINVAL", "project secrets name their project");
+    return { level, project };
+  }
+  if (project !== undefined && project !== "")
+    throw codedError("EINVAL", "only project secrets name a project");
+  return { level: level as SecretLevel };
+}
+
+function secretName(req: unknown): string {
+  const { name } = (req ?? {}) as Record<string, unknown>;
+  if (typeof name !== "string" || !name) throw codedError("EINVAL", "name is required");
+  return name;
+}
+
+function setSecretRequest(req: unknown): SetSecretRequest {
+  const { value, bindings } = (req ?? {}) as Record<string, unknown>;
+  if (typeof value !== "string" || !value) throw codedError("EINVAL", "value is required");
+  const b = (bindings ?? {}) as Record<string, unknown>;
+  const strings = (v: unknown) => Array.isArray(v) && v.every((x) => typeof x === "string");
+  if (!strings(b.plugins) || !strings(b.hosts))
+    throw codedError("EINVAL", "bindings are {plugins: string[], hosts: string[]}");
+  return {
+    ...secretScope(req),
+    name: secretName(req),
+    value,
+    bindings: { plugins: b.plugins as string[], hosts: b.hosts as string[] },
+  };
+}
+
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
   return {
     me: () => ports.user.openUserSession(token),
@@ -156,5 +240,9 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
     files: (method, args) => ports.user.files(token, method, args),
+    listSecrets: async (scope) => ports.user.listSecrets(token, secretScope(scope)),
+    setSecret: async (req) => ports.user.setSecret(token, setSecretRequest(req)),
+    deleteSecret: async (req) =>
+      ports.user.deleteSecret(token, { ...secretScope(req), name: secretName(req) }),
   };
 }
