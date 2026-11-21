@@ -28,7 +28,7 @@ export interface Item {
   seq: number;
   id: string;
   turn: string;
-  kind: "message" | "tool_call" | "tool_result";
+  kind: "message" | "tool_call" | "tool_result" | "approval";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -36,12 +36,37 @@ export interface Item {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** The approval an `approval` item waits on, or a resumed `tool_result` answers. */
+  approval?: string;
   /** The names of the secrets a tool call used (never their values). */
   secrets?: string[];
   /** A user message that steered a running turn. */
   steer?: string;
   /** The partial assistant message of a turn cut short. */
   incomplete?: true;
+}
+
+/** An action waiting on the user's answer, as the session API lists it. */
+export interface Approval {
+  id: string;
+  session: string;
+  workspace: string;
+  project: string;
+  /** The stored action: the file method and its normalised path (and the size of a write). */
+  action: { method: string; path: string; size?: number };
+  /** The permission asked for, with its target relative to the project. */
+  permission: string;
+  /** Why the mode or a rule asks. */
+  reason: string;
+  status: "pending" | "allowed" | "denied" | "expired";
+  created: number;
+  expires: number;
+}
+
+export interface ApprovalAnswer {
+  decision: "allow" | "deny";
+  scope: "once" | "session";
+  message?: string;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -78,6 +103,8 @@ export interface UserSession {
   user: string;
   workspace: string;
   mode: string;
+  /** The pending approvals of the user's agent sessions in this workspace. */
+  approvals?: Approval[];
 }
 
 export interface AgentSession {
@@ -126,6 +153,7 @@ export type MessageRequest = {
 
 /** The event types a turn ends with; the event carries the full turn. */
 export const TERMINAL_EVENTS = [
+  "turn.waiting",
   "turn.completed",
   "turn.failed",
   "turn.cancelled",
@@ -160,6 +188,18 @@ export interface SessionClient {
   profile(): Promise<Profile>;
   /** Erases the caller: their profile and their User DO's storage. */
   eraseUser(): Promise<{ erased: true }>;
+  /** Switches the user session's mode; it reaches running agent sessions at their next action. */
+  setMode(req: { mode: string }): Promise<UserSession>;
+  /** The approvals of the caller's agent sessions in the workspace, pending or answered. */
+  listApprovals(): Promise<{ approvals: Approval[] }>;
+  /**
+   * Answers an approval: the answer continues the agent session as a turn (the stored action runs
+   * again, re-checked, or the denial is told), accepted like a message.
+   */
+  answerApproval(
+    id: string,
+    answer: ApprovalAnswer,
+  ): Promise<{ approval: Approval; accepted: MessageAccepted }>;
   /** The secrets of one level (and project) the caller manages: names, bindings, update times. */
   listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   /** Sets or replaces a secret; the answer never holds its value. */
@@ -310,6 +350,9 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     },
     profile: () => call("GET", "/v1/me/profile"),
     eraseUser: () => call("DELETE", "/v1/me"),
+    setMode: (req) => call("PUT", "/v1/me/mode", req),
+    listApprovals: () => call("GET", "/v1/approvals"),
+    answerApproval: (id, answer) => call("POST", `/v1/approvals/${encodeURIComponent(id)}`, answer),
     listSecrets: ({ level, project }) =>
       call("GET", `/v1/secrets?${new URLSearchParams({ level, ...(project ? { project } : {}) })}`),
     setSecret: ({ level, name, ...rest }) =>

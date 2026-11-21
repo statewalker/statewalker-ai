@@ -1,0 +1,155 @@
+// Modes and permission rules (statewalker/statewalker-root#124, decided in #79): a mode is a named
+// bundle of allow/ask/deny rules with a verdict for actions no rule matches; rules come from the
+// deployment, the project, the user, the agent session and the mode; deny beats ask, and ask beats
+// allow. The built-in modes follow Claude Code's identifiers. `auto` is `default` until the risk
+// classifier (#137).
+
+import { DatabaseSync } from "node:sqlite";
+import { describe, expect, it } from "vitest";
+import { ApprovalRegistry, BUILT_IN_MODES, decideMode, modeOf, parseModes } from "../src/index.js";
+
+const files = (action: string, target: string) => ({ area: "files", action, target });
+const verdict = (mode: string, req: ReturnType<typeof files>, layers = []) =>
+  decideMode(req, { mode: modeOf(mode), layers }).verdict;
+
+describe("modes", () => {
+  it("default allows reads and lists and asks about writes and deletes", () => {
+    expect(verdict("default", files("read", "/a.md"))).toBe("allow");
+    expect(verdict("default", files("list", "/"))).toBe("allow");
+    expect(verdict("default", files("write", "/a.md"))).toBe("ask");
+    expect(verdict("default", files("delete", "/a.md"))).toBe("ask");
+    expect(verdict("default", { area: "db", action: "write", target: "main" })).toBe("ask");
+  });
+
+  it("acceptEdits allows file edits but still asks about deletes", () => {
+    expect(verdict("acceptEdits", files("write", "/src/a.ts"))).toBe("allow");
+    expect(verdict("acceptEdits", files("delete", "/src/a.ts"))).toBe("ask");
+  });
+
+  it("plan writes only in its configured folders and asks to widen or switch elsewhere", () => {
+    expect(verdict("plan", files("read", "/src/a.ts"))).toBe("allow");
+    expect(verdict("plan", files("write", "/plans/p.md"))).toBe("allow");
+    expect(verdict("plan", files("write", "/plans"))).toBe("allow");
+    expect(verdict("plan", files("write", "/plansx/p.md"))).toBe("ask");
+    const elsewhere = decideMode(files("write", "/src/a.ts"), { mode: modeOf("plan"), layers: [] });
+    expect(elsewhere.verdict).toBe("ask");
+    expect(elsewhere.reason).toMatch(/plan.*\/plans.*widen.*switch/);
+    const custom = parseModes({ plan: { extends: "plan", folders: ["/docs/plans"] } });
+    expect(custom.problems).toEqual([]);
+    const mode = modeOf("plan", custom.modes);
+    expect(decideMode(files("write", "/docs/plans/a.md"), { mode, layers: [] }).verdict).toBe(
+      "allow",
+    );
+    expect(decideMode(files("write", "/plans/a.md"), { mode, layers: [] }).verdict).toBe("ask");
+  });
+
+  it("bypassPermissions never asks, and a deny rule still denies", () => {
+    expect(verdict("bypassPermissions", files("delete", "/a.md"))).toBe("allow");
+    const layers = [
+      { source: "project", rules: { ask: ["files.write"], deny: ["files.delete:/keep/**"] } },
+    ];
+    expect(verdict("bypassPermissions", files("write", "/a.md"), layers as never)).toBe("allow");
+    expect(verdict("bypassPermissions", files("delete", "/keep/a.md"), layers as never)).toBe(
+      "deny",
+    );
+  });
+
+  it("dontAsk never prompts: allow rules run, everything else is denied", () => {
+    expect(verdict("dontAsk", files("read", "/a.md"))).toBe("allow");
+    expect(verdict("dontAsk", files("write", "/a.md"))).toBe("deny");
+    const layers = [{ source: "user", rules: { allow: ["files.write:/notes/**"] } }];
+    expect(verdict("dontAsk", files("write", "/notes/a.md"), layers as never)).toBe("allow");
+    const asking = [{ source: "project", rules: { ask: ["files.write:/notes/**"] } }];
+    expect(verdict("dontAsk", files("write", "/notes/a.md"), [...layers, ...asking] as never)).toBe(
+      "deny",
+    );
+  });
+
+  it("treats auto as default until the risk classifier", () => {
+    for (const req of [files("read", "/a"), files("write", "/a"), files("delete", "/a")])
+      expect(verdict("auto", req)).toBe(verdict("default", req));
+  });
+
+  it("deny beats ask and ask beats allow, whichever layer holds each", () => {
+    const req = files("write", "/src/a.ts");
+    const allow = { source: "session", rules: { allow: ["files.write:/src/a.ts"] } };
+    const ask = { source: "deployment", rules: { ask: ["files.write:/src/**"] } };
+    const deny = { source: "user", rules: { deny: ["files.*:/src/**"] } };
+    const at = (...layers: object[]) =>
+      decideMode(req, { mode: modeOf("acceptEdits"), layers: layers as never });
+    expect(at(allow).verdict).toBe("allow");
+    expect(at(allow, ask).verdict).toBe("ask");
+    expect(at(ask, allow).verdict).toBe("ask");
+    expect(at(allow, ask, deny)).toMatchObject({ verdict: "deny", source: "user" });
+    // A session allow rule settles what the mode would ask about.
+    expect(decideMode(req, { mode: modeOf("default"), layers: [allow] }).verdict).toBe("allow");
+  });
+
+  it("matches tool rules by tool name", () => {
+    const layers = [{ source: "project", rules: { deny: ["tool:bash"], allow: ["tool:grep"] } }];
+    const call = (tool: string) => ({ area: "tools", action: "call", target: tool, tool });
+    expect(decideMode(call("bash"), { mode: modeOf("bypassPermissions"), layers }).verdict).toBe(
+      "deny",
+    );
+    expect(decideMode(call("grep"), { mode: modeOf("default"), layers }).verdict).toBe("allow");
+    expect(decideMode(call("other"), { mode: modeOf("default"), layers }).verdict).toBe("ask");
+  });
+
+  it("ignores an unknown mode name and malformed rules instead of widening", () => {
+    expect(() => modeOf("yolo")).toThrow(/EINVAL/);
+    const parsed = parseModes({ odd: { rules: { allow: ["frobs.read", "files.read"] } } });
+    expect(parsed.problems.join()).toMatch(/frobs/);
+    // A custom mode with no verdict for unmatched actions asks.
+    expect(
+      decideMode(files("write", "/a"), { mode: modeOf("odd", parsed.modes), layers: [] }).verdict,
+    ).toBe("ask");
+    expect(Object.keys(BUILT_IN_MODES).sort()).toEqual(
+      ["acceptEdits", "auto", "bypassPermissions", "default", "dontAsk", "plan"].sort(),
+    );
+  });
+});
+
+describe("the approval registry", () => {
+  // The Workspace DO's SQLite, stood in for by Node's: only what the registry asks of it.
+  const sqlOf = () => {
+    const db = new DatabaseSync(":memory:");
+    return {
+      exec(query: string, ...bindings: unknown[]) {
+        const statement = db.prepare(query);
+        const rows = statement.columns().length
+          ? statement.all(...(bindings as never[]))
+          : statement.run(...(bindings as never[])) && [];
+        return { toArray: () => rows as Record<string, unknown>[] };
+      },
+    };
+  };
+
+  it("an approval for the session covers only its own target, never a folder's subtree or a pattern a file name spells", () => {
+    const registry = new ApprovalRegistry(sqlOf());
+    const expires = Date.now() + 60_000;
+    for (const [id, permission] of [
+      ["ap-1", "files.write:/notes/*.md"],
+      ["ap-2", "files.write:/src"],
+    ] as const)
+      registry.grant("ann", { id, session: "as-1", scope: "session", permission, expires });
+    const layer = registry.sessionLayer("as-1", "ann");
+    const at = (target: string) =>
+      decideMode(
+        { area: "files", action: "write", target },
+        { mode: modeOf("default"), layers: [layer] },
+      ).verdict;
+    expect(at("/src")).toBe("allow");
+    expect(at("/notes/*.md")).toBe("allow");
+    expect(at("/src/run.sh")).toBe("ask");
+    expect(at("/notes/a.md")).toBe("ask");
+    expect(
+      decideMode(
+        { area: "files", action: "write", target: "/src" },
+        { mode: modeOf("default"), layers: [registry.sessionLayer("as-1", "bob")] },
+      ).verdict,
+    ).toBe("ask");
+    expect(registry.consume("ap-1", "as-1", "ann")).toBe(true);
+    expect(registry.consume("ap-1", "as-1", "ann")).toBe(false);
+    expect(registry.consume("ap-2", "as-2", "ann")).toBe(false);
+  });
+});

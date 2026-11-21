@@ -1,4 +1,12 @@
-import { codedError, fromBase64, verifyAccessToken } from "@statewalker/ai-access";
+import {
+  codedError,
+  fromBase64,
+  type ModeDefinition,
+  type PermissionRules,
+  parseModes,
+  parseRules,
+  verifyAccessToken,
+} from "@statewalker/ai-access";
 import type { AgentSession } from "./agent-session-do.js";
 import type { Issuer } from "./issuer-do.js";
 import type { Profiles } from "./profiles-do.js";
@@ -38,6 +46,15 @@ export interface Env {
   /** The profiles file system's backend: "sql" (the default) or "memory". */
   PROFILES_BACKEND?: string;
   TOKEN_TTL_MS?: string;
+  /**
+   * The deployment's permission rules, JSON `{allow?, ask?, deny?}` (statewalker/statewalker-root#124);
+   * they apply in every workspace, project and mode.
+   */
+  PERMISSION_RULES?: string;
+  /** The deployment's own modes, JSON `{name: definition}`, beside the built-in ones. */
+  MODES?: string;
+  /** How long a pending approval waits before it counts as denied (default 24 hours). */
+  APPROVAL_TTL_MS?: string;
   /** The OpenAI-compatible model every agent uses, until the model gateway (a later ticket). */
   LLM_BASE_URL?: string;
   LLM_MODEL?: string;
@@ -117,4 +134,28 @@ export function nameOf(ctx: DurableObjectState): string {
   const name = (ctx.id as { name?: string }).name;
   if (!name) throw codedError("EIO", "this Durable Object was not reached by name");
   return name;
+}
+
+/** The deployment's own modes (problems are reported, and those modes are left out). */
+export function deploymentModes(env: Env): Record<string, ModeDefinition> {
+  let value: unknown;
+  try {
+    value = env.MODES ? JSON.parse(env.MODES) : undefined;
+  } catch {
+    console.warn("MODES is not JSON: no deployment modes");
+    return {};
+  }
+  const { modes, problems } = parseModes(value);
+  if (problems.length) console.warn(`MODES: ${problems.join("; ")}`);
+  return modes;
+}
+
+export const deploymentRules = (env: Env): PermissionRules => parseRules(env.PERMISSION_RULES);
+
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** How long a pending approval waits (APPROVAL_TTL_MS, default 24 hours). */
+export function approvalTtlMs(env: Env): number {
+  const ms = Number(env.APPROVAL_TTL_MS);
+  return Number.isFinite(ms) && ms > 0 ? ms : DAY_MS;
 }

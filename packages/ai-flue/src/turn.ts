@@ -56,6 +56,11 @@ export interface FlueTurn {
   model: ModelConfig;
   /** The user's message. */
   content: string;
+  /**
+   * Whether a file call of this turn waits on the user's approval: the turn then ends at the
+   * pending call, Flue's approval-gate pattern (a tool result with `terminate`).
+   */
+  waiting?: () => boolean;
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
   /** Aborts the turn: it stops at once, keeping what it reported so far. */
@@ -205,6 +210,9 @@ export async function runFlueTurn(
       tools: tools as never,
       messages: [],
     },
+    // A call waiting on an approval ends the turn: the model is not asked again until the user
+    // answers, and the answer continues the session.
+    afterToolCall: async () => (turn.waiting?.() ? { terminate: true, isError: true } : undefined),
     // Everything steered since the last step joins at the next one.
     steeringMode: "all",
   } as never);

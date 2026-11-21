@@ -4,7 +4,10 @@
 
 export { codeOf, statusOf } from "@statewalker/ai-access";
 export {
+  type ActionCall,
   AgentSessionCore,
+  type RecordApprovals,
+  type RunAction,
   type RunTurn,
   type Steer,
   type TurnOutcome,
@@ -16,6 +19,9 @@ export {
   type AgentRun,
   type AgentSessionConfig,
   type AgentSessionView,
+  type ApprovalAnswer,
+  type ApprovalRequest,
+  type ApprovalView,
   createSessionApi,
   type DeleteSecretRequest,
   type Delivery,
@@ -44,6 +50,7 @@ export {
   type SetSecretRequest,
   type StartSessionRequest,
   type StopReason,
+  type StoredAction,
   TERMINAL_TURN_STATUSES,
   type TurnStatus,
   type TurnView,

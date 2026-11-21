@@ -1,8 +1,15 @@
-// Access: tokens and the issuer, the permission language, roles and role sources, capabilities.
-// Later tickets add modes and permission rules, approvals and the risk classifier
-// (statewalker/statewalker-root#111).
+// Access: tokens and the issuer, the permission language, roles and role sources, capabilities,
+// modes and permission rules, and what the gate knows of approvals. A later ticket adds the risk
+// classifier (statewalker/statewalker-root#111).
 
 export { fromBase64, type Keypair, toBase64 } from "@statewalker/webrun-biscuit";
+export {
+  type ApprovalGrant,
+  ApprovalRegistry,
+  type ApprovalRequest,
+  approvalId,
+  type UserSessionState,
+} from "./approvals.js";
 export {
   type AgentSessionFacts,
   type AgentSessionGrant,
@@ -13,6 +20,23 @@ export {
   WorkspaceAuthority,
 } from "./capabilities.js";
 export { type CodedError, codedError, codeOf, type ErrorCode, statusOf } from "./errors.js";
+export {
+  BUILT_IN_MODES,
+  DEFAULT_MODE,
+  decideMode,
+  isMode,
+  type ModeDecision,
+  type ModeDefinition,
+  type ModeRequest,
+  modeOf,
+  PERMISSION_RULES_FILE,
+  type PermissionRules,
+  parseModes,
+  parseRules,
+  type ResolvedMode,
+  type RuleLayer,
+  type Verdict,
+} from "./modes.js";
 export {
   type AccessRequest,
   AREAS,
