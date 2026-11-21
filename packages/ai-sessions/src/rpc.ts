@@ -14,6 +14,9 @@ const METHODS = [
   "listSessions",
   "profile",
   "eraseUser",
+  "listSecrets",
+  "setSecret",
+  "deleteSecret",
 ] as const;
 type Method = (typeof METHODS)[number];
 type Call = { method: "authenticate" | Method; args: unknown[] };
@@ -72,5 +75,8 @@ export function sessionRpcClient(port: MessageTarget, token: string): SessionApi
     listSessions: after("listSessions"),
     profile: after("profile"),
     eraseUser: after("eraseUser"),
+    listSecrets: after("listSecrets"),
+    setSecret: after("setSecret"),
+    deleteSecret: after("deleteSecret"),
   } as SessionApi;
 }

@@ -15,6 +15,37 @@ export interface Item {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** The names of the secrets a tool call used (never their values). */
+  secrets?: string[];
+}
+
+export type SecretLevel = "deployment" | "workspace" | "project" | "user";
+
+/** Which plugins may use a secret, and which hosts it may be sent to. */
+export interface SecretBinding {
+  plugins: string[];
+  hosts: string[];
+}
+
+/** A secret as the session API lists it: never its value. */
+export interface SecretView {
+  name: string;
+  level: SecretLevel;
+  project?: string;
+  bindings: SecretBinding;
+  updated: number;
+}
+
+/** Which secrets a call names: a level, and the project for project secrets. */
+export interface SecretScope {
+  level: SecretLevel;
+  project?: string;
+}
+
+export interface SetSecretRequest extends SecretScope {
+  name: string;
+  value: string;
+  bindings: SecretBinding;
 }
 
 export interface UserSession {
@@ -55,6 +86,11 @@ export interface SessionClient {
   profile(): Promise<Profile>;
   /** Erases the caller: their profile and their User DO's storage. */
   eraseUser(): Promise<{ erased: true }>;
+  /** The secrets of one level (and project) the caller manages: names, bindings, update times. */
+  listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
+  /** Sets or replaces a secret; the answer never holds its value. */
+  setSecret(req: SetSecretRequest): Promise<SecretView>;
+  deleteSecret(req: SecretScope & { name: string }): Promise<{ deleted: true }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -91,6 +127,15 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     listSessions: () => call("GET", "/v1/sessions"),
     profile: () => call("GET", "/v1/me/profile"),
     eraseUser: () => call("DELETE", "/v1/me"),
+    listSecrets: ({ level, project }) =>
+      call("GET", `/v1/secrets?${new URLSearchParams({ level, ...(project ? { project } : {}) })}`),
+    setSecret: ({ level, name, ...rest }) =>
+      call("PUT", `/v1/secrets/${encodeURIComponent(level)}/${encodeURIComponent(name)}`, rest),
+    deleteSecret: ({ level, name, project }) =>
+      call(
+        "DELETE",
+        `/v1/secrets/${encodeURIComponent(level)}/${encodeURIComponent(name)}${project ? `?project=${encodeURIComponent(project)}` : ""}`,
+      ),
   };
 }
 

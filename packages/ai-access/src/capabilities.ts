@@ -141,6 +141,16 @@ export class WorkspaceAuthority {
   }
 
   /**
+   * The user of a bare user capability (the one a user session holds); an agent session's, or
+   * any other attenuated capability, is refused, so only a user session manages what is the user's.
+   */
+  async userOfUserCapability(capability: string): Promise<string> {
+    const verified = await this.#verify(capability);
+    if (verified.token.blocks.length !== 1) throw codedError("EACCES", "not a user capability");
+    return this.#userOf(verified);
+  }
+
+  /**
    * What an agent session's capability says: the user from its root-signed authority block, and
    * the session, project, agent and mode from its first attenuation block, which the User DO
    * wrote. A capability without that block (a bare user capability) is refused: only agent
