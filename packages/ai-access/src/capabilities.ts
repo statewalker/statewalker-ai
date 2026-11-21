@@ -19,8 +19,8 @@ import {
 import { codedError } from "./errors.js";
 import { type RoleGrant, roleAuthorizer } from "./permissions.js";
 
-/** The file actions the gate authorizes: `files.read` and `files.list` for now. */
-export type FileAction = "read" | "list";
+/** The file actions the gate authorizes: `files.read`, `files.list`, `files.write`, `files.delete`. */
+export type FileAction = "read" | "list" | "write" | "delete";
 
 /** A file action of an agent session, with the facts the Workspace DO knows when it happens. */
 export interface FileRequest {

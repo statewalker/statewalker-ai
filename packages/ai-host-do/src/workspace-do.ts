@@ -1,4 +1,4 @@
-// One Workspace DO per workspace: the store, the role sources (each project's access file and the
+// One Workspace DO per workspace: the store (from the deployment's configuration), the role sources (each project's access file and the
 // workspace's SQL, as the deployment's ROLE_SOURCES var chains them), the
 // workspace's root key (it never leaves this DO), and the gate every file call of every agent
 // session goes through. Its name is the workspace. It mints a user capability for a user session
@@ -23,17 +23,19 @@ import {
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
-  answerFileCall,
   deploymentSecrets,
-  type FileCall,
+  FilesRpcHost,
+  type FilesRpcMethod,
+  type GatedFilesOptions,
   type GatewayResult,
-  gatedFiles,
+  gatedFilesRpc,
   gatewayFetch,
+  IGNORE_FILE,
+  ignoreRules,
   normalise,
   type OutgoingRequest,
   type SecretInfo,
   SecretStore,
-  SqlFiles,
   type StoredLevel,
   sessionSecrets,
 } from "@statewalker/ai-environment";
@@ -43,12 +45,15 @@ import type {
   SecretView,
   SetSecretRequest,
 } from "@statewalker/ai-sessions";
-import { tryReadText } from "@statewalker/webrun-files";
-import { type Env, nameOf, verifyToken } from "./env.js";
+import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
+import { blockSizeOf, type Env, nameOf, verifyToken } from "./env.js";
+import { mountWorkspace } from "./workspace-store.js";
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
-  readonly #store: SqlFiles;
+  readonly #store: Promise<FilesApi>;
+  /** One files-RPC server per capability that holds a file view, so streams live across calls. */
+  readonly #files: FilesRpcHost;
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
@@ -58,7 +63,9 @@ export class Workspace extends DurableObject<Env> {
     super(ctx, env);
     this.#name = nameOf(ctx);
     const sql = ctx.storage.sql;
-    this.#store = new SqlFiles(sql);
+    this.#store = mountWorkspace(env, ctx.storage, this.#name);
+    this.#store.catch(() => {});
+    this.#files = new FilesRpcHost((capability) => this.#fileView(capability));
     sql.exec("CREATE TABLE IF NOT EXISTS ws_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
     // The tracer kept user and agent sessions here; they live in User DOs now. No release held
     // them, so their rows are dropped rather than migrated.
@@ -73,7 +80,10 @@ export class Workspace extends DurableObject<Env> {
     }
     this.#authority = WorkspaceAuthority.fromStored(root);
     this.#sqlRoles = new SqlRoleSource(sql);
-    const files = fileRoleSource((path) => tryReadText(this.#store, path), DEFAULT_SYSTEM_FOLDER);
+    const files = fileRoleSource(
+      async (path) => tryReadText(await this.#store, path),
+      DEFAULT_SYSTEM_FOLDER,
+    );
     const sources: RoleSource[] = [];
     for (const name of (env.ROLE_SOURCES || "file").split(",").map((s) => s.trim())) {
       if (name === "file") sources.push(files);
@@ -115,21 +125,57 @@ export class Workspace extends DurableObject<Env> {
     return access;
   }
 
+  /** Whether a user sees a project: membership, from the role sources now. */
+  async #member(project: string, user: string): Promise<boolean> {
+    try {
+      return (await this.#access(project, user)).member;
+    } catch {
+      return false;
+    }
+  }
+
   /**
-   * The gate: one file call of the agent session the capability names, decided now. User and
-   * project come from the capability itself; the user's roles are read from the role sources at
-   * this moment, never fixed at the session's start, so a demotion reaches the next call.
+   * The gated view a capability holds, as a files-RPC endpoint. An agent session's capability sees
+   * its project, with the ignore rules applied; the user capability of a user session sees every
+   * project the user is a member of, without them. Membership and roles are read from the role
+   * sources at every action, never fixed when the view opens, so a demotion or removal reaches the
+   * next call and the next block of a stream.
    */
-  async fileCall(capability: string, call: FileCall): Promise<unknown> {
-    const facts = await this.#authority.agentSessionOf(capability);
-    const { grants } = await this.#access(facts.project, facts.user);
-    const view = gatedFiles(this.#store, {
-      project: facts.project,
+  async #fileView(capability: string) {
+    const store = await this.#store;
+    const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
+    const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
+    const options: GatedFilesOptions = {
       systemFolder: DEFAULT_SYSTEM_FOLDER,
-      authorize: (action, path) =>
-        this.#authority.authorize(capability, { action, path, project: facts.project, grants }),
-    });
-    return answerFileCall(view, call);
+      blockSize: blockSizeOf(this.env),
+      visible: (project) => this.#member(project, user),
+      authorize: async (action, path) => {
+        // An agent session acts in its project only; the user's own session in the path's.
+        const project = agent?.project ?? path.split("/")[1] ?? "";
+        if (!project) throw codedError("EACCES", `may not ${action} '${path}'`);
+        const { grants } = await this.#access(project, user);
+        await this.#authority.authorize(capability, { action, path, project, grants });
+      },
+      ...(agent
+        ? {
+            ignoreRules: async (project: string) =>
+              ignoreRules([
+                this.env.IGNORE,
+                await tryReadText(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/${IGNORE_FILE}`),
+              ]),
+          }
+        : {}),
+    };
+    return gatedFilesRpc(store, options);
+  }
+
+  /**
+   * The gate: one files-RPC call on the file view a capability holds (an agent session's, or a
+   * user session's own), decided now. User, project and session come from the capability itself;
+   * a capability this workspace did not sign is refused (EACCES).
+   */
+  async files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
+    return this.#files.call(capability, method, args);
   }
 
   #deploymentSecrets() {
@@ -263,8 +309,9 @@ export class Workspace extends DurableObject<Env> {
   /** Test-only fixtures (the Worker admits this only with the ADMIN_KEY). */
   async seed(files: Record<string, string>): Promise<number> {
     const enc = new TextEncoder();
+    const store = await this.#store;
     for (const [path, text] of Object.entries(files))
-      await this.#store.write(normalise(path), [enc.encode(text)]);
+      await store.write(normalise(path), [enc.encode(text)]);
     return Object.keys(files).length;
   }
 }

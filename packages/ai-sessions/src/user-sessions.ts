@@ -5,6 +5,7 @@
 // user; the User DO attenuates it for each agent session it starts. Calls go only from here to a
 // workspace: a Workspace DO never calls a User DO.
 import { type AccessClaims, attenuateForAgentSession, codedError } from "@statewalker/ai-access";
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type {
   AgentSessionConfig,
@@ -26,6 +27,8 @@ export interface WorkspaceGrants {
   userCapability(token: string): Promise<string>;
   /** The user's roles in the project now; EACCES for a non-member. */
   memberRoles(userCapability: string, project: string): Promise<string[]>;
+  /** One files-RPC call on the file view a capability holds, at the workspace's gate. */
+  files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** The secrets of one level the user manages there; EACCES without `secrets.write:<level>`. */
   listSecrets(userCapability: string, scope: SecretScope): Promise<SecretView[]>;
   setSecret(userCapability: string, req: SetSecretRequest): Promise<SecretView>;
@@ -231,6 +234,15 @@ export class UserSessions implements UserPort {
     await this.#o.eraseStorage();
     this.createTables();
     return { erased: true };
+  }
+
+  /**
+   * One files-RPC call on the user's own file view of the token's workspace: the gate decides it
+   * with the user capability of their user session (no ignore rules apply to it).
+   */
+  async files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).files(us.capability, method, args);
   }
 
   async listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }> {

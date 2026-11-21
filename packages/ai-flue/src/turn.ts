@@ -5,7 +5,15 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions";
 import { registerApiProvider, streamSimple } from "@earendil-works/pi-ai/compat";
-import { createReadTool, bash as flueBash } from "@flue/runtime";
+import {
+  createBashTool,
+  createEditTool,
+  createGlobTool,
+  createGrepTool,
+  createReadTool,
+  createWriteTool,
+  bash as flueBash,
+} from "@flue/runtime";
 import type { ItemInput } from "@statewalker/ai-sessions";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
@@ -50,9 +58,26 @@ export interface FlueTurn {
   tools?: HostTool[];
 }
 
-/** Flue's tools by name; the tracer offers `read` (tool sets come with definitions). */
-const TOOLS = { read: createReadTool } as const;
-export const TRACER_TOOLS: (keyof typeof TOOLS)[] = ["read"];
+/**
+ * Flue's tools by name. Every agent is offered Flue's file and shell tools over its file view, until
+ * tool sets come with definitions (statewalker/statewalker-root#128).
+ */
+const TOOLS = {
+  read: createReadTool,
+  write: createWriteTool,
+  edit: createEditTool,
+  bash: createBashTool,
+  grep: createGrepTool,
+  glob: createGlobTool,
+} as const;
+export const TRACER_TOOLS: (keyof typeof TOOLS)[] = [
+  "read",
+  "write",
+  "edit",
+  "bash",
+  "grep",
+  "glob",
+];
 
 let registered = false;
 function piModel(m: ModelConfig) {

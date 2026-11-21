@@ -134,6 +134,11 @@ describe.each(transports)("roles over %s", (name, connect) => {
     isError: true,
     output: expect.stringMatching(/EACCES/),
   });
+  // A project the user is no member of is not there at all (statewalker/statewalker-root#122).
+  const absent = expect.objectContaining({
+    isError: true,
+    output: expect.stringMatching(/ENOENT/),
+  });
 
   it("grants the built-in roles' permissions, and custom roles composed with role:", async () => {
     const project = `files-${t}`;
@@ -238,7 +243,7 @@ describe.each(transports)("roles over %s", (name, connect) => {
 
     await seed(deployment, ADMIN_KEY, { [`/${project}/.system/access`]: JSON.stringify({}) });
     expect(toolResult(await dan.sendMessage(s.id, { content: read("public/a.md") }))).toEqual(
-      refused,
+      absent,
     );
   });
 
@@ -253,6 +258,6 @@ describe.each(transports)("roles over %s", (name, connect) => {
     expect(await next("readme.md")).toEqual(refused);
     expect(await next("public/a.md")).toEqual(allowed(PROJECT_FILES["public/a.md"]));
     await setAccess(deployment, ADMIN_KEY, { project, members: { dan: [] } });
-    expect(await next("public/a.md")).toEqual(refused);
+    expect(await next("public/a.md")).toEqual(absent);
   });
 });
