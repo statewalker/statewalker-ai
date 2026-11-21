@@ -17,6 +17,11 @@ const METHODS = [
   "listSecrets",
   "setSecret",
   "deleteSecret",
+  "revokeSession",
+  "revokeUserSession",
+  "listServiceAccounts",
+  "createServiceAccount",
+  "deleteServiceAccount",
 ] as const;
 type Method = (typeof METHODS)[number];
 type Call = { method: "authenticate" | Method; args: unknown[] };
@@ -78,5 +83,10 @@ export function sessionRpcClient(port: MessageTarget, token: string): SessionApi
     listSecrets: after("listSecrets"),
     setSecret: after("setSecret"),
     deleteSecret: after("deleteSecret"),
+    revokeSession: after("revokeSession"),
+    revokeUserSession: after("revokeUserSession"),
+    listServiceAccounts: after("listServiceAccounts"),
+    createServiceAccount: after("createServiceAccount"),
+    deleteServiceAccount: after("deleteServiceAccount"),
   } as SessionApi;
 }

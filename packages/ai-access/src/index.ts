@@ -6,6 +6,7 @@ export { fromBase64, type Keypair, toBase64 } from "@statewalker/webrun-biscuit"
 export {
   type AgentSessionFacts,
   type AgentSessionGrant,
+  type AuthorityOptions,
   attenuateForAgentSession,
   type FileAction,
   type FileRequest,
@@ -44,5 +45,12 @@ export {
   type UserAccess,
   WORKSPACE_ROLES,
 } from "./roles.js";
+export {
+  hashApiKey,
+  isServiceAccount,
+  newApiKey,
+  serviceAccountUser,
+} from "./service-accounts.js";
 export { type SqlLike, SqlRoleSource } from "./sql-roles.js";
 export { type AccessClaims, TokenIssuer, verifyAccessToken } from "./tokens.js";
+export { settleAsk, type Verdict } from "./unattended.js";

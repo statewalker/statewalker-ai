@@ -54,6 +54,11 @@ function sessionApi(env: Env, token: string) {
       listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
       setSecret: async (t, req) => (await user()).setSecret(t, req),
       deleteSecret: async (t, req) => (await user()).deleteSecret(t, req),
+      revokeAgentSession: async (t, id) => (await user()).revokeAgentSession(t, id),
+      revokeUserSession: async (t) => (await user()).revokeUserSession(t),
+      listServiceAccounts: async (t) => (await user()).listServiceAccounts(t),
+      createServiceAccount: async (t, name) => (await user()).createServiceAccount(t, name),
+      deleteServiceAccount: async (t, name) => (await user()).deleteServiceAccount(t, name),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -64,6 +69,23 @@ function sessionApi(env: Env, token: string) {
       };
     },
   });
+}
+
+/**
+ * The token issuer's routes (statewalker/statewalker-root#78, #127): a service account's API key
+ * for an access token (`POST /v1/token {key}`), and a valid access token for a fresh one
+ * (`POST /v1/token/renew`, the token as bearer). People get their first token from an identity
+ * provider, which is outside the harness.
+ */
+async function tokenRoutes(request: Request, env: Env, path: string) {
+  if (request.method !== "POST") return undefined;
+  if (path === "/v1/token") {
+    const body = await bodyOf(request);
+    if (typeof body.key !== "string" || !body.key) throw codedError("EINVAL", "key is required");
+    return json(await issuerOf(env).exchangeApiKey(body.key));
+  }
+  if (path === "/v1/token/renew") return json(await issuerOf(env).renew(bearerOf(request)));
+  return undefined;
 }
 
 async function devRoutes(request: Request, env: Env, path: string) {
@@ -100,6 +122,19 @@ async function devRoutes(request: Request, env: Env, path: string) {
   if (collection === "users" && id && sub === "unreachable") {
     await userOf(env, id).makeUnreachable();
     return json({ unreachable: id });
+  }
+  if (collection === "users" && id && sub === "revoke") {
+    // The operator revokes a user everywhere, at the issuer.
+    await issuerOf(env).revokeUser(id);
+    return json({ revoked: id });
+  }
+  if (collection === "workspaces" && id && sub === "user-session") {
+    // Hands an access token straight to one workspace's DO, whichever workspace it names: only a
+    // token for that workspace opens a user session there. The capability is not returned.
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    await workspaceOf(env, id).userCapability(String(body.token ?? ""));
+    return json({ opened: true });
   }
   if (collection === "sessions" && id && sub === "messages") {
     // Past the User DO, straight to the agent session: its turn's file calls go to the gate.
@@ -140,6 +175,8 @@ export default {
         blockSize: blockSizeOf(env),
       });
       if (files) return files;
+      const token = await tokenRoutes(request, env, path);
+      if (token) return token;
       const dev = await devRoutes(request, env, path);
       if (dev) return dev;
       const rest = await handleSessionRest(request, (token) => sessionApi(env, token));

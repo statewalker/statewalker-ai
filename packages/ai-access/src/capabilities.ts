@@ -39,11 +39,28 @@ export interface AgentSessionGrant {
   project: string;
   agent: string;
   mode: string;
+  /**
+   * Started with no one present (a service account's schedule, a trigger): every "ask" becomes a
+   * deny with a reason (statewalker/statewalker-root#127). Fixed in the capability, so no later
+   * block can undo it.
+   */
+  unattended?: boolean;
 }
 
 /** What an agent session's capability says: its user (root-signed) and its grant. */
 export interface AgentSessionFacts extends AgentSessionGrant {
   user: string;
+  unattended: boolean;
+}
+
+/** How a Workspace DO's authority is told about its revocation list. */
+export interface AuthorityOptions {
+  /**
+   * Whether any of a capability's blocks is on the workspace's revocation list (each block's
+   * revocation id); a capability with one is refused at its next use. Checked on every
+   * verification, so a revocation stops everything narrowed from the revoked block.
+   */
+  isRevoked?(revocationIds: readonly string[]): boolean;
 }
 
 // The facts of a file action the capability's blocks check. `resource` and `root` end in "/", so a
@@ -61,6 +78,9 @@ agent({agent});
 mode({mode});
 check if resource($p), $p.starts_with({root});`;
 
+// Added to the agent session's block when it is unattended: its presence alone is the flag.
+const UNATTENDED_FACT = "\nunattended(true);";
+
 const GRANT_FACTS = ["agent_session", "project", "agent", "mode"] as const;
 
 /** A first-level folder or a user's name: one path segment, never "." or "..". */
@@ -75,7 +95,7 @@ const term = (t: unknown) => (t as { v: unknown }).v;
 export function attenuateForAgentSession(userCapability: string, grant: AgentSessionGrant): string {
   if (!NAME.test(grant.project)) throw codedError("EINVAL", "project must be a project's name");
   return Biscuit.fromBase64(userCapability)
-    .attenuate(AGENT_BLOCK, {
+    .attenuate(AGENT_BLOCK + (grant.unattended ? UNATTENDED_FACT : ""), {
       params: {
         session: grant.session,
         project: grant.project,
@@ -96,9 +116,11 @@ export interface StoredRootKey {
 /** The authority of one workspace: its root key, minting and checking capabilities. */
 export class WorkspaceAuthority {
   readonly #keys: Keypair;
+  readonly #isRevoked: (ids: readonly string[]) => boolean;
 
-  private constructor(keys: Keypair) {
+  private constructor(keys: Keypair, options: AuthorityOptions) {
     this.#keys = keys;
+    this.#isRevoked = options.isRevoked ?? (() => false);
   }
 
   /** A new root key, as the Workspace DO stores it. */
@@ -107,11 +129,11 @@ export class WorkspaceAuthority {
     return { secret: toBase64(kp.secretKey), public: toBase64(kp.publicKey) };
   }
 
-  static fromStored(stored: StoredRootKey): WorkspaceAuthority {
-    return new WorkspaceAuthority({
-      secretKey: fromBase64(stored.secret),
-      publicKey: fromBase64(stored.public),
-    });
+  static fromStored(stored: StoredRootKey, options: AuthorityOptions = {}): WorkspaceAuthority {
+    return new WorkspaceAuthority(
+      { secretKey: fromBase64(stored.secret), publicKey: fromBase64(stored.public) },
+      options,
+    );
   }
 
   /** The capability of one user in this workspace, for their user session. */
@@ -121,11 +143,14 @@ export class WorkspaceAuthority {
   }
 
   async #verify(capability: string): Promise<VerifiedBiscuit> {
+    let verified: VerifiedBiscuit;
     try {
-      return await Biscuit.fromBase64(capability).verifyAsync(this.#keys.publicKey);
+      verified = await Biscuit.fromBase64(capability).verifyAsync(this.#keys.publicKey);
     } catch {
       throw codedError("EACCES", "invalid capability");
     }
+    if (this.#isRevoked(verified.revocationIds)) throw codedError("EACCES", "revoked capability");
+    return verified;
   }
 
   #userOf(verified: VerifiedBiscuit): string {
@@ -155,6 +180,22 @@ export class WorkspaceAuthority {
   }
 
   /**
+   * The revocation id that revokes `capability` (its last block), for the holder of a bare user
+   * capability: only a capability narrowed from that very user capability (the same authority
+   * block, so the same user session) is named, the user capability itself included. Putting the id
+   * on the revocation list stops the capability and every one narrowed from it.
+   */
+  async revocationOf(userCapability: string, capability: string): Promise<string> {
+    const owner = await this.#verify(userCapability);
+    if (owner.token.blocks.length !== 1) throw codedError("EACCES", "not a user capability");
+    const target = await this.#verify(capability);
+    const ids = target.revocationIds;
+    if (ids[0] !== owner.revocationIds[0])
+      throw codedError("EACCES", "not a capability of this user session");
+    return ids[ids.length - 1] as string;
+  }
+
+  /**
    * What an agent session's capability says: the user from its root-signed authority block, and
    * the session, project, agent and mode from its first attenuation block, which the User DO
    * wrote. A capability without that block (a bare user capability) is refused: only agent
@@ -174,6 +215,15 @@ export class WorkspaceAuthority {
         throw codedError("EACCES", "not an agent session's capability");
       values[name] = t.v;
     }
+    const unattended = block.facts.some((f) => {
+      const t = f.predicate.terms[0] as Term | undefined;
+      return (
+        f.predicate.name === "unattended" &&
+        f.predicate.terms.length === 1 &&
+        t?.t === "bool" &&
+        t.v === true
+      );
+    });
     const project = String(values.project);
     if (!NAME.test(project)) throw codedError("EACCES", "not an agent session's capability");
     return {
@@ -182,6 +232,7 @@ export class WorkspaceAuthority {
       project,
       agent: String(values.agent),
       mode: String(values.mode),
+      unattended,
     };
   }
 

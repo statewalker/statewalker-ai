@@ -60,6 +60,15 @@ export interface AgentSession {
   project: string;
   agent: string;
   workspace: string;
+  unattended: boolean;
+  revoked: boolean;
+}
+
+/** A workspace's service account, as the session API lists it (never its key). */
+export interface ServiceAccount {
+  name: string;
+  user: string;
+  created: number;
 }
 
 /** The caller's profile, as the session API shows it. */
@@ -78,7 +87,11 @@ export interface Turn {
 
 export interface SessionClient {
   me(): Promise<UserSession>;
-  startSession(req: { project: string; agent: string }): Promise<AgentSession>;
+  startSession(req: {
+    project: string;
+    agent: string;
+    unattended?: boolean;
+  }): Promise<AgentSession>;
   sendMessage(sessionId: string, req: { content: string }): Promise<Turn>;
   listItems(sessionId: string): Promise<{ items: Item[] }>;
   /** The caller's agent sessions in the workspace their token names, from the session index. */
@@ -91,6 +104,15 @@ export interface SessionClient {
   /** Sets or replaces a secret; the answer never holds its value. */
   setSecret(req: SetSecretRequest): Promise<SecretView>;
   deleteSecret(req: SecretScope & { name: string }): Promise<{ deleted: true }>;
+  /** Revokes one of the caller's agent sessions. */
+  revokeSession(sessionId: string): Promise<{ revoked: true }>;
+  /** Revokes the caller's user session in the token's workspace, and every agent session in it. */
+  revokeUserSession(): Promise<{ revoked: true }>;
+  /** The workspace's service accounts (a workspace admin's). */
+  listServiceAccounts(): Promise<{ accounts: ServiceAccount[] }>;
+  /** Creates a service account; its API key is in the answer, this once. */
+  createServiceAccount(req: { name: string }): Promise<ServiceAccount & { key: string }>;
+  deleteServiceAccount(name: string): Promise<{ deleted: true }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -136,6 +158,12 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         "DELETE",
         `/v1/secrets/${encodeURIComponent(level)}/${encodeURIComponent(name)}${project ? `?project=${encodeURIComponent(project)}` : ""}`,
       ),
+    revokeSession: (id) => call("POST", `/v1/sessions/${encodeURIComponent(id)}/revoke`),
+    revokeUserSession: () => call("DELETE", "/v1/me/session"),
+    listServiceAccounts: () => call("GET", "/v1/service-accounts"),
+    createServiceAccount: (req) => call("POST", "/v1/service-accounts", req),
+    deleteServiceAccount: (name) =>
+      call("DELETE", `/v1/service-accounts/${encodeURIComponent(name)}`),
   };
 }
 
@@ -152,6 +180,25 @@ export async function login(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ user, ...options }),
+  });
+  return (await answer<{ token: string }>(res)).token;
+}
+
+/** A service account's access token, for its API key, from the issuer (`POST /v1/token`). */
+export async function serviceAccountToken(deployment: Deployment, key: string): Promise<string> {
+  const res = await deployment.fetch("/v1/token", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key }),
+  });
+  return (await answer<{ token: string }>(res)).token;
+}
+
+/** A fresh access token for a valid one, from the issuer (`POST /v1/token/renew`). */
+export async function renewToken(deployment: Deployment, token: string): Promise<string> {
+  const res = await deployment.fetch("/v1/token/renew", {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
   });
   return (await answer<{ token: string }>(res)).token;
 }
@@ -215,6 +262,36 @@ export async function sendPastUser(
   return admin(deployment, adminKey, `/admin/sessions/${encodeURIComponent(sessionId)}/messages`, {
     content,
   });
+}
+
+/**
+ * Revokes a user everywhere, at the issuer, as the deployment's operator does (test-only, behind
+ * `ADMIN_KEY`).
+ */
+export async function revokeUserEverywhere(
+  deployment: Deployment,
+  adminKey: string,
+  user: string,
+): Promise<void> {
+  await admin(deployment, adminKey, `/admin/users/${encodeURIComponent(user)}/revoke`, {});
+}
+
+/**
+ * Hands an access token straight to one workspace's DO, past the routing by the token's workspace,
+ * to see whether it opens a user session there (test-only, behind `ADMIN_KEY`).
+ */
+export async function openUserSessionAt(
+  deployment: Deployment,
+  adminKey: string,
+  workspace: string,
+  token: string,
+): Promise<{ opened: true }> {
+  return admin(
+    deployment,
+    adminKey,
+    `/admin/workspaces/${encodeURIComponent(workspace)}/user-session`,
+    { token },
+  );
 }
 
 /** What the workspace's SQL role source is told to hold (see `setAccess`). */

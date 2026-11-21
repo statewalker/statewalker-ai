@@ -19,6 +19,24 @@ export interface AgentSessionView {
   project: string;
   agent: string;
   created: number;
+  /** Started with no one present: every "ask" is a deny with a reason. */
+  unattended: boolean;
+  /** Revoked: its capability is on the workspace's revocation list, and it takes no message. */
+  revoked: boolean;
+}
+
+/** A workspace's service account, as the session API lists it: never its API key. */
+export interface ServiceAccountView {
+  /** Its name in the workspace, as the admin gave it. */
+  name: string;
+  /** Its user name, which access files and role sources name it by. */
+  user: string;
+  created: number;
+}
+
+/** A service account just created: its API key is shown this once. */
+export interface CreatedServiceAccount extends ServiceAccountView {
+  key: string;
 }
 
 /** A user's profile, as the session API shows it. */
@@ -65,6 +83,11 @@ export interface SendMessageRequest {
 export interface StartSessionRequest {
   project: string;
   agent: string;
+  /**
+   * No one is present to answer approvals (a scheduled agent, a service account): every "ask" is
+   * a deny with a reason, and the agent carries on.
+   */
+  unattended?: boolean;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -127,6 +150,22 @@ export interface SessionApi {
   /** Sets or replaces one secret; write-only, so the answer never holds its value. */
   setSecret(req: SetSecretRequest): Promise<SecretView>;
   deleteSecret(req: DeleteSecretRequest): Promise<{ deleted: true }>;
+  /**
+   * Revokes one of the caller's agent sessions: its capability goes on the workspace's revocation
+   * list, so it, and everything narrowed from it, is refused at its next operation.
+   */
+  revokeSession(sessionId: string): Promise<{ revoked: true }>;
+  /**
+   * Revokes the caller's user session in the token's workspace: every agent session it started
+   * stops at its next operation, and the next call opens a new user session.
+   */
+  revokeUserSession(): Promise<{ revoked: true }>;
+  /** The workspace's service accounts (a workspace admin's: `members.manage`). */
+  listServiceAccounts(): Promise<{ accounts: ServiceAccountView[] }>;
+  /** Creates a service account; the answer holds its API key, shown this once. */
+  createServiceAccount(req: { name: string }): Promise<CreatedServiceAccount>;
+  /** Deletes a service account: its key is refused and its tokens are no longer renewed. */
+  deleteServiceAccount(name: string): Promise<{ deleted: true }>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -155,6 +194,11 @@ export interface UserPort {
   listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   setSecret(token: string, req: SetSecretRequest): Promise<SecretView>;
   deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }>;
+  revokeAgentSession(token: string, id: string): Promise<{ revoked: true }>;
+  revokeUserSession(token: string): Promise<{ revoked: true }>;
+  listServiceAccounts(token: string): Promise<{ accounts: ServiceAccountView[] }>;
+  createServiceAccount(token: string, name: string): Promise<CreatedServiceAccount>;
+  deleteServiceAccount(token: string, name: string): Promise<{ deleted: true }>;
 }
 
 /** One agent session DO's side of the API. */
@@ -172,12 +216,19 @@ export interface SessionApiPorts {
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function startRequest(req: unknown): StartSessionRequest {
-  const { project, agent } = (req ?? {}) as Record<string, unknown>;
+  const { project, agent, unattended } = (req ?? {}) as Record<string, unknown>;
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (typeof agent !== "string" || !NAME.test(agent))
     throw codedError("EINVAL", "agent must be an agent's name");
-  return { project, agent };
+  if (unattended !== undefined && typeof unattended !== "boolean")
+    throw codedError("EINVAL", "unattended is true or false");
+  return { project, agent, ...(unattended ? { unattended: true } : {}) };
+}
+
+function accountName(name: unknown): string {
+  if (typeof name !== "string" || !name) throw codedError("EINVAL", "name is required");
+  return name;
 }
 
 const LEVELS: readonly string[] = ["deployment", "workspace", "project", "user"];
@@ -230,6 +281,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       if (typeof content !== "string" || !content)
         throw codedError("EINVAL", "content must be a non-empty string");
       const session = await ports.user.ownAgentSession(token, String(sessionId));
+      if (session.revoked) throw codedError("EACCES", "the agent session is revoked");
       return ports.agent(session.id).send(content);
     },
     async listItems(sessionId) {
@@ -244,5 +296,11 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     setSecret: async (req) => ports.user.setSecret(token, setSecretRequest(req)),
     deleteSecret: async (req) =>
       ports.user.deleteSecret(token, { ...secretScope(req), name: secretName(req) }),
+    revokeSession: (sessionId) => ports.user.revokeAgentSession(token, String(sessionId)),
+    revokeUserSession: () => ports.user.revokeUserSession(token),
+    listServiceAccounts: () => ports.user.listServiceAccounts(token),
+    createServiceAccount: async (req) =>
+      ports.user.createServiceAccount(token, accountName(req?.name)),
+    deleteServiceAccount: async (name) => ports.user.deleteServiceAccount(token, accountName(name)),
   };
 }

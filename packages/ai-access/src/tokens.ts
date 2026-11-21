@@ -3,6 +3,7 @@
 // rights: those are read live where each action happens.
 import { Biscuit, generateKeypair, type Keypair } from "@statewalker/webrun-biscuit";
 import { codedError } from "./errors.js";
+import { isServiceAccount } from "./service-accounts.js";
 
 export interface AccessClaims {
   user: string;
@@ -34,8 +35,27 @@ export class TokenIssuer {
     return this.#keys.publicKey;
   }
 
-  /** Signs an access token for a user already identified (an identity provider's job). */
+  /**
+   * Signs an access token for a person already identified (an identity provider's job). A name in
+   * the service accounts' form is refused: no identity provider can sign in as one.
+   */
   issue(user: string, workspace: string, ttlMs = this.ttlMs): { token: string; expires: number } {
+    if (isServiceAccount(user))
+      throw codedError("EACCES", "a service account signs in only with its API key");
+    return this.#sign(user, workspace, ttlMs);
+  }
+
+  /** Signs an access token for a service account, once its API key is checked. */
+  issueServiceAccount(
+    user: string,
+    workspace: string,
+    ttlMs = this.ttlMs,
+  ): { token: string; expires: number } {
+    if (!isServiceAccount(user)) throw codedError("EINVAL", "not a service account");
+    return this.#sign(user, workspace, ttlMs);
+  }
+
+  #sign(user: string, workspace: string, ttlMs: number): { token: string; expires: number } {
     if (!user || !workspace)
       throw codedError("EINVAL", "an access token names a user and a workspace");
     const expires = Date.now() + ttlMs;

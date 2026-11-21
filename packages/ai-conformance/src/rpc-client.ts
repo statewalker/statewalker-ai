@@ -34,6 +34,11 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     listSecrets: (scope) => api.listSecrets(scope).catch(refusal),
     setSecret: (req) => api.setSecret(req).catch(refusal),
     deleteSecret: (req) => api.deleteSecret(req).catch(refusal),
+    revokeSession: (id) => api.revokeSession(id).catch(refusal),
+    revokeUserSession: () => api.revokeUserSession().catch(refusal),
+    listServiceAccounts: () => api.listServiceAccounts().catch(refusal),
+    createServiceAccount: (req) => api.createServiceAccount(req).catch(refusal),
+    deleteServiceAccount: (name) => api.deleteServiceAccount(name).catch(refusal),
     close: () => ws.close(1000, "done"),
   };
 }
