@@ -64,6 +64,9 @@ const entriesOf = (entries: RoleEntries): string[] =>
 /** A Datalog entry: accepted only when every statement in it is a check, so it only narrows. */
 function checkEntry(text: string): string | { problem: string } {
   const code = text.trim().endsWith(";") ? text.trim() : `${text.trim()};`;
+  // A role's checks run joined into one program: a comment left open in one entry would hide
+  // the next entry's checks or the policy, so comments are refused.
+  if (/\/\*|\*\/|\/\//.test(code)) return { problem: "Datalog in a role may not hold comments" };
   try {
     const parsed = parseAuthorizer(code);
     if (
@@ -78,6 +81,21 @@ function checkEntry(text: string): string | { problem: string } {
     return { problem: `not valid Datalog (${(e as Error).message})` };
   }
   return code;
+}
+
+function joinedChecksHold(checks: readonly string[]): boolean {
+  if (checks.length === 0) return true;
+  try {
+    const each = checks.reduce((n, c) => n + parseAuthorizer(c).checks.length, 0);
+    const joined = parseAuthorizer(checks.join("\n"));
+    return (
+      joined.checks.length === each &&
+      joined.facts.length + joined.rules.length + joined.policies.length + joined.scopes.length ===
+        0
+    );
+  } catch {
+    return false;
+  }
 }
 
 const isDatalog = (entry: string) => /[\s(;]/.test(entry) && !entry.startsWith("role:");
@@ -137,6 +155,12 @@ export function resolveRoles(
     grant.permissions.push(...parsed.permissions);
     for (const p of parsed.problems) problems.push(`role '${name}': ${p}`);
     grant.checks = [...new Set(grant.checks)];
+    // The checks as they will run, joined: still checks only, as many as accepted; otherwise
+    // the role grants nothing rather than lose a restriction.
+    if (!joinedChecksHold(grant.checks)) {
+      problems.push(`role '${name}': its checks do not hold together`);
+      grant.permissions = [];
+    }
     cache.set(name, grant);
     return grant;
   };

@@ -119,6 +119,20 @@ describe("custom roles", () => {
     expect(can(grants, "files", "list", "/a")).toBe(true);
   });
 
+  it("refuses Datalog comments, so joined checks never hide a policy or another check", () => {
+    const { grants, problems } = resolveRoles(["x", "y"], {
+      x: ["check if true; /*", "check if true; //*/ allow if true;"],
+      y: ["role:reader", 'check if target($t), !$t.starts_with("/private"); /*'],
+    });
+    expect(problems).toHaveLength(3);
+    expect(can(grants, "net", "read", "evil.com")).toBe(false);
+    expect(can(grants, "files", "read", "/private/x")).toBe(true); // y's check was refused, reader stays
+    const { grants: z } = resolveRoles(["z"], {
+      z: ["role:reader", "check if true; /*", 'check if target($t), !$t.starts_with("/private");'],
+    });
+    expect(can(z, "files", "read", "/private/x")).toBe(false);
+  });
+
   it("report a cycle and grant nothing through the roles in it", () => {
     const { grants, problems } = resolveRoles(["a", "c"], {
       a: ["role:b", "files.read"],
