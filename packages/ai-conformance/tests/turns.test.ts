@@ -572,6 +572,20 @@ describe("the event stream over SSE", () => {
     expect(after.map((f) => f.event)).toEqual(["up-to-date", "turn.completed"]);
   });
 
+  it("ends a session's stream with session.archived, even opened after the archive", async () => {
+    const { token, client } = await as("ann");
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    await client.archiveSession(session.id);
+    const path = `/v1/sessions/${session.id}/events`;
+    const all: SseFrame[] = [];
+    for await (const f of await openEvents(`${path}?since=0`, token)) all.push(f);
+    expect(all.at(-1)).toMatchObject({ id: "1", event: "session.archived" });
+    // An EventSource reconnecting after it: the stream still ends at once.
+    const again: SseFrame[] = [];
+    for await (const f of await openEvents(path, token, { "last-event-id": "1" })) again.push(f);
+    expect(again.map((f) => f.event)).toEqual(["up-to-date", "session.archived"]);
+  });
+
   it("refuses an event stream without a valid token or for another user's session", async () => {
     const { client } = await as("ann");
     const session = await client.startSession({ project: "alpha", agent: "a" });

@@ -74,6 +74,15 @@ export async function eventStream(
                 write(marker(`turn.${view.status}`, view));
                 return end();
               }
+            } else {
+              // A session archived before `since` still ends its stream with the archive event.
+              const session = await api.getSession(sessionId);
+              if (session.archived) {
+                const rest = await api.readEvents(sessionId, { since, limit: PAGE });
+                if (send(rest.events)) return end();
+                write(marker("session.archived", { id: session.id }));
+                return end();
+              }
             }
           }
           if (stopped) return;
