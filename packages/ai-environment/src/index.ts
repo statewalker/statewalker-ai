@@ -12,4 +12,24 @@ export {
   profilePath,
   rootedFiles,
 } from "./profile-files.js";
+export {
+  checkBinding,
+  checkSecretName,
+  deploymentSecrets,
+  type GatewayResult,
+  gatewayFetch,
+  type OutgoingRequest,
+  type Resolution,
+  type ResolvedSecret,
+  redactSecrets,
+  resolveSecrets,
+  SECRET_LEVELS,
+  type SecretBinding,
+  type SecretInfo,
+  type SecretLevel,
+  type SecretLookup,
+  SecretStore,
+  type StoredLevel,
+  sessionSecrets,
+} from "./secrets.js";
 export { SqlFiles, type SqlLike } from "./sql-files.js";

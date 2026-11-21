@@ -18,6 +18,22 @@ export interface ModelConfig {
   apiKey?: string;
 }
 
+/**
+ * A tool the host runs on the agent's behalf (a REST or MCP call through the gateway): the agent
+ * loop sees only its name, description, schema and output, never the secrets it used.
+ */
+export interface HostTool {
+  /** `<plugin>__<tool>`. */
+  name: string;
+  description: string;
+  /** A closed JSON Schema object for the tool's input. */
+  parameters: Record<string, unknown>;
+  execute(
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<{ output: string; isError?: boolean; secrets?: string[] }>;
+}
+
 export interface FlueTurn {
   /** The agent session's id: Flue's sandbox id. */
   id: string;
@@ -30,6 +46,8 @@ export interface FlueTurn {
   model: ModelConfig;
   /** The user's message. */
   content: string;
+  /** Tools the host runs (beside Flue's own over the sandbox). */
+  tools?: HostTool[];
 }
 
 /** Flue's tools by name; the tracer offers `read` (tool sets come with definitions). */
@@ -83,8 +101,11 @@ const textOf = (content: Message["content"]) =>
         .map((p) => p.text ?? "")
         .join("");
 
-/** The items of the loop's messages after the user's own. */
-function* itemsOf(messages: Message[]): Generator<ItemInput> {
+/** The items of the loop's messages after the user's own; `secrets` by tool call id. */
+function* itemsOf(
+  messages: Message[],
+  secrets: ReadonlyMap<string, string[]>,
+): Generator<ItemInput> {
   for (const m of messages) {
     if (m.role === "assistant") {
       if (m.stopReason === "error" || m.stopReason === "aborted")
@@ -101,6 +122,9 @@ function* itemsOf(messages: Message[]): Generator<ItemInput> {
         name: m.toolName,
         output: textOf(m.content),
         isError: !!m.isError,
+        ...(secrets.get(String(m.toolCallId))?.length
+          ? { secrets: secrets.get(String(m.toolCallId)) }
+          : {}),
       };
     }
   }
@@ -111,7 +135,21 @@ export async function runFlueTurn(turn: FlueTurn, emit: (item: ItemInput) => voi
   const sandbox = await flueBash(
     () => new Bash({ fs: new FilesFs(turn.files) as never, cwd: `/${turn.project}` }) as never,
   ).createSandbox({ id: turn.id });
-  const tools = TRACER_TOOLS.map((name) => TOOLS[name](sandbox as never));
+  // The names of the secrets each host tool call used, recorded on its item (never the values).
+  const secrets = new Map<string, string[]>();
+  const hostTools = (turn.tools ?? []).map((tool) => ({
+    name: tool.name,
+    label: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+    async execute(toolCallId: string, params: unknown, signal?: AbortSignal) {
+      const result = await tool.execute((params ?? {}) as Record<string, unknown>, signal);
+      if (result.secrets?.length) secrets.set(toolCallId, result.secrets);
+      if (result.isError) throw new Error(result.output);
+      return { content: [{ type: "text", text: result.output }], details: {} };
+    },
+  }));
+  const tools = [...TRACER_TOOLS.map((name) => TOOLS[name](sandbox as never)), ...hostTools];
   const agent = new Agent({
     streamFn: streamSimple as never,
     getApiKey: async () => turn.model.apiKey ?? "none",
@@ -126,5 +164,5 @@ export async function runFlueTurn(turn: FlueTurn, emit: (item: ItemInput) => voi
   await agent.waitForIdle();
   const messages = (agent.state as unknown as { messages: Message[] }).messages;
   const start = messages.findIndex((m) => m.role === "user");
-  for (const item of itemsOf(messages.slice(start + 1))) emit(item);
+  for (const item of itemsOf(messages.slice(start + 1), secrets)) emit(item);
 }

@@ -11,20 +11,38 @@ import {
   chainRoleSources,
   codedError,
   DEFAULT_SYSTEM_FOLDER,
+  decide,
   fileRoleSource,
   type RoleEntries,
+  type RoleGrant,
   type RoleSource,
+  resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
+  WORKSPACE_ROLES,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
   answerFileCall,
+  deploymentSecrets,
   type FileCall,
+  type GatewayResult,
   gatedFiles,
+  gatewayFetch,
   normalise,
+  type OutgoingRequest,
+  type SecretInfo,
+  SecretStore,
   SqlFiles,
+  type StoredLevel,
+  sessionSecrets,
 } from "@statewalker/ai-environment";
+import type {
+  DeleteSecretRequest,
+  SecretScope,
+  SecretView,
+  SetSecretRequest,
+} from "@statewalker/ai-sessions";
 import { tryReadText } from "@statewalker/webrun-files";
 import { type Env, nameOf, verifyToken } from "./env.js";
 
@@ -34,6 +52,7 @@ export class Workspace extends DurableObject<Env> {
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
+  readonly #secrets: SecretStore;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -62,6 +81,8 @@ export class Workspace extends DurableObject<Env> {
       else if (name) throw codedError("EIO", `unknown role source '${name}'`);
     }
     this.#roles = chainRoleSources(sources);
+    // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
+    this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
   }
 
   /**
@@ -109,6 +130,115 @@ export class Workspace extends DurableObject<Env> {
         this.#authority.authorize(capability, { action, path, project: facts.project, grants }),
     });
     return answerFileCall(view, call);
+  }
+
+  #deploymentSecrets() {
+    return deploymentSecrets(
+      this.env.DEPLOYMENT_SECRETS,
+      this.env as unknown as Record<string, unknown>,
+    );
+  }
+
+  /**
+   * `secrets.write:<level>` for a user capability's user, and the scope its rows are kept under.
+   * Users manage their own secrets; a project's are managed with a project role granting
+   * `secrets.write:project` (owners), the workspace's with a workspace role granting
+   * `secrets.write:workspace` (the admin). Deployment secrets are the runtime's: listed with
+   * `secrets.write:workspace`, written by nobody.
+   */
+  async #secretScope(
+    capability: string,
+    scope: SecretScope,
+    write: boolean,
+  ): Promise<{ level: StoredLevel | "deployment"; scope: string }> {
+    const user = await this.#authority.userOfUserCapability(capability);
+    const refuse = () => codedError("EACCES", `${user} may not manage ${scope.level} secrets here`);
+    const holds = (grants: readonly RoleGrant[], target: string) =>
+      decide(grants, { area: "secrets", action: "write", target });
+    switch (scope.level) {
+      case "user":
+        return { level: "user", scope: user };
+      case "project": {
+        const project = String(scope.project);
+        const access = await this.#access(project, user);
+        // Only project roles: a workspace role never reaches a project's secrets.
+        const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+        if (!access.member || !holds(grants, "project")) throw refuse();
+        return { level: "project", scope: project };
+      }
+      case "workspace":
+      case "deployment": {
+        // Only workspace roles: a project's custom role can't grant `secrets.write:workspace`.
+        const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+          Object.hasOwn(WORKSPACE_ROLES, r),
+        );
+        if (!holds(resolveRoles(held, {}).grants, "workspace")) throw refuse();
+        if (scope.level === "deployment" && write) throw refuse();
+        return { level: scope.level, scope: "" };
+      }
+      default:
+        throw codedError("EINVAL", "no such secret level");
+    }
+  }
+
+  #view(info: SecretInfo): SecretView {
+    return {
+      name: info.name,
+      level: info.level,
+      ...(info.level === "project" ? { project: info.scope } : {}),
+      bindings: info.bindings,
+      updated: info.updated,
+    };
+  }
+
+  /** The secrets of one level the caller manages: never a value. */
+  async listSecrets(capability: string, scope: SecretScope): Promise<SecretView[]> {
+    const s = await this.#secretScope(capability, scope, false);
+    const infos =
+      s.level === "deployment"
+        ? this.#deploymentSecrets().info
+        : this.#secrets.list(s.level, s.scope);
+    return infos.map((i) => this.#view(i));
+  }
+
+  /** Sets or replaces one secret (write-only: the answer never holds its value). */
+  async setSecret(capability: string, req: SetSecretRequest): Promise<SecretView> {
+    const s = await this.#secretScope(capability, req, true);
+    if (s.level === "deployment")
+      throw codedError("EACCES", "deployment secrets are runtime secrets");
+    return this.#view(await this.#secrets.set(s.level, s.scope, req.name, req.value, req.bindings));
+  }
+
+  async deleteSecret(capability: string, req: DeleteSecretRequest): Promise<void> {
+    const s = await this.#secretScope(capability, req, true);
+    if (s.level === "deployment")
+      throw codedError("EACCES", "deployment secrets are runtime secrets");
+    if (!this.#secrets.delete(s.level, s.scope, req.name))
+      throw codedError("ENOENT", `secret ${req.name} is not set`);
+  }
+
+  /** Deletes all the user-level secrets of a user capability's user (they are being erased). */
+  async eraseUserSecrets(capability: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(capability);
+    this.#secrets.deleteScope("user", user);
+  }
+
+  /**
+   * The host-side gateway for one outgoing request of a plugin in an agent session: its
+   * `{{secret:NAME}}` placeholders resolve to the session's user's, project's, workspace's or the
+   * deployment's secret, the most specific first, only where its binding names the plugin and the
+   * request's host. Values are read now and never leave this DO except in the request itself; the
+   * answer is redacted and names the secrets used.
+   */
+  async gatewayFetch(
+    capability: string,
+    call: { plugin: string; request: OutgoingRequest },
+  ): Promise<GatewayResult> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    if (!(await this.#access(facts.project, facts.user)).member)
+      throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
+    const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
+    return gatewayFetch(call.request, String(call.plugin), lookup);
   }
 
   /**
