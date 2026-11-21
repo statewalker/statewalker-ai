@@ -12,7 +12,9 @@ import {
   restClient,
   rpcClient,
   type SessionClient,
+  type SseFrame,
   seed,
+  sseFrames,
   startDeployment,
 } from "../src/index.js";
 
@@ -298,5 +300,142 @@ describe.each(transports)("turns over %s", (name, connect) => {
     await expect(ann.listItems(session.id, { types: ["secret" as never] })).rejects.toMatchObject({
       status: 400,
     });
+  });
+
+  it("reads the event log with a cursor that waits for the next event", async () => {
+    const ann = await as("ann");
+    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const empty = await ann.readEvents(session.id);
+    expect(empty).toEqual({ events: [], offset: 0, up_to_date: true });
+    const accepted = await ann.postMessage(session.id, { content: "hello" });
+    await ann.waitTurn(accepted);
+    const page = await ann.readEvents(session.id, { since: 0 });
+    expect(page.up_to_date).toBe(true);
+    expect(page.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5]);
+    const tail = await ann.readEvents(session.id, { since: 3 });
+    expect(tail.events.map((e) => e.seq)).toEqual([4, 5]);
+    await expect((await as("bob")).readEvents(session.id)).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+/** An SSE response's frames, with the reader that ends the connection. */
+async function openEvents(path: string, token: string, headers: Record<string, string> = {}) {
+  const res = await deployment.fetch(path, {
+    headers: { authorization: `Bearer ${token}`, ...headers },
+  });
+  expect(res.status).toBe(200);
+  expect(res.headers.get("content-type")).toMatch(/^text\/event-stream/);
+  return sseFrames(res.body as ReadableStream<Uint8Array>);
+}
+
+/** Frames until one matches (inclusive). */
+async function until(frames: AsyncGenerator<SseFrame>, done: (f: SseFrame) => boolean) {
+  // Reads with next(), not for-await: leaving a for-await loop would close the stream.
+  const seen: SseFrame[] = [];
+  for (let r = await frames.next(); !r.done; r = await frames.next()) {
+    seen.push(r.value);
+    if (done(r.value)) return seen;
+  }
+  return seen;
+}
+
+describe("the event stream over SSE", () => {
+  const as = async (user: string) => {
+    const token = await login(deployment, `${user}-rest`);
+    return { token, client: restClient(deployment, token) };
+  };
+  let holds = 0;
+  const hold = () => `sse-${++holds}`;
+
+  it("streams the durable log from a cursor, resumes from Last-Event-ID and marks up-to-date", async () => {
+    const { token, client } = await as("ann");
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    await client.sendMessage(session.id, { content: "one" });
+    const path = `/v1/sessions/${session.id}/events`;
+    const backlog = await until(await openEvents(`${path}?since=0`, token), (f) => f.event === "up-to-date");
+    const events = backlog.filter((f) => f.id);
+    expect(events.map((f) => [f.id, f.event])).toEqual([
+      ["1", "turn.queued"],
+      ["2", "turn.started"],
+      ["3", "item.created"],
+      ["4", "item.created"],
+      ["5", "turn.completed"],
+    ]);
+    expect(backlog.at(-1)).toMatchObject({ event: "up-to-date", data: JSON.stringify({ offset: 5 }) });
+    // A reconnecting client repeats its URL; its Last-Event-ID wins.
+    const resumed = await until(
+      await openEvents(`${path}?since=0`, token, { "last-event-id": "3" }),
+      (f) => f.event === "up-to-date",
+    );
+    expect(resumed.filter((f) => f.id).map((f) => f.id)).toEqual(["4", "5"]);
+    const since = await until(await openEvents(`${path}?since=4`, token), (f) => f.event === "up-to-date");
+    expect(since.filter((f) => f.id).map((f) => f.id)).toEqual(["5"]);
+    // Live: an event logged after the marker arrives on the open stream.
+    const live = await openEvents(`${path}?since=5`, token);
+    await until(live, (f) => f.event === "up-to-date");
+    await client.postMessage(session.id, { content: "two" });
+    const next = await until(live, (f) => !!f.id);
+    expect(next.at(-1)).toMatchObject({ id: "6", event: "turn.queued" });
+    await live.return(undefined);
+  });
+
+  it("sends keep-alives while nothing happens", async () => {
+    const { token, client } = await as("ann");
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const frames = await openEvents(`/v1/sessions/${session.id}/events`, token);
+    const seen = await until(frames, (f) => f.comment === "keep-alive");
+    expect(seen.map((f) => f.event ?? f.comment)).toEqual(["up-to-date", "keep-alive"]);
+    await frames.return(undefined);
+  });
+
+  it("never cancels a turn when its reader disconnects", async () => {
+    const { token, client } = await as("ann");
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const h = hold();
+    const accepted = await client.postMessage(session.id, { content: `HOLD ${h}` });
+    const frames = await openEvents(accepted.stream_url, token);
+    await until(frames, (f) => f.event === "turn.started");
+    await frames.return(undefined);
+    await model.held(h);
+    model.release(h);
+    expect(await client.waitTurn(accepted)).toMatchObject({ status: "completed" });
+  });
+
+  it("ends a turn's stream with its terminal event, even after the turn ended", async () => {
+    const { token, client } = await as("ann");
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const accepted = await client.postMessage(session.id, { content: "done" });
+    const seen: SseFrame[] = [];
+    for await (const f of await openEvents(accepted.stream_url, token)) seen.push(f);
+    expect(seen.at(-1)).toMatchObject({ event: "turn.completed" });
+    expect(JSON.parse(String(seen.at(-1)?.data))).toMatchObject({ id: accepted.turn_id, items: [{}, {}] });
+    // Read again from the end of the log: the stream still ends with the terminal turn.
+    const after: SseFrame[] = [];
+    for await (const f of await openEvents(
+      `/v1/sessions/${session.id}/events?since=999&turn=${accepted.turn_id}`,
+      token,
+    ))
+      after.push(f);
+    expect(after.map((f) => f.event)).toEqual(["up-to-date", "turn.completed"]);
+  });
+
+  it("refuses an event stream without a valid token or for another user's session", async () => {
+    const { client } = await as("ann");
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const path = `/v1/sessions/${session.id}/events`;
+    expect((await deployment.fetch(path)).status).toBe(401);
+    const bob = await login(deployment, "bob-rest");
+    const res = await deployment.fetch(path, { headers: { authorization: `Bearer ${bob}` } });
+    expect(res.status).toBe(404);
+  });
+
+  it("ends an open stream with an error event once its token expires", async () => {
+    const token = await login(deployment, "ann-rest", { ttlMs: 1500 });
+    const client = restClient(deployment, token);
+    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const seen: SseFrame[] = [];
+    for await (const f of await openEvents(`/v1/sessions/${session.id}/events`, token)) seen.push(f);
+    expect(seen.at(-1)).toMatchObject({ event: "error" });
+    expect(JSON.parse(String(seen.at(-1)?.data))).toMatchObject({ status: 401 });
   });
 });
