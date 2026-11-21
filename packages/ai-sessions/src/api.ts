@@ -3,6 +3,7 @@
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import { sessionOfTurn } from "./turns.js";
 
 export interface UserSessionView {
   id: string;
@@ -19,6 +20,11 @@ export interface AgentSessionView {
   project: string;
   agent: string;
   created: number;
+  metadata: Metadata;
+  /** When the session was archived: its history is kept, it takes no more messages. */
+  archived?: number;
+  /** The session's status (single-session reads; lists filtered by status). */
+  status?: SessionStatus;
 }
 
 /** A user's profile, as the session API shows it. */
@@ -40,6 +46,10 @@ export interface ItemInput {
   isError?: boolean;
   /** The names of the secrets a tool call used, never their values. */
   secrets?: string[];
+  /** A user message that steered the running turn: the steer's id. */
+  steer?: string;
+  /** Cut short: the partial assistant message of a cancelled or interrupted turn. */
+  incomplete?: true;
 }
 
 /** An item as stored and listed: numbered in its session, and tied to its turn. */
@@ -49,22 +59,141 @@ export interface Item extends ItemInput {
   turn: string;
 }
 
+/** How a message reaches the session (statewalker/statewalker-root#83). */
+export type Delivery = "next" | "steer" | "interrupt";
+
+export type TurnStatus =
+  | "queued"
+  | "running"
+  | "waiting"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "interrupted";
+
+/**
+ * Why a turn stopped. A turn that ended without completing (`cancelled`, `interrupted`,
+ * `failed`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
+ */
+export interface StopReason {
+  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval";
+  /** What went wrong, for `error`. */
+  message?: string;
+  /** The approvals a `waiting` turn waits on. */
+  approval_ids?: string[];
+}
+
+/** A model the turn ran on other than the one asked for (statewalker/statewalker-root#108). */
+export interface ModelSubstitution {
+  requested: string;
+  used: string;
+  reason: string;
+}
+
 export interface TurnView {
   id: string;
   session: string;
-  status: "completed" | "failed";
+  status: TurnStatus;
+  delivery: Delivery;
+  /** Set once the turn ended. */
+  stop_reason?: StopReason;
   /** Why a turn failed. */
   error?: string;
+  /** The model the turn ran on, once it ran. */
+  model?: string;
+  model_substitution?: ModelSubstitution;
+  /** Fields of the message request the API did not use. */
+  ignored?: string[];
+  created: number;
+  started?: number;
+  ended?: number;
   items: Item[];
 }
 
+/** The statuses a turn ends in. */
+export const TERMINAL_TURN_STATUSES: readonly TurnStatus[] = [
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+];
+
 export interface SendMessageRequest {
   content: string;
+  delivery?: Delivery;
+  /** A model to run the turn on; the agent's own unless the caller holds its right. */
+  model?: string;
+}
+
+/** A message the session accepted (REST: `202`). For `steer`, accepted is not yet applied. */
+export interface MessageAccepted {
+  turn_id: string;
+  session_id: string;
+  delivery: Delivery;
+  /** The turn's events: an SSE stream ending with the turn's terminal event. */
+  stream_url: string;
+  /** The event log's offset before the message: read the events after it. */
+  offset: number;
+  /** Fields of the request the API did not use. */
+  ignored?: string[];
+}
+
+/** Items, paged: `after` / `before` are item ids. */
+export interface ItemsQuery {
+  after?: string;
+  before?: string;
+  limit?: number;
+  order?: "asc" | "desc";
+  types?: ItemInput["kind"][];
+}
+
+export interface ItemsPage {
+  items: Item[];
+  has_more: boolean;
+  first_id?: string;
+  last_id?: string;
+}
+
+/** One entry of a session's durable, numbered event log. */
+export interface SessionEvent {
+  seq: number;
+  type: string;
+  turn?: string;
+  data: unknown;
+  created: number;
+}
+
+export interface EventsQuery {
+  /** The offset to read after (an event's `seq`; 0 from the start). */
+  since?: number;
+  limit?: number;
+  /** Milliseconds to wait for a new event when there is none after `since`. */
+  wait?: number;
+}
+
+export interface EventsPage {
+  events: SessionEvent[];
+  /** The offset to read after next time. */
+  offset: number;
+  /** True when nothing is logged past `offset` yet. */
+  up_to_date: boolean;
+}
+
+export type SessionStatus = "idle" | "running" | "waiting" | "error";
+
+/** Free key/value strings on a session, for search. */
+export type Metadata = Record<string, string>;
+
+export interface SessionsQuery {
+  status?: SessionStatus | "archived";
+  /** Exact matches, all of them. */
+  metadata?: Metadata;
 }
 
 export interface StartSessionRequest {
   project: string;
   agent: string;
+  metadata?: Metadata;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -107,12 +236,31 @@ export interface SessionApi {
   me(): Promise<UserSessionView>;
   /** Starts an agent session in a project the caller is a member of. */
   startSession(req: StartSessionRequest): Promise<AgentSessionView>;
-  /** Sends a message to one of the caller's agent sessions: it runs one turn. */
-  sendMessage(sessionId: string, req: SendMessageRequest): Promise<TurnView>;
-  /** The items of one of the caller's agent sessions, in order. */
-  listItems(sessionId: string): Promise<{ items: Item[] }>;
-  /** The caller's agent sessions in the workspace their token names, from the session index. */
-  listSessions(): Promise<{ sessions: AgentSessionView[] }>;
+  /** One of the caller's agent sessions, with its status. */
+  getSession(sessionId: string): Promise<AgentSessionView>;
+  /** Replaces a session's metadata. */
+  updateSession(sessionId: string, req: { metadata: Metadata }): Promise<AgentSessionView>;
+  /** Archives a session: its running and queued turns end, its history is kept. */
+  archiveSession(sessionId: string): Promise<AgentSessionView>;
+  /** Purges a session and its history; refused (EBUSY) while it runs. */
+  deleteSession(sessionId: string): Promise<{ deleted: true }>;
+  /**
+   * The caller's agent sessions in the workspace their token names, from the session index,
+   * filtered by status and metadata; archived ones only when asked for.
+   */
+  listSessions(query?: SessionsQuery): Promise<{ sessions: AgentSessionView[] }>;
+  /** Sends a message to one of the caller's agent sessions; the turn runs on its own. */
+  sendMessage(sessionId: string, req: SendMessageRequest): Promise<MessageAccepted>;
+  /** One turn of the caller's sessions, by id. */
+  getTurn(turnId: string): Promise<TurnView>;
+  /** Cancels that turn only (running or queued); the session's other queued turns stay. */
+  cancelTurn(turnId: string): Promise<TurnView>;
+  /** The items of one of the caller's agent sessions, paged and filtered. */
+  listItems(sessionId: string, query?: ItemsQuery): Promise<ItemsPage>;
+  /** One item of one of the caller's agent sessions. */
+  getItem(sessionId: string, itemId: string): Promise<Item>;
+  /** A cursor read of the session's event log. */
+  readEvents(sessionId: string, query?: EventsQuery): Promise<EventsPage>;
   /** The caller's profile. */
   profile(): Promise<ProfileView>;
   /** Erases the caller: their profile and everything their User DO holds. */
@@ -147,7 +295,12 @@ export interface UserPort {
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }>;
   /** One of the caller's own agent sessions; ENOENT for any other. */
   ownAgentSession(token: string, id: string): Promise<AgentSessionView>;
+  /** The caller's agent sessions in the token's workspace, archived ones included. */
   listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }>;
+  updateAgentSession(token: string, id: string, metadata: Metadata): Promise<AgentSessionView>;
+  archiveAgentSession(token: string, id: string): Promise<AgentSessionView>;
+  /** Removes one of the caller's agent sessions from the index. */
+  deleteAgentSession(token: string, id: string): Promise<void>;
   profile(token: string): Promise<ProfileView>;
   eraseUser(token: string): Promise<{ erased: true }>;
   /** One files-RPC call on the user's own file view of the token's workspace. */
@@ -157,11 +310,28 @@ export interface UserPort {
   deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }>;
 }
 
+/** A message as an agent session DO takes it: checked, with the fields the API ignored. */
+export interface AgentMessage {
+  content: string;
+  delivery: Delivery;
+  model?: string;
+  ignored: string[];
+}
+
 /** One agent session DO's side of the API. */
 export interface AgentPort {
   start(config: AgentSessionConfig): Promise<void>;
-  send(content: string): Promise<TurnView>;
-  items(): Promise<Item[]>;
+  send(message: AgentMessage): Promise<Omit<MessageAccepted, "stream_url">>;
+  turn(turnId: string): Promise<TurnView>;
+  cancel(turnId: string): Promise<TurnView>;
+  items(query?: ItemsQuery): Promise<ItemsPage>;
+  item(itemId: string): Promise<Item>;
+  events(query?: EventsQuery): Promise<EventsPage>;
+  status(): Promise<SessionStatus>;
+  /** Ends the running and queued turns, and takes no more messages. */
+  archive(): Promise<void>;
+  /** Erases the session's storage; EBUSY while a turn runs or is queued. */
+  purge(): Promise<void>;
 }
 
 export interface SessionApiPorts {
@@ -171,14 +341,59 @@ export interface SessionApiPorts {
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
+const META_KEY = /^[A-Za-z0-9_.-]{1,64}$/;
+const MAX_META_KEYS = 16;
+const MAX_META_VALUE = 512;
+
+/** Metadata: at most 16 keys (letters, digits, `_.-`, up to 64), string values up to 512. */
+export function metadataOf(value: unknown): Metadata {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== "object" || Array.isArray(value))
+    throw codedError("EINVAL", "metadata is an object of strings");
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length > MAX_META_KEYS)
+    throw codedError("EINVAL", `metadata holds at most ${MAX_META_KEYS} keys`);
+  for (const [k, v] of entries) {
+    if (!META_KEY.test(k)) throw codedError("EINVAL", `'${k}' is not a metadata key`);
+    if (typeof v !== "string" || v.length > MAX_META_VALUE)
+      throw codedError("EINVAL", `metadata values are strings of up to ${MAX_META_VALUE}`);
+  }
+  return Object.fromEntries(entries) as Metadata;
+}
+
 function startRequest(req: unknown): StartSessionRequest {
-  const { project, agent } = (req ?? {}) as Record<string, unknown>;
+  const { project, agent, metadata } = (req ?? {}) as Record<string, unknown>;
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (typeof agent !== "string" || !NAME.test(agent))
     throw codedError("EINVAL", "agent must be an agent's name");
-  return { project, agent };
+  return { project, agent, metadata: metadataOf(metadata) };
 }
+
+const MESSAGE_FIELDS = ["content", "delivery", "model"];
+const DELIVERIES: readonly string[] = ["next", "steer", "interrupt"];
+
+/** A message request, checked; the fields it holds that the API does not use are reported. */
+function messageOf(req: unknown): AgentMessage {
+  const body = (req ?? {}) as Record<string, unknown>;
+  const { content, delivery = "next", model } = body;
+  if (typeof content !== "string" || !content)
+    throw codedError("EINVAL", "content must be a non-empty string");
+  if (typeof delivery !== "string" || !DELIVERIES.includes(delivery))
+    throw codedError("EINVAL", "delivery is next, steer or interrupt");
+  if (model !== undefined && (typeof model !== "string" || !model))
+    throw codedError("EINVAL", "model must be a model's name");
+  return {
+    content,
+    delivery: delivery as Delivery,
+    ...(model ? { model: model as string } : {}),
+    ignored: Object.keys(body)
+      .filter((k) => !MESSAGE_FIELDS.includes(k))
+      .sort(),
+  };
+}
+
+const STATUSES: readonly string[] = ["idle", "running", "waiting", "error", "archived"];
 
 const LEVELS: readonly string[] = ["deployment", "workspace", "project", "user"];
 
@@ -217,7 +432,16 @@ function setSecretRequest(req: unknown): SetSecretRequest {
   };
 }
 
+/** Where an accepted message's turn is followed: its events, ending with the terminal one. */
+const streamUrl = (session: string, turn: string, offset: number) =>
+  `/v1/sessions/${encodeURIComponent(session)}/events?since=${offset}&turn=${encodeURIComponent(turn)}`;
+
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
+  const own = (id: unknown) => ports.user.ownAgentSession(token, String(id));
+  const withStatus = async (session: AgentSessionView): Promise<AgentSessionView> => ({
+    ...session,
+    status: await ports.agent(session.id).status(),
+  });
   return {
     me: () => ports.user.openUserSession(token),
     async startSession(req) {
@@ -225,18 +449,70 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       await ports.agent(session.id).start(config);
       return session;
     },
+    getSession: async (id) => withStatus(await own(id)),
+    async updateSession(id, req) {
+      const metadata = metadataOf((req as { metadata?: unknown } | undefined)?.metadata ?? {});
+      const session = await own(id);
+      return ports.user.updateAgentSession(token, session.id, metadata);
+    },
+    async archiveSession(id) {
+      const session = await own(id);
+      await ports.agent(session.id).archive();
+      return withStatus(await ports.user.archiveAgentSession(token, session.id));
+    },
+    async deleteSession(id) {
+      const session = await own(id);
+      await ports.agent(session.id).purge();
+      await ports.user.deleteAgentSession(token, session.id);
+      return { deleted: true };
+    },
+    async listSessions(query) {
+      const q = (query ?? {}) as SessionsQuery;
+      if (q.status !== undefined && !STATUSES.includes(q.status))
+        throw codedError("EINVAL", `status is one of ${STATUSES.join(", ")}`);
+      const metadata = metadataOf(q.metadata);
+      const { sessions } = await ports.user.listAgentSessions(token);
+      const found: AgentSessionView[] = [];
+      for (const s of sessions) {
+        if ((q.status === "archived") !== !!s.archived) continue;
+        if (!Object.entries(metadata).every(([k, v]) => s.metadata?.[k] === v)) continue;
+        if (q.status && q.status !== "archived") {
+          const status = await ports.agent(s.id).status();
+          if (status !== q.status) continue;
+          found.push({ ...s, status });
+        } else found.push(s);
+      }
+      return { sessions: found };
+    },
     async sendMessage(sessionId, req) {
-      const content = (req as Partial<SendMessageRequest> | undefined)?.content;
-      if (typeof content !== "string" || !content)
-        throw codedError("EINVAL", "content must be a non-empty string");
-      const session = await ports.user.ownAgentSession(token, String(sessionId));
-      return ports.agent(session.id).send(content);
+      const message = messageOf(req);
+      const session = await own(sessionId);
+      const accepted = await ports.agent(session.id).send(message);
+      return {
+        ...accepted,
+        stream_url: streamUrl(session.id, accepted.turn_id, accepted.offset),
+      };
     },
-    async listItems(sessionId) {
-      const session = await ports.user.ownAgentSession(token, String(sessionId));
-      return { items: await ports.agent(session.id).items() };
+    async getTurn(turnId) {
+      const session = await own(sessionOfTurn(String(turnId)));
+      return ports.agent(session.id).turn(String(turnId));
     },
-    listSessions: () => ports.user.listAgentSessions(token),
+    async cancelTurn(turnId) {
+      const session = await own(sessionOfTurn(String(turnId)));
+      return ports.agent(session.id).cancel(String(turnId));
+    },
+    async listItems(sessionId, query) {
+      const session = await own(sessionId);
+      return ports.agent(session.id).items((query ?? {}) as ItemsQuery);
+    },
+    async getItem(sessionId, itemId) {
+      const session = await own(sessionId);
+      return ports.agent(session.id).item(String(itemId));
+    },
+    async readEvents(sessionId, query) {
+      const session = await own(sessionId);
+      return ports.agent(session.id).events((query ?? {}) as EventsQuery);
+    },
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
     files: (method, args) => ports.user.files(token, method, args),

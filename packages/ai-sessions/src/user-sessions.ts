@@ -11,6 +11,7 @@ import type {
   AgentSessionConfig,
   AgentSessionView,
   DeleteSecretRequest,
+  Metadata,
   ProfileView,
   SecretScope,
   SecretView,
@@ -72,13 +73,24 @@ interface AgentRow {
   created: number;
 }
 
-const view = (row: AgentRow): AgentSessionView => ({
+interface AgentMetaRow {
+  metadata: string | null;
+  archived: number | null;
+}
+
+const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   id: row.id,
   workspace: row.workspace,
   project: row.project,
   agent: row.agent,
   created: Number(row.created),
+  metadata: row.metadata ? (JSON.parse(row.metadata) as Metadata) : {},
+  ...(row.archived ? { archived: Number(row.archived) } : {}),
 });
+
+/** The session index with each session's metadata and archive time (a table of its own). */
+const INDEX = `SELECT a.*, m.metadata, m.archived FROM agent_sessions a
+  LEFT JOIN agent_session_meta m ON m.id = a.id`;
 
 export class UserSessions implements UserPort {
   readonly #o: UserSessionsOptions;
@@ -96,6 +108,9 @@ export class UserSessions implements UserPort {
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_sessions (
       id TEXT PRIMARY KEY, workspace TEXT NOT NULL, project TEXT NOT NULL, agent TEXT NOT NULL,
       created INTEGER NOT NULL)`);
+    // statewalker/statewalker-root#125: metadata and archiving, beside the index.
+    this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_session_meta (
+      id TEXT PRIMARY KEY, metadata TEXT NOT NULL, archived INTEGER)`);
   }
 
   #one<T>(query: string, ...args: unknown[]): T | undefined {
@@ -178,8 +193,14 @@ export class UserSessions implements UserPort {
       row.agent,
       row.created,
     );
+    const metadata = req.metadata ?? {};
+    this.#o.sql.exec(
+      "INSERT INTO agent_session_meta VALUES (?, ?, NULL)",
+      row.id,
+      JSON.stringify(metadata),
+    );
     return {
-      session: view(row),
+      session: view({ ...row, metadata: JSON.stringify(metadata), archived: null }),
       config: {
         id: row.id,
         workspace: row.workspace,
@@ -192,13 +213,43 @@ export class UserSessions implements UserPort {
 
   async ownAgentSession(token: string, id: string): Promise<AgentSessionView> {
     const { workspace } = await this.claims(token);
-    const row = this.#one<AgentRow>(
-      "SELECT * FROM agent_sessions WHERE id = ? AND workspace = ?",
+    const row = this.#one<AgentRow & AgentMetaRow>(
+      `${INDEX} WHERE a.id = ? AND a.workspace = ?`,
       id,
       workspace,
     );
     if (!row) throw codedError("ENOENT", "no such agent session");
     return view(row);
+  }
+
+  async updateAgentSession(token: string, id: string, metadata: Metadata) {
+    const own = await this.ownAgentSession(token, id);
+    this.#o.sql.exec(
+      `INSERT INTO agent_session_meta VALUES (?, ?, NULL)
+        ON CONFLICT (id) DO UPDATE SET metadata = excluded.metadata`,
+      own.id,
+      JSON.stringify(metadata),
+    );
+    return this.ownAgentSession(token, id);
+  }
+
+  async archiveAgentSession(token: string, id: string) {
+    const own = await this.ownAgentSession(token, id);
+    if (!own.archived)
+      this.#o.sql.exec(
+        `INSERT INTO agent_session_meta VALUES (?, ?, ?)
+          ON CONFLICT (id) DO UPDATE SET archived = excluded.archived`,
+        own.id,
+        JSON.stringify(own.metadata),
+        Date.now(),
+      );
+    return this.ownAgentSession(token, id);
+  }
+
+  async deleteAgentSession(token: string, id: string): Promise<void> {
+    const own = await this.ownAgentSession(token, id);
+    this.#o.sql.exec("DELETE FROM agent_session_meta WHERE id = ?", own.id);
+    this.#o.sql.exec("DELETE FROM agent_sessions WHERE id = ?", own.id);
   }
 
   /** The caller's profile: the projects it holds user memory of (preferences: a later ticket). */
@@ -264,8 +315,8 @@ export class UserSessions implements UserPort {
   async listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }> {
     const { workspace } = await this.claims(token);
     const rows = this.#o.sql
-      .exec("SELECT * FROM agent_sessions WHERE workspace = ? ORDER BY created, rowid", workspace)
-      .toArray() as unknown as AgentRow[];
+      .exec(`${INDEX} WHERE a.workspace = ? ORDER BY a.created, a.rowid`, workspace)
+      .toArray() as unknown as (AgentRow & AgentMetaRow)[];
     return { sessions: rows.map(view) };
   }
 }
