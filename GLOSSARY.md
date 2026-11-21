@@ -115,6 +115,20 @@ A compacted stand-in for a range of a session's items or lower summaries; the it
 **Tail**:
 The most recent items of a session, never compacted; its size is set by count or by tokens.
 
+**Fork**:
+Starting a new agent session from a copy of another session's history up to the end of one of its turns, on any branch; both then continue independently.
+_Avoid_: branch (UHP's word for a fork), clone
+
+**Rewind**:
+Moving an agent session's head to the end of another of its turns, or to its start, so the next message continues from there; switching branch is the same move. Turns no longer on the path are kept as an inactive branch.
+_Avoid_: undo, truncate, delete
+
+**Branch**:
+One line of turns in an agent session; the session's turns form a tree, and the active branch is the path from its first turn to its head. Only a person can erase an inactive branch.
+
+**Head**:
+The turn an agent session's next message continues from; none before the first turn.
+
 **Session table of contents**:
 A session's topics, each pointing at the items that cover it: a view of the session by subject rather than by time. It is written while the session is summarized, belongs to the session, and is not memory.
 _Avoid_: session memory, index
@@ -152,7 +166,7 @@ A longer file that memory entries refer to, read on demand rather than shown at 
 Closing a memory entry so it is no longer shown or searched, while its earlier versions and a trace of the forgetting remain. Agents may forget.
 
 **Erase**:
-Removing a memory entry together with its history and trace. Only a person erases, never an agent.
+Removing a memory entry, or an inactive branch of an agent session, together with its history and trace. Only a person erases, never an agent.
 _Avoid_: delete (ambiguous between forget and erase)
 
 ### Usage and limits
