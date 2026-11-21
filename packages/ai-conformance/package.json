@@ -20,6 +20,9 @@
     "@types/node": "catalog:",
     "esbuild": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@statewalker/ai-environment": "workspace:^",
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/webrun-files-rpc": "catalog:"
   }
 }

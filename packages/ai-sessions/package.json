@@ -16,7 +16,11 @@
   "dependencies": {
     "@statewalker/ai-access": "workspace:^",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/webrun-rpc": "catalog:"
+    "@statewalker/webrun-rpc": "catalog:",
+    "@statewalker/ai-environment": "workspace:^",
+    "@statewalker/webrun-files-rpc": "catalog:",
+    "@statewalker/webrun-msgpack": "catalog:",
+    "@statewalker/webrun-streams-ws": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

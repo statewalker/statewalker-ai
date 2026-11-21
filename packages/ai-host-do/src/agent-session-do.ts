@@ -1,9 +1,10 @@
 // One DO per agent session: it holds the session's capability (the user capability its User DO
 // attenuated for it; never the access token) and runs its turns on Flue, whose file view is the
-// Workspace DO's gate reached with that capability.
+// Workspace DO's gate reached with that capability: a webrun-files-rpc client whose calls travel on
+// the Workspace DO's stub.
 
 import { DurableObject } from "cloudflare:workers";
-import { filesOverCalls } from "@statewalker/ai-environment";
+import { filesOverRpc } from "@statewalker/ai-environment";
 import { runFlueTurn } from "@statewalker/ai-flue";
 import {
   type AgentMessage,
@@ -12,7 +13,7 @@ import {
   type EventsQuery,
   type ItemsQuery,
 } from "@statewalker/ai-sessions";
-import type { Env } from "./env.js";
+import { blockSizeOf, type Env } from "./env.js";
 import { restTools } from "./rest-tools.js";
 
 export class AgentSession extends DurableObject<Env> {
@@ -29,7 +30,10 @@ export class AgentSession extends DurableObject<Env> {
             id: config.id,
             agent: config.agent,
             project: config.project,
-            files: filesOverCalls((call) => workspace.fileCall(config.capability, call)),
+            files: filesOverRpc(
+              (method, args) => workspace.files(config.capability, method, args),
+              { blockSize: blockSizeOf(env) },
+            ),
             model: { baseUrl: String(env.LLM_BASE_URL), model: env.LLM_MODEL || "default" },
             content,
             signal,

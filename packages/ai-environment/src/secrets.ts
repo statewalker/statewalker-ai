@@ -9,7 +9,7 @@
 // `{{secret:NAME}}` placeholder in an outgoing request resolves only when both match. The gateway
 // puts values into headers and the URL at the last moment and redacts them from what it answers.
 import { codedError } from "@statewalker/ai-access";
-import type { SqlLike } from "./sql-files.js";
+import type { SqlLike } from "./sql.js";
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
 

@@ -2,6 +2,7 @@
 // (./rest.ts) and RPC (./rpc.ts) are thin routers onto these methods; every call is made with the
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { codedError } from "@statewalker/ai-access";
+import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { sessionOfTurn } from "./turns.js";
 
 export interface UserSessionView {
@@ -264,6 +265,8 @@ export interface SessionApi {
   profile(): Promise<ProfileView>;
   /** Erases the caller: their profile and everything their User DO holds. */
   eraseUser(): Promise<{ erased: true }>;
+  /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
+  files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /**
    * The secrets of one level the caller manages (`secrets.write:<level>`; a project's for project
    * secrets): names, levels, bindings and update times, never values.
@@ -300,6 +303,8 @@ export interface UserPort {
   deleteAgentSession(token: string, id: string): Promise<void>;
   profile(token: string): Promise<ProfileView>;
   eraseUser(token: string): Promise<{ erased: true }>;
+  /** One files-RPC call on the user's own file view of the token's workspace. */
+  files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   setSecret(token: string, req: SetSecretRequest): Promise<SecretView>;
   deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }>;
@@ -510,6 +515,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
+    files: (method, args) => ports.user.files(token, method, args),
     listSecrets: async (scope) => ports.user.listSecrets(token, secretScope(scope)),
     setSecret: async (req) => ports.user.setSecret(token, setSecretRequest(req)),
     deleteSecret: async (req) =>

@@ -1,6 +1,6 @@
-// The session API over RPC: webrun-rpc calls on a webrun-wire channel, here a WebSocket the
-// deployment's Worker accepts at /v1/rpc. The access token goes in the first message.
-import { sessionRpcClient, statusOf, webSocketPort } from "@statewalker/ai-sessions";
+// The session API over RPC: webrun-rpc methods over msgpack frames on a WebSocket the
+// deployment's Worker accepts at /v1/rpc. The access token goes in the first call.
+import { sessionRpcClient, statusOf } from "@statewalker/ai-sessions";
 import type { Deployment } from "./deployment.js";
 import { ApiError, type SessionClient, TERMINAL_EVENTS, type Turn } from "./session-client.js";
 
@@ -19,7 +19,8 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
   const ws = (res as Response & { webSocket?: ClientSocket | null }).webSocket;
   if (res.status !== 101 || !ws) throw new ApiError(res.status, "the deployment refused RPC");
   ws.accept();
-  const api = sessionRpcClient(webSocketPort(ws as never), token);
+  const connection = await sessionRpcClient(ws as never, token);
+  const api = connection.api;
   const refusal = (e: unknown) => {
     throw new ApiError(statusOf(e), String((e as Error)?.message ?? e));
   };
@@ -56,7 +57,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     listSecrets: (scope) => api.listSecrets(scope).catch(refusal),
     setSecret: (req) => api.setSecret(req).catch(refusal),
     deleteSecret: (req) => api.deleteSecret(req).catch(refusal),
-    close: () => ws.close(1000, "done"),
+    close: () => connection.close(),
   };
   return client;
 }
