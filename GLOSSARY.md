@@ -137,6 +137,14 @@ _Avoid_: session memory, index
 A stored instruction that starts agent turns without anyone at the keyboard, owned by a user or a service account and run with the owner's rights at the moment it fires.
 _Avoid_: cron, job, routine
 
+**Task**:
+A durable request for work, published to a project's queue under a subject, waiting there until every matching subscription has taken it or it expires. It may ask for a reply.
+_Avoid_: job, message (and note that in UHP a "task" is a turn)
+
+**Subscription**:
+A named consumer of a project's tasks, chosen by a filter on subject, destination and sender; every matching subscription receives each task, and within one subscription a task is taken once.
+_Avoid_: listener, consumer group
+
 ### Memory
 
 **Project memory**:
