@@ -132,6 +132,9 @@ describe("the gated file view", () => {
     await writeText(store, "/alpha/docs/sub/x.md", "x");
     for (const op of ["copy", "move"] as const)
       await expect(files[op]("/alpha/docs/sub", "/alpha/docs")).rejects.toThrow(/EINVAL/);
+    // Spelled in another case, as a case-insensitive local FS would take it, too.
+    await expect(files.copy("/alpha/docs/sub", "/alpha/DOCS")).rejects.toThrow(/EINVAL/);
+    await expect(files.move("/alpha/DOCS", "/alpha/docs/sub/in")).rejects.toThrow(/EINVAL/);
     expect(await readText(store, "/alpha/docs/guide.md")).toBe("the guide");
     expect(await readText(store, "/alpha/docs/sub/x.md")).toBe("x");
   });

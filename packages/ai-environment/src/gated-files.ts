@@ -80,9 +80,9 @@ export interface StreamChecks {
   /** Whether a normalised path is hidden from the holder now. */
   hidden(path: string): Promise<boolean>;
   /**
-   * Throws unless the holder may still take the action on the path. A stream opened on a hidden
-   * path passes (it gives nothing, as a missing file would); one whose path became hidden since
-   * (a removal from the project, a new ignore rule) is ENOENT.
+   * Throws unless the holder may still take the action on the path. A stream opened on a path
+   * hidden then and still hidden passes (it gives nothing, as a missing file would); one whose path
+   * became hidden since (a removal from the project, a new ignore rule) is ENOENT.
    */
   allowed(action: FileAction, path: string, hiddenAtOpen: boolean): Promise<void>;
 }
@@ -92,8 +92,10 @@ export function streamChecks(options: GatedFilesOptions): StreamChecks {
   return {
     hidden,
     async allowed(action, path, hiddenAtOpen) {
-      if (hiddenAtOpen) return;
-      if (await hidden(path)) throw enoent(path);
+      if (await hidden(path)) {
+        if (hiddenAtOpen) return;
+        throw enoent(path);
+      }
       await options.authorize(action, path);
     },
   };
@@ -268,10 +270,12 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
     const s = scope();
     if (await s.hidden(from)) return false;
     if (await s.hidden(to)) throw enoent(target);
-    if (to === from || isUnder(to, from))
+    // Compared folded, as a case-insensitive backend would take the paths.
+    const f = (p: string) => p.split("/").map(folded).join("/");
+    if (f(to) === f(from) || isUnder(f(to), f(from)))
       throw codedError("EINVAL", `cannot ${move ? "move" : "copy"} '${source}' into itself`);
     // Replacing a folder above the source would remove the source with it.
-    if (isUnder(from, to))
+    if (isUnder(f(from), f(to)))
       throw codedError("EINVAL", `cannot ${move ? "move" : "copy"} '${source}' onto '${target}'`);
     await authorize("read", from);
     if (move) await authorize("delete", from);
