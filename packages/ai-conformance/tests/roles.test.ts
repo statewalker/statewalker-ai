@@ -125,7 +125,7 @@ describe.each(transports)("roles over %s", (name, connect) => {
   /** Starts a session for the user in the project; reading a path returns the tool's result. */
   const session = async (user: string, project: string) => {
     const client = await as(user);
-    const s = await client.startSession({ project, agent: "roles" });
+    const s = await client.startSession({ project });
     return async (path: string) =>
       toolResult(await client.sendMessage(s.id, { content: read(path) }));
   };
@@ -175,11 +175,9 @@ describe.each(transports)("roles over %s", (name, connect) => {
     const odd = await session("odd", project);
     expect(await odd("public/a.md")).toEqual(allowed(PROJECT_FILES["public/a.md"]));
     expect(await odd("readme.md")).toEqual(refused);
-    await expect((await as("cyc")).startSession({ project, agent: "roles" })).rejects.toMatchObject(
-      {
-        status: 403,
-      },
-    );
+    await expect((await as("cyc")).startSession({ project })).rejects.toMatchObject({
+      status: 403,
+    });
   });
 
   it("answers members and custom roles from the workspace's SQL", async () => {
@@ -190,21 +188,17 @@ describe.each(transports)("roles over %s", (name, connect) => {
     const pat = await session("pat", project);
     expect(await pat("public/a.md")).toEqual(allowed(PROJECT_FILES["public/a.md"]));
     expect(await pat("readme.md")).toEqual(refused);
-    await expect((await as("eve")).startSession({ project, agent: "roles" })).rejects.toMatchObject(
-      {
-        status: 403,
-      },
-    );
+    await expect((await as("eve")).startSession({ project })).rejects.toMatchObject({
+      status: 403,
+    });
   });
 
   it("answers a project from the first role source in the chain that knows it", async () => {
     const project = `both-${t}`;
     // The access file names ann, but the workspace's SQL comes first and names only bob.
-    await expect((await as("ann")).startSession({ project, agent: "roles" })).rejects.toMatchObject(
-      {
-        status: 403,
-      },
-    );
+    await expect((await as("ann")).startSession({ project })).rejects.toMatchObject({
+      status: 403,
+    });
     expect(await (await session("bob", project))("readme.md")).toEqual(
       allowed(PROJECT_FILES["readme.md"]),
     );
@@ -213,9 +207,7 @@ describe.each(transports)("roles over %s", (name, connect) => {
   it("a workspace admin is no member of a project and cannot open a session in it", async () => {
     for (const admin of ["carol", "dave"])
       for (const project of [`files-${t}`, `sql-${t}`])
-        await expect(
-          (await as(admin)).startSession({ project, agent: "roles" }),
-        ).rejects.toMatchObject({
+        await expect((await as(admin)).startSession({ project })).rejects.toMatchObject({
           status: 403,
         });
   });
@@ -223,7 +215,7 @@ describe.each(transports)("roles over %s", (name, connect) => {
   it("a demotion in the access file reaches a running session at its next action, without rebuilding its tool set", async () => {
     const project = `demote-file-${t}`;
     const dan = await as("dan");
-    const s = await dan.startSession({ project, agent: "roles" });
+    const s = await dan.startSession({ project });
     const before = toolResult(await dan.sendMessage(s.id, { content: read("readme.md") }));
     expect(before).toEqual(allowed(PROJECT_FILES["readme.md"]));
     const toolsBefore = model.requests.at(-2)?.tools;
@@ -250,7 +242,7 @@ describe.each(transports)("roles over %s", (name, connect) => {
   it("a demotion or removal in the workspace's SQL reaches a running session at its next action", async () => {
     const project = `demote-sql-${t}`;
     const dan = await as("dan");
-    const s = await dan.startSession({ project, agent: "roles" });
+    const s = await dan.startSession({ project });
     const next = async (path: string) =>
       toolResult(await dan.sendMessage(s.id, { content: read(path) }));
     expect(await next("readme.md")).toEqual(allowed(PROJECT_FILES["readme.md"]));

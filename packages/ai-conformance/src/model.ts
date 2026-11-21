@@ -12,6 +12,8 @@ export interface ModelRequest {
   lastUserText: string;
   /** The model the request named. */
   model?: string;
+  /** The system prompt the request carried. */
+  system?: string;
 }
 
 export interface FakeModel {
@@ -76,6 +78,10 @@ export async function fakeModel(): Promise<FakeModel> {
       tools: (json.tools ?? []).map((t) => String(t.function?.name)),
       lastUserText,
       model: json.model,
+      system: messages
+        .filter((m) => m.role === "system" || m.role === "developer")
+        .map((m) => text(m.content))
+        .join("\n"),
     });
     if (lastUserText === "FAIL" && messages.at(-1)?.role === "user") {
       res.writeHead(400, { "content-type": "application/json" });

@@ -38,6 +38,7 @@ export class User extends DurableObject<Env> {
         return {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
+          pinDefinitions: (capability, req) => ws.pinDefinitions(capability, req),
           files: (capability, method, args) => ws.files(capability, method, args),
           listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
           setSecret: (capability, req) => ws.setSecret(capability, req),

@@ -12,6 +12,7 @@ import type {
   AgentSessionView,
   DeleteSecretRequest,
   Metadata,
+  PinnedDefinitions,
   ProfileView,
   SecretScope,
   SecretView,
@@ -28,6 +29,15 @@ export interface WorkspaceGrants {
   userCapability(token: string): Promise<string>;
   /** The user's roles in the project now; EACCES for a non-member. */
   memberRoles(userCapability: string, project: string): Promise<string[]>;
+  /**
+   * Pins the definitions of a new agent session of the user in a project (EACCES for a
+   * non-member) and picks its agent: the one asked for, which the user must be allowed (ENOENT
+   * otherwise), or the project's default, then the deployment's.
+   */
+  pinDefinitions(
+    userCapability: string,
+    req: { session: string; project: string; agent?: string },
+  ): Promise<PinnedDefinitions>;
   /** One files-RPC call on the file view a capability holds, at the workspace's gate. */
   files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** The secrets of one level the user manages there; EACCES without `secrets.write:<level>`. */
@@ -171,12 +181,18 @@ export class UserSessions implements UserPort {
     req: StartSessionRequest,
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
     const us = await this.#userSession(token);
-    await this.#o.workspace(us.workspace).memberRoles(us.capability, req.project);
+    const id = `as-${crypto.randomUUID()}`;
+    // Membership, the agent and the session's definitions, decided and pinned by the workspace.
+    const pinned = await this.#o.workspace(us.workspace).pinDefinitions(us.capability, {
+      session: id,
+      project: req.project,
+      ...(req.agent ? { agent: req.agent } : {}),
+    });
     const row: AgentRow = {
-      id: `as-${crypto.randomUUID()}`,
+      id,
       workspace: us.workspace,
       project: req.project,
-      agent: req.agent,
+      agent: pinned.agent,
       created: Date.now(),
     };
     const capability = attenuateForAgentSession(us.capability, {
@@ -207,6 +223,7 @@ export class UserSessions implements UserPort {
         project: row.project,
         agent: row.agent,
         capability,
+        ...(pinned.run ? { run: pinned.run } : {}),
       },
     };
   }

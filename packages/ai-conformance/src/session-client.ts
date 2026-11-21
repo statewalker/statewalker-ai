@@ -134,7 +134,11 @@ export const TERMINAL_EVENTS = [
 
 export interface SessionClient {
   me(): Promise<UserSession>;
-  startSession(req: { project: string; agent: string; metadata?: Metadata }): Promise<AgentSession>;
+  startSession(req: {
+    project: string;
+    agent?: string;
+    metadata?: Metadata;
+  }): Promise<AgentSession>;
   getSession(id: string): Promise<AgentSession>;
   updateSession(id: string, req: { metadata: Metadata }): Promise<AgentSession>;
   archiveSession(id: string): Promise<AgentSession>;

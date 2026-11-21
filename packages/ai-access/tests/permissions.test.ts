@@ -59,7 +59,7 @@ describe("the permission language", () => {
     expect(pairs(all)).toContain("files.delete");
     expect(pairs(all)).toContain("tasks.admin");
     expect(pairs(all)).toContain("members.manage");
-    // Network, remote agents and creating projects are granted only by name.
+    // Network, agents and creating projects are granted only by name.
     for (const named of ["net.read", "net.write", "agents.use", "projects.create"])
       expect(pairs(all)).not.toContain(named);
     expect(pairs(parsePermissions(["files.*"]).permissions)).toEqual([

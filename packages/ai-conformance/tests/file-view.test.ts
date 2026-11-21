@@ -110,7 +110,7 @@ describe.each(transports)("the file view over %s", (t, connect, openFiles) => {
   const filesOf = async (user: string) => openFiles(deployment, await login(deployment, user));
   const agent = async (user: string, project: string) => {
     const client = await as(user);
-    const session = await client.startSession({ project, agent: "tracer" });
+    const session = await client.startSession({ project });
     return {
       run: async (tool: string, args: unknown) =>
         toolResult(await client.sendMessage(session.id, { content: call(tool, args) })),
@@ -314,7 +314,7 @@ describe("workspace backends", () => {
         expect(await files.stats("/p/big.bin")).toMatchObject({ size: 3 * 1024 * 1024 + 7 });
         expect(await files.exists("/p/.system/access")).toBe(false);
         const client = restClient(d, token);
-        const session = await client.startSession({ project: "p", agent: "tracer" });
+        const session = await client.startSession({ project: "p" });
         const turn = await client.sendMessage(session.id, {
           content: call("read", { path: "readme.md" }),
         });

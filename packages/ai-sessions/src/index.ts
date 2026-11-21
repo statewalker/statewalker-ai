@@ -13,6 +13,7 @@ export {
 export {
   type AgentMessage,
   type AgentPort,
+  type AgentRun,
   type AgentSessionConfig,
   type AgentSessionView,
   createSessionApi,
@@ -28,6 +29,7 @@ export {
   type Metadata,
   type ModelSubstitution,
   metadataOf,
+  type PinnedDefinitions,
   type ProfileView,
   type SecretBinding,
   type SecretLevel,

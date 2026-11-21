@@ -23,6 +23,15 @@ import {
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
+  type Allow,
+  definitionsView,
+  findAgent,
+  type NarrowedAgent,
+  narrowAgent,
+  type Plugin,
+  readPlugins,
+} from "@statewalker/ai-definitions";
+import {
   deploymentSecrets,
   FilesRpcHost,
   type FilesRpcMethod,
@@ -41,11 +50,15 @@ import {
 } from "@statewalker/ai-environment";
 import type {
   DeleteSecretRequest,
+  PinnedDefinitions,
   SecretScope,
   SecretView,
   SetSecretRequest,
 } from "@statewalker/ai-sessions";
-import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
+import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
+import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
+import { MemFilesApi } from "@statewalker/webrun-files-mem";
+import { agentRun, DefinitionsStore } from "./definitions-store.js";
 import { blockSizeOf, type Env, nameOf, verifyToken } from "./env.js";
 import { mountWorkspace } from "./workspace-store.js";
 
@@ -58,6 +71,9 @@ export class Workspace extends DurableObject<Env> {
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
   readonly #secrets: SecretStore;
+  readonly #definitions: DefinitionsStore;
+  /** The deployment catalog's plugins, read once from the CATALOG var. */
+  #deploymentPlugins?: Promise<{ plugins: Plugin[]; problems: string[] }>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -93,6 +109,7 @@ export class Workspace extends DurableObject<Env> {
     this.#roles = chainRoleSources(sources);
     // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
     this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
+    this.#definitions = new DefinitionsStore(sql);
   }
 
   /**
@@ -134,6 +151,133 @@ export class Workspace extends DurableObject<Env> {
     }
   }
 
+  /** The user's `<area>.use` permissions in a project, as the definitions ask for them. */
+  #allow(grants: readonly RoleGrant[]): Allow {
+    return (area, target) => decide(grants, { area, action: "use", target });
+  }
+
+  #readDeploymentPlugins() {
+    this.#deploymentPlugins ??= (async () => {
+      const sources = new MemFilesApi();
+      const files = this.env.CATALOG
+        ? (JSON.parse(this.env.CATALOG) as Record<string, string>)
+        : {};
+      for (const [path, text] of Object.entries(files))
+        await writeText(sources, normalise(path), text);
+      return readPlugins(sources, "/");
+    })();
+    return this.#deploymentPlugins;
+  }
+
+  /**
+   * The plugins of the three levels for a project: the deployment's catalog, the workspace's
+   * system folder and the project's `.system/plugins/`. A name taken at a broader level stays
+   * that level's: a project can't replace a deployment or workspace plugin.
+   */
+  async #plugins(project: string): Promise<Plugin[]> {
+    const store = await this.#store;
+    const levels = [
+      await this.#readDeploymentPlugins(),
+      await readPlugins(store, `/${DEFAULT_SYSTEM_FOLDER}/plugins`),
+      await readPlugins(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/plugins`),
+    ];
+    const plugins: Plugin[] = [];
+    const problems: string[] = [];
+    for (const level of levels) {
+      problems.push(...level.problems);
+      for (const p of level.plugins)
+        if (plugins.some((q) => q.name === p.name))
+          problems.push(`${p.name}: already loaded at a broader level; skipped`);
+        else plugins.push(p);
+    }
+    if (problems.length) console.warn(`plugins of ${project}: ${problems.join("; ")}`);
+    return plugins;
+  }
+
+  /**
+   * Pins the definitions of a new agent session (statewalker/statewalker-root#82, #128): the
+   * plugins of the three levels, kept by content hash, and the agent, picked and narrowed now. The
+   * agent asked for must be one the user may use (ENOENT otherwise, as for any absent thing);
+   * without one, the project's default (`.system/settings` `{"agent": ...}`) applies, then the
+   * deployment's, then the generic agent. Only a User DO calls this, with a user capability.
+   */
+  async pinDefinitions(
+    capability: string,
+    req: { session: string; project: string; agent?: string },
+  ): Promise<PinnedDefinitions> {
+    const user = await this.#authority.userOfUserCapability(capability);
+    const project = String(req.project);
+    const access = await this.#access(project, user);
+    if (!access.member) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    const plugins = await this.#plugins(project);
+    const catalog = await this.#definitions.catalogOf(plugins);
+    const allow = this.#allow(access.grants);
+    const usable = async (id: string | undefined) => {
+      if (!id) return undefined;
+      const agent = await findAgent(catalog, id);
+      return agent && (await allow("agents", agent.id)) ? agent : undefined;
+    };
+    let agent = await usable(req.agent);
+    if (req.agent && !agent) throw codedError("ENOENT", `no agent '${req.agent}' here`);
+    if (!agent) {
+      const settings = await tryReadText(
+        await this.#store,
+        `/${project}/${DEFAULT_SYSTEM_FOLDER}/settings`,
+      );
+      let projectDefault: string | undefined;
+      try {
+        const agentName = settings ? JSON.parse(settings)?.agent : undefined;
+        projectDefault = typeof agentName === "string" ? agentName : undefined;
+      } catch {
+        console.warn(`settings of ${project} are not JSON`);
+      }
+      agent = (await usable(projectDefault)) ?? (await usable(this.env.DEFAULT_AGENT));
+    }
+    const run: NarrowedAgent | undefined = agent
+      ? await narrowAgent(catalog, agent, allow)
+      : undefined;
+    for (const p of plugins) this.#definitions.keep(p);
+    this.#definitions.pin(
+      String(req.session),
+      user,
+      project,
+      plugins.map((p) => ({ name: p.name, hash: p.hash })),
+      run,
+    );
+    return run ? { agent: run.id, run: agentRun(run) } : { agent: "default" };
+  }
+
+  /**
+   * The store as an agent session sees it: its pinned definitions, filtered by the user's
+   * permissions at every call, mounted read-only at `<project>/.agents/` over the project.
+   */
+  async #withDefinitions(
+    store: FilesApi,
+    agent: { session: string; user: string; project: string },
+  ): Promise<FilesApi> {
+    const pinned = await this.#definitions.session(agent.session);
+    if (!pinned || pinned.user !== agent.user || pinned.project !== agent.project) return store;
+    // Roles are read again at most every quarter second: one listing asks for every entry.
+    let cached: { at: number; grants: Promise<readonly RoleGrant[]> } | undefined;
+    const grants = () => {
+      if (!cached || Date.now() - cached.at > 250) {
+        const read = this.#access(agent.project, agent.user).then((a) =>
+          a.member ? a.grants : [],
+        );
+        cached = { at: Date.now(), grants: read };
+        read.catch(() => {
+          cached = undefined;
+        });
+      }
+      return cached.grants;
+    };
+    const view = await definitionsView(pinned.catalog, {
+      allow: async (area, target) => this.#allow(await grants())(area, target),
+      ...(pinned.run ? { agent: pinned.run } : {}),
+    });
+    return new CompositeFilesApi(store).mount(`/${agent.project}/.agents`, view);
+  }
+
   /**
    * The gated view a capability holds, as a files-RPC endpoint. An agent session's capability sees
    * its project, with the ignore rules applied; the user capability of a user session sees every
@@ -142,9 +286,10 @@ export class Workspace extends DurableObject<Env> {
    * next call and the next block of a stream.
    */
   async #fileView(capability: string) {
-    const store = await this.#store;
+    const raw = await this.#store;
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
+    const store = agent ? await this.#withDefinitions(raw, agent) : raw;
     const options: GatedFilesOptions = {
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       blockSize: blockSizeOf(this.env),

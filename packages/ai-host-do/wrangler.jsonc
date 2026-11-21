@@ -38,7 +38,13 @@
     "IGNORE": "",
     // Bytes per block of every file stream; each block is authorized again.
     "FILE_BLOCK_SIZE": "1048576",
-    "TOKEN_TTL_MS": "3600000"
+    "TOKEN_TTL_MS": "3600000",
+    // The deployment's plugin catalog: JSON {"<path>": "<text>"} of plugin sources, one folder per
+    // plugin (Agent Plugins 1.0 or Claude Code layout). Workspaces add theirs in
+    // `/.system/plugins/`, projects in `<project>/.system/plugins/`.
+    "CATALOG": "{}",
+    // The default agent, `<plugin>/<agent>`, for projects whose `.system/settings` names none.
+    "DEFAULT_AGENT": ""
     // The S3 workspace backend's keys, set as runtime secrets, never vars:
     //   WORKSPACE_S3_ACCESS_KEY_ID, WORKSPACE_S3_SECRET_ACCESS_KEY
     // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:

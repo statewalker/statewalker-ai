@@ -56,6 +56,13 @@ export interface Env {
    * to every agent, `[{plugin, name, method?, url, headers?, query?}]`, called through the gateway.
    */
   REST_TOOLS?: string;
+  /**
+   * The deployment's plugin catalog: JSON `{"<path>": "<text>"}` of plugin sources, one folder per
+   * plugin, in the Agent Plugins 1.0 or Claude Code layout (statewalker/statewalker-root#82).
+   */
+  CATALOG?: string;
+  /** The deployment's default agent, `<plugin>/<agent>`, when a project names none. */
+  DEFAULT_AGENT?: string;
   /** Test-only: the SSE keep-alive interval in ms (30 s otherwise). */
   SSE_KEEPALIVE_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
