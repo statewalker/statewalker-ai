@@ -190,7 +190,7 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
   it("refuses to list another user's agent session", async () => {
     const ann = await as("ann");
     const session = await ann.startSession({ project: "alpha", agent: "tracer" });
-    await expect(ann.listItems(session.id)).resolves.toEqual({ items: [] });
+    await expect(ann.listItems(session.id)).resolves.toMatchObject({ items: [] });
     await expect((await as("bob")).listItems(session.id)).rejects.toMatchObject({ status: 404 });
   });
 

@@ -5,7 +5,13 @@
 import { DurableObject } from "cloudflare:workers";
 import { filesOverCalls } from "@statewalker/ai-environment";
 import { runFlueTurn } from "@statewalker/ai-flue";
-import { type AgentSessionConfig, AgentSessionCore } from "@statewalker/ai-sessions";
+import {
+  type AgentMessage,
+  type AgentSessionConfig,
+  AgentSessionCore,
+  type EventsQuery,
+  type ItemsQuery,
+} from "@statewalker/ai-sessions";
 import type { Env } from "./env.js";
 import { restTools } from "./rest-tools.js";
 
@@ -16,7 +22,7 @@ export class AgentSession extends DurableObject<Env> {
     super(ctx, env);
     this.#core = new AgentSessionCore({
       sql: ctx.storage.sql,
-      runTurn: ({ config, content }, emit) => {
+      runTurn: ({ config, content, signal, onSteer }, emit) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         return runFlueTurn(
           {
@@ -26,6 +32,8 @@ export class AgentSession extends DurableObject<Env> {
             files: filesOverCalls((call) => workspace.fileCall(config.capability, call)),
             model: { baseUrl: String(env.LLM_BASE_URL), model: env.LLM_MODEL || "default" },
             content,
+            signal,
+            onSteer,
             tools: restTools(env.REST_TOOLS, (call) =>
               workspace.gatewayFetch(config.capability, call),
             ),
@@ -40,11 +48,44 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.start(config);
   }
 
-  send(content: string) {
-    return this.#core.send(content);
+  send(message: AgentMessage) {
+    return this.#core.send(message);
   }
 
-  items() {
-    return this.#core.items();
+  turn(turnId: string) {
+    return this.#core.turn(turnId);
+  }
+
+  /** Waits for a turn to end (test-only admin route). */
+  waitTurn(turnId: string) {
+    return this.#core.waitTurn(turnId);
+  }
+
+  cancel(turnId: string) {
+    return this.#core.cancel(turnId);
+  }
+
+  items(query?: ItemsQuery) {
+    return this.#core.items(query);
+  }
+
+  item(itemId: string) {
+    return this.#core.item(itemId);
+  }
+
+  events(query?: EventsQuery) {
+    return this.#core.events(query);
+  }
+
+  status() {
+    return this.#core.status();
+  }
+
+  archive() {
+    return this.#core.archive();
+  }
+
+  purge() {
+    return this.#core.purge();
   }
 }

@@ -44,6 +44,9 @@ function sessionApi(env: Env, token: string) {
       startAgentSession: async (t, req) => (await user()).startAgentSession(t, req),
       ownAgentSession: async (t, id) => (await user()).ownAgentSession(t, id),
       listAgentSessions: async (t) => (await user()).listAgentSessions(t),
+      updateAgentSession: async (t, id, m) => (await user()).updateAgentSession(t, id, m),
+      archiveAgentSession: async (t, id) => (await user()).archiveAgentSession(t, id),
+      deleteAgentSession: async (t, id) => (await user()).deleteAgentSession(t, id),
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
       listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
@@ -54,8 +57,15 @@ function sessionApi(env: Env, token: string) {
       const agent = agentOf(env, id);
       return {
         start: (config) => agent.start(config),
-        send: (content) => agent.send(content),
-        items: () => agent.items(),
+        send: (message) => agent.send(message),
+        turn: (turnId) => agent.turn(turnId),
+        cancel: (turnId) => agent.cancel(turnId),
+        items: (query) => agent.items(query),
+        item: (itemId) => agent.item(itemId),
+        events: (query) => agent.events(query),
+        status: () => agent.status(),
+        archive: () => agent.archive(),
+        purge: () => agent.purge(),
       };
     },
   });
@@ -99,7 +109,9 @@ async function devRoutes(request: Request, env: Env, path: string) {
   if (collection === "sessions" && id && sub === "messages") {
     // Past the User DO, straight to the agent session: its turn's file calls go to the gate.
     if (typeof body.content !== "string") throw codedError("EINVAL", "content is required");
-    return json(await agentOf(env, id).send(body.content));
+    const agent = agentOf(env, id);
+    const { turn_id } = await agent.send({ content: body.content, delivery: "next", ignored: [] });
+    return json(await agent.waitTurn(turn_id));
   }
   return undefined;
 }
@@ -122,7 +134,9 @@ export default {
       if (path === "/v1/rpc") return rpcChannel(request, env);
       const dev = await devRoutes(request, env, path);
       if (dev) return dev;
-      const rest = await handleSessionRest(request, (token) => sessionApi(env, token));
+      const rest = await handleSessionRest(request, (token) => sessionApi(env, token), {
+        keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
+      });
       if (rest) return rest;
       return json({ error: "ENOENT: no such route" }, 404);
     } catch (e) {

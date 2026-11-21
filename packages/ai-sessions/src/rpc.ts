@@ -9,8 +9,16 @@ const CHANNEL = "statewalker-ai/session-api/v1";
 const METHODS = [
   "me",
   "startSession",
+  "getSession",
+  "updateSession",
+  "archiveSession",
+  "deleteSession",
   "sendMessage",
+  "getTurn",
+  "cancelTurn",
   "listItems",
+  "getItem",
+  "readEvents",
   "listSessions",
   "profile",
   "eraseUser",
@@ -67,16 +75,5 @@ export function sessionRpcClient(port: MessageTarget, token: string): SessionApi
     <T>(method: Method) =>
     (...args: unknown[]) =>
       authenticated.then(() => call<T>(method, args));
-  return {
-    me: after("me"),
-    startSession: after("startSession"),
-    sendMessage: after("sendMessage"),
-    listItems: after("listItems"),
-    listSessions: after("listSessions"),
-    profile: after("profile"),
-    eraseUser: after("eraseUser"),
-    listSecrets: after("listSecrets"),
-    setSecret: after("setSecret"),
-    deleteSecret: after("deleteSecret"),
-  } as SessionApi;
+  return Object.fromEntries(METHODS.map((m) => [m, after(m)])) as unknown as SessionApi;
 }
