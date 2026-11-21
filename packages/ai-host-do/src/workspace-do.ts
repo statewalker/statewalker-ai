@@ -7,11 +7,25 @@
 
 import { DurableObject } from "cloudflare:workers";
 import {
+  type AgentSessionFacts,
+  type ApprovalGrant,
+  ApprovalRegistry,
+  type ApprovalRequest,
   accessOf,
+  approvalId,
   chainRoleSources,
   codedError,
+  DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
+  decideMode,
+  type FileAction,
   fileRoleSource,
+  isMode,
+  type ModeDefinition,
+  modeOf,
+  PERMISSION_RULES_FILE,
+  type PermissionRules,
+  parseRules,
   type RoleEntries,
   type RoleSource,
   SqlRoleSource,
@@ -21,12 +35,20 @@ import {
 import {
   answerFileCall,
   type FileCall,
+  type FileOp,
   gatedFiles,
   normalise,
   SqlFiles,
 } from "@statewalker/ai-environment";
 import { tryReadText } from "@statewalker/webrun-files";
-import { type Env, nameOf, verifyToken } from "./env.js";
+import { deploymentModes, deploymentRules, type Env, nameOf, verifyToken } from "./env.js";
+
+/** Thrown inside the gate when the mode or a rule asks; the call answers with the request. */
+class NeedsApproval extends Error {
+  constructor(readonly request: ApprovalRequest) {
+    super(`needs approval ${request.id}`);
+  }
+}
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
@@ -34,6 +56,9 @@ export class Workspace extends DurableObject<Env> {
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
+  readonly #registry: ApprovalRegistry;
+  readonly #modes: Record<string, ModeDefinition>;
+  readonly #deploymentRules: PermissionRules;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -62,6 +87,9 @@ export class Workspace extends DurableObject<Env> {
       else if (name) throw codedError("EIO", `unknown role source '${name}'`);
     }
     this.#roles = chainRoleSources(sources);
+    this.#registry = new ApprovalRegistry(sql);
+    this.#modes = deploymentModes(env);
+    this.#deploymentRules = deploymentRules(env);
   }
 
   /**
@@ -97,7 +125,11 @@ export class Workspace extends DurableObject<Env> {
   /**
    * The gate: one file call of the agent session the capability names, decided now. User and
    * project come from the capability itself; the user's roles are read from the role sources at
-   * this moment, never fixed at the session's start, so a demotion reaches the next call.
+   * this moment, never fixed at the session's start, so a demotion reaches the next call. Then
+   * the permission rules of the deployment, the project, the user and the agent session, and the
+   * user session's current mode decide (statewalker/statewalker-root#124): a mode switch reaches
+   * the next call too. A call the mode asks about answers `{$approval}` unless the user granted
+   * that exact action.
    */
   async fileCall(capability: string, call: FileCall): Promise<unknown> {
     const facts = await this.#authority.agentSessionOf(capability);
@@ -105,10 +137,87 @@ export class Workspace extends DurableObject<Env> {
     const view = gatedFiles(this.#store, {
       project: facts.project,
       systemFolder: DEFAULT_SYSTEM_FOLDER,
-      authorize: (action, path) =>
-        this.#authority.authorize(capability, { action, path, project: facts.project, grants }),
+      authorize: async (action, path, op) => {
+        await this.#authority.authorize(capability, {
+          action,
+          path,
+          project: facts.project,
+          grants,
+        });
+        await this.#decide(facts, action, path, op);
+      },
     });
-    return answerFileCall(view, call);
+    try {
+      return await answerFileCall(view, call);
+    } catch (e) {
+      if (e instanceof NeedsApproval) return { $approval: e.request };
+      throw e;
+    }
+  }
+
+  /** The mode and the rules on an action the roles allow: allowed, EACCES, or NeedsApproval. */
+  async #decide(
+    facts: AgentSessionFacts,
+    action: FileAction,
+    path: string,
+    op: FileOp,
+  ): Promise<void> {
+    const state = this.#registry.userSession(facts.user);
+    const modeName = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
+    const mode = modeOf(modeName, this.#modes);
+    const root = `/${facts.project}`;
+    const target = path === root ? "/" : path.slice(root.length);
+    const projectRules = parseRules(
+      await tryReadText(this.#store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
+    );
+    const decision = decideMode(
+      { area: "files", action, target },
+      {
+        mode,
+        layers: [
+          { source: "deployment", rules: this.#deploymentRules },
+          { source: "project", rules: projectRules },
+          { source: "user", rules: state?.rules ?? {} },
+          { source: "session", rules: this.#registry.sessionRules(facts.session, facts.user) },
+        ],
+      },
+    );
+    if (decision.verdict === "allow") return;
+    if (decision.verdict === "deny")
+      throw codedError("EACCES", `may not ${action} '${path}': ${decision.reason}`);
+    const id = await approvalId(facts.session, op.method, path, op.content);
+    if (this.#registry.consume(id, facts.session, facts.user)) return;
+    throw new NeedsApproval({
+      id,
+      session: facts.session,
+      project: facts.project,
+      action: {
+        method: op.method,
+        path,
+        ...(op.content ? { size: op.content.length } : {}),
+      },
+      permission: `files.${action}:${target}`,
+      reason: decision.reason,
+    });
+  }
+
+  /**
+   * The user session's mode and the user's own rules, pushed by their User DO with its user
+   * capability (an agent session's capability is refused: only the user switches modes).
+   */
+  async setUserSession(
+    userCapability: string,
+    state: { mode: string; rules: PermissionRules },
+  ): Promise<void> {
+    const user = await this.#authority.userSessionOf(userCapability);
+    if (!isMode(state.mode, this.#modes)) throw codedError("EINVAL", `no mode '${state.mode}'`);
+    this.#registry.setUserSession(user, { mode: state.mode, rules: parseRules(state.rules) });
+  }
+
+  /** An approval the user granted, pushed by their User DO with its user capability. */
+  async grantApproval(userCapability: string, grant: ApprovalGrant): Promise<void> {
+    const user = await this.#authority.userSessionOf(userCapability);
+    this.#registry.grant(user, grant);
   }
 
   /**

@@ -6,8 +6,21 @@
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
 import { filesOverCalls } from "@statewalker/ai-environment";
-import { type StartSessionRequest, UserSessions } from "@statewalker/ai-sessions";
-import { type Env, nameOf, profilesOf, verifyToken, workspaceOf } from "./env.js";
+import {
+  type ApprovalAnswer,
+  type ApprovalRequest,
+  type StartSessionRequest,
+  UserSessions,
+} from "@statewalker/ai-sessions";
+import {
+  approvalTtlMs,
+  deploymentModes,
+  type Env,
+  nameOf,
+  profilesOf,
+  verifyToken,
+  workspaceOf,
+} from "./env.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
@@ -28,8 +41,12 @@ export class User extends DurableObject<Env> {
         return {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
+          setUserSession: (capability, state) => ws.setUserSession(capability, state),
+          grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
         };
       },
+      modes: deploymentModes(env),
+      approvalTtlMs: approvalTtlMs(env),
     });
   }
 
@@ -67,6 +84,26 @@ export class User extends DurableObject<Env> {
   async eraseUser(token: string) {
     await this.#reachable();
     return this.#sessions.eraseUser(token);
+  }
+
+  async setMode(token: string, mode: string) {
+    await this.#reachable();
+    return this.#sessions.setMode(token, mode);
+  }
+
+  async recordApprovals(token: string, session: string, requests: ApprovalRequest[]) {
+    await this.#reachable();
+    return this.#sessions.recordApprovals(token, session, requests);
+  }
+
+  async listApprovals(token: string) {
+    await this.#reachable();
+    return this.#sessions.listApprovals(token);
+  }
+
+  async answerApproval(token: string, id: string, answer: ApprovalAnswer) {
+    await this.#reachable();
+    return this.#sessions.answerApproval(token, id, answer);
   }
 
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */

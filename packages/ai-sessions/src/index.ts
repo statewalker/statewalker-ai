@@ -3,11 +3,20 @@
 // (statewalker/statewalker-root#111).
 
 export { codeOf, statusOf } from "@statewalker/ai-access";
-export { AgentSessionCore, type RunTurn } from "./agent-session.js";
+export {
+  type ActionCall,
+  AgentSessionCore,
+  type RunAction,
+  type RunTurn,
+} from "./agent-session.js";
 export {
   type AgentPort,
   type AgentSessionConfig,
   type AgentSessionView,
+  type AgentTurn,
+  type ApprovalAnswer,
+  type ApprovalRequest,
+  type ApprovalView,
   createSessionApi,
   type Item,
   type ItemInput,
@@ -16,6 +25,7 @@ export {
   type SessionApi,
   type SessionApiPorts,
   type StartSessionRequest,
+  type StoredAction,
   type TurnView,
   type UserPort,
   type UserSessionView,

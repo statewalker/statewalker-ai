@@ -28,7 +28,17 @@
     // custom roles in `.system/roles`; the workspace's admins in `/.system/access`) and "sql" (the
     // workspace's SQL). Each project is answered by the first source that knows it.
     "ROLE_SOURCES": "file",
-    "TOKEN_TTL_MS": "3600000"
+    "TOKEN_TTL_MS": "3600000",
+    // Optional: the deployment's permission rules, JSON {"allow": [...], "ask": [...], "deny": [...]},
+    // entries "area.action[:target]" or "tool:<name>", applied in every project and mode beside each
+    // project's `.system/permission-rules` and each user's `permission-rules` in their profile.
+    //   PERMISSION_RULES = "{\"deny\": [\"files.write:/.git/**\"]}"
+    // Optional: the deployment's own modes beside the built-in ones (default, acceptEdits, plan,
+    // auto, bypassPermissions, dontAsk), JSON {name: {extends?, rules?, folders?, otherwise?, asks?}};
+    // {"plan": {"extends": "plan", "folders": ["/docs/plans"]}} changes plan's folders.
+    //   MODES = "{}"
+    // How long a pending approval waits before it counts as denied, in ms (default 24 hours).
+    "APPROVAL_TTL_MS": "86400000"
     // Test-only, never set in a real deployment:
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":

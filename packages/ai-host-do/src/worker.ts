@@ -46,6 +46,11 @@ function sessionApi(env: Env, token: string) {
       listAgentSessions: async (t) => (await user()).listAgentSessions(t),
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
+      setMode: async (t, mode) => (await user()).setMode(t, mode),
+      recordApprovals: async (t, session, requests) =>
+        (await user()).recordApprovals(t, session, requests),
+      listApprovals: async (t) => (await user()).listApprovals(t),
+      answerApproval: async (t, id, answer) => (await user()).answerApproval(t, id, answer),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -53,6 +58,7 @@ function sessionApi(env: Env, token: string) {
         start: (config) => agent.start(config),
         send: (content) => agent.send(content),
         items: () => agent.items(),
+        answer: (approval, answer) => agent.answer(approval, answer),
       };
     },
   });

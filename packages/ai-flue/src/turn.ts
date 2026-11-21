@@ -5,7 +5,7 @@
 import { Agent } from "@earendil-works/pi-agent-core";
 import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions";
 import { registerApiProvider, streamSimple } from "@earendil-works/pi-ai/compat";
-import { createReadTool, bash as flueBash } from "@flue/runtime";
+import { createBashTool, createReadTool, createWriteTool, bash as flueBash } from "@flue/runtime";
 import type { ItemInput } from "@statewalker/ai-sessions";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
@@ -30,11 +30,19 @@ export interface FlueTurn {
   model: ModelConfig;
   /** The user's message. */
   content: string;
+  /**
+   * Whether a file call of this turn waits on the user's approval: the turn then ends at the
+   * pending call, Flue's approval-gate pattern (a tool result with `terminate`).
+   */
+  waiting?: () => boolean;
 }
 
-/** Flue's tools by name; the tracer offers `read` (tool sets come with definitions). */
-const TOOLS = { read: createReadTool } as const;
-export const TRACER_TOOLS: (keyof typeof TOOLS)[] = ["read"];
+/**
+ * Flue's tools by name; the tracer offers `read`, `write` and `bash` (tool sets come with
+ * definitions). Every file verb they use goes to the gate.
+ */
+const TOOLS = { read: createReadTool, write: createWriteTool, bash: createBashTool } as const;
+export const TRACER_TOOLS: (keyof typeof TOOLS)[] = ["read", "write", "bash"];
 
 let registered = false;
 function piModel(m: ModelConfig) {
@@ -121,6 +129,9 @@ export async function runFlueTurn(turn: FlueTurn, emit: (item: ItemInput) => voi
       tools: tools as never,
       messages: [],
     },
+    // A call waiting on an approval ends the turn: the model is not asked again until the user
+    // answers, and the answer continues the session.
+    afterToolCall: async () => (turn.waiting?.() ? { terminate: true, isError: true } : undefined),
   } as never);
   await agent.prompt(turn.content);
   await agent.waitForIdle();

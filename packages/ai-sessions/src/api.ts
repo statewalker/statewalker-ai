@@ -1,15 +1,37 @@
 // The session API (statewalker/statewalker-root#83), implemented once as methods. REST
 // (./rest.ts) and RPC (./rpc.ts) are thin routers onto these methods; every call is made with the
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
-import { codedError } from "@statewalker/ai-access";
+import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
+
+export type { ApprovalRequest };
+
+/** An approval as the session API lists it: the gate's request, and where it stands. */
+export interface ApprovalView extends ApprovalRequest {
+  workspace: string;
+  /** An unanswered approval past its time counts as denied: "expired". */
+  status: "pending" | "allowed" | "denied" | "expired";
+  created: number;
+  expires: number;
+}
+
+/** The user's answer to an approval (statewalker/statewalker-root#79). */
+export interface ApprovalAnswer {
+  decision: "allow" | "deny";
+  /** "session": the same permission on the same target, for the rest of the agent session. */
+  scope: "once" | "session";
+  /** Returned to the model with a denial. */
+  message?: string;
+}
 
 export interface UserSessionView {
   id: string;
   user: string;
   workspace: string;
-  /** The user session's mode (modes and their rules: a later ticket). */
+  /** The user session's mode: it decides every action of the user's agent sessions. */
   mode: string;
   created: number;
+  /** The pending approvals of the user's agent sessions in this workspace. */
+  approvals: ApprovalView[];
 }
 
 export interface AgentSessionView {
@@ -29,7 +51,7 @@ export interface ProfileView {
 
 /** What a turn adds to its session, in order. */
 export interface ItemInput {
-  kind: "message" | "tool_call" | "tool_result";
+  kind: "message" | "tool_call" | "tool_result" | "approval";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -37,6 +59,20 @@ export interface ItemInput {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** The approval an `approval` item waits on, or a resumed `tool_result` answers. */
+  approval?: string;
+  /** An `approval` item's request (the gate's). */
+  request?: ApprovalRequest;
+  /** An `approval` item's stored action: the exact file call, a write's content in base64. */
+  stored?: StoredAction;
+}
+
+/** The exact file call an approval runs, as the agent session stores it in its items. */
+export interface StoredAction {
+  method: "write" | "mkdir" | "remove";
+  path: string;
+  /** A write's content, base64. */
+  content?: string;
 }
 
 /** An item as stored and listed: numbered in its session, and tied to its turn. */
@@ -49,10 +85,18 @@ export interface Item extends ItemInput {
 export interface TurnView {
   id: string;
   session: string;
-  status: "completed" | "failed";
+  /** "pending": the turn ended waiting on the user's approvals. */
+  status: "completed" | "failed" | "pending";
   /** Why a turn failed. */
   error?: string;
   items: Item[];
+  /** The approvals a pending turn waits on. */
+  approvals?: ApprovalView[];
+}
+
+/** A turn as the agent session reports it: a pending one names the gate's requests. */
+export interface AgentTurn extends Omit<TurnView, "approvals"> {
+  requests?: ApprovalRequest[];
 }
 
 export interface SendMessageRequest {
@@ -80,6 +124,15 @@ export interface SessionApi {
   profile(): Promise<ProfileView>;
   /** Erases the caller: their profile and everything their User DO holds. */
   eraseUser(): Promise<{ erased: true }>;
+  /** Switches the user session's mode; running agent sessions follow at their next action. */
+  setMode(req: { mode: string }): Promise<UserSessionView>;
+  /** The approvals of the caller's agent sessions in the workspace, pending or answered. */
+  listApprovals(): Promise<{ approvals: ApprovalView[] }>;
+  /** Answers one of the caller's approvals; allowing re-checks and runs the stored action. */
+  answerApproval(
+    id: string,
+    answer: ApprovalAnswer,
+  ): Promise<{ approval: ApprovalView; turn: TurnView }>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -103,13 +156,25 @@ export interface UserPort {
   listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }>;
   profile(token: string): Promise<ProfileView>;
   eraseUser(token: string): Promise<{ erased: true }>;
+  setMode(token: string, mode: string): Promise<UserSessionView>;
+  /** Records what a pending turn of one of the caller's agent sessions waits on. */
+  recordApprovals(
+    token: string,
+    session: string,
+    requests: ApprovalRequest[],
+  ): Promise<ApprovalView[]>;
+  listApprovals(token: string): Promise<{ approvals: ApprovalView[] }>;
+  /** Answers one of the caller's pending approvals; an allow is granted at the gate first. */
+  answerApproval(token: string, id: string, answer: ApprovalAnswer): Promise<ApprovalView>;
 }
 
 /** One agent session DO's side of the API. */
 export interface AgentPort {
   start(config: AgentSessionConfig): Promise<void>;
-  send(content: string): Promise<TurnView>;
+  send(content: string): Promise<AgentTurn>;
   items(): Promise<Item[]>;
+  /** Continues the session with the user's answer: the stored action runs, or the denial is told. */
+  answer(approval: string, answer: ApprovalAnswer): Promise<AgentTurn>;
 }
 
 export interface SessionApiPorts {
@@ -128,7 +193,24 @@ function startRequest(req: unknown): StartSessionRequest {
   return { project, agent };
 }
 
+function approvalAnswer(answer: unknown): ApprovalAnswer {
+  const { decision, scope, message } = (answer ?? {}) as Record<string, unknown>;
+  if (decision !== "allow" && decision !== "deny")
+    throw codedError("EINVAL", "decision is allow or deny");
+  if (scope !== undefined && scope !== "once" && scope !== "session")
+    throw codedError("EINVAL", "scope is once or session");
+  if (message !== undefined && (typeof message !== "string" || message.length > 4000))
+    throw codedError("EINVAL", "message is a string of at most 4000 characters");
+  return { decision, scope: scope ?? "once", ...(message ? { message } : {}) };
+}
+
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
+  /** A turn as the caller sees it: a pending turn's requests recorded as the user's approvals. */
+  const view = async (session: string, turn: AgentTurn): Promise<TurnView> => {
+    const { requests, ...rest } = turn;
+    if (turn.status !== "pending" || !requests?.length) return rest;
+    return { ...rest, approvals: await ports.user.recordApprovals(token, session, requests) };
+  };
   return {
     me: () => ports.user.openUserSession(token),
     async startSession(req) {
@@ -141,7 +223,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       if (typeof content !== "string" || !content)
         throw codedError("EINVAL", "content must be a non-empty string");
       const session = await ports.user.ownAgentSession(token, String(sessionId));
-      return ports.agent(session.id).send(content);
+      return view(session.id, await ports.agent(session.id).send(content));
     },
     async listItems(sessionId) {
       const session = await ports.user.ownAgentSession(token, String(sessionId));
@@ -150,5 +232,17 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     listSessions: () => ports.user.listAgentSessions(token),
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
+    setMode(req) {
+      const mode = (req as { mode?: unknown } | undefined)?.mode;
+      if (typeof mode !== "string") throw codedError("EINVAL", "mode must be a mode's name");
+      return ports.user.setMode(token, mode);
+    },
+    listApprovals: () => ports.user.listApprovals(token),
+    async answerApproval(id, answer) {
+      const checked = approvalAnswer(answer);
+      const approval = await ports.user.answerApproval(token, String(id), checked);
+      const turn = await ports.agent(approval.session).answer(approval.id, checked);
+      return { approval, turn: await view(approval.session, turn) };
+    },
   };
 }

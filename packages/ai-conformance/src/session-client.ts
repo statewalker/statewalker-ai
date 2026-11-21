@@ -7,7 +7,7 @@ export interface Item {
   seq: number;
   id: string;
   turn: string;
-  kind: "message" | "tool_call" | "tool_result";
+  kind: "message" | "tool_call" | "tool_result" | "approval";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -15,6 +15,31 @@ export interface Item {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** The approval an `approval` item waits on, or a resumed `tool_result` answers. */
+  approval?: string;
+}
+
+/** An action waiting on the user's answer, as the session API lists it. */
+export interface Approval {
+  id: string;
+  session: string;
+  workspace: string;
+  project: string;
+  /** The stored action: the file method and its normalised path (and the size of a write). */
+  action: { method: string; path: string; size?: number };
+  /** The permission asked for, with its target relative to the project. */
+  permission: string;
+  /** Why the mode or a rule asks. */
+  reason: string;
+  status: "pending" | "allowed" | "denied" | "expired";
+  created: number;
+  expires: number;
+}
+
+export interface ApprovalAnswer {
+  decision: "allow" | "deny";
+  scope: "once" | "session";
+  message?: string;
 }
 
 export interface UserSession {
@@ -22,6 +47,8 @@ export interface UserSession {
   user: string;
   workspace: string;
   mode: string;
+  /** The pending approvals of the user's agent sessions in this workspace. */
+  approvals?: Approval[];
 }
 
 export interface AgentSession {
@@ -43,6 +70,8 @@ export interface Turn {
   session: string;
   status: string;
   items: Item[];
+  /** The approvals a pending turn waits on. */
+  approvals?: Approval[];
 }
 
 export interface SessionClient {
@@ -55,6 +84,12 @@ export interface SessionClient {
   profile(): Promise<Profile>;
   /** Erases the caller: their profile and their User DO's storage. */
   eraseUser(): Promise<{ erased: true }>;
+  /** Switches the user session's mode; it reaches running agent sessions at their next action. */
+  setMode(req: { mode: string }): Promise<UserSession>;
+  /** The approvals of the caller's agent sessions in the workspace, pending or answered. */
+  listApprovals(): Promise<{ approvals: Approval[] }>;
+  /** Answers an approval: the stored action runs (re-checked) or is refused. */
+  answerApproval(id: string, answer: ApprovalAnswer): Promise<{ approval: Approval; turn: Turn }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -91,6 +126,9 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     listSessions: () => call("GET", "/v1/sessions"),
     profile: () => call("GET", "/v1/me/profile"),
     eraseUser: () => call("DELETE", "/v1/me"),
+    setMode: (req) => call("PUT", "/v1/me/mode", req),
+    listApprovals: () => call("GET", "/v1/approvals"),
+    answerApproval: (id, answer) => call("POST", `/v1/approvals/${encodeURIComponent(id)}`, answer),
   };
 }
 

@@ -34,6 +34,10 @@ export async function handleSessionRest(
     if (route === "DELETE /me") return api().eraseUser();
     if (route === "POST /sessions") return api().startSession((await bodyOf(request)) as never);
     if (route === "GET /sessions") return api().listSessions();
+    if (route === "PUT /me/mode") return api().setMode((await bodyOf(request)) as never);
+    if (route === "GET /approvals") return api().listApprovals();
+    if (request.method === "POST" && parts[1] === "approvals" && parts[2] && parts.length === 3)
+      return api().answerApproval(parts[2], (await bodyOf(request)) as never);
     const [, collection, id, sub] = parts;
     if (collection === "sessions" && id && parts.length === 4) {
       if (request.method === "POST" && sub === "messages")

@@ -1,7 +1,7 @@
 // Capabilities (statewalker/statewalker-root#78, #80, amended by #157): each workspace's root key,
 // held only by its Workspace DO, signs one capability per user: the user capability, which the
 // user's User DO keeps in their user session. The User DO attenuates it for each agent session
-// (agent, project, mode) with one block, offline; the agent session holds that capability, never
+// (agent, project) with one block, offline; the agent session holds that capability, never
 // the access token. The gate reads user, project and session from the capability itself (the user
 // from the root-signed authority block, the rest from the first attenuation block), so it never
 // asks the User DO, and authorizes every file action with the permissions the member's roles grant
@@ -19,8 +19,8 @@ import {
 import { codedError } from "./errors.js";
 import { type RoleGrant, roleAuthorizer } from "./permissions.js";
 
-/** The file actions the gate authorizes: `files.read` and `files.list` for now. */
-export type FileAction = "read" | "list";
+/** The file actions the gate authorizes: `files.<action>`. */
+export type FileAction = "read" | "list" | "write" | "delete";
 
 /** A file action of an agent session, with the facts the Workspace DO knows when it happens. */
 export interface FileRequest {
@@ -33,12 +33,15 @@ export interface FileRequest {
   grants: readonly RoleGrant[];
 }
 
-/** What the User DO narrows a user capability to for one agent session. */
+/**
+ * What the User DO narrows a user capability to for one agent session. The mode is not in it: the
+ * user switches modes at any time, and the gate reads the current one at every action
+ * (statewalker/statewalker-root#124).
+ */
 export interface AgentSessionGrant {
   session: string;
   project: string;
   agent: string;
-  mode: string;
 }
 
 /** What an agent session's capability says: its user (root-signed) and its grant. */
@@ -58,10 +61,9 @@ check if resource($p), root($x), $p.starts_with($x);`;
 const AGENT_BLOCK = `agent_session({session});
 project({project});
 agent({agent});
-mode({mode});
 check if resource($p), $p.starts_with({root});`;
 
-const GRANT_FACTS = ["agent_session", "project", "agent", "mode"] as const;
+const GRANT_FACTS = ["agent_session", "project", "agent"] as const;
 
 /** A first-level folder or a user's name: one path segment, never "." or "..". */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/;
@@ -80,7 +82,6 @@ export function attenuateForAgentSession(userCapability: string, grant: AgentSes
         session: grant.session,
         project: grant.project,
         agent: grant.agent,
-        mode: grant.mode,
         root: `/${grant.project}/`,
       },
     })
@@ -145,8 +146,20 @@ export class WorkspaceAuthority {
   }
 
   /**
+   * The user of a bare user capability (the one a User DO holds for a user session), signed by
+   * this workspace's root key; EACCES for any other, an agent session's included. Only a user
+   * session switches its mode, sets its rules and answers its approvals.
+   */
+  async userSessionOf(capability: string): Promise<string> {
+    const verified = await this.#verify(capability);
+    if (verified.token.blocks.length !== 1)
+      throw codedError("EACCES", "not a user session's capability");
+    return this.#userOf(verified);
+  }
+
+  /**
    * What an agent session's capability says: the user from its root-signed authority block, and
-   * the session, project, agent and mode from its first attenuation block, which the User DO
+   * the session, project and agent from its first attenuation block, which the User DO
    * wrote. A capability without that block (a bare user capability) is refused: only agent
    * sessions reach the gate.
    */
@@ -171,7 +184,6 @@ export class WorkspaceAuthority {
       session: String(values.agent_session),
       project,
       agent: String(values.agent),
-      mode: String(values.mode),
     };
   }
 

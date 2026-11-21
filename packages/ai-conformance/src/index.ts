@@ -7,6 +7,8 @@ export {
   type AccessFixture,
   type AgentSession,
   ApiError,
+  type Approval,
+  type ApprovalAnswer,
   type Item,
   login,
   makeUserUnreachable,
