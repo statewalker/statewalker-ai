@@ -93,6 +93,8 @@ export async function handleSessionRest(
         project: url.searchParams.get("project") ?? "",
         discover: url.searchParams.get("discover") === "true",
       });
+    if (route === "GET /agents")
+      return api().listAgents({ project: url.searchParams.get("project") ?? undefined });
     if (route === "GET /limits/effective")
       return api().effectiveLimits({
         project: url.searchParams.get("project") ?? undefined,

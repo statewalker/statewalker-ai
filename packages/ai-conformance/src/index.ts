@@ -85,6 +85,7 @@ export {
   TERMINAL_EVENTS,
   type Topic,
   type Turn,
+  UHP_BASE_URL,
   type UIMessageChunk,
   type UsageGroup,
   type UsageQuery,

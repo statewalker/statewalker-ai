@@ -38,6 +38,7 @@ const METHODS = [
   "createServiceAccount",
   "deleteServiceAccount",
   "listModels",
+  "listAgents",
   "getModelConfig",
   "setModelConfig",
   "effectiveLimits",
