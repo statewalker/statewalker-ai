@@ -26,9 +26,12 @@ packages/
                      model, the threat-table check
 ```
 
-The packages are private skeletons until their tickets give them content; a package's first
-version is published once, by a human, and later releases go through CI (statewalker-root's
-release rules).
+`ai-access`, `ai-environment`, `ai-definitions`, `ai-sessions`, `ai-flue` and `ai-host-do` are
+published (the first usable release, statewalker/statewalker-root#132); the others are private
+skeletons until their tickets give them content. A package's first version is published once, by a
+human, and later releases go through CI (statewalker-root's release rules). In the workspace the
+packages export their TypeScript sources; `publishConfig.exports` points the published ones at
+`dist/`, built by tsdown.
 
 The previous agent stack is removed from this repository; its published versions stay on npm.
 What replaces each package:

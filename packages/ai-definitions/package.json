@@ -1,12 +1,34 @@
 {
   "name": "@statewalker/ai-definitions",
   "version": "0.0.0",
-  "private": true,
   "license": "MIT",
   "description": "Definitions: the plugin loader, the catalog, the per-role definitions mount, tool definitions in the restricted OpenAPI profile and their projections.",
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-definitions#readme",
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-definitions"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    }
   },
   "scripts": {
     "build": "tsdown",
@@ -25,5 +47,8 @@
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }
