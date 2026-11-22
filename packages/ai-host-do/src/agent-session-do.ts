@@ -379,12 +379,35 @@ export class AgentSession extends DurableObject<Env> {
         options: compaction.options,
       },
       runTurn: async (
-        { config, turn, content, continues, model, context, signal, onSteer, onApproval, waiting },
+        {
+          config,
+          turn,
+          content,
+          continues,
+          model,
+          context,
+          path,
+          signal,
+          onSteer,
+          onApproval,
+          waiting,
+        },
         emit,
       ) => {
-        // A remote agent session: the turn is one task of its UHP server (#144).
+        // A remote agent session: the turn is one task of its UHP server (#144), continuing from
+        // the remote response on the turn's path (statewalker/statewalker-ai#84).
         if (config.run?.remote) {
-          const run = { config, turn, content, context, signal, onSteer, onApproval, waiting };
+          const run = {
+            config,
+            turn,
+            content,
+            context,
+            ...(path ? { path } : {}),
+            signal,
+            onSteer,
+            onApproval,
+            waiting,
+          };
           return this.#remote.run(
             this.#remotePort(config, turn, emit),
             continues ? { ...run, continues: true } : run,

@@ -193,7 +193,7 @@ export class RemoteCore {
         return undefined;
       }
     }
-    if (!task) task = await this.#create(port, config, turn, run.content, emit);
+    if (!task) task = await this.#create(port, config, run, emit);
     try {
       await this.#drive(port, config, task, run, emit);
     } catch (e) {
@@ -207,14 +207,31 @@ export class RemoteCore {
     return undefined;
   }
 
+  /**
+   * The remote response a new task of the turn continues: the last ended task's on the turn's path
+   * (statewalker/statewalker-ai#84), so a rewind, a branch switch or an edit moves the remote
+   * session's head too (UHP's `previous_response_id` naming an earlier response). None on the path
+   * (rewound before the first task, or a fork's copied turns, which ran in another session): a
+   * fresh remote session. A run without a path continues from the task that ended last.
+   */
+  #previous(path: readonly string[] | undefined): string | undefined {
+    if (!path) return this.#state("last_response");
+    const row = this.#rows<{ response: string }>(
+      `SELECT response FROM uhp_tasks WHERE status = 'done' AND response IS NOT NULL
+        AND turn IN (SELECT value FROM json_each(?)) ORDER BY id DESC LIMIT 1`,
+      JSON.stringify(path),
+    )[0];
+    return row ? String(row.response) : undefined;
+  }
+
   async #create(
     port: RemotePort,
     config: AgentSessionConfig,
-    turn: string,
-    text: string,
+    run: TurnRun,
     emit: (item: ItemInput) => void,
   ): Promise<TaskRow> {
-    const previous = this.#state("last_response");
+    const { turn, content: text } = run;
+    const previous = this.#previous(run.path);
     let input: unknown[];
     if (previous) input = packInput(text);
     else {
