@@ -144,15 +144,21 @@ describe.each(transports)("definitions over %s", (name, connect) => {
       .split(/\s+/)
       .filter(Boolean)
       .sort();
+  /** The skills of a session's view, as `<plugin>/<name>`: one folder per plugin. */
+  const skillsOf = async (client: SessionClient, session: string) => {
+    const root = `/${alpha}/.agents/skills`;
+    const out: string[] = [];
+    for (const plugin of await ls(client, session, root))
+      for (const name of await ls(client, session, `${root}/${plugin}`))
+        out.push(`${plugin}/${name}`);
+    return out.sort();
+  };
 
-  it("mounts at <project>/.agents/ the skills and agents of all three levels, as <plugin>__<name>", async () => {
+  it("mounts at <project>/.agents/ the skills and agents of all three levels, skills nested by plugin and agents as <plugin>__<name>", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project: alpha, agent: "core/writer" });
     // The writer asks for core/summarize and team/*: only those skills show in its session.
-    expect(await ls(ann, s.id, `/${alpha}/.agents/skills`)).toEqual([
-      "core__summarize",
-      "team__standup",
-    ]);
+    expect(await skillsOf(ann, s.id)).toEqual(["core/summarize", "team/standup"]);
     expect(await ls(ann, s.id, `/${alpha}/.agents/agents`)).toEqual([
       "core__default.md",
       "core__writer.md",
@@ -160,7 +166,7 @@ describe.each(transports)("definitions over %s", (name, connect) => {
       "team__scrum.md",
     ]);
     const read = await run(ann, s.id, "read", {
-      path: `/${alpha}/.agents/skills/team__standup/SKILL.md`,
+      path: `/${alpha}/.agents/skills/team/standup/SKILL.md`,
     });
     expect(read).toMatchObject({ isError: false, output: skill("standup") });
   });
@@ -168,13 +174,14 @@ describe.each(transports)("definitions over %s", (name, connect) => {
   it("shows only what the role's skills.use and agents.use permissions allow", async () => {
     const cus = await as("cus");
     const s = await cus.startSession({ project: alpha, agent: "core/default" });
-    expect(await ls(cus, s.id, `/${alpha}/.agents/skills`)).toEqual(["core__summarize"]);
+    expect(await ls(cus, s.id, `/${alpha}/.agents/skills`)).toEqual(["core"]);
+    expect(await skillsOf(cus, s.id)).toEqual(["core/summarize"]);
     expect(await ls(cus, s.id, `/${alpha}/.agents/agents`)).toEqual([
       "core__default.md",
       "core__writer.md",
     ]);
     const hidden = await run(cus, s.id, "read", {
-      path: `/${alpha}/.agents/skills/core__audit/SKILL.md`,
+      path: `/${alpha}/.agents/skills/core/audit/SKILL.md`,
     });
     expect(hidden).toMatchObject({ isError: true });
     expect(hidden?.output).toMatch(/ENOENT/);
@@ -184,14 +191,14 @@ describe.each(transports)("definitions over %s", (name, connect) => {
     const eve = await as("eve");
     const s = await eve.startSession({ project: alpha });
     const write = await run(eve, s.id, "write", {
-      path: `/${alpha}/.agents/skills/core__summarize/SKILL.md`,
+      path: `/${alpha}/.agents/skills/core/summarize/SKILL.md`,
       content: "changed",
     });
     expect(write).toMatchObject({ isError: true });
     const rm = await run(eve, s.id, "bash", { command: `rm -r /${alpha}/.agents/skills` });
     expect(rm?.output).toMatch(/EACCES|read-only|ermission/);
     const after = await run(eve, s.id, "read", {
-      path: `/${alpha}/.agents/skills/core__summarize/SKILL.md`,
+      path: `/${alpha}/.agents/skills/core/summarize/SKILL.md`,
     });
     expect(after).toMatchObject({ isError: false, output: skill("summarize") });
   });
@@ -232,7 +239,7 @@ describe.each(transports)("definitions over %s", (name, connect) => {
 
   it("pins a session's definitions at start: a plugin update reaches only new sessions", async () => {
     const ann = await as("ann");
-    const path = `/${alpha}/.agents/skills/proj__house-style/SKILL.md`;
+    const path = `/${alpha}/.agents/skills/proj/house-style/SKILL.md`;
     const before = await ann.startSession({ project: alpha, agent: "proj/helper" });
     expect((await run(ann, before.id, "read", { path }))?.output).toBe(skill("house-style", "V1"));
     await seed(deployment, ADMIN_KEY, {
@@ -250,11 +257,11 @@ describe.each(transports)("definitions over %s", (name, connect) => {
     const ann = await as("ann");
     // The project's default agent asks for no skills list: every visible skill shows.
     const s = await ann.startSession({ project: alpha });
-    expect(await ls(ann, s.id, `/${alpha}/.agents/skills`)).toEqual([
-      "core__audit",
-      "core__summarize",
-      "proj__house-style",
-      "team__standup",
+    expect(await skillsOf(ann, s.id)).toEqual([
+      "core/audit",
+      "core/summarize",
+      "proj/house-style",
+      "team/standup",
     ]);
   });
 

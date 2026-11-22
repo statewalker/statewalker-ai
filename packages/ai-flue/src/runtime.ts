@@ -25,17 +25,20 @@ import {
   createGrepTool,
   createReadTool,
   createWriteTool,
+  defineSkill,
   bash as flueBash,
   observe,
   useAgentFinish,
   useModel,
   useSandbox,
+  useSkill,
 } from "@flue/runtime";
 import { runWithCloudflareContext } from "@flue/runtime/cloudflare/internal";
 import {
   configureFlueRuntime,
   createCloudflareAgentRuntime,
   createFlueContext,
+  parseSkillMarkdown,
   registerFlueAgents,
   resolveModel,
   setProvider,
@@ -55,7 +58,7 @@ import type {
   Steer,
   TurnOutcome,
 } from "@statewalker/ai-sessions";
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, readFile } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
 import { contextMessages } from "./context.js";
 import { FilesFs } from "./files-fs.js";
@@ -122,6 +125,11 @@ export interface FlueTurn {
    * sub-agent's are within its parent's (statewalker/statewalker-root#126).
    */
   allowTools?: readonly string[];
+  /**
+   * The plugins pinned for the session, broadest level first: a skill name two plugins share in
+   * the `.agents/` view goes to the first.
+   */
+  plugins?: readonly string[];
   /** Aborts the turn: it stops at once, keeping what it reported so far. */
   signal?: AbortSignal;
   /**
@@ -203,6 +211,8 @@ interface LiveTurn {
   items: ItemInput[];
   /** Steered messages not yet handed to the model. */
   steers: Steer[];
+  /** The view's skills registered with Flue for this turn. */
+  skills: unknown[];
   /** One entry per model call, taken by its answer's message (in order). */
   answers: Answer[];
   /** The names of the secrets each host tool call used, by tool call id (never the values). */
@@ -591,6 +601,8 @@ function HarnessAgent(props: { id: string }) {
   );
   // A message steered while the model answered its last step continues the turn: Flue runs one
   // more step, whose model call takes it.
+  // The skills of the `.agents/` view, as Flue skills (its catalog, `activate_skill`).
+  for (const skill of live?.skills ?? []) useSkill(skill as never);
   useAgentFinish(({ append }) => {
     const current = LIVE.get(session);
     if (current && !current.closed && current.steers.length)
@@ -688,6 +700,8 @@ configureFlueRuntime({
  */
 export class FlueSession {
   readonly #instance: Instance;
+  /** Skills read from the view, by folder: a session's definitions are pinned, so never stale. */
+  readonly #skillCache = new Map<string, unknown>();
   #started?: Promise<void>;
 
   constructor(options: { state: FlueHostState; env: unknown; session: string }) {
@@ -729,6 +743,57 @@ export class FlueSession {
     return this.#started;
   }
 
+  /**
+   * The skills the session's `.agents/` view shows now (`skills/<plugin>/<name>/`), as Flue skill
+   * definitions, read through the gated view. Flue's catalog is flat: on a name two plugins share,
+   * the first in pinned order holds it and the other is reported; a skill Flue can't take (its
+   * name not its folder's, or not an Agent Skills name) is reported and left out.
+   */
+  async #skills(turn: FlueTurn): Promise<unknown[]> {
+    const root = `/${turn.project}/.agents/skills`;
+    const names = async (path: string, kind: "file" | "directory") => {
+      const out: string[] = [];
+      try {
+        for await (const e of turn.files.list(path)) if (e.kind === kind) out.push(e.name);
+      } catch {
+        // No view, or nothing visible.
+      }
+      return out.sort();
+    };
+    const order = turn.plugins ?? [];
+    const rank = (p: string) => (order.includes(p) ? order.indexOf(p) : order.length);
+    const plugins = (await names(root, "directory")).sort((a, b) => rank(a) - rank(b));
+    const skills: unknown[] = [];
+    const holder = new Map<string, string>();
+    for (const plugin of plugins)
+      for (const name of await names(`${root}/${plugin}`, "directory")) {
+        const dir = `${root}/${plugin}/${name}`;
+        const taken = holder.get(name);
+        if (taken) {
+          console.warn(
+            `[harness] skill ${plugin}/${name} not registered: ${taken}/${name} holds the name`,
+          );
+          continue;
+        }
+        let skill = this.#skillCache.get(dir);
+        if (!skill) {
+          try {
+            skill = await readSkill(turn.files, dir, name);
+          } catch (e) {
+            console.warn(
+              `[harness] skill ${plugin}/${name} not registered: ${(e as Error)?.message ?? e}`,
+            );
+            continue;
+          }
+          if (!skill) continue;
+          this.#skillCache.set(dir, skill);
+        }
+        holder.set(name, plugin);
+        skills.push(skill);
+      }
+    return skills;
+  }
+
   /** The DO's alarm: Flue's heartbeat over unsettled submissions. */
   async alarm(): Promise<void> {
     await this.#start();
@@ -754,6 +819,7 @@ export class FlueSession {
       submission,
       items: [],
       steers: [],
+      skills: [],
       answers: [],
       secrets: new Map(),
       outcome,
@@ -769,6 +835,7 @@ export class FlueSession {
         settle = resolve;
       }),
     };
+    live.skills = await this.#skills(turn);
     LIVE.set(session, live);
     BY_SUBMISSION.set(submission, live);
     turn.onSteer?.((steer) => {
@@ -826,6 +893,27 @@ export class FlueSession {
       BY_SUBMISSION.delete(submission);
     }
   }
+}
+
+/**
+ * One skill folder of the view as a Flue skill: its SKILL.md (front matter and instructions) and
+ * every other file of the folder as a resource. Nothing when the folder has no SKILL.md.
+ */
+async function readSkill(files: FilesApi, dir: string, name: string): Promise<unknown> {
+  if (!(await files.exists(`${dir}/SKILL.md`))) return undefined;
+  const text = new TextDecoder().decode(await readFile(files, `${dir}/SKILL.md`));
+  const parsed = parseSkillMarkdown(text, { directoryName: name, path: `${dir}/SKILL.md` });
+  const resources: Record<string, Uint8Array> = {};
+  for await (const e of files.list(dir, { recursive: true }))
+    if (e.kind === "file" && e.path !== `${dir}/SKILL.md`)
+      resources[e.path.slice(dir.length + 1)] = await readFile(files, e.path);
+  return defineSkill({
+    name: parsed.name,
+    description: parsed.description,
+    instructions: parsed.body.trim() || parsed.description,
+    ...(parsed.license ? { license: parsed.license } : {}),
+    ...(Object.keys(resources).length ? { files: resources } : {}),
+  });
 }
 
 /**
