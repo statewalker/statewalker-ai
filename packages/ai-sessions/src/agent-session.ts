@@ -114,7 +114,7 @@ function callOf(stored: StoredAction): ActionCall {
     method: stored.method,
     path: stored.path,
     ...(stored.target !== undefined ? { target: stored.target } : {}),
-    ...(stored.method === "write" || stored.method === "db"
+    ...(stored.method === "write" || stored.method === "db" || stored.method === "tool"
       ? { content: fromBase64(stored.content ?? "") }
       : {}),
   };
@@ -210,7 +210,8 @@ function pageSize(limit: unknown, fallback: number): number {
   return Math.min(n, MAX_PAGE);
 }
 
-export class AgentSessionCore implements AgentPort {
+/** The core is an agent session DO's side of the API, but for its MCP endpoint (the host's). */
+export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   readonly #sql: SqlLike;
   readonly #runTurn: RunTurn;
   readonly #runAction: RunAction;
@@ -607,6 +608,16 @@ export class AgentSessionCore implements AgentPort {
       if (done && typeof done === "object" && "$approval" in done) {
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });
+      } else if (method === "tool" && done && typeof done === "object" && "output" in done) {
+        // A tool's answer, as the tool would have answered it (the secrets it used by name).
+        const r = done as { output: unknown; isError?: boolean; secrets?: string[] };
+        this.#append(turn, {
+          kind: "tool_result",
+          approval: answer.approval,
+          output: String(r.output),
+          isError: !!r.isError,
+          ...(r.secrets?.length ? { secrets: r.secrets } : {}),
+        });
       } else if (method === "db" && done !== null && done !== undefined)
         // A database query's answer: its rows, as the tool would have answered them.
         result(`db ${path}: ${rowsText(done)}`, false);

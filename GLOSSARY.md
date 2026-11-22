@@ -249,6 +249,15 @@ _Avoid_: plugin, function
 **Tool definition**:
 An OpenAPI document, in the harness's restricted profile, describing one tool: its input, its output, and how the harness reaches it.
 
+**REST tool**:
+A tool imported from an existing REST API's OpenAPI spec (`tools/rest/` in a plugin's extension directory): its parameters are flattened into one input, and the harness rebuilds each call from its route and adds the key from the secrets.
+
+**Tool set**:
+The tools one agent session is offered: what its agent requests, its user's role grants and the mode does not deny; its model and its MCP endpoint see exactly this set.
+
+**Session MCP endpoint**:
+An agent session's own MCP endpoint (`/v1/sessions/{id}/mcp`), listing and calling exactly its tool set.
+
 **Native tool**:
 A tool written as code (TS, JS, Python, …) in a plugin, built by the harness and run in an isolate.
 

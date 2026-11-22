@@ -262,6 +262,22 @@ export const TERMINAL_EVENTS = [
   "turn.interrupted",
 ];
 
+/** A JSON-RPC 2.0 message of MCP (a request or a notification). */
+export interface McpMessage {
+  jsonrpc: "2.0";
+  id?: number | string;
+  method: string;
+  params?: unknown;
+}
+
+/** A JSON-RPC 2.0 response of MCP. */
+export interface McpResponse {
+  jsonrpc: "2.0";
+  id: number | string | null;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
+}
+
 export interface SessionClient {
   me(): Promise<UserSession>;
   startSession(req: {
@@ -339,6 +355,11 @@ export interface SessionClient {
     sessionId: string,
     from?: { turn?: string; since?: number },
   ): Promise<ReadableStream<UIMessageChunk> | null>;
+  /**
+   * One message to an agent session's own MCP endpoint (`POST /v1/sessions/{id}/mcp`, JSON
+   * responses): its answer, or null for a notification.
+   */
+  mcp(sessionId: string, message: McpMessage): Promise<McpResponse | null>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -558,6 +579,15 @@ export function restClient(deployment: Deployment, token: string): SessionClient
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
+    async mcp(id, message) {
+      const res = await deployment.fetch(`${s(id)}/mcp`, {
+        method: "POST",
+        headers: { ...headers, accept: "application/json, text/event-stream" },
+        body: JSON.stringify(message),
+      });
+      if (res.status === 202) return null;
+      return answer(res);
+    },
   };
   return client;
 }

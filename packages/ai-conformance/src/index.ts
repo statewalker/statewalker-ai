@@ -36,6 +36,8 @@ export {
   type ItemsPage,
   type ItemsQuery,
   login,
+  type McpMessage,
+  type McpResponse,
   type MessageAccepted,
   type MessageRequest,
   type Metadata,

@@ -61,6 +61,7 @@ export {
   parseRules,
   type ResolvedMode,
   type RuleLayer,
+  toolRequest,
   type Verdict,
 } from "./modes.js";
 export {

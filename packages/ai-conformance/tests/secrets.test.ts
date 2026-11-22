@@ -50,7 +50,52 @@ let model: FakeModel;
 let rest: FakeRest;
 let deployment: Deployment;
 
-const bearer = (name: string) => ({ authorization: `Bearer {{secret:${name}}}` });
+const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+/** GET operations, each sending a bearer key from the named secret (or none). */
+const spec = (server: string, ops: Record<string, string | null>) => ({
+  openapi: "3.1.0",
+  info: { title: "fixture", version: "1" },
+  servers: [{ url: server }],
+  components: {
+    securitySchemes: Object.fromEntries(
+      [...new Set(Object.values(ops).filter((x): x is string => !!x))].map((secret) => [
+        secret,
+        { type: "http", scheme: "bearer", "x-dev.cellb.harness": { secret } },
+      ]),
+    ),
+  },
+  paths: Object.fromEntries(
+    Object.entries(ops).map(([op, secret]) => [
+      `/${op}`,
+      {
+        get: {
+          operationId: op,
+          security: secret ? [{ [secret]: [] }] : [],
+          ...(op === "search"
+            ? { parameters: [{ name: "q", in: "query", schema: { type: "string" } }] }
+            : {}),
+        },
+      },
+    ]),
+  ),
+});
+const catalog = (base: string, other: string) => ({
+  "/fixture/plugin.json": JSON.stringify({ $schema: AP, name: "fixture" }),
+  "/fixture/dev.cellb.harness/agents/default.md":
+    "---\nname: default\ntools: [fixture/*, other/*]\n---\n",
+  "/fixture/dev.cellb.harness/tools/rest/api.json": JSON.stringify(
+    spec(base, { call: "API_TOKEN", echo: "API_TOKEN", deploy: "DEPLOY_TOKEN", search: null }),
+  ),
+  "/fixture/dev.cellb.harness/tools/rest/away.json": JSON.stringify({
+    ...spec(other, { elsewhere: "API_TOKEN" }),
+    paths: { "/away": { get: { operationId: "elsewhere", security: [{ API_TOKEN: [] }] } } },
+  }),
+  "/other/plugin.json": JSON.stringify({ $schema: AP, name: "other" }),
+  "/other/dev.cellb.harness/tools/rest/api.json": JSON.stringify({
+    ...spec(base, { call: "API_TOKEN" }),
+    paths: { "/other": { get: { operationId: "call", security: [{ API_TOKEN: [] }] } } },
+  }),
+});
 
 beforeAll(async () => {
   model = await fakeModel();
@@ -65,19 +110,10 @@ beforeAll(async () => {
     DEPLOYMENT_SECRETS: JSON.stringify({
       DEPLOY_TOKEN: { plugins: ["fixture"], hosts: ["127.0.0.1"] },
     }),
-    REST_TOOLS: JSON.stringify([
-      { plugin: "fixture", name: "call", url: `${rest.url}/call`, headers: bearer("API_TOKEN") },
-      { plugin: "fixture", name: "echo", url: `${rest.url}/echo`, headers: bearer("API_TOKEN") },
-      { plugin: "fixture", name: "elsewhere", url: `${other}/away`, headers: bearer("API_TOKEN") },
-      { plugin: "other", name: "call", url: `${rest.url}/other`, headers: bearer("API_TOKEN") },
-      {
-        plugin: "fixture",
-        name: "deploy",
-        url: `${rest.url}/deploy`,
-        headers: bearer("DEPLOY_TOKEN"),
-      },
-      { plugin: "fixture", name: "search", url: `${rest.url}/search`, query: ["q"] },
-    ]),
+    // The REST tools of two plugins, imported from OpenAPI specs (#129); the key's placeholder is
+    // the route's, never the model's.
+    CATALOG: JSON.stringify(catalog(rest.url, other)),
+    DEFAULT_AGENT: "fixture/default",
   });
   await seed(deployment, ADMIN_KEY, {
     "/.system/access": perTransport({ wendy: "admin" }),

@@ -16,7 +16,6 @@ export {
   catalogPlugins,
   catalogSkills,
   catalogTools,
-  OPERATION_ID,
 } from "./catalog.js";
 export { type FrontMatter, formatFrontMatter, parseFrontMatter } from "./front-matter.js";
 export {
@@ -35,4 +34,27 @@ export {
   readPlugins,
   writePlugin,
 } from "./loader.js";
+export {
+  catalogToolDefinitions,
+  closedSchema,
+  type JsonSchema,
+  nativeTools,
+  OPERATION_ID,
+  type RestAuth,
+  type RestParam,
+  restRequest,
+  restTools,
+  TOOL_EXTENSION,
+  type ToolAction,
+  type ToolDefinition,
+  type ToolExtension,
+  type ToolRoute,
+  type ToolSource,
+  toMcpTool,
+  toolDefinition,
+  toolExtension,
+  toolInput,
+  toolName,
+  toolOutput,
+} from "./tools.js";
 export { type DefinitionsViewOptions, definitionsView } from "./view.js";
