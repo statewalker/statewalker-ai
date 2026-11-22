@@ -186,7 +186,7 @@ describe.each(transports)("sub-agents over %s", (name, connect) => {
       }),
     );
     // Answering it continues the grandchild, which writes.
-    const answered = await dee.answerApproval(String(approval?.id), { decision: "allow" });
+    const answered = await dee.answerApproval(String(approval?.id), { decision: "allow", scope: "once" });
     const done = await dee.waitTurn(answered.accepted);
     expect(done.items.filter((i) => i.kind === "tool_result")).toEqual([
       expect.objectContaining({ isError: false }),

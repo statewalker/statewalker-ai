@@ -147,7 +147,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("ends the turn waiting on an approval when the mode asks, listed on /v1/me and /v1/approvals", async () => {
     const ann = await as("ann");
     expect((await ann.me()).mode).toBe("default");
-    const s = await ann.startSession({ project: "proj", agent: "modes" });
+    const s = await ann.startSession({ project: "proj" });
     const turn = await ann.sendMessage(s.id, { content: write("notes/a.md", "from ann\n") });
     const approval = await approvalOf(ann, turn);
     expect(approval).toMatchObject({
@@ -174,7 +174,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("approving runs exactly the stored action, once", async () => {
     const bob = await as("bob");
-    const s = await bob.startSession({ project: "proj", agent: "modes" });
+    const s = await bob.startSession({ project: "proj" });
     const approval = await approvalOf(
       bob,
       await bob.sendMessage(s.id, { content: write("notes/b.md", "stored\n") }),
@@ -199,7 +199,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("denying returns the user's message to the model and writes nothing", async () => {
     const cy = await as("cy");
-    const s = await cy.startSession({ project: "proj", agent: "modes" });
+    const s = await cy.startSession({ project: "proj" });
     const approval = await approvalOf(
       cy,
       await cy.sendMessage(s.id, { content: write("notes/c.md", "no\n") }),
@@ -217,7 +217,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("a repeated identical action waits on the same approval", async () => {
     const dee = await as("dee");
-    const s = await dee.startSession({ project: "proj", agent: "modes" });
+    const s = await dee.startSession({ project: "proj" });
     const first = await approvalOf(
       dee,
       await dee.sendMessage(s.id, { content: write("notes/d.md", "x\n") }),
@@ -239,7 +239,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("mkdir -p of an existing folder does not ask", async () => {
     const eli = await as("eli");
-    const s = await eli.startSession({ project: "proj", agent: "modes" });
+    const s = await eli.startSession({ project: "proj" });
     const turn = await eli.sendMessage(s.id, { content: bash("mkdir -p /proj/notes") });
     expect(turn.status).toBe("completed");
     expect(turn.stop_reason).toMatchObject({ type: "end_turn" });
@@ -252,7 +252,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("a mode switch reaches a running session at its next action", async () => {
     const fay = await as("fay");
-    const s = await fay.startSession({ project: "proj", agent: "modes" });
+    const s = await fay.startSession({ project: "proj" });
     await approvalOf(fay, await fay.sendMessage(s.id, { content: write("notes/f.md", "1\n") }));
 
     expect(await fay.setMode({ mode: "acceptEdits" })).toMatchObject({ mode: "acceptEdits" });
@@ -296,14 +296,14 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
       (await connect(deployment, "")).setMode({ mode: "dontAsk" }),
     ).rejects.toMatchObject({ status: 401 });
     await gus.setMode({ mode: "bypassPermissions" });
-    const s = await hal.startSession({ project: "proj", agent: "modes" });
+    const s = await hal.startSession({ project: "proj" });
     expect((await hal.me()).mode).toBe("default");
     await approvalOf(hal, await hal.sendMessage(s.id, { content: write("notes/h.md", "h\n") }));
   });
 
   it("approving re-checks the stored action against the current mode", async () => {
     const ivy = await as("ivy");
-    const s = await ivy.startSession({ project: "proj", agent: "modes" });
+    const s = await ivy.startSession({ project: "proj" });
     const approval = await approvalOf(
       ivy,
       await ivy.sendMessage(s.id, { content: write("notes/i.md", "i\n") }),
@@ -319,7 +319,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("approving re-checks the stored action against the user's current role", async () => {
     const project = `demote-${t}`;
     const dan = await as("dan");
-    const s = await dan.startSession({ project, agent: "modes" });
+    const s = await dan.startSession({ project });
     const approval = await approvalOf(
       dan,
       await dan.sendMessage(s.id, { content: write("notes/a.md", "changed\n") }),
@@ -334,7 +334,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("approving for the session lets the same action on the same target run for the rest of it", async () => {
     const jo = await as("jo");
-    const s = await jo.startSession({ project: "proj", agent: "modes" });
+    const s = await jo.startSession({ project: "proj" });
     const approval = await approvalOf(
       jo,
       await jo.sendMessage(s.id, { content: write("notes/j.md", "1\n") }),
@@ -346,13 +346,13 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(await contentOf(jo, s.id, "notes/j.md")).toBe("2\n");
     // Another target, or another session, still asks.
     await approvalOf(jo, await jo.sendMessage(s.id, { content: write("notes/other.md", "x\n") }));
-    const s2 = await jo.startSession({ project: "proj", agent: "modes" });
+    const s2 = await jo.startSession({ project: "proj" });
     await approvalOf(jo, await jo.sendMessage(s2.id, { content: write("notes/j.md", "3\n") }));
   });
 
   it("decides by the rules of the deployment, the project, the user and the mode: deny beats ask, ask beats allow", async () => {
     const kit = await as("kit");
-    const s = await kit.startSession({ project: "proj", agent: "modes" });
+    const s = await kit.startSession({ project: "proj" });
     // The project allows writes in /scratch, and asks in /scratch/keep (ask beats allow).
     expect((await kit.sendMessage(s.id, { content: write("scratch/a.md", "a\n") })).status).toBe(
       "completed",
@@ -372,7 +372,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     // lee's own rules deny deletes.
     const lee = await as("lee");
     await lee.setMode({ mode: "bypassPermissions" });
-    const ls = await lee.startSession({ project: "proj", agent: "modes" });
+    const ls = await lee.startSession({ project: "proj" });
     const removed = await lee.sendMessage(ls.id, { content: bash("rm /proj/readme.md") });
     expect(removed.status).toBe("completed");
     expect(await contentOf(lee, ls.id, "readme.md")).toBe("# proj\n");
@@ -382,7 +382,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     const mo = await as("mo");
     await mo.setMode({ mode: "bypassPermissions" });
     // A project with no rules of its own: only the gate's own guard stands in the way.
-    const s = await mo.startSession({ project: `bare-${t}`, agent: "modes" });
+    const s = await mo.startSession({ project: `bare-${t}` });
     const turn = await mo.sendMessage(s.id, { content: bash(`rm -r /bare-${t}`) });
     expect(turn.status).toBe("completed");
     expect(toolResult(turn)?.output).toMatch(/EACCES/);
@@ -392,7 +392,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
   it("decides a folder's removal by every entry inside it: a denied or asking file inside denies or asks", async () => {
     const ned = await as("ned");
     await ned.setMode({ mode: "bypassPermissions" });
-    const s = await ned.startSession({ project: "proj", agent: "modes" });
+    const s = await ned.startSession({ project: "proj" });
     const denied = await ned.sendMessage(s.id, { content: bash(`rm -r /proj/guarded-${t}`) });
     expect(toolResult(denied)?.output).toMatch(/EACCES/);
     expect(await contentOf(ned, s.id, `guarded-${t}/keep.md`)).toBe("keep me\n");
@@ -410,7 +410,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("approving a folder for the session never covers the files later written inside it", async () => {
     const oz = await as("oz");
-    const s = await oz.startSession({ project: "proj", agent: "modes" });
+    const s = await oz.startSession({ project: "proj" });
     const made = await approvalOf(
       oz,
       await oz.sendMessage(s.id, { content: bash(`mkdir /proj/src-${t}`) }),
@@ -424,7 +424,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("asks about a move, keyed by source and target, and approving runs exactly that move", async () => {
     const pat = await as("pat");
-    const s = await pat.startSession({ project: "proj", agent: "modes" });
+    const s = await pat.startSession({ project: "proj" });
     const moved = await approvalOf(
       pat,
       await pat.sendMessage(s.id, {
@@ -450,7 +450,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("an approval is answered only by its own user", async () => {
     const ann = await as("ann");
-    const s = await ann.startSession({ project: "proj", agent: "modes" });
+    const s = await ann.startSession({ project: "proj" });
     const approval = await approvalOf(
       ann,
       await ann.sendMessage(s.id, { content: write("notes/mine.md", "m\n") }),
@@ -467,7 +467,7 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
 
   it("approvals expire after their time and then count as denied", async () => {
     const ann = await as("ann", shortLived);
-    const s = await ann.startSession({ project: "proj", agent: "modes" });
+    const s = await ann.startSession({ project: "proj" });
     const approval = await approvalOf(
       ann,
       await ann.sendMessage(s.id, { content: write("notes/late.md", "late\n") }),

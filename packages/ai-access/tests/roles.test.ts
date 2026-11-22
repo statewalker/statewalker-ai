@@ -62,13 +62,29 @@ describe("built-in roles", () => {
     expect(can(editor, "tasks", "subscribe", "jobs.>")).toBe(true);
   });
 
-  it("give no built-in role the network or remote agents", () => {
+  it("give no built-in role the network", () => {
     for (const role of ["owner", "editor", "reader", "admin"]) {
       const { grants } = resolveRoles([role], {});
       expect(can(grants, "net", "read", "example.com")).toBe(false);
       expect(can(grants, "net", "write", "example.com")).toBe(false);
-      expect(can(grants, "agents", "use", "remote/claude")).toBe(false);
     }
+  });
+
+  it("let every project role use the plugins' skills and agents, and editors and owners their tools", () => {
+    for (const role of ["owner", "editor", "reader"]) {
+      const { grants } = resolveRoles([role], {});
+      expect(can(grants, "skills", "use", "notes/summarize")).toBe(true);
+      expect(can(grants, "agents", "use", "notes/writer")).toBe(true);
+    }
+    expect(can(resolveRoles(["owner"], {}).grants, "tools", "use", "notes/word_count")).toBe(true);
+    expect(can(resolveRoles(["editor"], {}).grants, "tools", "use", "notes/word_count")).toBe(true);
+    expect(can(resolveRoles(["reader"], {}).grants, "tools", "use", "notes/word_count")).toBe(
+      false,
+    );
+    // The workspace admin is no project role: no plugin items.
+    expect(can(resolveRoles(["admin"], {}).grants, "agents", "use", "notes/writer")).toBe(false);
+    // `*.*` in a custom role never reaches agents: they are granted by name.
+    expect(can(resolveRoles(["all"], { all: "*.*" }).grants, "agents", "use", "a/b")).toBe(false);
   });
 
   it("grant secrets.write only by name: the owner a project's, the admin the workspace's", () => {

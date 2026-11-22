@@ -81,6 +81,7 @@ export class AgentSession extends DurableObject<Env> {
           {
             id: config.id,
             agent: config.agent,
+            ...(config.run ? { instructions: config.run.instructions } : {}),
             project: config.project,
             files: approvalAware(
               filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
@@ -88,7 +89,12 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            model: { baseUrl: String(env.LLM_BASE_URL), model: env.LLM_MODEL || "default" },
+            // The agent's first model the user may use, else the deployment's (the model gateway
+            // comes in a later ticket).
+            model: {
+              baseUrl: String(env.LLM_BASE_URL),
+              model: config.run?.models[0] ?? (env.LLM_MODEL || "default"),
+            },
             content,
             waiting,
             signal,

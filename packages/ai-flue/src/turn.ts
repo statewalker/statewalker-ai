@@ -45,8 +45,10 @@ export interface HostTool {
 export interface FlueTurn {
   /** The agent session's id: Flue's sandbox id. */
   id: string;
-  /** The agent's name. */
+  /** The agent's name (`<plugin>/<agent>`). */
   agent: string;
+  /** The agent's always-on instructions, from its definition. */
+  instructions?: string;
   /** The session's project; its folder is the working directory. */
   project: string;
   /** The gated file view the session holds. */
@@ -207,7 +209,12 @@ export async function runFlueTurn(
     streamFn: streamSimple as never,
     getApiKey: async () => turn.model.apiKey ?? "none",
     initialState: {
-      systemPrompt: `You are the ${turn.agent} agent, working in /${turn.project}.`,
+      systemPrompt: [
+        `You are the ${turn.agent} agent, working in /${turn.project}.`,
+        turn.instructions?.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
       model: piModel(turn.model) as never,
       tools: tools as never,
       messages: [],

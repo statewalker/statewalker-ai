@@ -26,7 +26,9 @@
     "@statewalker/webrun-files-s3": "catalog:",
     "@statewalker/webrun-files-sqlite": "catalog:",
     "@statewalker/webrun-files-rpc": "catalog:",
-    "aws4fetch": "catalog:"
+    "aws4fetch": "catalog:",
+    "@statewalker/ai-definitions": "workspace:^",
+    "@statewalker/webrun-files-composite": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

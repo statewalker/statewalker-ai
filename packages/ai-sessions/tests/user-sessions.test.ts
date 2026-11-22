@@ -23,6 +23,7 @@ function sessionsOver(sql: SqlLike) {
   const workspace = {
     userCapability: async () => USER_CAP,
     memberRoles: async () => ["reader"],
+    pinDefinitions: async () => ({ agent: "default" }),
     setUserSession: async () => {},
     revoke: async (owner: string, target: string) => {
       revoked.push([owner, target]);
@@ -66,7 +67,6 @@ describe("user sessions", () => {
     const { sessions, revoked } = sessionsOver(sqlite());
     const { session, config } = await sessions.startAgentSession("t", {
       project: "alpha",
-      agent: "a",
     });
     await sessions.revokeAgentSession("t", session.id);
     expect(revoked).toEqual([[USER_CAP, config.capability]]);

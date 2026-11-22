@@ -117,7 +117,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
         ["other", OTHER_FILES],
       ] as const) {
         const ann = await as(u("ann"), workspace);
-        const session = await ann.startSession({ project: "shared", agent: "reader" });
+        const session = await ann.startSession({ project: "shared" });
         expect(session.workspace).toBe(workspace);
         const turn = await ann.sendMessage(session.id, { content: read("/shared/readme.md") });
         expect(results(turn)).toEqual([
@@ -126,7 +126,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       }
       // The other workspace has no "alpha": a project of one workspace is nothing in another.
       const there = await as(u("ann"), "other");
-      await expect(there.startSession({ project: "alpha", agent: "x" })).rejects.toMatchObject({
+      await expect(there.startSession({ project: "alpha" })).rejects.toMatchObject({
         status: 403,
       });
     });
@@ -157,13 +157,13 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       const { user, key } = await wes.createServiceAccount({ name: `bot-${t}` });
       const ci = await connect(deployment, await serviceAccountToken(deployment, key));
       // A member of no project yet: it sees nothing.
-      await expect(ci.startSession({ project: "alpha", agent: "x" })).rejects.toMatchObject({
+      await expect(ci.startSession({ project: "alpha" })).rejects.toMatchObject({
         status: 403,
       });
       await seed(deployment, ADMIN_KEY, {
         "/alpha/.system/access": JSON.stringify({ ...ACCESS, [user]: "reader" }),
       });
-      const session = await ci.startSession({ project: "alpha", agent: "nightly" });
+      const session = await ci.startSession({ project: "alpha" });
       const turn = await ci.sendMessage(session.id, { content: read("/alpha/readme.md") });
       expect(results(turn)).toEqual([
         expect.objectContaining({ isError: false, output: DEFAULT_FILES["/alpha/readme.md"] }),
@@ -172,7 +172,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       const write = `CALL write ${JSON.stringify({ path: "/alpha/x.md", content: "x" })}`;
       const denied = await ci.sendMessage(session.id, { content: write });
       expect(results(denied)[0]).toMatchObject({ isError: true });
-      await expect(ci.startSession({ project: "beta", agent: "x" })).rejects.toMatchObject({
+      await expect(ci.startSession({ project: "beta" })).rejects.toMatchObject({
         status: 403,
       });
     });
@@ -224,16 +224,15 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       const bob = await as(u("bob"));
       const session = await bob.startSession({
         project: "alpha",
-        agent: "nightly",
         unattended: true,
       });
       expect(session).toMatchObject({ unattended: true, revoked: false });
-      const attended = await bob.startSession({ project: "alpha", agent: "daily" });
+      const attended = await bob.startSession({ project: "alpha" });
       expect(attended).toMatchObject({ unattended: false });
       const { sessions } = await bob.listSessions();
       expect(sessions.find((s) => s.id === session.id)).toMatchObject({ unattended: true });
       await expect(
-        bob.startSession({ project: "alpha", agent: "x", unattended: "yes" as never }),
+        bob.startSession({ project: "alpha", unattended: "yes" as never }),
       ).rejects.toMatchObject({ status: 400 });
     });
     it("turns every ask into a deny with a reason, and the agent carries on", async () => {
@@ -242,7 +241,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       const write = (path: string) =>
         `CALL write ${JSON.stringify({ path, content: "unattended\n" })}`;
       // Attended, the default mode asks before a write: the turn waits on an approval.
-      const attended = await ann.startSession({ project: "alpha", agent: "daily" });
+      const attended = await ann.startSession({ project: "alpha" });
       expect((await ann.sendMessage(attended.id, { content: write(`a-${t}.md`) })).status).toBe(
         "waiting",
       );
@@ -250,7 +249,6 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       // Unattended, the same ask is a deny that says why, and the turn completes.
       const session = await ann.startSession({
         project: "alpha",
-        agent: "nightly",
         unattended: true,
       });
       const turn = await ann.sendMessage(session.id, { content: write(`u-${t}.md`) });
@@ -287,9 +285,9 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
 
     it("a user removed from a workspace loses it at their next action, and keeps the others", async () => {
       const ida = await as(u("ida"));
-      const session = await ida.startSession({ project: "shared", agent: "reader" });
+      const session = await ida.startSession({ project: "shared" });
       const idaOther = await as(u("ida"), "other");
-      const there = await idaOther.startSession({ project: "shared", agent: "reader" });
+      const there = await idaOther.startSession({ project: "shared" });
       const { [u("ida")]: _removed, ...rest } = ACCESS;
       await seed(deployment, ADMIN_KEY, {
         "/alpha/.system/access": JSON.stringify(rest),
@@ -297,7 +295,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       });
       const turn = await ida.sendMessage(session.id, { content: read("/shared/readme.md") });
       expect(results(turn)).toEqual([expect.objectContaining({ isError: true })]);
-      await expect(ida.startSession({ project: "shared", agent: "x" })).rejects.toMatchObject({
+      await expect(ida.startSession({ project: "shared" })).rejects.toMatchObject({
         status: 403,
       });
       const kept = await idaOther.sendMessage(there.id, { content: read("/shared/readme.md") });
@@ -308,8 +306,8 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
 
     it("revoking an agent session stops it at its next operation, and only it", async () => {
       const bob = await as(u("bob"));
-      const doomed = await bob.startSession({ project: "alpha", agent: "doomed" });
-      const kept = await bob.startSession({ project: "alpha", agent: "kept" });
+      const doomed = await bob.startSession({ project: "alpha" });
+      const kept = await bob.startSession({ project: "alpha" });
       expect(await bob.revokeSession(doomed.id)).toEqual({ revoked: true });
       await expect(
         bob.sendMessage(doomed.id, { content: read("/alpha/readme.md") }),
@@ -328,7 +326,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
 
     it("erasing a user revokes their running agent sessions", async () => {
       const eve = await as(u("eve"));
-      const session = await eve.startSession({ project: "alpha", agent: "doomed" });
+      const session = await eve.startSession({ project: "alpha" });
       await eve.eraseUser();
       const past = await sendPastUser(deployment, ADMIN_KEY, session.id, read("/alpha/readme.md"));
       expect(results(past)).toEqual([
@@ -340,8 +338,8 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       const ann = await as(u("ann"));
       const before = await ann.me();
       const sessions = [
-        await ann.startSession({ project: "alpha", agent: "one" }),
-        await ann.startSession({ project: "beta", agent: "two" }),
+        await ann.startSession({ project: "alpha" }),
+        await ann.startSession({ project: "beta" }),
       ];
       expect(await ann.revokeUserSession()).toEqual({ revoked: true });
       for (const s of sessions) {
@@ -358,7 +356,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       }
       const after = await ann.me();
       expect(after.id).not.toBe(before.id);
-      const fresh = await ann.startSession({ project: "alpha", agent: "fresh" });
+      const fresh = await ann.startSession({ project: "alpha" });
       const turn = await ann.sendMessage(fresh.id, { content: read("/alpha/readme.md") });
       expect(results(turn)).toEqual([expect.objectContaining({ isError: false })]);
       // The user session in another workspace is untouched.
