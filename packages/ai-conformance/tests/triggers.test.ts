@@ -566,16 +566,56 @@ describe.each(transports)("triggers over %s", (name, connect) => {
     },
   );
 
-  it("archives a trigger's new session 30 days after its fire", async () => {
+  it("starts one turn at a time for fires that race, and ends a fire whose turn ended at once", async () => {
+    const p = `conc-${t}`;
+    const ann = await as("ann");
+    const hold = `race-${t}`;
+    const trig = await ann.createTrigger(p, {
+      name: "race",
+      kind: "manual",
+      message: `HOLD ${hold}`,
+    });
+    const fired = await Promise.all(
+      [1, 2, 3].map((i) => ann.fireTrigger(trig.id, { text: `${i}` })),
+    );
+    expect(fired.filter((f) => f.fire)).toHaveLength(1);
+    expect((await ann.getSubscription(p, "trigger.race")).counts).toMatchObject({ leased: 1 });
+    await model.held(hold);
+    for (let i = 0; i < 3; i++) model.release(hold);
+    await until(async () => {
+      const { fires } = await ann.triggerFires(p, trig.id);
+      return fires.length === 3 && fires.every((f) => f.turn_status) ? fires : undefined;
+    }, "every racing fire to end");
+    // A turn that fails at once still ends its fire (and acks its task) right away.
+    const failing = await ann.createTrigger(p, {
+      name: "failing",
+      kind: "manual",
+      message: "FAIL",
+    });
+    for (let i = 0; i < 3; i++) await ann.fireTrigger(failing.id);
+    const ended = await until(async () => {
+      const { fires } = await ann.triggerFires(p, failing.id);
+      return fires.length === 3 && fires.every((f) => f.turn_status) ? fires : undefined;
+    }, "the failing fires to end");
+    expect(ended.map((f) => f.turn_status)).toEqual(["failed", "failed", "failed"]);
+  });
+
+  it("archives a trigger's new session 30 days after its fire, even once the trigger is deleted", async () => {
     const p = `old-${t}`;
     const ed = await as("ed");
     const trig = await ed.createTrigger(p, { name: "old", kind: "manual", message: "Hello." });
     const fired = await ed.fireTrigger(trig.id);
     const session = String(fired.fire?.session);
     await waitTurn(ed, session, String(fired.fire?.turn));
+    const gone = await ed.createTrigger(p, { name: "gone", kind: "manual", message: "Bye." });
+    const goneFire = await ed.fireTrigger(gone.id);
+    const goneSession = String(goneFire.fire?.session);
+    await waitTurn(ed, goneSession, String(goneFire.fire?.turn));
+    await ed.deleteTrigger(p, gone.id);
     await advanceWorkspaceClock(deployment, ADMIN_KEY, WORKSPACE, 29 * DAY);
     expect((await ed.getSession(session)).archived).toBeUndefined();
     await advanceWorkspaceClock(deployment, ADMIN_KEY, WORKSPACE, 1 * DAY);
     expect((await ed.getSession(session)).archived).toEqual(expect.any(Number));
+    expect((await ed.getSession(goneSession)).archived).toEqual(expect.any(Number));
   });
 });

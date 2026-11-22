@@ -23,6 +23,7 @@ import {
   type RoleGrant,
 } from "@statewalker/ai-access";
 import type { Limit } from "@statewalker/ai-environment";
+import { KeyedLock } from "@statewalker/ai-memory";
 import {
   checkSchedule,
   dueFires,
@@ -181,7 +182,6 @@ interface FireRow {
   cost: number | null;
   reason: string | null;
   ended: number | null;
-  archive_at: number | null;
 }
 
 const str = (v: unknown, what: string): string => {
@@ -212,6 +212,8 @@ const bytesOf = (v: unknown) => new TextEncoder().encode(JSON.stringify(v ?? nul
 
 export class TriggersHost {
   readonly #o: TriggersHostOptions;
+  /** One dispatch per trigger at a time: its running count holds across the awaits of a start. */
+  readonly #locks = new KeyedLock();
 
   constructor(o: TriggersHostOptions) {
     this.#o = o;
@@ -222,8 +224,11 @@ export class TriggersHost {
     o.sql.exec(`CREATE TABLE IF NOT EXISTS trigger_fires (id TEXT PRIMARY KEY,
       trigger TEXT NOT NULL, project TEXT NOT NULL, time INTEGER NOT NULL, source TEXT NOT NULL,
       outcome TEXT NOT NULL, session TEXT, turn TEXT, tasks TEXT, leases TEXT,
-      running INTEGER NOT NULL DEFAULT 0, turn_status TEXT, cost REAL, reason TEXT, ended INTEGER,
-      archive_at INTEGER)`);
+      running INTEGER NOT NULL DEFAULT 0, turn_status TEXT, cost REAL, reason TEXT, ended INTEGER)`);
+    // A new session's archiving, kept apart from the history: deleting the trigger or trimming its
+    // history never keeps a session from being archived after its 30 days.
+    o.sql.exec(`CREATE TABLE IF NOT EXISTS trigger_archives (session TEXT PRIMARY KEY,
+      owner TEXT NOT NULL, archive_at INTEGER NOT NULL)`);
     o.sql.exec(
       "CREATE INDEX IF NOT EXISTS trigger_fires_by_trigger ON trigger_fires (trigger, time)",
     );
@@ -664,7 +669,11 @@ export class TriggersHost {
   }
 
   /** Takes the trigger's waiting tasks while fewer than `max_concurrent` of its turns run. */
-  async #dispatch(row: Row): Promise<void> {
+  #dispatch(row: Row): Promise<void> {
+    return this.#locks.run(row.id, () => this.#dispatchNow(row));
+  }
+
+  async #dispatchNow(row: Row): Promise<void> {
     for (;;) {
       const current = this.#row(row.id);
       if (!current?.enabled || current.suspended) return;
@@ -713,7 +722,7 @@ export class TriggersHost {
     const id = `fire-${hex(10)}`;
     this.#o.sql.exec(
       `INSERT INTO trigger_fires (id, trigger, project, time, source, outcome, session, turn, tasks,
-        leases, running, reason, archive_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        leases, running, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       id,
       row.id,
       row.project,
@@ -726,11 +735,10 @@ export class TriggersHost {
       fire.leases ?? null,
       fire.running ?? 0,
       fire.reason ?? null,
-      fire.archive_at ?? null,
     );
     // The oldest fires go beyond the history's size; running ones stay.
     this.#o.sql.exec(
-      `DELETE FROM trigger_fires WHERE trigger = ? AND running = 0 AND archive_at IS NULL AND id NOT IN
+      `DELETE FROM trigger_fires WHERE trigger = ? AND running = 0 AND id NOT IN
         (SELECT id FROM trigger_fires WHERE trigger = ? ORDER BY time DESC, rowid DESC LIMIT ?)`,
       row.id,
       row.id,
@@ -813,8 +821,18 @@ export class TriggersHost {
         turn,
         leases: JSON.stringify(leases.map((l) => l.id)),
         running: 1,
-        ...(def.target === "new_session" ? { archive_at: now + ARCHIVE_AFTER_MS } : {}),
       });
+      if (def.target === "new_session")
+        this.#o.sql.exec(
+          "INSERT OR REPLACE INTO trigger_archives VALUES (?, ?, ?)",
+          session,
+          row.owner,
+          now + ARCHIVE_AFTER_MS,
+        );
+      // A turn that ended before its fire was recorded told no one: look once now.
+      const state = await this.#o.turnState(session, turn).catch(() => undefined);
+      if (state && TERMINAL_TURN_STATUSES.includes(state.status as never))
+        await this.#endFire(session, turn, state.status, state.cost);
       return true;
     } catch (e) {
       const reason = String((e as Error)?.message ?? e);
@@ -836,6 +854,19 @@ export class TriggersHost {
    * and the trigger takes what waits.
    */
   async turnEnded(session: string, turn: string, status: string, cost?: number): Promise<void> {
+    const row = await this.#endFire(session, turn, status, cost);
+    if (!row) return;
+    await this.#dispatch(row);
+    await this.#arm();
+  }
+
+  /** Ends the running fire of a turn and acks its tasks: its trigger, or undefined. */
+  async #endFire(
+    session: string,
+    turn: string,
+    status: string,
+    cost?: number,
+  ): Promise<Row | undefined> {
     const fire = this.#rows<FireRow>(
       "SELECT * FROM trigger_fires WHERE session = ? AND turn = ? AND running = 1",
       session,
@@ -861,8 +892,7 @@ export class TriggersHost {
           }
       })
       .catch(() => {});
-    await this.#dispatch(row);
-    await this.#arm();
+    return row;
   }
 
   /** A webhook request: authenticated before anything else, then published (202). */
@@ -994,12 +1024,12 @@ export class TriggersHost {
         })
         .catch(() => {});
     }
-    for (const fire of this.#rows<FireRow & { owner: string }>(
-      "SELECT f.*, t.owner FROM trigger_fires f JOIN triggers t ON t.id = f.trigger WHERE f.archive_at IS NOT NULL AND f.archive_at <= ?",
+    for (const a of this.#rows<{ session: string; owner: string }>(
+      "SELECT session, owner FROM trigger_archives WHERE archive_at <= ?",
       now,
     )) {
-      if (fire.session) await this.#o.archive(fire.owner, fire.session).catch(() => {});
-      this.#o.sql.exec("UPDATE trigger_fires SET archive_at = NULL WHERE id = ?", fire.id);
+      await this.#o.archive(a.owner, a.session).catch(() => {});
+      this.#o.sql.exec("DELETE FROM trigger_archives WHERE session = ?", a.session);
     }
     // Tasks waiting for a trigger that may take them (a free turn, a retry).
     for (const row of this.#rows<Row>(
@@ -1017,7 +1047,7 @@ export class TriggersHost {
     )[0]?.t;
     if (schedule !== null && schedule !== undefined) times.push(Number(schedule));
     const archive = this.#rows<{ t: number | null }>(
-      "SELECT min(archive_at) AS t FROM trigger_fires WHERE archive_at IS NOT NULL",
+      "SELECT min(archive_at) AS t FROM trigger_archives",
     )[0]?.t;
     if (archive !== null && archive !== undefined) times.push(Number(archive));
     if (this.#rows("SELECT 1 FROM trigger_fires WHERE running = 1 LIMIT 1").length)
