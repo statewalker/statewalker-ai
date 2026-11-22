@@ -52,6 +52,7 @@ function sessionApi(env: Env, token: string) {
   };
   return createSessionApi(token, {
     user: {
+      admitRequest: async (t, kind) => (await user()).admitRequest(t, kind),
       openUserSession: async (t) => (await user()).openUserSession(t),
       startAgentSession: async (t, req) => (await user()).startAgentSession(t, req),
       ownAgentSession: async (t, id) => (await user()).ownAgentSession(t, id),
@@ -115,6 +116,7 @@ function sessionApi(env: Env, token: string) {
         regenerate: (turnId, req) => agent.regenerate(turnId, req),
         branches: () => agent.branches(),
         eraseBranch: (turnId) => agent.eraseBranch(turnId),
+        topics: (query) => agent.topics(query),
         exportPath: (atTurn) => agent.exportPath(atTurn),
         importHistory: (history) => agent.importHistory(history),
       };
@@ -182,6 +184,12 @@ async function devRoutes(request: Request, env: Env, path: string) {
     // The operator revokes a user everywhere, at the issuer.
     await issuerOf(env).revokeUser(id);
     return json({ revoked: id });
+  }
+  if (collection === "workspaces" && id && sub === "clock") {
+    // Moves the workspace's limits clock forward, so a scenario places a request in a window.
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    return json({ offset: await workspaceOf(env, id).advanceClock(Number(body.advance_ms)) });
   }
   if (collection === "workspaces" && id && sub === "user-session") {
     // Hands an access token straight to one workspace's DO, whichever workspace it names: only a

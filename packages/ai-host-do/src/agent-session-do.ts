@@ -53,6 +53,8 @@ import {
   type RegenerateRequest,
   type RewindRequest,
   type SessionHistory,
+  type SessionScanQuery,
+  type TopicsQuery,
   type TurnRun,
 } from "@statewalker/ai-sessions";
 import { RemoteCore, type RemotePort, type UhpCall } from "@statewalker/ai-uhp-client";
@@ -66,6 +68,7 @@ import {
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
 import { MEMORY_TOOL, memoryHost, memoryTool, runStoredMemoryCall } from "./memory-tool.js";
+import { SESSION_SEARCH_TOOL, sessionSearchOf, sessionSearchTool } from "./session-search-tool.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
 import { AGENT_START, agentStartTool, outcomeOf, type SubAgentHost } from "./sub-agents.js";
 
@@ -174,7 +177,12 @@ export class AgentSession extends DurableObject<Env> {
     const within = (name: string) => !config.tools || config.tools.includes(name);
     // `agent.start` only for an agent whose definition lists sub-agents the user may use.
     const delegates = (config.run?.agents ?? []).length > 0;
-    const named = [...DB_TOOLS, MEMORY_TOOL, ...(delegates ? [AGENT_START] : [])].filter(within);
+    const named = [
+      ...DB_TOOLS,
+      MEMORY_TOOL,
+      SESSION_SEARCH_TOOL,
+      ...(delegates ? [AGENT_START] : []),
+    ].filter(within);
     const set = (await workspace.sessionTools(config.capability, named)) as unknown as {
       harness: string[];
       tools: ToolDefinition[];
@@ -190,6 +198,8 @@ export class AgentSession extends DurableObject<Env> {
       ...databaseTools(databaseHost(env, config, config.capability), onApproval),
       // Memory across sessions, the agent's only way to it (#157).
       memoryTool(memoryHost(env, config), onApproval),
+      // The user's own earlier sessions in the project (#174).
+      sessionSearchTool(sessionSearchOf(env, config)),
       agentStartTool(
         offered,
         {
@@ -540,6 +550,9 @@ export class AgentSession extends DurableObject<Env> {
       subAgentAnswered: (config, approval, decision) =>
         agentOf(env, String(config.parent)).subAgentAnswered(approval, decision),
       effectOf,
+      // The topic titles on the active path, kept in the user's session index (#174).
+      onTopics: (config, titles) =>
+        userOf(env, config.user).sessionTopics(config.id, config.capability, titles),
     });
   }
 
@@ -702,15 +715,18 @@ export class AgentSession extends DurableObject<Env> {
       response = await request(call);
     } finally {
       const all = { model_tokens: 0, model_spend: 0 };
-      const mine = { model_tokens: 0, model_spend: 0 };
+      const mine = { model_tokens: 0, model_spend: 0, model_requests: 0 };
       // The own-key model, so the user's usage report groups it (#181).
       let ownModel: string | undefined;
-      for (const { usage } of response?.attempts ?? [])
+      for (const { usage } of response?.attempts ?? []) {
+        // Each request on the user's own key counts against their buckets (#180).
+        if (!usage.charged) mine.model_requests += 1;
         for (const into of usage.charged ? [all] : [all, mine]) {
           if (!usage.charged) ownModel = usage.model;
           into.model_tokens += usage.input_tokens + usage.output_tokens;
           into.model_spend += usage.cost ?? 0;
         }
+      }
       if (reserved) warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
       if (own)
         warn(await user.settleOwnKey(own, mine, meta, ownModel ? { model: ownModel } : undefined));
@@ -822,6 +838,21 @@ export class AgentSession extends DurableObject<Env> {
 
   eraseBranch(turnId: string) {
     return this.#core.eraseBranch(turnId);
+  }
+
+  /** The table of contents (statewalker/statewalker-root#174). */
+  topics(query?: TopicsQuery) {
+    return this.#core.topics(query);
+  }
+
+  /** This session's part of a session search of another session of its user (#174). */
+  scan(query: SessionScanQuery) {
+    return this.#core.scan(query);
+  }
+
+  /** The turns around a session search's hit here (#174). */
+  openTurns(req: { turn: string; around?: number }) {
+    return this.#core.openTurns(req);
   }
 
   /** A turn's path for a fork, with the session's limits: its defaults and its own (#181). */

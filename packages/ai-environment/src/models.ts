@@ -28,6 +28,59 @@ export interface Provider {
   headers?: Record<string, string>;
   /** The secret holding the provider's key. */
   secret?: string;
+  /** The key's rate limits, and each workspace's share of them (statewalker/statewalker-root#180). */
+  rate?: ProviderRate;
+}
+
+/**
+ * A provider key's rate limits (statewalker/statewalker-root#180): requests and tokens a minute.
+ * With no global counter, each workspace is held to its share of them in its own DO: `shares`
+ * names a workspace's, `share` is every other's (1: the whole). Requests over the share wait up to
+ * the max delay for the next minute, then fall back to the agent's next model.
+ */
+export interface ProviderRate {
+  rpm?: number;
+  tpm?: number;
+  /** Each workspace's share, between 0 and 1 (1). */
+  share?: number;
+  /** The share of named workspaces. */
+  shares?: Record<string, number>;
+}
+
+/** A workspace's part of a provider's rate limits: what its DO holds it to, a minute. */
+export function rateShare(
+  rate: ProviderRate | undefined,
+  workspace: string,
+): { rpm?: number; tpm?: number } {
+  if (!rate) return {};
+  const share = rate.shares?.[workspace] ?? rate.share ?? 1;
+  // A share always leaves a workspace at least one request (or token) a minute.
+  const part = (v: number | undefined) =>
+    v === undefined ? undefined : Math.max(1, Math.floor(v * share));
+  const rpm = part(rate.rpm);
+  const tpm = part(rate.tpm);
+  return { ...(rpm !== undefined ? { rpm } : {}), ...(tpm !== undefined ? { tpm } : {}) };
+}
+
+function rateOf(id: string, v: unknown): ProviderRate | string {
+  if (!isRecord(v)) return `provider ${id}: rate is an object`;
+  const fraction = (x: unknown) => typeof x === "number" && Number.isFinite(x) && x > 0 && x <= 1;
+  const rate: ProviderRate = {};
+  for (const k of ["rpm", "tpm"] as const) {
+    if (v[k] === undefined) continue;
+    if (!positive(v[k])) return `provider ${id}: rate.${k} is a number above 0`;
+    rate[k] = v[k] as number;
+  }
+  if (v.share !== undefined) {
+    if (!fraction(v.share)) return `provider ${id}: rate.share is a number in (0, 1]`;
+    rate.share = v.share as number;
+  }
+  if (v.shares !== undefined) {
+    if (!isRecord(v.shares) || !Object.values(v.shares).every(fraction))
+      return `provider ${id}: rate.shares maps workspaces to numbers in (0, 1]`;
+    rate.shares = { ...(v.shares as Record<string, number>) };
+  }
+  return rate;
 }
 
 /** Prices per million tokens, in the deployment's price unit. */
@@ -109,7 +162,7 @@ export function splitModelId(id: string): { provider: string; name: string } | u
 
 function providerOf(v: unknown): Provider | string {
   if (!isRecord(v)) return "a provider is an object";
-  const { id, api, baseUrl, headers, secret } = v;
+  const { id, api, baseUrl, headers, secret, rate } = v;
   if (typeof id !== "string" || !ID.test(id)) return `provider id '${String(id)}' is malformed`;
   if (typeof api !== "string" || !(MODEL_APIS as readonly string[]).includes(api))
     return `provider ${id}: api is one of ${MODEL_APIS.join(", ")}`;
@@ -128,12 +181,15 @@ function providerOf(v: unknown): Provider | string {
     return `provider ${id}: headers are strings`;
   if (secret !== undefined && (typeof secret !== "string" || !SECRET.test(secret)))
     return `provider ${id}: secret names a secret`;
+  const limits = rate === undefined ? undefined : rateOf(id, rate);
+  if (typeof limits === "string") return limits;
   return {
     id,
     api: api as ModelApi,
     baseUrl: String(baseUrl ?? ""),
     ...(headers ? { headers: headers as Record<string, string> } : {}),
     ...(secret ? { secret: secret as string } : {}),
+    ...(limits ? { rate: limits } : {}),
   };
 }
 

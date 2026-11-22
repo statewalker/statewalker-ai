@@ -9,6 +9,7 @@ export {
   type AnswerDecision,
   type CancelApprovals,
   type EffectOf,
+  type OnTopics,
   type RecordApprovals,
   type RunAction,
   type RunTurn,
@@ -28,6 +29,7 @@ export {
   type AgentsQuery,
   type AgentView,
   type AnswerAccepted,
+  type ApiRequestKind,
   type ApprovalAnswer,
   type ApprovalAnswered,
   type ApprovalRequest,
@@ -95,6 +97,7 @@ export {
   type StoredAction,
   type SubAgentRequest,
   TERMINAL_TURN_STATUSES,
+  type TopicsQuery,
   type TurnEffect,
   type TurnOrigin,
   type TurnRef,
@@ -129,6 +132,7 @@ export {
   parseSummary,
   renderItems,
   renderSummaries,
+  renderTopics,
   SUMMARIZER_PROMPT_START,
   type Summarizer,
   type SummarizerInput,
@@ -136,6 +140,15 @@ export {
   type SummaryOutput,
   type SummarySection,
 } from "./context/summarizer.js";
+export {
+  MAX_TOPIC_BODY,
+  MAX_TOPIC_TITLE,
+  MAX_TOPIC_UPDATES,
+  type Topic,
+  type TopicScope,
+  TopicStore,
+  type TopicUpdate,
+} from "./context/topics.js";
 export {
   createTrimPolicy,
   type TrimOptions,
@@ -157,6 +170,34 @@ export {
 } from "./files.js";
 export { bearerOf, bodyOf, errorResponse, handleSessionRest, ndjsonResponse } from "./rest.js";
 export { type SessionRpcConnection, serveSessionRpc, sessionRpcClient } from "./rpc.js";
+export {
+  DEFAULT_SEARCH_LIMIT,
+  fencedData,
+  type IndexedSession,
+  MAX_AROUND,
+  MAX_SEARCH_LIMIT,
+  MAX_SEARCH_QUERY,
+  matcher,
+  type OpenedItem,
+  type OpenedTurns,
+  type OpenTurnsRequest,
+  openedText,
+  type ScannableSession,
+  SESSION_SEARCH_DESCRIPTION,
+  SESSION_SEARCH_SCHEMA,
+  SESSION_SEARCH_TOOL,
+  type SessionScanHit,
+  type SessionScanQuery,
+  type SessionSearch,
+  type SessionSearchHit,
+  type SessionSearchQuery,
+  type SessionSearchResult,
+  type SessionSearchScope,
+  scanSessionSearch,
+  searchText,
+  sessionSearchCall,
+  snippet,
+} from "./search.js";
 export type { SqlLike } from "./sql.js";
 export { sessionOfTurn } from "./turns.js";
 export {

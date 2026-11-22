@@ -23,9 +23,18 @@ export const METERS = [
   "sessions",
   "streams",
   "turns",
+  // Rate limits (statewalker/statewalker-root#180): session API requests (messages, stream opens,
+  // session starts) and requests to models (one per attempt), counted per minute or second.
+  "api_requests",
+  "model_requests",
 ] as const;
 
 export type Meter = (typeof METERS)[number] | `executor_cpu_ms:${string}`;
+
+/** Options of a charge: `record: false` counts it without a usage record (rate counters). */
+export interface ChargeOptions {
+  record?: boolean;
+}
 
 /** Meters of what is held now (bytes stored, sessions active, streams open), not of a flow. */
 const GAUGES: readonly string[] = ["storage_bytes", "sessions", "streams"];
@@ -687,6 +696,7 @@ export class LimitLedger {
     used: Record<string, number>,
     meta: UsageMeta,
     detail?: Record<string, unknown>,
+    options?: ChargeOptions,
   ): LimitWarning[] {
     const row = this.#sql
       .exec("SELECT scopes, entries FROM limit_reservations WHERE id = ?", id)
@@ -694,7 +704,7 @@ export class LimitLedger {
     if (!row) return [];
     this.#sql.exec("DELETE FROM limit_reservations WHERE id = ?", id);
     for (const e of JSON.parse(String(row.entries)) as Entry[]) this.#bump(e, 0, -e.amount);
-    return this.#add(JSON.parse(String(row.scopes)) as LimitScope[], used, meta, detail);
+    return this.#add(JSON.parse(String(row.scopes)) as LimitScope[], used, meta, detail, options);
   }
 
   /** Charges `amounts` against every scope at once, refusing at the first limit it would cross. */
@@ -703,19 +713,24 @@ export class LimitLedger {
     amounts: Record<string, number>,
     meta: UsageMeta,
     detail?: Record<string, unknown>,
+    options?: ChargeOptions,
   ): LimitWarning[] {
     this.check(scopes, amounts);
-    return this.#add(scopes, amounts, meta, detail);
+    return this.#add(scopes, amounts, meta, detail, options);
   }
 
-  /** Adds usage already spent (a response's bytes): recorded and counted, never refused. */
+  /**
+   * Adds usage already spent (a response's bytes): recorded and counted, never refused. A
+   * negative amount with `record: false` gives back what a refused request was counted.
+   */
   add(
     scopes: readonly LimitScope[],
     amounts: Record<string, number>,
     meta: UsageMeta,
     detail?: Record<string, unknown>,
+    options?: ChargeOptions,
   ): LimitWarning[] {
-    return this.#add(scopes, amounts, meta, detail);
+    return this.#add(scopes, amounts, meta, detail, options);
   }
 
   /** Changes a gauge by `delta`: adding is refused over a limit, taking away always works. */
@@ -736,6 +751,7 @@ export class LimitLedger {
     amounts: Record<string, number>,
     meta: UsageMeta,
     detail?: Record<string, unknown>,
+    options?: ChargeOptions,
   ): LimitWarning[] {
     const now = this.#now();
     this.#prune(now);
@@ -777,6 +793,7 @@ export class LimitLedger {
           warnings.push({ limit, level: scope.level, target: scope.target, used, value });
         }
       }
+    if (options?.record === false) return warnings;
     for (const [meter, amount] of Object.entries(amounts)) {
       if (!amount) continue;
       this.#sql.exec(
@@ -899,21 +916,37 @@ export class LimitLedger {
   }
 }
 
+/** How long a request over a `delay` limit waits at most before it is denied (30 s). */
+export const DEFAULT_MAX_DELAY_MS = 30_000;
+
+export interface DelayOptions {
+  /** How long the request may wait in all (30 s). */
+  maxDelayMs?: number;
+  /** The clock (tests move a virtual one). */
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
 /**
- * Runs `charge`; a `delay` limit makes it wait for its window to reset when that is at most
- * `maxDelayMs` away (30 s), then tries once more. Otherwise a delay denies.
+ * Runs `charge`; a `delay` limit makes it wait for its window to reset and try again, for as long
+ * as the reset comes within `maxDelayMs` (30 s) of the first try (statewalker/statewalker-root#180).
+ * Otherwise a delay denies, with the breach of the last try (its `retry after`).
  */
 export async function withDelay<T>(
-  charge: () => T,
-  options: { maxDelayMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+  charge: () => T | Promise<T>,
+  options: DelayOptions = {},
 ): Promise<T> {
-  try {
-    return charge();
-  } catch (e) {
-    if (!(e instanceof LimitExceeded) || e.verdict !== "delay") throw e;
-    const wait = e.breach.retryAfterMs;
-    if (wait === undefined || wait > (options.maxDelayMs ?? 30_000)) throw e;
-    await (options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))))(wait + 1);
-    return charge();
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const deadline = now() + (options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS);
+  for (;;) {
+    try {
+      return await charge();
+    } catch (e) {
+      if (!(e instanceof LimitExceeded) || e.verdict !== "delay") throw e;
+      const wait = e.breach.retryAfterMs;
+      if (wait === undefined || now() + wait > deadline) throw e;
+      await sleep(wait + 1);
+    }
   }
 }

@@ -53,6 +53,7 @@ const METHODS = [
   "editTurn",
   "regenerateTurn",
   "listBranches",
+  "listTopics",
   "eraseBranch",
   "forkSession",
   "listMemory",

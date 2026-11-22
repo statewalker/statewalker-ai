@@ -462,8 +462,11 @@ function gatewayStream(model: { id: string }, context: { messages: Message[] }, 
   });
   // A failure is the harness's to report; Flue sees a plain refusal it neither retries nor
   // compacts over (the gateway already fell back).
-  const failed = (text: string): ModelMessage => {
-    live.failure ??= `EIO: the model failed: ${text}`;
+  const failed = (text: string, rateLimited = false): ModelMessage => {
+    // Every model left was rate limited (#180): the turn ends incomplete, `rate_limited`.
+    live.failure ??= rateLimited
+      ? `ERATELIMITED: every model left is rate limited: ${text}`
+      : `EIO: the model failed: ${text}`;
     return errorMessage(undefined, "the model gateway refused the request");
   };
   const asked = turn.models
@@ -490,8 +493,12 @@ function gatewayStream(model: { id: string }, context: { messages: Message[] }, 
             });
         }
         const message = response.message;
-        if (message.stopReason === "error") return [failed(message.errorMessage ?? "error"), {}];
         const last = response.attempts.at(-1);
+        if (message.stopReason === "error")
+          return [
+            failed(message.errorMessage ?? "error", last?.usage.outcome === "rate_limited"),
+            {},
+          ];
         return [message, last ? { usage: last.usage } : {}];
       },
       (e: unknown): [ModelMessage, Answer] => [failed(String((e as Error)?.message ?? e)), {}],
