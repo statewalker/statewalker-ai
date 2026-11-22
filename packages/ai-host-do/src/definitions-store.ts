@@ -12,10 +12,14 @@ interface SqlLike {
   exec(query: string, ...bindings: unknown[]): { toArray(): Record<string, unknown>[] };
 }
 
-/** A pinned plugin: its name and the hash of its bundle. */
+/** Where a plugin comes from: the deployment's catalog, the workspace or the project. */
+export type PluginLevel = "deployment" | "workspace" | "project";
+
+/** A pinned plugin: its name, the hash of its bundle, and its level (deployment if unknown). */
 export interface Pin {
   name: string;
   hash: string;
+  level?: PluginLevel;
 }
 
 export interface SessionDefinitions {
@@ -23,6 +27,8 @@ export interface SessionDefinitions {
   project: string;
   /** The session's catalog: its pinned bundles, each at `/<plugin>/`. */
   catalog: MemFilesApi;
+  /** The pinned plugins. */
+  pins: Pin[];
   run?: NarrowedAgent;
 }
 
@@ -127,7 +133,8 @@ export class DefinitionsStore {
       .toArray()[0];
     if (!row) return undefined;
     const catalog = new MemFilesApi();
-    for (const pin of JSON.parse(String(row.pins)) as Pin[]) {
+    const pins = JSON.parse(String(row.pins)) as Pin[];
+    for (const pin of pins) {
       const files = this.#sql
         .exec("SELECT path, content FROM plugin_files WHERE hash = ?", pin.hash)
         .toArray();
@@ -140,6 +147,7 @@ export class DefinitionsStore {
       user: String(row.user),
       project: String(row.project),
       catalog,
+      pins,
       ...(row.run ? { run: JSON.parse(String(row.run)) as NarrowedAgent } : {}),
     };
   }

@@ -305,6 +305,15 @@ What reads plugin sources, in their own layouts, and writes them into the catalo
 A plugin ready to launch, its native tools prebuilt and described by OpenAPI documents, served through the harness.
 _Avoid_: compiled plugin, artifact
 
+**Plugin builder**:
+What turns a plugin's tool scripts into its bundle: one self-contained ESM bundle per tool, named by its sha-256, and an OpenAPI document for every tool.
+
+**Acceptance check**:
+The static check a workspace or project plugin's tool bundles pass before they load: self-contained, and naming no global beyond the language's own.
+
+**Run lease**:
+What a native tool's run reaches files and databases through: valid only while the run lasts.
+
 **Catalog**:
 The full set of plugins a deployment offers, before any user's permissions filter it.
 

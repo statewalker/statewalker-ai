@@ -49,7 +49,17 @@ export interface RestAuth {
 /** How the harness reaches the real tool. Never shown to a model. */
 export type ToolRoute =
   | { kind: "harness"; entry: string }
-  | { kind: "native"; entry: string }
+  | {
+      kind: "native";
+      /** The tool's operationId. */
+      entry: string;
+      /** How the builder recorded its script (#130): a JS bundle, or Python source. */
+      language?: "js" | "python";
+      /** The bundle's path in the plugin (JS), or the script's (Python). */
+      bundle?: string;
+      /** The bundle's sha-256. */
+      hash?: string;
+    }
   | { kind: "mcp"; url: string; name: string }
   | {
       kind: "rest";
@@ -369,8 +379,29 @@ function* operations(doc: Record<string, unknown>) {
   }
 }
 
-/** The tools of a plugin's `tools/openapi` document: one native tool per operation. */
-export function nativeTools(plugin: string, doc: Record<string, unknown>): ToolDefinition[] {
+/** The operationIds a document declares, in order (whether valid or not). */
+export function operationIds(doc: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  for (const { op } of operations(doc))
+    if (typeof op.operationId === "string" && !out.includes(op.operationId))
+      out.push(op.operationId);
+  return out;
+}
+
+/** A built tool as the builder's manifest records it (see builder.ts). */
+export type NativeBuild =
+  | { language: "js"; bundle: string; hash: string }
+  | { language: "python"; source: string };
+
+/**
+ * The tools of a plugin's `tools/openapi` document: one native tool per operation, its route
+ * naming the bundle the builder made for it (`builds`, the build manifest's tools).
+ */
+export function nativeTools(
+  plugin: string,
+  doc: Record<string, unknown>,
+  builds: Record<string, NativeBuild> = {},
+): ToolDefinition[] {
   const out: ToolDefinition[] = [];
   const seen = new Set<string>();
   for (const { method, op, pathParams } of operations(doc)) {
@@ -388,11 +419,17 @@ export function nativeTools(plugin: string, doc: Record<string, unknown>): ToolD
         action: c.action,
         input: c.input,
         ...(c.output ? { output: c.output } : {}),
-        route: { kind: "native", entry: id },
+        route: { kind: "native", entry: id, ...buildRoute(builds[id]) },
       }),
     );
   }
   return out;
+}
+
+function buildRoute(b: NativeBuild | undefined) {
+  if (b?.language === "js") return { language: "js" as const, bundle: b.bundle, hash: b.hash };
+  if (b?.language === "python") return { language: "python" as const, bundle: b.source };
+  return {};
 }
 
 /** The secret a plugin's key is in when its scheme names none: `<PLUGIN>_API_KEY`. */
@@ -577,7 +614,9 @@ async function pluginTools(catalog: FilesApi, plugin: string): Promise<ToolDefin
   for (const ext of ["json", "yaml", "yml"]) {
     const doc = await readDoc(catalog, `${dir}/openapi.${ext}`);
     if (!doc) continue;
-    out.push(...nativeTools(plugin, doc));
+    const manifest = await readDoc(catalog, `/${plugin}/${EXTENSION}/build/tools.json`);
+    const builds = (manifest?.tools ?? {}) as Record<string, NativeBuild>;
+    out.push(...nativeTools(plugin, doc, builds));
     break;
   }
   const rest = `${dir}/rest`;

@@ -74,7 +74,11 @@ describe("threat table", () => {
 
   it("holds for this repository's docs/security.md", () => {
     const md = readFileSync(new URL("docs/security.md", repo), "utf8");
-    const titles = (pkg: string) => collectTestTitles(new URL(`packages/${pkg}/tests/`, repo));
+    // A row names a package by its folder: packages/<pkg>, or apps/<app> as `ai-<app>`.
+    const titles = (pkg: string) => [
+      ...collectTestTitles(new URL(`packages/${pkg}/tests/`, repo)),
+      ...collectTestTitles(new URL(`apps/${pkg.replace(/^ai-/, "")}/tests/`, repo)),
+    ];
     expect(checkThreatTable(md, titles)).toEqual([]);
   });
 });
