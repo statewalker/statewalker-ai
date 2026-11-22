@@ -38,6 +38,13 @@ export interface AgentDefinition {
   requires?: unknown;
   /** The body: always-on instructions. */
   instructions: string;
+  /**
+   * A remote agent (statewalker/statewalker-root#144): its core is the harness `harness` of the UHP
+   * server `server`, used with `agents.use:remote:<server>/<harness>`.
+   */
+  remote?: { server: string; harness: string };
+  /** A remote agent's inputs: the project paths copied in at start (patterns; default all). */
+  inputs?: string[];
 }
 
 /** An agent's lists after narrowing: the ids the user may use, never patterns. */
@@ -68,6 +75,18 @@ export function parseAgent(plugin: string, name: string, text: string): AgentDef
   if (skills) def.skills = skills;
   if (typeof data.mode === "string") def.mode = data.mode;
   if (data.requires !== undefined) def.requires = data.requires;
+  const remote = data.remote as Record<string, unknown> | undefined;
+  if (remote && typeof remote === "object")
+    if (
+      typeof remote.server === "string" &&
+      typeof remote.harness === "string" &&
+      isItemName(remote.server) &&
+      isItemName(remote.harness)
+    )
+      def.remote = { server: remote.server, harness: remote.harness };
+    else throw new Error("remote is {server, harness}, each a name");
+  const inputs = strings(data.inputs);
+  if (inputs) def.inputs = inputs;
   return def;
 }
 
@@ -116,6 +135,8 @@ export async function narrowAgent(
   catalog: FilesApi,
   agent: AgentDefinition,
   allow: Allow,
+  /** The remote agents the user may use (`remote:<server>/<harness>`), for sub-agent patterns. */
+  remoteAgents: readonly string[] = [],
 ): Promise<NarrowedAgent> {
   const tools: string[] = [];
   for (const t of await catalogTools(catalog))
@@ -131,6 +152,9 @@ export async function narrowAgent(
     models,
     skills: await allowed(await catalogSkills(catalog), "skills", allow, agent.skills),
     tools,
-    agents: await allowed(await catalogAgents(catalog), "agents", allow, agent.agents),
+    agents: [
+      ...(await allowed(await catalogAgents(catalog), "agents", allow, agent.agents)),
+      ...remoteAgents.filter((id) => agent.agents.some((p) => matches(p, id))),
+    ],
   };
 }

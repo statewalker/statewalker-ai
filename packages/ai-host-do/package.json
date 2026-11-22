@@ -61,7 +61,8 @@
     "@statewalker/db-api": "catalog:",
     "esbuild-wasm": "catalog:",
     "@statewalker/webrun-bundler": "catalog:",
-    "@statewalker/ai-memory": "workspace:^"
+    "@statewalker/ai-memory": "workspace:^",
+    "@statewalker/ai-uhp-client": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",

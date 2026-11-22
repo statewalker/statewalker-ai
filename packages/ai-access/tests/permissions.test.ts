@@ -9,6 +9,7 @@ import {
   type Permission,
   parsePermissions,
   permits,
+  remoteAgentRequest,
 } from "../src/index.js";
 
 const pairs = (perms: Permission[]) => perms.map((p) => `${p.area}.${p.action}`).sort();
@@ -274,5 +275,39 @@ describe("the translation of permissions to Datalog (property-based)", () => {
         if (narrowed) expect(decide([{ role: "r", permissions, checks: [] }], req)).toBe(true);
       }),
     );
+  });
+});
+
+describe("remote agents (statewalker/statewalker-root#144)", () => {
+  const grants = (texts: string[]) => [
+    { role: "r", permissions: parsePermissions(texts).permissions, checks: [] },
+  ];
+  const remote = (target: string) => remoteAgentRequest(target);
+
+  it("are granted only by agents.use:remote:<server>/<harness>", () => {
+    expect(decide(grants(["agents.use:remote:hr/coder"]), remote("hr/coder"))).toBe(true);
+    expect(decide(grants(["agents.use:remote:hr/*"]), remote("hr/coder"))).toBe(true);
+    expect(decide(grants(["agents.use:remote:hr/coder"]), remote("hr/other"))).toBe(false);
+    expect(decide(grants(["agents.use:remote:*"]), remote("ws/any"))).toBe(true);
+  });
+
+  it("are never reached by a plain agents.use grant, nor *", () => {
+    for (const texts of [
+      ["agents.use"],
+      ["agents.use:*"],
+      ["agents.use:*/*"],
+      ["agents.*"],
+      ["*.*"],
+      ["agents.use:remote*"],
+    ])
+      expect(decide(grants(texts), remote("hr/coder")), texts.join()).toBe(false);
+    // The remote grant does not reach plugin agents either.
+    expect(
+      decide(grants(["agents.use:remote:*"]), {
+        area: "agents",
+        action: "use",
+        target: "hr/coder",
+      }),
+    ).toBe(false);
   });
 });

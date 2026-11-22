@@ -119,6 +119,19 @@ export interface Env {
    */
   MEMORY_CAPS?: string;
   /**
+   * The deployment's UHP servers (statewalker/statewalker-root#144), JSON `[{id, baseUrl, secret,
+   * harnesses}]`: `secret` names the secret holding its bearer token (bound to plugin `uhp` and the
+   * server's host), `harnesses` the ones it may serve here (`{"<name>": "<UHP harness id>"}`), each
+   * the remote agent `remote:<id>/<name>`. Workspaces add theirs in `/.system/uhp-servers`.
+   */
+  UHP_SERVERS?: string;
+  /** How often a remote agent session's DO polls its running task, in ms (default 2000). */
+  UHP_POLL_MS?: string;
+  /** Bytes of project files copied in to a remote harness at start (default 4 MiB). */
+  UHP_INPUT_MAX_BYTES?: string;
+  /** Bytes of a remote harness's write-back (default 16 MiB). */
+  UHP_WRITEBACK_MAX_BYTES?: string;
+  /**
    * The deployment's plugin catalog: JSON `{"<path>": "<text>"}` of plugin sources, one folder per
    * plugin, in the Agent Plugins 1.0 or Claude Code layout (statewalker/statewalker-root#82).
    */
