@@ -56,6 +56,7 @@ describe("threat table", () => {
           'describe("a group", () => {',
           '  it("a real test", () => {});',
           '  test.each([1])("an each test %s", () => {});',
+          '  it.skipIf(RUNTIME === "browser")("a test some runtime skips", () => {});',
           '  // it("a commented test", () => {});',
           '  /* test("a block-commented test", () => {}); */',
           "});",
@@ -64,6 +65,7 @@ describe("threat table", () => {
       expect(collectTestTitles(pathToFileURL(`${dir}/`))).toEqual([
         "a real test",
         "an each test %s",
+        "a test some runtime skips",
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

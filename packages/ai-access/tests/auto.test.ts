@@ -16,6 +16,13 @@ import {
   toolRequest,
 } from "../src/index.js";
 
+/** CPU milliseconds the test's own thread has used: what a Durable Object's CPU limit counts. */
+const cpuMs = () => {
+  const usage = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+  const { user, system } = usage ? usage() : process.cpuUsage();
+  return (user + system) / 1000;
+};
+
 const files = (action: string, target: string) => ({ area: "files", action, target });
 const auto = (req: ReturnType<typeof files>, layers: object[] = [], protectedPaths?: string[]) =>
   decideAuto(req, {
@@ -140,6 +147,17 @@ describe("auto mode", () => {
     expect(prompt.user).toContain("files.delete:/build");
     expect(prompt.user).not.toContain("IGNORE ALL RULES");
     expect(prompt.system).toMatch(/^You are the risk classifier/);
+  });
+
+  it("decides the 10,000 entries of a folder's removal well within the CPU limit, broad allows set aside", () => {
+    const allow = [...Array.from({ length: 40 }, (_, i) => `files.delete:/area${i}/**`), "files.*"];
+    const layers = [{ source: "user", rules: { allow, deny: ["files.delete:/locked/**"] } }];
+    const started = cpuMs();
+    for (let i = 0; i < 10_000; i++) auto(files("delete", `/build/d${i % 100}/f${i}.js`), layers);
+    expect(cpuMs() - started).toBeLessThan(2_000);
+    expect(auto(files("delete", "/locked/a.js"), layers)).toMatchObject({ verdict: "deny" });
+    expect(auto(files("delete", "/area3/a.js"), layers)).toMatchObject({ verdict: "allow" });
+    expect(auto(files("delete", "/build/a.js"), layers)).toMatchObject({ step: "classifier" });
   });
 
   it("sends database writes and database admin to the classifier, the statement by size only", () => {

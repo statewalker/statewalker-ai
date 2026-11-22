@@ -59,16 +59,21 @@ export function isBroadRule(entry: string): boolean {
   return /^[/*]+$/.test(target);
 }
 
+/** Each allow list without its broad rules, kept per list: the rules compile once (#49). */
+const NARROWED = new WeakMap<readonly string[], string[]>();
+
 /** The layers with their broad allow rules set aside. */
 export function withoutBroadAllows(layers: readonly RuleLayer[]): RuleLayer[] {
-  return layers.map((layer) =>
-    layer.rules.allow?.some(isBroadRule)
-      ? {
-          ...layer,
-          rules: { ...layer.rules, allow: layer.rules.allow.filter((e) => !isBroadRule(e)) },
-        }
-      : layer,
-  );
+  return layers.map((layer) => {
+    const allow = layer.rules.allow;
+    if (!Array.isArray(allow)) return layer;
+    let narrowed = NARROWED.get(allow);
+    if (!narrowed) {
+      narrowed = allow.some(isBroadRule) ? allow.filter((e) => !isBroadRule(e)) : allow;
+      NARROWED.set(allow, narrowed);
+    }
+    return narrowed === allow ? layer : { ...layer, rules: { ...layer.rules, allow: narrowed } };
+  });
 }
 
 /**

@@ -34,6 +34,15 @@ export interface FileRequest {
   grants: readonly RoleGrant[];
 }
 
+/** Many file actions of one holder in one project, decided together (a folder's entries). */
+export interface FileRequests {
+  /** The project, as the capability names it (the agent session's), or the paths' own. */
+  project: string;
+  /** What the member's roles grant in the project now. */
+  grants: readonly RoleGrant[];
+  checks: readonly { action: FileAction; path: string }[];
+}
+
 /**
  * What the User DO narrows a user capability to for one agent session. The mode is not in it: the
  * user switches modes at any time, and the gate reads the current one at every action
@@ -439,31 +448,60 @@ export class WorkspaceAuthority {
    * block of the capability agrees; EACCES otherwise.
    */
   async authorize(capability: string, req: FileRequest): Promise<void> {
-    let ok = false;
+    await this.authorizeMany(capability, {
+      project: req.project,
+      grants: req.grants,
+      checks: [{ action: req.action, path: req.path }],
+    });
+  }
+
+  /**
+   * Authorizes many file actions in one project under a capability, each as `authorize` would,
+   * with the capability verified once (statewalker-ai#49: a folder's removal decides every entry
+   * inside it). EACCES naming the first refused action, if any is.
+   */
+  async authorizeMany(capability: string, req: FileRequests): Promise<void> {
+    const refused = (i: number) => {
+      const c = req.checks[i];
+      return c
+        ? codedError("EACCES", `may not ${c.action} '${c.path}'`)
+        : codedError("EACCES", "invalid capability");
+    };
+    let verified: VerifiedBiscuit;
     try {
-      const verified = await this.#verify(capability);
-      const root = `/${req.project}/`;
-      const resource = req.path === "/" ? "/" : `${req.path}/`;
-      const inProject = resource.startsWith(root);
-      const target = inProject ? `/${resource.slice(root.length)}`.replace(/(.)\/$/, "$1") : "";
-      const extra = { code: FILE_FACTS, params: { path: resource, root } };
-      ok =
-        inProject &&
-        req.grants.some((grant) => {
-          const { code, params } = roleAuthorizer(
-            grant,
-            { area: "files", action: req.action, target },
-            extra,
-          );
-          try {
-            return verified.authorize(code, { params }).kind === "ok";
-          } catch {
-            return false;
-          }
-        });
+      verified = await this.#verify(capability);
     } catch {
-      ok = false;
+      throw refused(0);
     }
-    if (!ok) throw codedError("EACCES", `may not ${req.action} '${req.path}'`);
+    const root = `/${req.project}/`;
+    req.checks.forEach(({ action, path }, i) => {
+      if (!fileAllowed(verified, root, req.grants, action, path)) throw refused(i);
+    });
+  }
+}
+
+/** Whether a verified capability and the member's roles allow one file action. */
+function fileAllowed(
+  verified: VerifiedBiscuit,
+  root: string,
+  grants: readonly RoleGrant[],
+  action: FileAction,
+  path: string,
+): boolean {
+  try {
+    const resource = path === "/" ? "/" : `${path}/`;
+    if (!resource.startsWith(root)) return false;
+    const target = `/${resource.slice(root.length)}`.replace(/(.)\/$/, "$1");
+    const extra = { code: FILE_FACTS, params: { path: resource, root } };
+    return grants.some((grant) => {
+      const { code, params } = roleAuthorizer(grant, { area: "files", action, target }, extra);
+      try {
+        return verified.authorize(code, { params }).kind === "ok";
+      } catch {
+        return false;
+      }
+    });
+  } catch {
+    return false;
   }
 }

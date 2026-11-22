@@ -13,7 +13,7 @@ export {
   type ToolDbCall,
   toolDb,
 } from "./db-client.js";
-export { type Deployment, startDeployment } from "./deployment.js";
+export { type Deployment, RUNTIME, startDeployment, startNodeDeployment } from "./deployment.js";
 export { type FakeS3, fakeS3 } from "./fake-s3.js";
 export { type FilesClient, restFiles, rpcFiles } from "./files-client.js";
 export { type FakeModel, fakeModel, type ModelRequest } from "./model.js";
@@ -26,9 +26,11 @@ export {
   type Approval,
   type ApprovalAnswer,
   advanceUserClock,
+  type ChatTransportLike,
   type EventsPage,
   type EventsQuery,
   eventOf,
+  expectUiStream,
   flueStorage,
   type Item,
   type ItemsPage,
@@ -69,7 +71,9 @@ export {
   sseFrames,
   TERMINAL_EVENTS,
   type Turn,
+  type UIMessageChunk,
   type UserSession,
+  uiChunks,
 } from "./session-client.js";
 export {
   checkThreatTable,

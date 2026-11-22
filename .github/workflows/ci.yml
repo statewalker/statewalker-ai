@@ -23,6 +23,32 @@ jobs:
       # so it does not wait for the layers below (statewalker/statewalker-root#69).
       api-diff: true
 
+  # The conformance suite on CellB in Chromium, beside the CellB Node run in `ci`: every deployment
+  # is built for browsers (`cellb build`) and loaded in a Dedicated Worker of a page Playwright
+  # drives, its cells in OPFS (packages/ai-conformance/src/browser-deployment.ts).
+  browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Chromium
+        run: pnpm --filter @statewalker/ai-conformance exec playwright install --with-deps chromium
+
+      - name: Conformance on CellB in Chromium
+        run: pnpm --filter @statewalker/ai-conformance run test:browser
+
   # The lockfile-only pull request that .github/workflows/statewalker-update.yml opens: merged
   # once every other check on it passes, after checking it changes pnpm-lock.yaml alone
   # (statewalker/statewalker-ci's merge-lockfile.yml; statewalker-root docs/process/merging.md).

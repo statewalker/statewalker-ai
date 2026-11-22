@@ -94,6 +94,12 @@ export interface Env {
    */
   SECRETS_KEY?: string;
   /**
+   * "browser" for a deployment in a person's page (CellB in a browser): it holds no key of the
+   * deployment's (SECRETS_KEY and DEPLOYMENT_SECRETS are ignored) and keeps only its users' own
+   * secrets (statewalker/statewalker-root#132; `browserDeploymentConfig` builds its configuration).
+   */
+  HOSTING?: string;
+  /**
    * The deployment secrets: JSON `{"NAME": {"plugins": [...], "hosts": [...]}}` naming runtime
    * variables (Worker secrets, `.dev.vars`, the Node environment) and their bindings.
    */

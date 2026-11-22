@@ -6,7 +6,8 @@
   "description": "The hosting layer: the Durable Object classes, REST and RPC entrypoints, and the bindings for CellB, CellD and Workers.",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./browser": "./src/browser.ts"
   },
   "scripts": {
     "build": "tsdown",
