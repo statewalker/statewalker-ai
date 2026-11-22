@@ -83,6 +83,7 @@ export class User extends DurableObject<Env> {
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
           pinDefinitions: (capability, req) => ws.pinDefinitions(capability, req),
           forkDefinitions: (capability, req) => ws.forkDefinitions(capability, req),
+          preImageCheckpoint: (capability, session) => ws.preImageCheckpoint(capability, session),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),

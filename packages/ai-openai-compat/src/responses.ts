@@ -346,7 +346,7 @@ export async function createResponse(
       });
       // The Conversation's own turn: a sub-agent's approval continues its root's last.
       const accepted = [answered.accepted, ...(answered.continued ?? [])].find(
-        (a) => a.session_id === (session as AgentSessionView).id,
+        (a) => a?.session_id === (session as AgentSessionView).id,
       );
       if (!accepted)
         throw codedError("EINVAL", `approval request ${answer.id} continues no turn here`);
