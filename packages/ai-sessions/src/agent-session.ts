@@ -34,6 +34,9 @@ import type {
   TurnStatus,
   TurnView,
 } from "./api.js";
+import { type CompactionOptions, type ContextEntry, ContextShaper } from "./context/shaper.js";
+import type { Summarizer } from "./context/summarizer.js";
+import { type ItemRow, itemOf } from "./items.js";
 import type { SqlLike } from "./sql.js";
 
 /** A message handed to the running turn, to take at its next step. */
@@ -49,6 +52,11 @@ export interface TurnRun {
   turn: string;
   /** The user's message. */
   content: string;
+  /**
+   * The model context before the user's message: the session's top-level summaries and the items
+   * no summary covers, with pins and tool-result trimming applied (statewalker/statewalker-root#131).
+   */
+  context: ContextEntry[];
   /** The model the message asked for, if any. */
   model?: string;
   /** Aborts when the turn is cancelled or interrupted. */
@@ -125,14 +133,6 @@ export type RunTurn = (
   emit: (item: ItemInput) => void,
 ) => Promise<TurnOutcome | undefined>;
 
-interface ItemRow {
-  seq: number;
-  id: string;
-  turn: string;
-  kind: string;
-  body: string;
-}
-
 interface TurnRow {
   id: string;
   status: TurnStatus;
@@ -168,14 +168,6 @@ interface Running {
   done: Promise<void>;
 }
 
-const itemOf = (row: ItemRow): Item => ({
-  ...(JSON.parse(row.body) as Omit<ItemInput, "kind">),
-  seq: Number(row.seq),
-  id: row.id,
-  turn: row.turn,
-  kind: row.kind as Item["kind"],
-});
-
 const eventOf = (row: EventRow): SessionEvent => ({
   seq: Number(row.seq),
   type: row.type,
@@ -207,6 +199,8 @@ export class AgentSessionCore implements AgentPort {
   readonly #runTurn: RunTurn;
   readonly #runAction: RunAction;
   readonly #recordApprovals: RecordApprovals;
+  readonly #shaper: ContextShaper;
+  readonly #summarizer: Summarizer | undefined;
   #running: Running | undefined;
   readonly #waiters = new Set<() => void>();
 
@@ -215,6 +209,11 @@ export class AgentSessionCore implements AgentPort {
     runTurn: RunTurn;
     runAction: RunAction;
     recordApprovals: RecordApprovals;
+    /**
+     * Compaction: without a summarizer, nothing is compacted (the context is every earlier item,
+     * long tool results outside the tail trimmed).
+     */
+    compaction?: { summarizer?: Summarizer; options?: Partial<CompactionOptions> };
   }) {
     this.#sql = options.sql;
     this.#runTurn = options.runTurn;
@@ -234,6 +233,8 @@ export class AgentSessionCore implements AgentPort {
         decision TEXT NOT NULL, message TEXT);
       CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
         used TEXT NOT NULL, reason TEXT NOT NULL);`);
+    this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
+    this.#summarizer = options.compaction?.summarizer;
     this.#recover();
   }
 
@@ -436,13 +437,15 @@ export class AgentSessionCore implements AgentPort {
         error = String((e as Error)?.message ?? e);
       }
     } else {
-      this.#append(row.id, { kind: "message", role: "user", text: row.content });
+      const prompt = this.#append(row.id, { kind: "message", role: "user", text: row.content });
       try {
+        const context = await this.#context(row.id, prompt.seq, running.abort.signal);
         outcome = await this.#runTurn(
           {
             config,
             turn: row.id,
             content: row.content,
+            context,
             ...(row.model_requested ? { model: row.model_requested } : {}),
             signal: running.abort.signal,
             onSteer: (listener) => {
@@ -513,6 +516,24 @@ export class AgentSessionCore implements AgentPort {
         model ? { model } : {},
       );
     else this.#finish(row.id, "completed", { type: "end_turn" }, model ? { model } : {});
+  }
+
+  /** The model context of a turn whose user message is item `before`. */
+  async #context(turn: string, before: number, signal: AbortSignal): Promise<ContextEntry[]> {
+    if (this.#summarizer) {
+      try {
+        await this.#shaper.compact(before, this.#summarizer, {
+          signal,
+          onSummary: (summary) => this.#log("summary.created", turn, summary),
+          onThrash: (info) => this.#log("context.over_budget", turn, info),
+        });
+      } catch (e) {
+        // A failed summary leaves the context uncompacted; the turn still runs.
+        if (signal.aborted) throw e;
+        this.#log("compaction.failed", turn, { message: String((e as Error)?.message ?? e) });
+      }
+    }
+    return this.#shaper.context(before);
   }
 
   /**
@@ -630,6 +651,16 @@ export class AgentSessionCore implements AgentPort {
     );
     this.#pump();
     return { turn_id: id, session_id: config.id, delivery: "next", offset };
+  }
+
+  /**
+   * Posts the approvals a sub-agent's turn waits on to this session's events stream, as the root
+   * of its tree (statewalker/statewalker-root#126): whoever follows the root sees every approval
+   * of the tree. Told by the sub-agent's DO.
+   */
+  async subAgentApprovals(session: string, requests: ApprovalRequest[]): Promise<void> {
+    this.#started();
+    this.#log("approval.requested", undefined, { session, approvals: requests });
   }
 
   async turn(turnId: string): Promise<TurnView> {
@@ -764,7 +795,7 @@ export class AgentSessionCore implements AgentPort {
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM turn_substitutions;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM turn_substitutions; DELETE FROM summaries;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

@@ -13,6 +13,7 @@ import {
   generateKeypair,
   type Keypair,
   type Term,
+  thirdPartyBlock,
   toBase64,
   type VerifiedBiscuit,
 } from "@statewalker/webrun-biscuit";
@@ -50,10 +51,28 @@ export interface AgentSessionGrant {
   unattended?: boolean;
 }
 
+/**
+ * What the Workspace DO narrows a parent agent session's capability to for a sub-agent
+ * (statewalker/statewalker-root#126): the child's session and agent, and a mode that may only make
+ * the gate stricter than the user session's.
+ */
+export interface SubAgentGrant {
+  session: string;
+  agent: string;
+  /** Modes the child's actions are also decided by: the strictest verdict wins. */
+  modes?: string[];
+}
+
 /** What an agent session's capability says: its user (root-signed) and its grant. */
 export interface AgentSessionFacts extends AgentSessionGrant {
   user: string;
   unattended: boolean;
+  /** A sub-agent's parent session. */
+  parent?: string;
+  /** A sub-agent's ancestors, the root session first. */
+  lineage?: string[];
+  /** The modes the sub-agent blocks add, each one only stricter (outermost first). */
+  modes?: string[];
 }
 
 /** How a Workspace DO's authority is told about its revocation list. */
@@ -84,6 +103,15 @@ check if resource($p), $p.starts_with({root});`;
 const UNATTENDED_FACT = "\nunattended(true);";
 
 const GRANT_FACTS = ["agent_session", "project", "agent"] as const;
+
+// A sub-agent's block, signed by the workspace's key as a third-party block: the gate trusts its
+// facts because no holder can sign it. It adds no check: the parent's blocks still bind the child.
+const SUB_AGENT_BLOCK = `agent_session({session});
+parent_session({parent});
+agent({agent});`;
+const SUB_AGENT_FACTS = ["agent_session", "parent_session", "agent"] as const;
+const MODE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const hex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
 /** A first-level folder or a user's name: one path segment, never "." or "..". */
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,127}$/;
@@ -117,10 +145,12 @@ export interface StoredRootKey {
 /** The authority of one workspace: its root key, minting and checking capabilities. */
 export class WorkspaceAuthority {
   readonly #keys: Keypair;
+  readonly #externalKey: string;
   readonly #isRevoked: (ids: readonly string[]) => boolean;
 
   private constructor(keys: Keypair, options: AuthorityOptions) {
     this.#keys = keys;
+    this.#externalKey = `ed25519/${hex(keys.publicKey)}`;
     this.#isRevoked = options.isRevoked ?? (() => false);
   }
 
@@ -227,13 +257,84 @@ export class WorkspaceAuthority {
     });
     const project = String(values.project);
     if (!NAME.test(project)) throw codedError("EACCES", "not an agent session's capability");
-    return {
+    const facts: AgentSessionFacts = {
       user,
       session: String(values.agent_session),
       project,
       agent: String(values.agent),
       unattended,
     };
+    // Sub-agent blocks: only those the workspace signed count, each naming the session before it
+    // as its parent. A block the holder appended is a check at most, never a fact the gate reads.
+    const lineage: string[] = [];
+    const modes: string[] = [];
+    for (const later of verified.token.blocks.slice(2)) {
+      if (later.externalKey !== this.#externalKey) continue;
+      const sub: Record<string, string> = {};
+      for (const name of SUB_AGENT_FACTS) {
+        const found = later.facts.filter((f) => f.predicate.name === name);
+        const t = found[0]?.predicate.terms[0] as Term | undefined;
+        if (found.length !== 1 || found[0]?.predicate.terms.length !== 1 || t?.t !== "str")
+          throw codedError("EACCES", "not an agent session's capability");
+        sub[name] = t.v;
+      }
+      if (sub.parent_session !== facts.session)
+        throw codedError("EACCES", "not an agent session's capability");
+      for (const f of later.facts.filter((f) => f.predicate.name === "mode")) {
+        const t = f.predicate.terms[0] as Term | undefined;
+        // An unreadable mode is kept as it is: the gate knows no such mode, and denies.
+        modes.push(t?.t === "str" ? t.v : "");
+      }
+      lineage.push(facts.session);
+      facts.session = String(sub.agent_session);
+      facts.agent = String(sub.agent);
+      facts.parent = String(sub.parent_session);
+    }
+    if (lineage.length) facts.lineage = lineage;
+    if (modes.length) facts.modes = modes;
+    return facts;
+  }
+
+  /**
+   * The capability of a sub-agent of an agent session (statewalker/statewalker-root#126): the
+   * parent's capability with one more block, which this workspace signs, naming the child's
+   * session and agent (and a mode that may only be stricter). Only the user session that the
+   * parent's capability was narrowed from may ask, with its own user capability. The child holds
+   * every block of its parent's, so it can do nothing its parent can't, and revoking any ancestor
+   * stops it.
+   */
+  async delegate(
+    userCapability: string,
+    parentCapability: string,
+    grant: SubAgentGrant,
+  ): Promise<string> {
+    const owner = await this.#verify(userCapability);
+    if (owner.token.blocks.length !== 1) throw codedError("EACCES", "not a user capability");
+    const parent = await this.agentSessionOf(parentCapability);
+    const target = await this.#verify(parentCapability);
+    if (target.revocationIds[0] !== owner.revocationIds[0])
+      throw codedError("EACCES", "not a capability of this user session");
+    if (!NAME.test(grant.session) || grant.session === parent.session)
+      throw codedError("EINVAL", "invalid session id");
+    if (typeof grant.agent !== "string" || !grant.agent)
+      throw codedError("EINVAL", "agent must be an agent's name");
+    const modes = grant.modes ?? [];
+    if (!modes.every((m) => typeof m === "string" && MODE_NAME.test(m)))
+      throw codedError("EINVAL", "invalid mode name");
+    const token = Biscuit.fromBase64(parentCapability);
+    const block = thirdPartyBlock(
+      token.thirdPartyRequest(),
+      this.#keys.secretKey,
+      SUB_AGENT_BLOCK + modes.map((_, i) => `\nmode({mode${i}});`).join(""),
+      0,
+      {
+        session: grant.session,
+        parent: parent.session,
+        agent: grant.agent,
+        ...Object.fromEntries(modes.map((m, i) => [`mode${i}`, m])),
+      },
+    );
+    return token.appendThirdParty(block).toBase64();
   }
 
   /**

@@ -132,6 +132,9 @@ A compacted stand-in for a range of a session's items or lower summaries; the it
 **Tail**:
 The most recent items of a session, never compacted; its size is set by count or by tokens.
 
+**Pin**:
+An item kept whole in the model context: never compacted into a summary nor trimmed (an item marked pinned, or the latest call of a tool the deployment pins, with its result).
+
 **Fork**:
 Starting a new agent session from a copy of another session's history up to the end of one of its turns, on any branch; both then continue independently.
 _Avoid_: branch (UHP's word for a fork), clone

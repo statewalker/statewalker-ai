@@ -141,6 +141,10 @@ export interface AgentSession {
   metadata: Metadata;
   archived?: number;
   status?: "idle" | "running" | "waiting" | "error";
+  /** The session that started it with `agent.start` (a sub-agent). */
+  parent?: string;
+  /** The root of its tree: the session the user started. */
+  root?: string;
 }
 
 /** A workspace's service account, as the session API lists it (never its key). */

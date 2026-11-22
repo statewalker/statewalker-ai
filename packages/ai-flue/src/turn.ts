@@ -3,7 +3,7 @@
 // the loop's messages into the harness's items (statewalker/statewalker-root#76, #87).
 // Ported from statewalker-sandbox apps/harness-proto-sessions/src/agent-session.ts.
 import { Agent } from "@earendil-works/pi-agent-core";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, normalizeContext } from "@earendil-works/pi-ai";
 import {
   createBashTool,
   createEditTool,
@@ -20,9 +20,16 @@ import {
   type ModelResponse,
   type ModelUsage,
 } from "@statewalker/ai-environment";
-import type { ItemInput, Steer, TurnOutcome } from "@statewalker/ai-sessions";
+import type {
+  Complete,
+  ContextEntry,
+  ItemInput,
+  Steer,
+  TurnOutcome,
+} from "@statewalker/ai-sessions";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
+import { contextMessages } from "./context.js";
 import { FilesFs } from "./files-fs.js";
 
 /**
@@ -69,12 +76,22 @@ export interface FlueTurn {
   /** The user's message. */
   content: string;
   /**
+   * The model context before the user's message, as the harness shaped it (summaries and the
+   * items they leave); the loop starts from it. The harness compacts: Flue's own compaction is off.
+   */
+  context?: ContextEntry[];
+  /**
    * Whether a file call of this turn waits on the user's approval: the turn then ends at the
    * pending call, Flue's approval-gate pattern (a tool result with `terminate`).
    */
   waiting?: () => boolean;
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
+  /**
+   * The names of the tools the model may be offered, Flue's and the host's (none: all of them). A
+   * sub-agent's are within its parent's (statewalker/statewalker-root#126).
+   */
+  allowTools?: readonly string[];
   /** Aborts the turn: it stops at once, keeping what it reported so far. */
   signal?: AbortSignal;
   /**
@@ -215,7 +232,11 @@ export async function runFlueTurn(
       return { content: [{ type: "text", text: result.output }], details: {} };
     },
   }));
-  const tools = [...TRACER_TOOLS.map((name) => TOOLS[name](sandbox as never)), ...hostTools];
+  const offered = (name: string) => !turn.allowTools || turn.allowTools.includes(name);
+  const tools = [
+    ...TRACER_TOOLS.filter(offered).map((name) => TOOLS[name](sandbox as never)),
+    ...hostTools.filter((tool) => offered(tool.name)),
+  ];
   let requests = 0;
   /**
    * The loop's only way to a model: one gateway request per step. Fallbacks are reported as items
@@ -279,7 +300,12 @@ export async function runFlueTurn(
         .join("\n\n"),
       model: loopModel(turn.model) as never,
       tools: tools as never,
-      messages: [],
+      // Earlier answers are replayed as the gateway's: it may have served several models.
+      messages: contextMessages(turn.context ?? [], {
+        api: "openai-completions",
+        provider: "gateway",
+        id: turn.model ?? "gateway",
+      }) as never,
     },
     // A call waiting on an approval ends the turn: the model is not asked again until the user
     // answers, and the answer continues the session.
@@ -322,4 +348,30 @@ export async function runFlueTurn(
   }
   if (failure && !turn.signal?.aborted) throw new Error(failure);
   return outcome;
+}
+
+/**
+ * One model call with no tools, for the harness's summarizer, through the model gateway (the
+ * session's model, metered like any request): the reply's text. A refusal or an error is thrown.
+ */
+export function completeWith(models: ModelPort): Complete {
+  return async ({ system, prompt, maxOutputTokens, signal }) => {
+    if (signal?.aborted) throw new Error("EIO: the summarizer was cut short");
+    const context = normalizeContext({
+      systemPrompt: system,
+      messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+    } as never);
+    const { message: reply } = await models.request({
+      context: plain(context),
+      ...(maxOutputTokens ? { maxTokens: maxOutputTokens } : {}),
+    });
+    if (reply.stopReason === "error" || reply.stopReason === "aborted")
+      throw new Error(
+        `EIO: the summarizer's model failed: ${reply.errorMessage ?? reply.stopReason}`,
+      );
+    return (reply.content as { type?: string; text?: string }[])
+      .filter((p) => p.type === "text")
+      .map((p) => p.text ?? "")
+      .join("");
+  };
 }

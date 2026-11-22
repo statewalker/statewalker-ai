@@ -1,6 +1,6 @@
 // Sessions: user and agent sessions, turns, items, and the session API as methods with REST and
 // RPC routers onto them; turns, the event log and its SSE stream (statewalker/statewalker-root#125).
-// Summaries come with compaction (statewalker/statewalker-root#111).
+// Summaries, compaction and the model context of a turn (statewalker/statewalker-root#131).
 
 export { codeOf, statusOf } from "@statewalker/ai-access";
 export {
@@ -57,12 +57,48 @@ export {
   type StartSessionRequest,
   type StopReason,
   type StoredAction,
+  type SubAgentRequest,
   TERMINAL_TURN_STATUSES,
   type TurnStatus,
   type TurnView,
   type UserPort,
   type UserSessionView,
 } from "./api.js";
+export {
+  createTokenEstimator,
+  type TokenEstimator,
+  type TokenEstimatorOptions,
+} from "./context/estimate.js";
+export {
+  type CompactionOptions,
+  type ContextEntry,
+  ContextShaper,
+  compactionOptions,
+  DEFAULT_COMPACTION,
+  parseCompaction,
+  type TailSize,
+} from "./context/shaper.js";
+export {
+  type Complete,
+  createModelSummarizer,
+  type ModelSummarizerOptions,
+  parseSummary,
+  renderItems,
+  renderSummaries,
+  SUMMARIZER_PROMPT_START,
+  type Summarizer,
+  type SummarizerInput,
+  type Summary,
+  type SummaryOutput,
+  type SummarySection,
+} from "./context/summarizer.js";
+export {
+  createTrimPolicy,
+  type TrimOptions,
+  type TrimPolicy,
+  type TrimStrategy,
+  trimToolResult,
+} from "./context/trim.js";
 export {
   type FilesRpcConnection,
   filesRpcClient,

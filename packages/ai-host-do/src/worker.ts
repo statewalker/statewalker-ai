@@ -49,6 +49,7 @@ function sessionApi(env: Env, token: string) {
       listAgentSessions: async (t) => (await user()).listAgentSessions(t),
       updateAgentSession: async (t, id, m) => (await user()).updateAgentSession(t, id, m),
       archiveAgentSession: async (t, id) => (await user()).archiveAgentSession(t, id),
+      subtree: async (t, id) => (await user()).subtree(t, id),
       deleteAgentSession: async (t, id) => (await user()).deleteAgentSession(t, id),
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
