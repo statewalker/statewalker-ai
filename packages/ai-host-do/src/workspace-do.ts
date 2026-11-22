@@ -124,7 +124,13 @@ import {
   nameOf,
   verifyToken,
 } from "./env.js";
-import { refusal, type WarningView, WorkspaceLimits, warningView } from "./limits-host.js";
+import {
+  meteredFiles,
+  refusal,
+  type WarningView,
+  WorkspaceLimits,
+  warningView,
+} from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { mountWorkspace } from "./workspace-store.js";
 
@@ -238,6 +244,9 @@ export class Workspace extends DurableObject<Env> {
         (await this.#modeDecider(facts, await this.#store))(req.area, req.action, req.target),
       consume: async (facts, id) => this.#registry.consume(id, facts.session, facts.user),
       mayCallTool: (facts, tool) => this.#mayCallTool(facts, tool),
+      // A write over a storage limit fails with ENOSPC; queries still run (#179).
+      admitWrite: async (project) =>
+        this.#limits.admitStorage(project, 1, await this.#store, () => this.#databases.storage()),
     });
   }
 
@@ -712,7 +721,7 @@ export class Workspace extends DurableObject<Env> {
    * unless the user granted that exact action.
    */
   async #fileView(capability: string) {
-    const raw = await this.#store;
+    const raw = this.#meteredStore(await this.#store);
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
     const store = agent ? await this.#withDefinitions(raw, agent) : raw;
@@ -738,6 +747,19 @@ export class Workspace extends DurableObject<Env> {
         : {}),
     };
     return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
+  }
+
+  /**
+   * The store as file views write to it: every change counts against the storage limits of the
+   * project it lands in, and fails with ENOSPC over one (statewalker/statewalker-root#179).
+   */
+  #meteredStore(store: FilesApi): FilesApi {
+    return meteredFiles(store, {
+      ensure: (project) => this.#limits.ensureStorage(project, store),
+      admit: (project, delta) =>
+        this.#limits.admitStorage(project, delta, store, () => this.#databases.storage()),
+      adjust: (project, delta) => this.#limits.adjustStorage(project, "", delta, store),
+    });
   }
 
   /**
@@ -1282,7 +1304,8 @@ export class Workspace extends DurableObject<Env> {
       detail,
     );
     const result = await gatewayFetch(call.request, String(call.plugin), lookup);
-    const received = "body" in result ? new TextEncoder().encode(String(result.body ?? "")).length : 0;
+    const received =
+      "body" in result ? new TextEncoder().encode(String(result.body ?? "")).length : 0;
     warnings.push(
       ...this.#limits.ledger.add(
         await this.#limits.scopes(facts.project, facts.user),

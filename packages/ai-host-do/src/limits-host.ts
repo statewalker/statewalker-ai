@@ -18,6 +18,7 @@ import {
   type UsageMeta,
   withDelay,
 } from "@statewalker/ai-environment";
+import type { FilesApi } from "@statewalker/webrun-files";
 import { type Env, ledgerOptions } from "./env.js";
 
 /** The limits file in the workspace's and each project's system folder, and a user's profile. */
@@ -89,6 +90,7 @@ export class WorkspaceLimits {
     this.#sql = sql;
     sql.exec(`CREATE TABLE IF NOT EXISTS limit_sessions (session TEXT PRIMARY KEY,
       user TEXT NOT NULL, project TEXT NOT NULL)`);
+    sql.exec("CREATE TABLE IF NOT EXISTS limit_storage_scanned (project TEXT PRIMARY KEY)");
     sql.exec(`CREATE TABLE IF NOT EXISTS limit_streams (id TEXT PRIMARY KEY, user TEXT NOT NULL,
       expires INTEGER NOT NULL)`);
     this.#env = env;
@@ -188,6 +190,81 @@ export class WorkspaceLimits {
     } catch (e) {
       throw refusal(e);
     }
+  }
+
+  /**
+   * The storage meter of a project (files; databases are measured live): counted from what the
+   * store holds the first time, then kept by every change through the gate.
+   */
+  async ensureStorage(project: string, store: FilesApi): Promise<void> {
+    if (
+      this.#sql.exec("SELECT 1 FROM limit_storage_scanned WHERE project = ?", project).toArray()
+        .length
+    )
+      return;
+    let n = 0;
+    try {
+      // The system folder is the harness's, not the project's files.
+      const system = `/${project}/${DEFAULT_SYSTEM_FOLDER}/`;
+      for await (const e of store.list(`/${project}`, { recursive: true }))
+        if (e.kind === "file" && !`${e.path}`.startsWith(system)) n += e.size;
+    } catch {
+      // A project with no folder yet holds nothing.
+    }
+    this.#sql.exec("INSERT OR IGNORE INTO limit_storage_scanned VALUES (?)", project);
+    if (n)
+      this.ledger.add(
+        this.#storageScopes(await this.scopes(project, "")),
+        { storage_bytes: n },
+        this.meta(project, ""),
+      );
+  }
+
+  /** Storage counts against the workspace (and the deployment's ceilings) and the project. */
+  #storageScopes(scopes: LimitScope[]): LimitScope[] {
+    return scopes.filter((s) => s.level !== "member");
+  }
+
+  /**
+   * Refuses (ENOSPC) adding `delta` bytes to a project when its files and databases, or the
+   * workspace's, would then cross a storage limit.
+   */
+  async admitStorage(
+    project: string,
+    delta: number,
+    store: FilesApi,
+    databases: () => Promise<{ project: string; bytes: number }[]>,
+  ): Promise<void> {
+    await this.ensureStorage(project, store);
+    const scopes = this.#storageScopes(await this.scopes(project, ""));
+    if (!scopes.some((s) => s.limits.some((l) => l.meter === "storage_bytes"))) return;
+    const dbs = await databases();
+    const total = dbs.reduce((n, d) => n + d.bytes, 0);
+    const own = dbs.filter((d) => d.project === project).reduce((n, d) => n + d.bytes, 0);
+    try {
+      for (const scope of scopes)
+        this.ledger.check([scope], {
+          storage_bytes: delta + (scope.level === "project" ? own : total),
+        });
+    } catch (e) {
+      throw refusal(e, "ENOSPC");
+    }
+  }
+
+  /** Counts `delta` bytes of files in a project. */
+  async adjustStorage(
+    project: string,
+    user: string,
+    delta: number,
+    store: FilesApi,
+  ): Promise<void> {
+    await this.ensureStorage(project, store);
+    if (!delta) return;
+    this.ledger.add(
+      this.#storageScopes(await this.scopes(project, user)),
+      { storage_bytes: delta },
+      this.meta(project, user),
+    );
   }
 
   /** Counts a new active agent session; ELIMIT (429) over a limit on sessions. */
@@ -290,4 +367,86 @@ export class UserLimits {
       },
     ];
   }
+}
+
+/** What a metered file store asks of its owner: the storage meter of each project. */
+export interface StoragePort {
+  /** Counts what a project holds the first time it is metered. */
+  ensure(project: string): Promise<void>;
+  /** Refuses (ENOSPC) a change adding `delta` bytes to a project over a storage limit. */
+  admit(project: string, delta: number): Promise<void>;
+  /** Counts a change of `delta` bytes in a project (a negative one frees room). */
+  adjust(project: string, delta: number): Promise<void>;
+}
+
+/**
+ * A file store whose writes, copies and moves count against the storage limits of the project
+ * they land in (statewalker/statewalker-root#179): a change that would cross one fails with
+ * ENOSPC before it lands, reads are untouched, and removing always works and frees room.
+ */
+export function meteredFiles(store: FilesApi, port: StoragePort): FilesApi {
+  const projectOf = (path: string) => path.split("/").filter(Boolean)[0] ?? "";
+  const sizeOf = async (path: string): Promise<number> => {
+    const st = await store.stats(path);
+    if (!st) return 0;
+    if (st.kind === "file") return st.size;
+    let n = 0;
+    for await (const e of store.list(path, { recursive: true })) if (e.kind === "file") n += e.size;
+    return n;
+  };
+  return {
+    read: (path, options) => store.read(path, options),
+    list: (path, options) => store.list(path, options),
+    stats: (path) => store.stats(path),
+    exists: (path) => store.exists(path),
+    mkdir: (path) => store.mkdir(path),
+    async write(path, content) {
+      const project = projectOf(path);
+      if (!project) return store.write(path, content);
+      await port.ensure(project);
+      const old = await sizeOf(path);
+      let written = 0;
+      async function* counted() {
+        for await (const chunk of content) {
+          written += chunk.length;
+          if (written > old) await port.admit(project, written - old);
+          yield chunk;
+        }
+      }
+      await store.write(path, counted());
+      await port.adjust(project, written - old);
+    },
+    async remove(path) {
+      const project = projectOf(path);
+      if (project) await port.ensure(project);
+      const size = project ? await sizeOf(path) : 0;
+      const done = await store.remove(path);
+      if (done && size) await port.adjust(project, -size);
+      return done;
+    },
+    async copy(source, target) {
+      const to = projectOf(target);
+      if (to) await port.ensure(to);
+      const delta = to ? (await sizeOf(source)) - (await sizeOf(target)) : 0;
+      if (delta > 0) await port.admit(to, delta);
+      const done = await store.copy(source, target);
+      if (done && delta) await port.adjust(to, delta);
+      return done;
+    },
+    async move(source, target) {
+      const from = projectOf(source);
+      const to = projectOf(target);
+      if (from === to) return store.move(source, target);
+      for (const p of [from, to]) if (p) await port.ensure(p);
+      const size = await sizeOf(source);
+      const replaced = await sizeOf(target);
+      if (size - replaced > 0) await port.admit(to, size - replaced);
+      const done = await store.move(source, target);
+      if (done) {
+        await port.adjust(to, size - replaced);
+        await port.adjust(from, -size);
+      }
+      return done;
+    },
+  };
 }

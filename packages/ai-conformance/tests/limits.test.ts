@@ -13,7 +13,11 @@ import {
   fakeRest,
   login,
   restClient,
+  restDb,
+  restFiles,
   rpcClient,
+  rpcDb,
+  rpcFiles,
   type SessionClient,
   seed,
   seedProfiles,
@@ -58,6 +62,16 @@ function projectFiles(t: string): Record<string, string> {
       warn_at: 0.5,
     }),
     [`/free-${t}/.system/access`]: owner("ann", "kim"),
+    [`/store-${t}/.system/access`]: owner("ann"),
+    [`/store-${t}/.system/limits`]: limits({
+      meter: "storage_bytes",
+      level: "project",
+      value: 100,
+    }),
+    [`/store-${t}/seeded.txt`]: "x".repeat(20),
+    [`/dbfull-${t}/.system/access`]: owner("ann"),
+    [`/dbfull-${t}/.system/databases`]: JSON.stringify({ notes: {} }),
+    [`/dbfull-${t}/.system/limits`]: limits({ meter: "storage_bytes", level: "project", value: 0 }),
     [`/net-${t}/.system/access`]: owner("ann"),
     [`/net-${t}/.system/limits`]: limits({
       meter: "outbound_requests",
@@ -391,5 +405,37 @@ describe.each(transports)("limits over %s", (name, connect) => {
       expect.objectContaining({ amount: 1, turn: first.id, project: `net-${t}`, user: `ann-${t}` }),
     ]);
     expect(records.some((r) => r.session === s.id && r.meter === "outbound_bytes")).toBe(true);
+  });
+
+  it("fails file writes with ENOSPC over the project's storage limit, while reads and deletes work", async () => {
+    const token = await login(deployment, u("ann"));
+    const files = t === "rest" ? restFiles(deployment, token) : await rpcFiles(deployment, token);
+    sockets.push(files);
+    const bytes = (n: number) => [new TextEncoder().encode("y".repeat(n))];
+    // 20 bytes were there already; 60 more fit in 100.
+    await files.write(`/store-${t}/a.txt`, bytes(60));
+    await expect(files.write(`/store-${t}/b.txt`, bytes(30))).rejects.toMatchObject({
+      message: expect.stringContaining("ENOSPC"),
+      ...(t === "rest" ? { status: 507 } : {}),
+    });
+    expect(await files.exists(`/store-${t}/b.txt`)).toBe(false);
+    // Reading works, and so does deleting, which makes room again.
+    let read = 0;
+    for await (const chunk of files.read(`/store-${t}/a.txt`)) read += chunk.length;
+    expect(read).toBe(60);
+    expect(await files.remove(`/store-${t}/a.txt`)).toBe(true);
+    await files.write(`/store-${t}/b.txt`, bytes(30));
+    // Overwriting a file counts what it adds, not its whole size.
+    await files.write(`/store-${t}/b.txt`, bytes(70));
+  });
+
+  it("fails database writes with ENOSPC over the storage limit, while queries work", async () => {
+    const token = await login(deployment, u("ann"));
+    const db = t === "rest" ? restDb(deployment, token) : await rpcDb(deployment, token);
+    sockets.push(db);
+    expect(await db.query(`dbfull-${t}`, "notes", "SELECT 1 AS one")).toEqual([{ one: 1 }]);
+    await expect(db.exec(`dbfull-${t}`, "notes", "CREATE TABLE t (x)")).rejects.toMatchObject({
+      message: expect.stringContaining("ENOSPC"),
+    });
   });
 });

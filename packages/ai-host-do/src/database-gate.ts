@@ -75,6 +75,8 @@ export interface DatabaseGateOptions {
   consume(facts: AgentSessionFacts, id: string): Promise<boolean>;
   /** Whether the session may call the plugin's tool now (pinned, and `tools.call` by the roles). */
   mayCallTool(facts: AgentSessionFacts, tool: ToolGrant): Promise<boolean>;
+  /** Refuses (ENOSPC) a write to a project over a storage limit (statewalker/statewalker-root#179). */
+  admitWrite?(project: string): Promise<void>;
 }
 
 /** Who holds a capability, and where it acts. */
@@ -236,13 +238,17 @@ export class DatabaseGate {
       params?: unknown[],
     ): Promise<DbServerKind> => {
       if (typeof sql !== "string") throw codedError("EINVAL", "sql must be a string");
-      if (db.private) return "write";
+      if (db.private) {
+        if (!isReadStatement(sql)) await this.#o.admitWrite?.(holder.project);
+        return "write";
+      }
       // Reads never wait on an approval: one the mode does not allow is refused.
       const readOnly = async (): Promise<DbServerKind> => {
         await this.#readable(holder, db.name);
         return "read";
       };
       if (isReadStatement(sql) || !db.write) return readOnly();
+      await this.#o.admitWrite?.(holder.project);
       await this.#settle(holder, "write", db.name, {
         op,
         sql,
