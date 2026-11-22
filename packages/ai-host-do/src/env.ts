@@ -100,6 +100,8 @@ export interface Env {
   EGRESS_MAX_RESPONSE_BYTES?: string;
   EGRESS_MAX_BODY_BYTES?: string;
   EGRESS_MAX_QUERY_BYTES?: string;
+  /** How long one egress request may take, over every hop, in ms (30000). */
+  EGRESS_TIMEOUT_MS?: string;
   /**
    * Test-only: hosts the egress gateway (and REST tools and MCP servers) reach over http, on any
    * port, at internal addresses: a test deployment's local fake servers. Never set in production.

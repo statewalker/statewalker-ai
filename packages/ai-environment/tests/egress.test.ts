@@ -407,3 +407,21 @@ describe("egressFetch without following redirects", () => {
     expect(t.hops).toHaveLength(1);
   });
 });
+
+describe("egressFetch where the runtime hides redirects (a browser)", () => {
+  it("refuses an opaque redirect rather than answering it: the gateway could not check where it points", async () => {
+    const opaque = {
+      status: 0,
+      type: "opaqueredirect",
+      headers: new Headers(),
+      body: null,
+    } as unknown as Response;
+    const t = fakeTransport(
+      { "https://a.example/go": () => opaque },
+      { "a.example": ["93.184.216.34"] },
+    );
+    await expect(
+      egressFetch({ url: "https://a.example/go" }, { config: config(), transport: t }),
+    ).rejects.toThrow(/EACCES: .*hides redirects/);
+  });
+});

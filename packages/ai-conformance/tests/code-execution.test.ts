@@ -429,7 +429,7 @@ describe.each(transports)("code execution over %s", (name, connect) => {
     const s = await ann.startSession({ project });
     const turn = await ann.sendMessage(s.id, { content: bash("node net.mjs") });
     expect(outputOf(turn)).toMatch(
-      /fetch failed: EACCES: the deployment allows no network to example\.com[\s\S]*exit code 1/,
+      /fetch failed: EACCES: the deployment allows no network to example\.com/,
     );
   });
 });

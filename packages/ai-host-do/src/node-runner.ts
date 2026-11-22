@@ -27,7 +27,7 @@ import {
 } from "./tool-executor.js";
 
 /** The globals a `node` script may name beside the language's: what its isolate defines. */
-const NODE_GLOBALS = ["process", "__harness", "fetch"];
+const NODE_GLOBALS = ["process", "__harness"];
 
 const PATH_SHIM = `
 const norm = (p) => {
@@ -226,11 +226,7 @@ export default class extends WorkerEntrypoint {
       signal: controller.signal,
     };
     define("process", proc);
-    define("__harness", { host, console, cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
-    // The script's only network: the egress gateway, through the run's host (the isolate's own
-    // globalOutbound stays null). Refused there unless the deployment, the user's roles, the agent's
-    // declaration and the mode all allow it.
-    define("fetch", gatewayFetchOf(host));
+    define("__harness", { host, console, fetch: gatewayFetchOf(host), cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
     let exitCode = 0;
     try {
       await main();
@@ -268,7 +264,9 @@ export async function bundleNodeScript(
       modules: (specifier) => NODE_MODULES[specifier],
       // The script's `console` is the isolate's, writing to stdout and stderr: named through
       // `__harness`, since a host may rebind the global `console` of loaded code (CellB does).
-      define: { console: "__harness.console" },
+      // Its `fetch` is the egress gateway's, over the run's host (statewalker/statewalker-root#208):
+      // named through `__harness` too, since a hardened realm may not let `fetch` be redefined.
+      define: { console: "__harness.console", fetch: "__harness.fetch" },
       format: "esm",
       platform: "neutral",
       conditions: ["node", "worker", "browser"],

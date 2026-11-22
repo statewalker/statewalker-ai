@@ -580,6 +580,9 @@ export async function egressFetch(
   options: EgressOptions,
 ): Promise<EgressResponse> {
   const { config } = options;
+  // Every hop of the request shares one deadline (EGRESS_TIMEOUT_MS, 30 s by default).
+  const deadline = AbortSignal.timeout(config.timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
   let method = String(request.method ?? "GET").toUpperCase();
   let body =
     request.body === undefined
@@ -657,7 +660,7 @@ export async function egressFetch(
           method,
           headers,
           ...(body ? { body } : {}),
-          ...(options.signal ? { signal: options.signal } : {}),
+          signal,
         },
         admit,
       );
@@ -665,6 +668,10 @@ export async function egressFetch(
       return fail(e);
     }
     sent += body?.length ?? 0;
+    // A browser's fetch answers a redirect it was told not to follow as an opaque response: the
+    // gateway cannot see where it points, so it is neither followed nor handed on.
+    if ((res.type as string) === "opaqueredirect")
+      throw codedError("EACCES", "this runtime hides redirects from the gateway: none is followed");
     const location = res.headers.get("location");
     if (REDIRECTS.has(res.status) && location && request.redirect !== "manual") {
       await res.body?.cancel().catch(() => {});

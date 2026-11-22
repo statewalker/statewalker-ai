@@ -324,7 +324,10 @@ describe.each(transports)("the egress gateway over %s", (name, connect) => {
     ]) {
       const url = `${server.url}/redirect?to=${encodeURIComponent(to)}&m=${t}`;
       const out = outputOf(await ann.sendMessage(s.id, { content: bash(`node net.mjs "${url}"`) }));
-      expect(out, to).toMatch(/refused: .*EACCES: .*(internal address|https requests only)/);
+      // A browser's fetch hides redirects from the gateway: none is followed there.
+      expect(out, to).toMatch(
+        /refused: .*EACCES: .*(internal address|https requests only|hides redirects)/,
+      );
     }
   });
 
@@ -461,7 +464,9 @@ describe.each(transports)("the egress gateway over %s", (name, connect) => {
   it("lets a native tool reach only what its operation declares, through the gateway, recording an item", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project, agent: "net/geofetch" });
-    const ok = await ann.sendMessage(s.id, { content: call("geo__lookup", { url: api(`/geo-${t}`) }) });
+    const ok = await ann.sendMessage(s.id, {
+      content: call("geo__lookup", { url: api(`/geo-${t}`) }),
+    });
     expect(outputOf(ok)).toContain('status 200 {"ok":true}');
     expect(networkItems(ok)[0]?.network).toMatchObject({ executor: "isolate", status: 200 });
     const refused = await ann.sendMessage(s.id, {
