@@ -3,8 +3,9 @@
 // It is a browser deployment (HOSTING "browser"): built without any deployment-held secret, it
 // keeps only its user's own (statewalker/statewalker-root#132). The page reaches it only through
 // the session API: requests come in as messages, answers go back as a head and body chunks.
-import { loadProject } from "@statewalker/cellb/browser";
+
 import { browserDeploymentConfig } from "@statewalker/ai-host-do/browser";
+import { loadProject } from "@statewalker/cellb/browser";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 
 type LoadedProject = Awaited<ReturnType<typeof loadProject>>;
