@@ -93,6 +93,19 @@ beforeAll(async () => {
       files[`/${p}/doc.txt`] = "one two three four";
       for (const [name, text] of Object.entries(SCRIPTS)) files[`/${p}/${name}`] = text;
       files[`/${p}/hello.py`] = "import sys\nprint('hello from python', *sys.argv[1:])\n";
+      files[`/${p}/count.py`] = [
+        "import os",
+        "words = len(open('doc.txt').read().split())",
+        "os.makedirs('pyout', exist_ok=True)",
+        "open('pyout/count.txt', 'w').write(str(words))",
+        "print('projects:', sorted(os.listdir('/')))",
+        "try:",
+        "    import urllib.request",
+        "    urllib.request.urlopen('https://example.com/', timeout=5)",
+        "    print('reached the network')",
+        "except Exception as e:",
+        "    print('no network:', type(e).__name__)",
+      ].join("\n");
     }
     files[`/other-${t}/.system/access`] = JSON.stringify({ [`ann-${t}`]: "owner" });
     files[`/other-${t}/secret.txt`] = "not yours";
@@ -166,6 +179,45 @@ describe.each(transports)("code execution over %s", (name, connect) => {
       expect(outputOf(turn)).toMatch(/python: ENOSYS/);
       expect(outputOf(turn)).toContain("exited with code 127");
     }
+  });
+
+  it("runs python on a copy of the project's files, writes changes back through the capability, with no network", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const turn = await ann.sendMessage(s.id, { content: bash("python count.py") });
+    if (!CAN.python) {
+      expect(outputOf(turn)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(outputOf(turn)).toContain(`projects: ['${project}'`);
+    expect(outputOf(turn)).not.toContain(`other-${t}`);
+    expect(outputOf(turn)).toContain("no network:");
+    const read = await ann.sendMessage(s.id, {
+      content: call("read", { path: `/${project}/pyout/count.txt` }),
+    });
+    expect(outputOf(read)).toContain("4");
+  });
+
+  it("authorizes python's write-back again: a change the mode asks about is not written", async () => {
+    const bea = await as("bea", "default");
+    const s = await bea.startSession({ project });
+    const turn = await bea.sendMessage(s.id, {
+      content: bash(`python -c "open('denied.txt', 'w').write('no')"`),
+    });
+    if (!CAN.python) {
+      // Nothing to decide: there is no executor to run it on.
+      expect(outputOf(turn)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(turn.status).toBe("waiting");
+    const id = String(turn.stop_reason?.approval_ids?.[0]);
+    const { accepted } = await bea.answerApproval(id, { decision: "allow", scope: "once" });
+    const done = await bea.waitTurn(accepted);
+    expect(outputOf(done)).toMatch(/not written back: write \/code-\w+\/denied\.txt: EACCES/);
+    const read = await bea.sendMessage(s.id, {
+      content: call("read", { path: `/${project}/denied.txt` }),
+    });
+    expect(results(read).at(-1)).toMatchObject({ isError: true });
   });
 
   it("checks an agent's requires when its session starts", async () => {

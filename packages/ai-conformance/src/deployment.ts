@@ -3,9 +3,12 @@
 // vars overridden for the run and its cells in a fresh directory), CellB in Chromium
 // (browser-deployment.ts), CellD or workerd (process-deployment.ts).
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installCodeEngines } from "@statewalker/ai-environment/code-engines";
+import { pyodideEngine, pyodideNodeHost } from "@statewalker/ai-environment/pyodide";
 import { loadProject } from "@statewalker/cellb/node";
 import { projectConfig } from "./project-config.js";
 
@@ -56,7 +59,7 @@ export const CAN = {
    * (statewalker/statewalker-root#142): CellB in a browser and on Node. Elsewhere `python` and
    * POSIX programs answer ENOSYS.
    */
-  python: false,
+  python: RUNTIME === "node" || RUNTIME === "browser",
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
@@ -107,6 +110,14 @@ export function scenarioRates(vars: Record<string, string>): Record<string, stri
   });
   return { ...vars, LIMITS: JSON.stringify([...list, rate("user"), rate("workspace")]) };
 }
+
+/** Pyodide's folder, as the runner serves and installs it. */
+export const PYODIDE_DIR = `${dirname(createRequire(import.meta.url).resolve("pyodide/package.json"))}/`;
+
+// CellB Node runs the deployment in this realm: its host (this runner) declares the engines it
+// has, as an operator's host would (statewalker/statewalker-root#142).
+if (RUNTIME === "node")
+  installCodeEngines({ pyodide: pyodideEngine(pyodideNodeHost({ indexDir: PYODIDE_DIR })) });
 
 /** Starts the Worker project on CellB Node, in this process. */
 export async function startNodeDeployment(

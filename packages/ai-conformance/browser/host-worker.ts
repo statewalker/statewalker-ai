@@ -2,7 +2,9 @@
 // @statewalker/cellb/browser, its cells in OPFS. The page relays the conformance runner's
 // requests here and the answers back (host-page.ts); WebSockets the Worker accepts are relayed
 // message by message.
+import { installCodeEngines } from "@statewalker/ai-environment/code-engines";
 import { installLocalEngine } from "@statewalker/ai-environment/local-models";
+import { pyodideEngine, pyodideWorkerHost } from "@statewalker/ai-environment/pyodide";
 import { loadProject } from "@statewalker/cellb/browser";
 
 type LoadedProject = Awaited<ReturnType<typeof loadProject>>;
@@ -31,6 +33,14 @@ installLocalEngine({
       body,
     });
   },
+});
+
+// The page's code engines (statewalker/statewalker-root#142): Pyodide in a module Worker, its
+// script served with a CSP that allows no eval and no other origin (src/browser-deployment.ts).
+installCodeEngines({
+  pyodide: pyodideEngine(
+    pyodideWorkerHost({ engineUrl: "/engines/pyodide-engine.mjs", indexURL: "/pyodide/" }),
+  ),
 });
 
 let project: LoadedProject | undefined;

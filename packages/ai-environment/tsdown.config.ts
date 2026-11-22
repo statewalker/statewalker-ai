@@ -1,7 +1,13 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/local-models.ts", "src/webllm.ts", "src/code-engines.ts"],
+  entry: [
+    "src/index.ts",
+    "src/local-models.ts",
+    "src/webllm.ts",
+    "src/code-engines.ts",
+    "src/pyodide.ts",
+  ],
   unbundle: true,
   format: ["esm"],
   dts: true,

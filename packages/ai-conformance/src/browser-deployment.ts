@@ -18,6 +18,11 @@ import type { Deployment } from "./deployment.js";
 const run = promisify(execFile);
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const PACKAGE = join(HERE, "..");
+/** Pyodide and the engine script, served to the page's Python engine (statewalker/statewalker-root#142). */
+const PYODIDE_DIR = fileURLToPath(new URL(".", import.meta.resolve("pyodide/pyodide.mjs")));
+const PYODIDE_ENGINE = fileURLToPath(
+  import.meta.resolve("@statewalker/ai-environment/engines/pyodide-engine.mjs"),
+);
 
 const TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -111,6 +116,15 @@ function startShared(): Promise<Shared> {
           return;
         }
         if (d) file = join(d.folder, normalize(`/${m[2]}`));
+      } else if (path.startsWith("/pyodide/"))
+        file = join(PYODIDE_DIR, normalize(`/${path.slice("/pyodide/".length)}`));
+      else if (path === "/engines/pyodide-engine.mjs") {
+        file = PYODIDE_ENGINE;
+        // The engine's Worker: no eval, no other origin (its network is gone after Pyodide loads).
+        res.setHeader(
+          "content-security-policy",
+          "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'",
+        );
       } else file = join(b.page, normalize(path === "/" ? "/index.html" : path));
       try {
         const body = readFileSync(String(file));

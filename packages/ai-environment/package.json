@@ -17,10 +17,13 @@
     ".": "./src/index.ts",
     "./local-models": "./src/local-models.ts",
     "./webllm": "./src/webllm.ts",
-    "./code-engines": "./src/code-engines.ts"
+    "./code-engines": "./src/code-engines.ts",
+    "./pyodide": "./src/pyodide.ts",
+    "./engines/pyodide-engine.mjs": "./engines/pyodide-engine.mjs"
   },
   "files": [
     "dist",
+    "engines",
     "README.md"
   ],
   "publishConfig": {
@@ -45,7 +48,13 @@
         "types": "./dist/code-engines.d.ts",
         "import": "./dist/code-engines.js",
         "default": "./dist/code-engines.js"
-      }
+      },
+      "./pyodide": {
+        "types": "./dist/pyodide.d.ts",
+        "import": "./dist/pyodide.js",
+        "default": "./dist/pyodide.js"
+      },
+      "./engines/pyodide-engine.mjs": "./engines/pyodide-engine.mjs"
     }
   },
   "scripts": {

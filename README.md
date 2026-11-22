@@ -105,7 +105,11 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   files, held to the acceptance check and run in a Worker Loader isolate with no network; `python`
   and POSIX programs run on a code engine (Pyodide, Wasmer) the runtime's host installs
   (`installCodeEngines` from `@statewalker/ai-environment/code-engines`, CellB only), and answer
-  ENOSYS elsewhere. Each run is the `code.run:<kind>` action under the roles and the mode, charged as
+  ENOSYS elsewhere. `@statewalker/ai-environment/pyodide` is the Pyodide engine: a host installs
+  `pyodideEngine(pyodideNodeHost({indexDir}))` on Node (a child process under Node's permission
+  model) or `pyodideEngine(pyodideWorkerHost({engineUrl, indexURL}))` in a page (a module Worker,
+  its script `engines/pyodide-engine.mjs` served with a CSP); the session's project is copied in
+  before a run and each change written back through the gate. Each run is the `code.run:<kind>` action under the roles and the mode, charged as
   `executor_cpu_ms:<kind>` and killed when a limit refuses more or `EXEC_TIMEOUT_MS` passes. An
   agent's `requires` is checked when its session starts. The external executor pool is an
   interface only (`ExecutorPool`).
