@@ -370,8 +370,13 @@ export class Workspace extends DurableObject<Env> {
       run,
     );
     return run
-      ? { agent: run.id, run: agentRun(run), model: models.model }
-      : { agent: "default", model: models.model };
+      ? {
+          agent: run.id,
+          run: agentRun(run),
+          model: models.model,
+          plugins: plugins.map((p) => p.name),
+        }
+      : { agent: "default", model: models.model, plugins: plugins.map((p) => p.name) };
   }
 
   // --- the model gateway (statewalker/statewalker-root#105, #134) ------------------------------
@@ -1093,7 +1098,13 @@ export class Workspace extends DurableObject<Env> {
     userCapability: string,
     parentCapability: string,
     grant: { session: string; agent: string; mode?: string },
-  ): Promise<{ capability: string; agent: string; run?: AgentRun; model?: string }> {
+  ): Promise<{
+    capability: string;
+    agent: string;
+    run?: AgentRun;
+    model?: string;
+    plugins?: string[];
+  }> {
     // The parent must be narrowed from this very user session (revocation ids name it).
     await this.#authority.revocationOf(userCapability, parentCapability);
     const parent = await this.#authority.agentSessionOf(parentCapability);
@@ -1123,6 +1134,7 @@ export class Workspace extends DurableObject<Env> {
       agent: child.agent,
       ...(child.run ? { run: child.run } : {}),
       ...(child.model ? { model: child.model } : {}),
+      ...(child.plugins ? { plugins: child.plugins } : {}),
     };
   }
 

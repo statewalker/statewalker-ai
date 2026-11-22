@@ -1,7 +1,7 @@
 // The definitions mount (statewalker/statewalker-root#80, #82): the catalog as one user may use it
 // in one project, a read-only tree mounted at `<project>/.agents/`:
 //
-//   skills/<plugin>__<skill>/SKILL.md            Flue discovers these natively
+//   skills/<plugin>/<skill>/SKILL.md             registered with Flue by the harness, by name
 //   agents/<plugin>__<agent>.md
 //   tools/<plugin>__<operationId>.openapi.json   one document per tool
 //
@@ -18,22 +18,27 @@ import { EXTENSION } from "./loader.js";
 
 const enc = new TextEncoder();
 
-/** What a path of the view shows: the item it belongs to, or nothing (a folder of the layout). */
-function itemOf(path: string): { area: "skills" | "agents" | "tools"; id: string } | undefined {
-  const [, top, entry] = path.split("/");
+/**
+ * What a path of the view shows: the item it belongs to, a plugin's skills folder (`plugin`), or
+ * nothing (a folder of the layout).
+ */
+function itemOf(
+  path: string,
+): { area: "skills" | "agents" | "tools"; id: string } | { plugin: string } | undefined {
+  const [, top, entry, rest] = path.split("/");
   if (!entry) return undefined;
+  if (top === "skills")
+    return rest ? { area: "skills", id: `${entry}/${rest}` } : { plugin: entry };
   const qualified =
-    top === "skills"
-      ? entry
-      : top === "agents"
-        ? entry.replace(/\.md$/, "")
-        : top === "tools"
-          ? entry.replace(/\.openapi\.json$/, "")
-          : undefined;
+    top === "agents"
+      ? entry.replace(/\.md$/, "")
+      : top === "tools"
+        ? entry.replace(/\.openapi\.json$/, "")
+        : undefined;
   const at = qualified?.indexOf("__") ?? -1;
   if (!qualified || at < 1) return { area: "skills", id: "" };
   const id = `${qualified.slice(0, at)}/${qualified.slice(at + 2)}`;
-  return { area: top as "skills" | "agents" | "tools", id };
+  return { area: top as "agents" | "tools", id };
 }
 
 /** Every mutating call refused: the definitions are the catalog's, never a session's. */
@@ -63,7 +68,7 @@ async function treeOf(catalog: FilesApi): Promise<MemFilesApi> {
     const root = `/${plugin}/skills/${skill}`;
     for await (const e of catalog.list(root, { recursive: true }))
       if (e.kind === "file")
-        await tree.write(`/skills/${plugin}__${skill}${e.path.slice(root.length)}`, [
+        await tree.write(`/skills/${plugin}/${skill}${e.path.slice(root.length)}`, [
           await readFile(catalog, e.path),
         ]);
   }
@@ -100,13 +105,23 @@ export async function definitionsView(
 ): Promise<FilesApi> {
   const tree = await treeOf(catalog);
   const skills = options.agent ? new Set(options.agent.skills) : undefined;
+  const all = await catalogSkills(catalog);
+  const shows = async (area: "skills" | "agents" | "tools", id: string) => {
+    if (!id) return false;
+    if (area === "skills" && skills && !skills.has(id)) return false;
+    return options.allow(area, id);
+  };
   return readOnly(
     new FilteredFilesApi(tree, async (path) => {
       const item = itemOf(path);
       if (!item) return true;
-      if (!item.id) return false;
-      if (item.area === "skills" && skills && !skills.has(item.id)) return false;
-      return options.allow(item.area, item.id);
+      // A plugin's skills folder shows while one of its skills does.
+      if ("plugin" in item) {
+        for (const id of all)
+          if (id.startsWith(`${item.plugin}/`) && (await shows("skills", id))) return true;
+        return false;
+      }
+      return shows(item.area, item.id);
     }),
   );
 }
