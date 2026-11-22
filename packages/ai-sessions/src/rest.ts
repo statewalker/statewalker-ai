@@ -145,6 +145,22 @@ export async function handleSessionRest(
         return answered === null ? new Response(null, { status: 202 }) : json(answered);
       }
       if (request.method === "POST" && sub === "revoke") return api().revokeSession(id);
+      // The turn tree (statewalker/statewalker-root#190).
+      if (request.method === "POST" && sub === "rewind")
+        return api().rewind(id, (await bodyOf(request)) as never);
+      if (request.method === "PUT" && sub === "head")
+        return api().setHead(id, (await bodyOf(request)) as never);
+      if (request.method === "GET" && sub === "branches") return api().listBranches(id);
+      if (request.method === "POST" && sub === "fork") {
+        const forked = await api().forkSession(id, (await bodyOf(request)) as never);
+        return new Response(JSON.stringify(forked), {
+          status: 201,
+          headers: {
+            "content-type": "application/json",
+            location: `/v1/sessions/${encodeURIComponent(forked.session.id)}`,
+          },
+        });
+      }
       if (request.method === "POST" && sub === "archive") return api().archiveSession(id);
       if (request.method === "GET" && sub === "items") return api().listItems(id, itemsQuery(url));
       if (request.method === "GET" && sub === "events") {
@@ -181,10 +197,29 @@ export async function handleSessionRest(
     }
     if (collection === "sessions" && id && sub === "items" && parts.length === 5)
       if (request.method === "GET") return api().getItem(id, String(parts[4]));
+    if (collection === "sessions" && id && sub === "branches" && parts.length === 5)
+      if (request.method === "DELETE") return api().eraseBranch(id, String(parts[4]));
     if (collection === "turns" && id) {
       if (request.method === "GET" && parts.length === 3) return api().getTurn(id);
       if (request.method === "POST" && sub === "cancel" && parts.length === 4)
         return api().cancelTurn(id);
+      if (
+        request.method === "POST" &&
+        (sub === "edit" || sub === "regenerate") &&
+        parts.length === 4
+      ) {
+        const body = (await bodyOf(request)) as never;
+        const accepted =
+          sub === "edit" ? await api().editTurn(id, body) : await api().regenerateTurn(id, body);
+        return new Response(JSON.stringify(accepted), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+            location: `/v1/turns/${encodeURIComponent(accepted.turn_id)}`,
+            "stream-next-offset": String(accepted.offset),
+          },
+        });
+      }
     }
     return NOT_A_ROUTE;
   };
@@ -233,7 +268,7 @@ export async function bodyOf(request: Request): Promise<Record<string, unknown>>
   throw codedError("EINVAL", "the request body is not a JSON object");
 }
 
-/** `?after=&before=&limit=&order=&types[]=` (or `types=a,b`). */
+/** `?after=&before=&limit=&order=&types[]=` (or `types=a,b`), `&branch=<turn>` or `&all=true`. */
 function itemsQuery(url: URL) {
   const p = url.searchParams;
   const types = [...p.getAll("types[]"), ...p.getAll("types").flatMap((t) => t.split(","))].filter(
@@ -245,6 +280,8 @@ function itemsQuery(url: URL) {
     ...(p.get("limit") ? { limit: Number(p.get("limit")) } : {}),
     ...(p.get("order") ? { order: p.get("order") as "asc" } : {}),
     ...(types.length ? { types: types as never } : {}),
+    ...(p.get("branch") ? { branch: p.get("branch") as string } : {}),
+    ...(p.get("all") === "true" ? { all: true } : {}),
   };
 }
 

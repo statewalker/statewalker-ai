@@ -2,8 +2,9 @@
 
 ## What it is
 
-User and agent sessions: turns queued and run one at a time, items, hierarchical summaries, the
-event log, approvals, and the session API with its REST, server-sent-event and RPC transports.
+User and agent sessions: turns queued and run one at a time in a tree with a movable head (rewind,
+branch switch, edit, regenerate and fork), items, hierarchical summaries, the event log, approvals,
+and the session API with its REST, server-sent-event and RPC transports.
 
 Part of the AI harness (statewalker/statewalker-root#111): see the
 [repository's README](https://github.com/statewalker/statewalker-ai#readme), its

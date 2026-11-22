@@ -571,6 +571,51 @@ export class Workspace extends DurableObject<Env> {
     };
   }
 
+  /**
+   * Pins a fork's definitions (statewalker/statewalker-root#190): the agent and plugin bundles the
+   * source session pinned, unchanged, and its models, or `model` picked afresh within the user's
+   * rights now. The user must still be a member of the project; the source must be theirs (ENOENT
+   * otherwise). The fork counts as an active session. Only a User DO calls this, with a user
+   * capability.
+   */
+  async forkDefinitions(
+    capability: string,
+    req: { from: string; session: string; model?: string },
+  ): Promise<PinnedDefinitions> {
+    const user = await this.#authority.userOfUserCapability(capability);
+    const source = this.#definitions.pins(String(req.from));
+    const models = this.#models.pinned(String(req.from));
+    if (!source || !models || source.user !== user || models.user !== user)
+      throw codedError("ENOENT", "no such agent session");
+    const project = source.project;
+    const access = await this.#access(project, user);
+    if (!access.member) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    const run = source.run;
+    const pinned =
+      req.model !== undefined
+        ? await pickSessionModel(await this.#modelCatalog(project, user), {
+            override: String(req.model),
+            agentModels: run?.models ?? [],
+            right: this.#modelRight(access.grants),
+          })
+        : models.pinned;
+    await this.#limits.startSession(project, user, String(req.session));
+    this.#models.pin(String(req.session), user, project, pinned);
+    this.#definitions.pin(String(req.session), user, project, source.pins, run);
+    const limits = await this.#limits.sessionLimits(project);
+    const ownKeys = [pinned.model, ...pinned.fallbacks].some((id) => {
+      const m = lookupModel(pinned.catalog, id);
+      return m && pinned.catalog.providers[m.provider]?.level === "user";
+    });
+    return {
+      ...(run ? { agent: run.id, run: agentRun(run) } : { agent: "default" }),
+      model: pinned.model,
+      plugins: source.pins.map((p) => p.name),
+      ...(limits.length ? { limits } : {}),
+      ...(ownKeys ? { ownKeys: true } : {}),
+    };
+  }
+
   // --- the model gateway (statewalker/statewalker-root#105, #134) ------------------------------
 
   #readDeploymentModels(): ModelsConfig {
