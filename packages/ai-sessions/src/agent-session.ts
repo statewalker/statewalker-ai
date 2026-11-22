@@ -482,10 +482,15 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     };
   }
 
-  /** The session's model usage, totalled over its turns; none before its first request. */
+  /**
+   * The session's model usage, totalled over the turns it ran (rewound branches included: their
+   * requests were spent); turns a fork copied are the source session's spend, not this one's.
+   */
   async usage(): Promise<UsageTotals | undefined> {
     this.#started();
-    return this.#usage("");
+    return this.#usage(
+      "turn IN (SELECT id FROM agent_turns WHERE COALESCE(origin, 'run') = 'run')",
+    );
   }
 
   /** The head: the turn the next one follows (null before the first turn). */

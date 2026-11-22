@@ -169,6 +169,9 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
       cost: 6,
       output_tokens: 6,
     });
+    // A fork copies the history, not the spend: its own total starts empty.
+    const { session: fork } = await ann.forkSession(s.id, { at_turn: first.id });
+    expect((await ann.getSession(fork.id)).usage).toBeUndefined();
   });
 
   it("reports each user's own usage, and a project's to those with usage.read:project", async () => {
