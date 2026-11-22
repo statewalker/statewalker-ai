@@ -41,6 +41,7 @@ function projectFiles(t: string): Record<string, string> {
       [`cid-${t}`]: "editor",
     }),
     [`/own-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner", [`kim-${t}`]: "editor" }),
+    [`/as-team-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner" }),
     [`/mgr-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner", [`dan-${t}`]: "editor" }),
     [`/rep-${t}/.system/limits`]: limits({
       meter: "turns",
@@ -441,6 +442,15 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
       const lines = (await res.text()).split("\n").filter(Boolean);
       expect(lines.length).toBe(records.length);
     }
+  });
+  it("manages the session defaults of a project whose name looks like a session's", async () => {
+    const ann = await as("ann");
+    const p = `as-team-${t}`;
+    await ann.setLimits("session", p, { limits: [{ meter: "turns", value: 3 }] });
+    expect((await ann.getLimits("session", p)).limits).toEqual([
+      expect.objectContaining({ meter: "turns", value: 3 }),
+    ]);
+    await ann.deleteLimits("session", p);
   });
 });
 

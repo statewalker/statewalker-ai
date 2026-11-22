@@ -1245,6 +1245,9 @@ export interface SessionApiPorts {
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
+/** An agent session's id, as the User DO makes it. */
+const SESSION_ID = /^as-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 const META_KEY = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_META_KEYS = 16;
 const MAX_META_VALUE = 512;
@@ -1511,7 +1514,8 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
   const own = (id: unknown) => ports.user.ownAgentSession(token, String(id));
   /** A session's own limits are its agent session's; every other place is managed by the user's DO. */
   const manage = async (call: LimitsCall): Promise<LimitsView> => {
-    if (call.level !== "session" || !call.target.startsWith("as-"))
+    // A session id exactly (`as-<uuid>`): a project may be named `as-…` too.
+    if (call.level !== "session" || !SESSION_ID.test(call.target))
       return ports.user.manageLimits(token, call);
     const session = await own(call.target);
     const agent = ports.agent(session.id);
