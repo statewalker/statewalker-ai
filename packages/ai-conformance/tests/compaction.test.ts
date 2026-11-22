@@ -51,7 +51,7 @@ let byTokens: Deployment;
 
 beforeAll(async () => {
   model = await fakeModel();
-  const vars = { LLM_BASE_URL: model.url, DEV_LOGIN: "true", ADMIN_KEY };
+  const vars = { MODELS: model.deploymentModels(), DEV_LOGIN: "true", ADMIN_KEY };
   byMessages = await startDeployment(HOST, {
     ...vars,
     COMPACTION: JSON.stringify({

@@ -45,6 +45,14 @@
     "CATALOG": "{}",
     // The default agent, `<plugin>/<agent>`, for projects whose `.system/settings` names none.
     "DEFAULT_AGENT": "",
+    // The deployment's model providers and models (statewalker/statewalker-root#134), JSON
+    // {"providers": [{id, api, baseUrl, headers?, secret?}], "models": [{id: "<provider>/<model>",
+    // alias?, contextWindow?, maxTokens?, input?, cost?}], "allow"?: [...], "default"?: "<id or alias>"}.
+    // `api` is openai-completions, openai-responses, anthropic-messages or local; `secret` names a
+    // secret bound to plugin "model-gateway" and the provider's host. Workspaces add theirs in
+    // `/.system/models`, projects in `<project>/.system/models`, users through PUT /v1/me/models.
+    // Without any configured model no session starts.
+    "MODELS": "{}",
     // Optional: the deployment's permission rules, JSON {"allow": [...], "ask": [...], "deny": [...]},
     // entries "area.action[:target]" or "tool:<name>", applied in every project and mode beside each
     // project's `.system/permission-rules` and each user's `permission-rules` in their profile.
@@ -69,6 +77,8 @@
     //                        deployment-level secrets, and their bindings (the values are the NAME secrets)
     // Test-only, never set in a real deployment:
     //   SSE_KEEPALIVE_MS     the event streams' keep-alive interval (30000 otherwise)
+    //   USER_PROVIDER_HOSTS  hosts a user's own provider may use over http or at a private address
+    //                        (comma-separated; a local scripted model)
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":
     //                        POST /admin/seed {files, workspace?} writes fixtures into a workspace
@@ -81,6 +91,8 @@
     //                        POST /admin/users/<user>/revoke revokes a user everywhere, at the issuer (the operator's)
     //                        POST /admin/workspaces/<ws>/user-session {token} hands a token straight to that
     //                          workspace's DO, past the routing by the token's workspace
+    //                        POST /admin/workspaces/<ws>/model-usage answers every model request the
+    //                          workspace's budget recorded
     // Always on, the token issuer's routes: POST /v1/token {key} (a service account's API key for an
     // access token) and POST /v1/token/renew (a valid access token, as bearer, for a fresh one).
   }

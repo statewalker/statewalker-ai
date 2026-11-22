@@ -76,7 +76,7 @@ let deployment: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     WORKSPACES: "default,other",
@@ -93,6 +93,14 @@ afterAll(async () => {
 const read = (path: string) => `CALL read ${JSON.stringify({ path })}`;
 const results = (turn: Turn) => turn.items.filter((i) => i.kind === "tool_result");
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/**
+ * A turn stopped by a refused capability: the model gateway refuses it before the model is asked
+ * (the model right is checked per request, #134), so no tool runs.
+ */
+const stopped = (turn: Turn) => {
+  expect(turn).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
+  expect(results(turn)).toEqual([]);
+};
 
 describe.each(transports)("tenancy over %s", (name, connect) => {
   const t = name.toLowerCase();
@@ -293,8 +301,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
         "/alpha/.system/access": JSON.stringify(rest),
         "/shared/.system/access": JSON.stringify(rest),
       });
-      const turn = await ida.sendMessage(session.id, { content: read("/shared/readme.md") });
-      expect(results(turn)).toEqual([expect.objectContaining({ isError: true })]);
+      stopped(await ida.sendMessage(session.id, { content: read("/shared/readme.md") }));
       await expect(ida.startSession({ project: "shared" })).rejects.toMatchObject({
         status: 403,
       });
@@ -313,10 +320,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
         bob.sendMessage(doomed.id, { content: read("/alpha/readme.md") }),
       ).rejects.toMatchObject({ status: 403 });
       // Past the User DO, the gate itself refuses the revoked capability.
-      const past = await sendPastUser(deployment, ADMIN_KEY, doomed.id, read("/alpha/readme.md"));
-      expect(results(past)).toEqual([
-        expect.objectContaining({ isError: true, output: expect.stringMatching(/EACCES/) }),
-      ]);
+      stopped(await sendPastUser(deployment, ADMIN_KEY, doomed.id, read("/alpha/readme.md")));
       const turn = await bob.sendMessage(kept.id, { content: read("/alpha/readme.md") });
       expect(results(turn)).toEqual([expect.objectContaining({ isError: false })]);
       // Another user cannot revoke it.
@@ -328,10 +332,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
       const eve = await as(u("eve"));
       const session = await eve.startSession({ project: "alpha" });
       await eve.eraseUser();
-      const past = await sendPastUser(deployment, ADMIN_KEY, session.id, read("/alpha/readme.md"));
-      expect(results(past)).toEqual([
-        expect.objectContaining({ isError: true, output: expect.stringMatching(/EACCES/) }),
-      ]);
+      stopped(await sendPastUser(deployment, ADMIN_KEY, session.id, read("/alpha/readme.md")));
     });
 
     it("revoking the user session stops all its agent sessions; the next call opens a new one", async () => {
@@ -349,7 +350,7 @@ describe.each(transports)("tenancy over %s", (name, connect) => {
           s.id,
           read(`/${s.project}/readme.md`),
         );
-        expect(results(past)).toEqual([expect.objectContaining({ isError: true })]);
+        stopped(past);
         await expect(
           ann.sendMessage(s.id, { content: read(`/${s.project}/readme.md`) }),
         ).rejects.toMatchObject({ status: 403 });

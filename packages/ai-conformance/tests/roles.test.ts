@@ -30,7 +30,18 @@ const CUSTOM_ROLES = {
   odd: ["frobs.read", "files.zap", "*.*.*", "files.read:/public/**"],
   a: ["role:b", "files.read"],
   b: ["role:a"],
+  // Held beside each role below: an agent session needs a model the user may use (#134).
+  "model-user": ["models.use"],
 };
+/** A user's roles, with the model right beside them. */
+const withModels = (roles: Record<string, string | string[]>) =>
+  Object.fromEntries(
+    Object.entries(roles).map(([user, r]) => [
+      user,
+      [...(Array.isArray(r) ? r : [r]), "model-user"],
+    ]),
+  );
+const MODEL_USER = { "model-user": ["models.use"] };
 const PROJECT_FILES = {
   "readme.md": "# the readme\n",
   "public/a.md": "public text\n",
@@ -50,17 +61,20 @@ function fixtures(t: string): Record<string, string> {
   ])
     for (const [path, text] of Object.entries(PROJECT_FILES)) files[`/${project}/${path}`] = text;
   files[`/files-${t}/.system/access`] = JSON.stringify({
-    ann: "reader",
-    rita: "reviewer",
-    pat: "public-reader",
-    lim: "limited",
-    sly: "sneaky",
-    odd: ["odd"],
+    ...withModels({
+      ann: "reader",
+      rita: "reviewer",
+      pat: "public-reader",
+      lim: "limited",
+      sly: "sneaky",
+      odd: ["odd"],
+    }),
+    // Only a cycle of roles: a member of nothing.
     cyc: "a",
   });
   files[`/files-${t}/.system/roles`] = JSON.stringify(CUSTOM_ROLES);
   files[`/both-${t}/.system/access`] = JSON.stringify({ ann: "owner" });
-  files[`/demote-file-${t}/.system/access`] = JSON.stringify({ dan: "editor" });
+  files[`/demote-file-${t}/.system/access`] = JSON.stringify(withModels({ dan: "editor" }));
   files[`/demote-file-${t}/.system/roles`] = JSON.stringify(CUSTOM_ROLES);
   return files;
 }
@@ -85,7 +99,7 @@ let deployment: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     // The workspace's SQL first, then each project's access file.
@@ -96,14 +110,14 @@ beforeAll(async () => {
     await seed(deployment, ADMIN_KEY, fixtures(t));
     await setAccess(deployment, ADMIN_KEY, {
       project: `sql-${t}`,
-      members: { ann: ["reader"], pat: ["public-reader"] },
-      roles: { "public-reader": ["files.read:/public/**"] },
+      members: withModels({ ann: ["reader"], pat: ["public-reader"] }),
+      roles: { "public-reader": ["files.read:/public/**"], ...MODEL_USER },
     });
     await setAccess(deployment, ADMIN_KEY, { project: `both-${t}`, members: { bob: ["owner"] } });
     await setAccess(deployment, ADMIN_KEY, {
       project: `demote-sql-${t}`,
-      members: { dan: ["editor"] },
-      roles: { "public-reader": ["files.read:/public/**"] },
+      members: withModels({ dan: ["editor"] }),
+      roles: { "public-reader": ["files.read:/public/**"], ...MODEL_USER },
     });
   }
   // Workspace admins: carol in the workspace's own access file, dave in its SQL.
@@ -133,11 +147,6 @@ describe.each(transports)("roles over %s", (name, connect) => {
   const refused = expect.objectContaining({
     isError: true,
     output: expect.stringMatching(/EACCES/),
-  });
-  // A project the user is no member of is not there at all (statewalker/statewalker-root#122).
-  const absent = expect.objectContaining({
-    isError: true,
-    output: expect.stringMatching(/ENOENT/),
   });
 
   it("grants the built-in roles' permissions, and custom roles composed with role:", async () => {
@@ -222,7 +231,7 @@ describe.each(transports)("roles over %s", (name, connect) => {
     expect(toolsBefore).toContain("read");
 
     await seed(deployment, ADMIN_KEY, {
-      [`/${project}/.system/access`]: JSON.stringify({ dan: "public-reader" }),
+      [`/${project}/.system/access`]: JSON.stringify(withModels({ dan: "public-reader" })),
     });
     const demoted = await dan.sendMessage(s.id, { content: read("readme.md") });
     expect(toolResult(demoted)).toEqual(refused);
@@ -233,10 +242,14 @@ describe.each(transports)("roles over %s", (name, connect) => {
       allowed(PROJECT_FILES["public/a.md"]),
     );
 
+    // Removed: the session reaches no model any more (the model right is checked per request).
     await seed(deployment, ADMIN_KEY, { [`/${project}/.system/access`]: JSON.stringify({}) });
-    expect(toolResult(await dan.sendMessage(s.id, { content: read("public/a.md") }))).toEqual(
-      absent,
-    );
+    const asked = model.requests.length;
+    expect(await dan.sendMessage(s.id, { content: read("public/a.md") })).toMatchObject({
+      status: "failed",
+      error: expect.stringMatching(/EACCES/),
+    });
+    expect(model.requests.length).toBe(asked);
   });
 
   it("a demotion or removal in the workspace's SQL reaches a running session at its next action", async () => {
@@ -246,10 +259,16 @@ describe.each(transports)("roles over %s", (name, connect) => {
     const next = async (path: string) =>
       toolResult(await dan.sendMessage(s.id, { content: read(path) }));
     expect(await next("readme.md")).toEqual(allowed(PROJECT_FILES["readme.md"]));
-    await setAccess(deployment, ADMIN_KEY, { project, members: { dan: ["public-reader"] } });
+    await setAccess(deployment, ADMIN_KEY, {
+      project,
+      members: withModels({ dan: ["public-reader"] }),
+    });
     expect(await next("readme.md")).toEqual(refused);
     expect(await next("public/a.md")).toEqual(allowed(PROJECT_FILES["public/a.md"]));
     await setAccess(deployment, ADMIN_KEY, { project, members: { dan: [] } });
-    expect(await next("public/a.md")).toEqual(absent);
+    expect(await dan.sendMessage(s.id, { content: read("public/a.md") })).toMatchObject({
+      status: "failed",
+      error: expect.stringMatching(/EACCES/),
+    });
   });
 });

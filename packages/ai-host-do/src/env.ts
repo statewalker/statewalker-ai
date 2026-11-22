@@ -55,9 +55,17 @@ export interface Env {
   MODES?: string;
   /** How long a pending approval waits before it counts as denied (default 24 hours). */
   APPROVAL_TTL_MS?: string;
-  /** The OpenAI-compatible model every agent uses, until the model gateway (a later ticket). */
-  LLM_BASE_URL?: string;
-  LLM_MODEL?: string;
+  /**
+   * The deployment's model configuration (statewalker/statewalker-root#134): JSON
+   * `{providers, models, allow?, default?}`; workspaces add theirs in `/.system/models`, projects
+   * in `<project>/.system/models`, users through the session API.
+   */
+  MODELS?: string;
+  /**
+   * Test-only: hosts a user's own provider may use over http or at a loopback or private address,
+   * comma-separated (a local scripted model).
+   */
+  USER_PROVIDER_HOSTS?: string;
   /**
    * The deployment's key for workspace, project and user secrets (a runtime secret). Without it
    * the deployment keeps no secrets below deployment level.

@@ -57,7 +57,7 @@ beforeAll(async () => {
   rest = await fakeRest();
   const other = `http://localhost:${rest.port}`;
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     SECRETS_KEY: "conformance-secrets-key",

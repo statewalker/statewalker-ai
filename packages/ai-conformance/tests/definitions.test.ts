@@ -107,7 +107,15 @@ let deployment: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels({
+      models: [
+        { id: "scripted/default", alias: "default" },
+        { id: "scripted/big", alias: "big" },
+        { id: "scripted/small", alias: "small" },
+      ],
+      // The limited role may use only `small`: agents without models run on it.
+      default: "small",
+    }),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     CATALOG: JSON.stringify(CATALOG),

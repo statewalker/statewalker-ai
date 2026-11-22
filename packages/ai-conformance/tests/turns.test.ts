@@ -54,7 +54,7 @@ let deployment: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     SSE_KEEPALIVE_MS: "200",
@@ -245,7 +245,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
       id: accepted.turn_id,
       status: "completed",
       stop_reason: { type: "end_turn" },
-      model: "default",
+      model: "scripted/default",
       items: [
         { kind: "message", role: "user", text: "hello" },
         { kind: "message", role: "assistant", text: "OK" },
@@ -273,11 +273,11 @@ describe.each(transports)("turns over %s", (name, connect) => {
     expect(turn).toMatchObject({
       status: "completed",
       ignored: ["temperature", "tools"],
-      model: "default",
+      model: "scripted/default",
       model_substitution: {
         requested: "gpt-unheard-of",
-        used: "default",
-        reason: expect.any(String),
+        used: "scripted/default",
+        reason: expect.stringMatching(/configured/),
       },
     });
     expect(model.requests.at(-1)?.model).toBe("default");

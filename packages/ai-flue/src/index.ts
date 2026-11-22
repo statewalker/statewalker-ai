@@ -10,7 +10,7 @@ export {
   completeWith,
   type FlueTurn,
   type HostTool,
-  type ModelConfig,
+  type ModelPort,
   runFlueTurn,
   TRACER_TOOLS,
 } from "./turn.js";

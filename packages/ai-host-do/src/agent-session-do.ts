@@ -1,5 +1,6 @@
 // One DO per agent session: it holds the session's capability (the user capability its User DO
-// attenuated for it; never the access token) and runs its turns on Flue, whose file view is the
+// attenuated for it; never the access token or a provider key) and runs its turns on Flue, whose
+// models are the Workspace DO's model gateway and whose file view is the
 // Workspace DO's gate reached with that capability: a webrun-files-rpc client whose calls travel on
 // the Workspace DO's stub. A file call the gate stops for an approval ends the turn waiting on it;
 // the user's answer continues the session. Long sessions are compacted into hierarchical summaries
@@ -8,7 +9,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { approvalAware, filesOverRpc, runStoredCall } from "@statewalker/ai-environment";
-import { completeWith, type ModelConfig, runFlueTurn, TRACER_TOOLS } from "@statewalker/ai-flue";
+import { completeWith, type ModelPort, runFlueTurn, TRACER_TOOLS } from "@statewalker/ai-flue";
 import {
   type AgentMessage,
   type AgentSessionConfig,
@@ -65,19 +66,35 @@ export class AgentSession extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    const model: ModelConfig = {
-      baseUrl: String(env.LLM_BASE_URL),
-      model: env.LLM_MODEL || "default",
+    // Every model request goes through the workspace's model gateway, with the session's
+    // capability: it picks the model within the user's rights, holds the provider's key, falls
+    // back and meters (statewalker/statewalker-root#134).
+    const gateway = (config: AgentSessionConfig, turn?: string): ModelPort => {
+      const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+      return {
+        request: (call) =>
+          workspace.modelRequest(config.capability, { ...call, ...(turn ? { turn } : {}) }),
+      };
     };
     const compaction = parseCompaction(env.COMPACTION);
     for (const problem of compaction.problems) console.warn(`COMPACTION: ${problem}`);
     this.#core = new AgentSessionCore({
       sql: ctx.storage.sql,
       compaction: {
-        summarizer: createModelSummarizer({ complete: completeWith(model) }),
+        // The summarizer runs on the session's model, through the gateway like every request.
+        summarizer: createModelSummarizer({
+          complete: (req) => {
+            const config = this.#core.config();
+            if (!config) throw new Error("ENOENT: no such agent session");
+            return completeWith(gateway(config))(req);
+          },
+        }),
         options: compaction.options,
       },
-      runTurn: ({ config, content, context, signal, onSteer, onApproval, waiting }, emit) => {
+      runTurn: (
+        { config, turn, content, model, context, signal, onSteer, onApproval, waiting },
+        emit,
+      ) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         const rest = restTools(env.REST_TOOLS, (call) =>
           workspace.gatewayFetch(config.capability, call),
@@ -107,12 +124,9 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            // The agent's first model the user may use, else the deployment's (the model gateway
-            // comes in a later ticket).
-            model: {
-              baseUrl: String(env.LLM_BASE_URL),
-              model: config.run?.models[0] ?? model.model,
-            },
+            models: gateway(config, turn),
+            ...(config.model ? { model: config.model } : {}),
+            ...(model ? { requested: model } : {}),
             content,
             context,
             waiting,

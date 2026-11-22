@@ -53,7 +53,8 @@ function fixtures(): Record<string, string> {
     "/alpha/readme.md": "# alpha\n",
     "/alpha/.system/access": JSON.stringify(access),
     "/alpha/.system/roles": JSON.stringify({
-      limited: "files.read, files.list, agents.use:team/lead, agents.use:team/helper",
+      limited:
+        "files.read, files.list, agents.use:team/lead, agents.use:team/helper, models.use:default",
     }),
   };
 }
@@ -78,7 +79,7 @@ let deployment: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     CATALOG: JSON.stringify(CATALOG),
@@ -269,22 +270,20 @@ describe.each(transports)("sub-agents over %s", (name, connect) => {
     await fay.sendMessage(root.id, { content: start({ agent: "team/helper", message: "hi" }) });
     const child = (await fay.listSessions()).sessions.find((s) => s.parent === root.id);
     await fay.revokeUserSession();
+    // The model gateway refuses a revoked capability before the model is asked (#134): no tool
+    // runs, and the root starts no other sub-agent.
     for (const id of [root.id, String(child?.id)]) {
       const past = await sendPastUser(deployment, ADMIN_KEY, id, read("/alpha/readme.md"));
-      expect(past.items.filter((i) => i.kind === "tool_result")).toEqual([
-        expect.objectContaining({ isError: true, output: expect.stringMatching(/EACCES/) }),
-      ]);
+      expect(past).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
+      expect(past.items.filter((i) => i.kind === "tool_result")).toEqual([]);
     }
-    // Nor can the root start another sub-agent.
     const again = await sendPastUser(
       deployment,
       ADMIN_KEY,
       root.id,
       start({ agent: "team/late", message: "hi" }),
     );
-    expect(again.items.filter((i) => i.kind === "tool_result")).toEqual([
-      expect.objectContaining({ isError: true }),
-    ]);
+    expect(again).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
   });
 
   it("revoking a session stops its sub-agents at the gate, and not its siblings", async () => {
@@ -303,9 +302,9 @@ describe.each(transports)("sub-agents over %s", (name, connect) => {
     for (const agent of ["team/cut", "team/cut-child"]) {
       expect(await gus.getSession(id(agent))).toMatchObject({ revoked: true });
       const past = await sendPastUser(deployment, ADMIN_KEY, id(agent), read("/alpha/readme.md"));
-      expect(past.items.filter((i) => i.kind === "tool_result")).toEqual([
-        expect.objectContaining({ isError: true, output: expect.stringMatching(/EACCES/) }),
-      ]);
+      // Refused at the model gateway, before any tool runs (#134).
+      expect(past).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
+      expect(past.items.filter((i) => i.kind === "tool_result")).toEqual([]);
     }
     const kept = await gus.sendMessage(id("team/kept"), { content: read("/alpha/readme.md") });
     expect(results(kept)).toEqual([expect.objectContaining({ isError: false })]);

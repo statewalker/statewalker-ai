@@ -14,10 +14,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "catalog:",
     "@statewalker/ai-access": "workspace:^",
+    "@statewalker/db-api": "catalog:",
     "@statewalker/webrun-files": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
-    "@statewalker/db-api": "catalog:",
     "@statewalker/webrun-files-rpc": "catalog:",
     "@statewalker/webrun-files-sqlite": "catalog:",
     "ignore": "catalog:"

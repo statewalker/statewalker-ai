@@ -75,6 +75,9 @@ describe("built-in roles", () => {
       const { grants } = resolveRoles([role], {});
       expect(can(grants, "skills", "use", "notes/summarize")).toBe(true);
       expect(can(grants, "agents", "use", "notes/writer")).toBe(true);
+      // An agent runs on a model: every project role may use the configured ones (#134).
+      expect(can(grants, "models", "use", "fast")).toBe(true);
+      expect(can(grants, "models", "use", "openai/gpt-x")).toBe(true);
     }
     expect(can(resolveRoles(["owner"], {}).grants, "tools", "use", "notes/word_count")).toBe(true);
     expect(can(resolveRoles(["editor"], {}).grants, "tools", "use", "notes/word_count")).toBe(true);

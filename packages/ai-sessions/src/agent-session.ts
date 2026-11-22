@@ -26,6 +26,7 @@ import type {
   ItemsPage,
   ItemsQuery,
   MessageAccepted,
+  ModelSubstitution,
   SessionEvent,
   SessionStatus,
   StopReason,
@@ -47,6 +48,8 @@ export interface Steer {
 /** What the core (Flue) is given to run one turn. */
 export interface TurnRun {
   config: AgentSessionConfig;
+  /** The turn's id. */
+  turn: string;
   /** The user's message. */
   content: string;
   /**
@@ -120,6 +123,8 @@ type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;
 export interface TurnOutcome {
   /** The model the turn ran on. */
   model?: string;
+  /** The model its message asked for could not be used: what ran instead, and why. */
+  substitution?: ModelSubstitution;
 }
 
 /** Runs one turn of the session's core (Flue), reporting each item as it happens. */
@@ -172,7 +177,13 @@ const eventOf = (row: EventRow): SessionEvent => ({
 });
 
 const TERMINAL: readonly string[] = ["waiting", "completed", "failed", "cancelled", "interrupted"];
-const KINDS: readonly string[] = ["message", "tool_call", "tool_result", "approval"];
+const KINDS: readonly string[] = [
+  "message",
+  "tool_call",
+  "tool_result",
+  "approval",
+  "model_fallback",
+];
 const MAX_PAGE = 1000;
 const MAX_WAIT_MS = 60_000;
 
@@ -219,7 +230,9 @@ export class AgentSessionCore implements AgentPort {
       CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL,
         turn TEXT, data TEXT NOT NULL, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS approval_answers (turn TEXT PRIMARY KEY, approval TEXT NOT NULL,
-        decision TEXT NOT NULL, message TEXT);`);
+        decision TEXT NOT NULL, message TEXT);
+      CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
+        used TEXT NOT NULL, reason TEXT NOT NULL);`);
     this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
     this.#summarizer = options.compaction?.summarizer;
     this.#recover();
@@ -291,7 +304,11 @@ export class AgentSessionCore implements AgentPort {
     const config = this.config();
     const ignored = JSON.parse(row.ignored) as string[];
     const model = row.model ?? undefined;
-    const requested = row.model_requested ?? undefined;
+    // What the gateway said ran instead of the model the message asked for (#105).
+    const substitution = this.#one<ModelSubstitution>(
+      "SELECT requested, used, reason FROM turn_substitutions WHERE turn = ?",
+      row.id,
+    );
     return {
       id: row.id,
       session: config?.id ?? "",
@@ -300,12 +317,12 @@ export class AgentSessionCore implements AgentPort {
       ...(row.stop_reason ? { stop_reason: JSON.parse(row.stop_reason) as StopReason } : {}),
       ...(row.error ? { error: row.error } : {}),
       ...(model ? { model } : {}),
-      ...(model && requested && requested !== model
+      ...(substitution
         ? {
             model_substitution: {
-              requested,
-              used: model,
-              reason: "the session's capability holds no right to the requested model",
+              requested: String(substitution.requested),
+              used: String(substitution.used),
+              reason: String(substitution.reason),
             },
           }
         : {}),
@@ -426,6 +443,7 @@ export class AgentSessionCore implements AgentPort {
         outcome = await this.#runTurn(
           {
             config,
+            turn: row.id,
             content: row.content,
             context,
             ...(row.model_requested ? { model: row.model_requested } : {}),
@@ -459,6 +477,14 @@ export class AgentSessionCore implements AgentPort {
         this.#queue(config, { content: steer.text, delivery: "steer", ignored: [] }, first);
     }
     const model = outcome?.model;
+    if (outcome?.substitution)
+      this.#sql.exec(
+        "INSERT OR REPLACE INTO turn_substitutions VALUES (?, ?, ?, ?)",
+        row.id,
+        outcome.substitution.requested,
+        outcome.substitution.used,
+        outcome.substitution.reason,
+      );
     // The changes the turn waits on: stored in its items, and told to the user's User DO before
     // the turn ends, so the turn's terminal event and the user's approvals agree.
     if (!running.endAs && !error && pending.size) {
@@ -769,7 +795,7 @@ export class AgentSessionCore implements AgentPort {
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM summaries;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM turn_substitutions; DELETE FROM summaries;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

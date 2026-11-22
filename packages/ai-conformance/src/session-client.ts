@@ -28,7 +28,7 @@ export interface Item {
   seq: number;
   id: string;
   turn: string;
-  kind: "message" | "tool_call" | "tool_result" | "approval";
+  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -44,6 +44,30 @@ export interface Item {
   steer?: string;
   /** The partial assistant message of a turn cut short. */
   incomplete?: true;
+  /**
+   * The model request that produced the item (on the first item of each answer), or that failed
+   * (on a `model_fallback` item).
+   */
+  usage?: ModelUsage;
+  /** A `model_fallback` item: the model that failed, the one tried next, and why. */
+  from?: string;
+  to?: string;
+  reason?: string;
+}
+
+/** One request to a model, metered. */
+export interface ModelUsage {
+  model: string;
+  provider: string;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  /** In the model's price unit, when it has prices. */
+  cost?: number;
+  latency_ms: number;
+  outcome: "ok" | "overloaded" | "rate_limited" | "unavailable" | "error" | "aborted";
+  /** Charged to the workspace's budget; false for the user's own provider. */
+  charged: boolean;
 }
 
 /** An action waiting on the user's answer, as the session API lists it. */
@@ -137,6 +161,54 @@ export interface Profile {
   projects: { workspace: string; project: string }[];
 }
 
+/** A model as the session API lists it for a project (statewalker/statewalker-root#134). */
+export interface ModelView {
+  /** `<provider>/<model>`. */
+  id: string;
+  /** The aliases that pick it in the project (the most specific level's). */
+  aliases: string[];
+  provider: string;
+  /** The level that configured it; a discovered model's provider's level. */
+  level: "deployment" | "workspace" | "project" | "user";
+  /** Configured at some level: discovered models are off until a level lists them. */
+  enabled: boolean;
+  /** The caller holds its right (`models.use`). */
+  allowed: boolean;
+  /** Found through the provider's `/models` endpoint. */
+  discovered?: true;
+}
+
+/** One level's model configuration: providers and models it adds, models it narrows to. */
+export interface ModelsConfig {
+  providers?: {
+    id: string;
+    api: string;
+    baseUrl: string;
+    headers?: Record<string, string>;
+    secret?: string;
+  }[];
+  models?: Record<string, unknown>[];
+  allow?: string[];
+  default?: string;
+}
+
+/** One request to a model, as the workspace's budget recorded it (test-only admin route). */
+export interface ModelUsageRecord {
+  session: string;
+  turn?: string;
+  user: string;
+  project: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost?: number;
+  latency_ms: number;
+  outcome: string;
+  charged: boolean;
+}
+
 export interface Turn {
   id: string;
   session: string;
@@ -180,6 +252,8 @@ export interface SessionClient {
     agent?: string;
     metadata?: Metadata;
     unattended?: boolean;
+    /** A model (an id or an alias) the session runs on instead of the agent's, within rights. */
+    model?: string;
   }): Promise<AgentSession>;
   getSession(id: string): Promise<AgentSession>;
   updateSession(id: string, req: { metadata: Metadata }): Promise<AgentSession>;
@@ -228,6 +302,12 @@ export interface SessionClient {
   /** Creates a service account; its API key is in the answer, this once. */
   createServiceAccount(req: { name: string }): Promise<ServiceAccount & { key: string }>;
   deleteServiceAccount(name: string): Promise<{ deleted: true }>;
+  /** The models of a project as the caller sees them; `discover` asks each provider's `/models`. */
+  listModels(query: { project: string; discover?: boolean }): Promise<{ models: ModelView[] }>;
+  /** The caller's own model configuration (user level) in the token's workspace. */
+  getModelConfig(): Promise<ModelsConfig>;
+  /** Replaces the caller's own model configuration (user level). */
+  setModelConfig(config: ModelsConfig): Promise<ModelsConfig>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -391,6 +471,13 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     createServiceAccount: (req) => call("POST", "/v1/service-accounts", req),
     deleteServiceAccount: (name) =>
       call("DELETE", `/v1/service-accounts/${encodeURIComponent(name)}`),
+    listModels: ({ project, discover }) =>
+      call(
+        "GET",
+        `/v1/models?${new URLSearchParams({ project, ...(discover ? { discover: "true" } : {}) })}`,
+      ),
+    getModelConfig: () => call("GET", "/v1/me/models"),
+    setModelConfig: (config) => call("PUT", "/v1/me/models", config),
   };
   return client;
 }
@@ -546,4 +633,22 @@ export async function setAccess(
   fixture: AccessFixture,
 ): Promise<void> {
   await admin(deployment, adminKey, "/admin/access", fixture);
+}
+
+/**
+ * The model requests a workspace's budget recorded, oldest first (test-only, behind `ADMIN_KEY`;
+ * usage reports are a later ticket's).
+ */
+export async function modelUsage(
+  deployment: Deployment,
+  adminKey: string,
+  workspace = "default",
+): Promise<ModelUsageRecord[]> {
+  const { usage } = await admin<{ usage: ModelUsageRecord[] }>(
+    deployment,
+    adminKey,
+    `/admin/workspaces/${encodeURIComponent(workspace)}/model-usage`,
+    {},
+  );
+  return usage;
 }
