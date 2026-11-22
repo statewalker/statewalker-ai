@@ -10,13 +10,15 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
-import { approvalId, codeOf, settleAsk } from "@statewalker/ai-access";
+import { approvalId, codedError, codeOf, settleAsk } from "@statewalker/ai-access";
 import { TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
 import {
   approvalAware,
   approvalOf,
   errorMessage,
   filesOverRpc,
+  isSessionMeter,
+  type Limit,
   limitOfMessage,
   type ModelCall,
   type ModelResponse,
@@ -623,13 +625,17 @@ export class AgentSession extends DurableObject<Env> {
     } finally {
       const all = { model_tokens: 0, model_spend: 0 };
       const mine = { model_tokens: 0, model_spend: 0 };
+      // The own-key model, so the user's usage report groups it (#181).
+      let ownModel: string | undefined;
       for (const { usage } of response?.attempts ?? [])
         for (const into of usage.charged ? [all] : [all, mine]) {
+          if (!usage.charged) ownModel = usage.model;
           into.model_tokens += usage.input_tokens + usage.output_tokens;
           into.model_spend += usage.cost ?? 0;
         }
       if (reserved) warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
-      if (own) warn(await user.settleOwnKey(own, mine, meta));
+      if (own)
+        warn(await user.settleOwnKey(own, mine, meta, ownModel ? { model: ownModel } : undefined));
     }
     warn(response.warnings);
     return response;
@@ -740,8 +746,13 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.eraseBranch(turnId);
   }
 
-  exportPath(atTurn: string) {
-    return this.#core.exportPath(atTurn);
+  /** A turn's path for a fork, with the session's limits: its defaults and its own (#181). */
+  async exportPath(atTurn: string) {
+    const history = await this.#core.exportPath(atTurn);
+    const config = this.#core.config();
+    const limits = config ? (this.#limits.scopes(config)[0]?.limits ?? []) : [];
+    const { limits: _l, ...rest } = history;
+    return { ...rest, ...(limits.length ? { limits } : {}) };
   }
 
   /** A fork's copied history: nothing is charged for it (statewalker/statewalker-root#190). */
@@ -772,6 +783,34 @@ export class AgentSession extends DurableObject<Env> {
 
   status() {
     return this.#core.status();
+  }
+
+  usage() {
+    return this.#core.usage();
+  }
+
+  /**
+   * The session's own limits, which its user set (statewalker/statewalker-root#181): a list
+   * replaces them (the session level counts only its own meters: EINVAL for another).
+   */
+  ownLimits(limits?: Limit[]) {
+    const config = this.#core.config();
+    if (!config) throw codedError("ENOENT", "no such agent session");
+    if (limits !== undefined) {
+      const bad = limits.find((l) => !isSessionMeter(l.meter));
+      if (bad) throw codedError("EINVAL", `the session level does not count ${bad.meter}`);
+      this.#limits.setOwn(
+        limits.map((l) => ({ ...l, level: "session" as const, target: config.id })),
+      );
+    }
+    return this.#limits.own(config);
+  }
+
+  /** The session level's limits now (statewalker/statewalker-root#181). */
+  limits() {
+    const config = this.#core.config();
+    if (!config) throw codedError("ENOENT", "no such agent session");
+    return this.#limits.ledger.states(this.#limits.scopes(config));
   }
 
   archive() {

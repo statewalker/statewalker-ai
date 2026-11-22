@@ -56,6 +56,7 @@ import type {
   TurnRef,
   TurnStatus,
   TurnView,
+  UsageTotals,
 } from "./api.js";
 import { type CompactionOptions, type ContextEntry, ContextShaper } from "./context/shaper.js";
 import type { Summarizer } from "./context/summarizer.js";
@@ -289,7 +290,7 @@ function pageSize(limit: unknown, fallback: number): number {
 }
 
 /** The core is an agent session DO's side of the API, but for its MCP endpoint (the host's). */
-export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
+export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "ownLimits"> {
   readonly #sql: SqlLike;
   readonly #runTurn: RunTurn;
   readonly #runAction: RunAction;
@@ -457,6 +458,41 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     return row;
   }
 
+  /**
+   * The model usage of the items matching `where`, totalled (statewalker/statewalker-root#181):
+   * every request the items record, the failed ones a fallback names included. None without one.
+   */
+  #usage(where: string, ...args: unknown[]): UsageTotals | undefined {
+    const row = this.#one<Record<string, unknown>>(
+      `SELECT count(*) AS requests,
+        total(json_extract(body, '$.usage.input_tokens')) AS input_tokens,
+        total(json_extract(body, '$.usage.output_tokens')) AS output_tokens,
+        total(json_extract(body, '$.usage.cached_tokens')) AS cached_tokens,
+        total(json_extract(body, '$.usage.cost')) AS cost
+        FROM items WHERE json_extract(body, '$.usage.model') IS NOT NULL${where ? ` AND ${where}` : ""}`,
+      ...args,
+    );
+    if (!row || !Number(row.requests)) return undefined;
+    return {
+      requests: Number(row.requests),
+      input_tokens: Number(row.input_tokens),
+      output_tokens: Number(row.output_tokens),
+      cached_tokens: Number(row.cached_tokens),
+      cost: Number(row.cost),
+    };
+  }
+
+  /**
+   * The session's model usage, totalled over the turns it ran (rewound branches included: their
+   * requests were spent); turns a fork copied are the source session's spend, not this one's.
+   */
+  async usage(): Promise<UsageTotals | undefined> {
+    this.#started();
+    return this.#usage(
+      "turn IN (SELECT id FROM agent_turns WHERE COALESCE(origin, 'run') = 'run')",
+    );
+  }
+
   /** The head: the turn the next one follows (null before the first turn). */
   #head(): string | null {
     const row = this.#one<{ value: string }>("SELECT value FROM agent_config WHERE key = ?", HEAD);
@@ -525,6 +561,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       "SELECT approval FROM approval_answers WHERE turn = ?",
       row.id,
     );
+    const usage = this.#usage("turn = ?", row.id);
     return {
       id: row.id,
       session: config?.id ?? "",
@@ -544,6 +581,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         : {}),
       ...(ignored.length ? { ignored } : {}),
       ...(answers ? { answers: String(answers.approval) } : {}),
+      ...(usage ? { usage } : {}),
       parent_turn: row.parent_turn ?? null,
       origin: (row.origin ?? "run") as TurnOrigin,
       ...(row.copied_from ? { copied_from: JSON.parse(row.copied_from) as TurnRef } : {}),

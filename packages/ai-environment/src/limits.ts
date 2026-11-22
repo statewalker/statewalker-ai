@@ -283,6 +283,26 @@ export interface LimitBreach {
   retryAfterMs?: number;
 }
 
+/** One limit as it holds a scope now: what is used, reserved and left of it, and when it resets. */
+export interface LimitState {
+  meter: Meter;
+  level: LimitLevel;
+  target: string;
+  /** The limit's own level: a deployment ceiling held by a workspace says `deployment`. */
+  limit_level: LimitLevel;
+  period: Period;
+  on_exceed: OnExceed;
+  warn_at: number;
+  /** The limit's value now, with the increments approvals added in this window. */
+  value: number;
+  used: number;
+  reserved: number;
+  /** What is left before the limit refuses: never below 0. */
+  remaining: number;
+  /** When the window resets (ms since the epoch); none for a total. */
+  reset?: number;
+}
+
 /** A warning left once per window when usage crosses a limit's `warn_at`. */
 export interface LimitWarning {
   limit: Limit;
@@ -352,6 +372,98 @@ export function limitOfMessage(message: string): Record<string, unknown> | undef
   } catch {
     return undefined;
   }
+}
+
+/** Which usage records a report sums: created in `[from, until)`, of a workspace, project, user. */
+export interface UsageFilter {
+  from: number;
+  until: number;
+  workspace?: string;
+  project?: string;
+  user?: string;
+}
+
+/** Usage summed per project, user, session, model and meter in a quarter-hour bucket. */
+export interface UsageRow {
+  project: string;
+  user: string;
+  session?: string;
+  model?: string;
+  /** Missing for usage whose amounts are not shown (another user's own key). */
+  meter?: string;
+  bucket: number;
+  amount?: number;
+}
+
+const BUCKET_MS = 15 * 60_000;
+
+const recordOf = (r: Record<string, unknown>): UsageRecord => ({
+  seq: Number(r.seq),
+  created: Number(r.created),
+  meter: String(r.meter) as Meter,
+  amount: Number(r.amount),
+  workspace: String(r.workspace),
+  project: String(r.project),
+  user: String(r.user),
+  ...(r.session ? { session: String(r.session) } : {}),
+  ...(r.turn ? { turn: String(r.turn) } : {}),
+  ...(r.detail ? { detail: JSON.parse(String(r.detail)) } : {}),
+});
+
+/** What usage reports group by (statewalker/statewalker-root#181). */
+export const USAGE_GROUPS = ["project", "user", "agent", "model", "day"] as const;
+export type UsageGroupBy = (typeof USAGE_GROUPS)[number];
+
+/** Usage totals of one group: what it is keyed by, and each meter's amount. */
+export interface UsageGroup {
+  key: Partial<Record<UsageGroupBy, string>>;
+  /** Each meter's amount; none for usage under a user's own key seen by anyone but that user. */
+  usage?: Record<string, number>;
+  /** Usage under the user's own key. */
+  own_key?: true;
+}
+
+/** A local calendar date (`YYYY-MM-DD`) in the time zone. */
+export function localDay(t: number, timeZone = "UTC"): string {
+  const p = localParts(t, timeZone);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+/**
+ * Groups usage rows by the keys asked for, summing each meter: rows without a meter (amounts not
+ * shown) make a group with no usage. `ownKey` marks every group as usage on the user's own key.
+ */
+export function groupUsage(
+  rows: readonly UsageRow[],
+  groupBy: readonly UsageGroupBy[],
+  options: { timeZone?: string; agentOf?: (session: string) => string; ownKey?: boolean } = {},
+): UsageGroup[] {
+  const groups = new Map<string, UsageGroup>();
+  for (const row of rows) {
+    const key: UsageGroup["key"] = {};
+    for (const by of groupBy) {
+      const value =
+        by === "day"
+          ? localDay(row.bucket, options.timeZone)
+          : by === "agent"
+            ? row.session
+              ? options.agentOf?.(row.session)
+              : undefined
+            : row[by];
+      if (value) key[by] = value;
+    }
+    const id = JSON.stringify(groupBy.map((by) => key[by] ?? null));
+    let group = groups.get(id);
+    if (!group) {
+      group = { key, ...(options.ownKey ? { own_key: true as const } : {}) };
+      groups.set(id, group);
+    }
+    if (row.meter !== undefined) {
+      group.usage ??= {};
+      group.usage[row.meter] = (group.usage[row.meter] ?? 0) + (row.amount ?? 0);
+    }
+  }
+  return [...groups.values()];
 }
 
 export interface LedgerOptions {
@@ -488,6 +600,40 @@ export class LimitLedger {
     // A deny can't be approved away: it is said first, then a delay, then an ask.
     const rank = { deny: 0, delay: 1, ask: 2 };
     return found.sort((a, b) => rank[a.verdict] - rank[b.verdict]);
+  }
+
+  /** Each limit of each scope as it holds now: used, reserved, remaining and its reset. */
+  states(scopes: readonly LimitScope[]): LimitState[] {
+    const now = this.#now();
+    const found: LimitState[] = [];
+    for (const scope of scopes)
+      for (const limit of scope.limits) {
+        const w = this.#window(limit.period, now);
+        const ref = {
+          level: scope.level,
+          target: scope.target,
+          meter: limit.meter,
+          period: limit.period,
+          window: w.start,
+        };
+        const { used, reserved } = this.#counter(ref);
+        const value = limit.value + this.#raised(keyOf(ref));
+        found.push({
+          meter: limit.meter,
+          level: scope.level,
+          target: scope.target,
+          limit_level: limit.level,
+          period: limit.period,
+          on_exceed: limit.on_exceed,
+          warn_at: limit.warn_at,
+          value,
+          used,
+          reserved,
+          remaining: Math.max(0, value - used - reserved),
+          ...(Number.isFinite(w.reset) ? { reset: w.reset } : {}),
+        });
+      }
+    return found;
   }
 
   /** Throws the first breach a charge would make (LimitExceeded). */
@@ -678,22 +824,56 @@ export class LimitLedger {
     return this.#counter({ ...scope, meter, period, window: this.#window(period).start }).reserved;
   }
 
+  /** Usage records created at or after `from` and past seq `after`, oldest first: an export page. */
+  recordsFrom(query: { from?: number; after?: number; limit?: number }): UsageRecord[] {
+    return this.#sql
+      .exec(
+        "SELECT * FROM usage_records WHERE created >= ? AND seq > ? ORDER BY seq LIMIT ?",
+        Math.max(0, Number(query.from) || 0),
+        Math.max(0, Number(query.after) || 0),
+        Math.min(Math.max(1, Number(query.limit) || 1000), 1000),
+      )
+      .toArray()
+      .map(recordOf);
+  }
+
   /** Usage records after `since` (a seq), oldest first. */
   records(since = 0, limit = 1000): UsageRecord[] {
     return this.#sql
       .exec("SELECT * FROM usage_records WHERE seq > ? ORDER BY seq LIMIT ?", since, limit)
       .toArray()
+      .map(recordOf);
+  }
+
+  /**
+   * Usage between `from` and `until`, summed per project, user, session, model and meter in
+   * quarter-hour buckets (every time zone's days start on one): the input of usage reports.
+   */
+  aggregate(filter: UsageFilter): UsageRow[] {
+    const where = ["created >= ?", "created < ?"];
+    const args: unknown[] = [filter.from, filter.until];
+    for (const k of ["workspace", "project", "user"] as const)
+      if (filter[k] !== undefined) {
+        where.push(`${k} = ?`);
+        args.push(filter[k]);
+      }
+    return this.#sql
+      .exec(
+        `SELECT project, user, session, json_extract(detail, '$.model') AS model, meter,
+          (created / ${BUCKET_MS}) * ${BUCKET_MS} AS bucket, total(amount) AS amount
+          FROM usage_records WHERE ${where.join(" AND ")}
+          GROUP BY project, user, session, model, meter, bucket`,
+        ...args,
+      )
+      .toArray()
       .map((r) => ({
-        seq: Number(r.seq),
-        created: Number(r.created),
-        meter: String(r.meter) as Meter,
-        amount: Number(r.amount),
-        workspace: String(r.workspace),
         project: String(r.project),
         user: String(r.user),
         ...(r.session ? { session: String(r.session) } : {}),
-        ...(r.turn ? { turn: String(r.turn) } : {}),
-        ...(r.detail ? { detail: JSON.parse(String(r.detail)) } : {}),
+        ...(r.model ? { model: String(r.model) } : {}),
+        meter: String(r.meter),
+        bucket: Number(r.bucket),
+        amount: Number(r.amount),
       }));
   }
 

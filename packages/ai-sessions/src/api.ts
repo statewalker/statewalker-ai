@@ -5,11 +5,18 @@ import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 
 import {
   type FilesRpcMethod,
+  LIMIT_LEVELS,
   type Limit,
+  type LimitLevel,
+  type LimitState,
   type ModelLevel,
   type ModelsConfig,
   type ModelUsage,
   parseLimits,
+  USAGE_GROUPS,
+  type UsageGroup,
+  type UsageGroupBy,
+  type UsageRecord,
 } from "@statewalker/ai-environment";
 import type {
   BatchResult,
@@ -31,10 +38,14 @@ export type {
   FileView,
   KindView,
   Limit,
+  LimitState,
   MemoryAction,
   MemoryCall,
   ModelsConfig,
   ModelUsage,
+  UsageGroup,
+  UsageGroupBy,
+  UsageRecord,
 };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
@@ -92,6 +103,8 @@ export interface AgentSessionView {
   parent?: string;
   /** A sub-agent's root: the session the user started, whose events stream gets its approvals. */
   root?: string;
+  /** The session's model usage, totalled over its turns (single-session reads, #181). */
+  usage?: UsageTotals;
   /** A fork: the session and turn its history was copied from (statewalker/statewalker-root#190). */
   forked_from?: TurnRef;
 }
@@ -387,6 +400,8 @@ export interface TurnView {
   ignored?: string[];
   /** The approval this turn continues the session with: a turn queued by answering it. */
   answers?: string;
+  /** The turn's model usage, totalled over its requests (statewalker/statewalker-root#181). */
+  usage?: UsageTotals;
   /**
    * The turn it follows in the session's tree (statewalker/statewalker-root#190): null for a first
    * turn, and for a turn not started yet (it follows the head when it starts).
@@ -399,6 +414,16 @@ export interface TurnView {
   started?: number;
   ended?: number;
   items: Item[];
+}
+
+/** Model usage totalled over requests: a turn's or a session's (statewalker/statewalker-root#181). */
+export interface UsageTotals {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  /** In the models' price unit; 0 when none has prices. */
+  cost: number;
 }
 
 /** The statuses a turn ends in. */
@@ -895,6 +920,106 @@ export interface SessionApi {
   exportProfile(): Promise<Uint8Array>;
   /** Erases the caller's profile: their preferences and their user memory of every project. */
   eraseProfile(): Promise<{ erased: true }>;
+  /**
+   * Each limit that applies in the caller's context (statewalker/statewalker-root#181): the
+   * workspace's, the member's and the user's own (their keys), a project's when one is named (the
+   * caller must be a member), and one of the caller's sessions' when named (its project too), each
+   * with what is used, reserved and left, and when it resets.
+   */
+  effectiveLimits(query?: EffectiveLimitsQuery): Promise<{ limits: LimitState[] }>;
+  /**
+   * Usage totals (statewalker/statewalker-root#181): the caller's own, a project's with
+   * `usage.read:project`, the workspace's with `usage.read:workspace`, grouped by project, user,
+   * agent, model or day. Usage under a user's own key shows its amounts to that user alone.
+   */
+  usage(query?: UsageQuery): Promise<UsageReport>;
+  /**
+   * The limits the caller manages at a level and target (statewalker/statewalker-root#181), with
+   * `limits.write:<level>`: the workspace admin the workspace's, projects' and members'; a
+   * project's owners its own and its sessions' defaults (target: the project); users their own
+   * sessions' (target: the session) and their own keys' (`user`, target: themselves). Each only
+   * adds to the broader levels': the tightest applies, and no one removes another's.
+   */
+  getLimits(level: string, target: string): Promise<LimitsView>;
+  /** Replaces the limits the caller manages there: `{limits: [{meter, value, period?, …}]}`. */
+  setLimits(level: string, target: string, req: { limits: unknown[] }): Promise<LimitsView>;
+  deleteLimits(level: string, target: string): Promise<{ deleted: true }>;
+  /**
+   * A page of the token's workspace's usage records, for its admin (`usage.read:workspace`):
+   * REST exports every page as NDJSON. Usage under users' own keys is never among them.
+   */
+  usageRecords(query?: UsageRecordsQuery): Promise<UsageRecordsPage>;
+}
+
+/** What a usage report is asked for (statewalker/statewalker-root#181). */
+export interface UsageQuery {
+  /**
+   * `user` (the default): the caller's own usage in the token's workspace; `project`: a project's
+   * (`usage.read:project`, or the workspace's); `workspace`: the workspace's (`usage.read:workspace`).
+   */
+  level?: "user" | "project" | "workspace";
+  /** The project of a `project` report. */
+  project?: string;
+  /** The current window it sums (calendar days and months in the deployment's zone): month. */
+  period?: "hour" | "day" | "month" | "total";
+  group_by?: UsageGroupBy[];
+}
+
+/** Usage totals for one level and target over the period's current window, by group. */
+export interface UsageReport {
+  level: "user" | "project" | "workspace";
+  /** The user, project or workspace reported on. */
+  target: string;
+  period: string;
+  /** The window's start (ms since the epoch). */
+  start: number;
+  /** When the window ends; none for a total. */
+  end?: number;
+  group_by: UsageGroupBy[];
+  /**
+   * The totals of each group. Usage under a user's own key is its own group (`own_key`): with its
+   * amounts for that user alone, without them for anyone else.
+   */
+  groups: UsageGroup[];
+}
+
+/** The limits one manager set at one level and target (statewalker/statewalker-root#181). */
+export interface LimitsView {
+  level: LimitLevel;
+  target: string;
+  limits: Limit[];
+}
+
+/**
+ * One call managing the limits at a level and target: the workspace's (`workspace`, its name),
+ * a project's (`project`; `session` for its sessions' defaults), a member's (`member`, the user)
+ * or the caller's own keys (`user`, themselves). `set` replaces what the caller manages there.
+ */
+export interface LimitsCall {
+  op: "get" | "set" | "delete";
+  level: LimitLevel;
+  target: string;
+  /** For `set`: each with that level and target. */
+  limits?: Limit[];
+}
+
+/** A page of the usage records export: created at or after `since` (ms), past seq `after`. */
+export interface UsageRecordsQuery {
+  since?: number;
+  after?: number;
+  /** At most 1000 (the default). */
+  limit?: number;
+}
+
+export interface UsageRecordsPage {
+  records: UsageRecord[];
+  /** The `after` of the next page; none when this one is the last. */
+  next?: number;
+}
+
+export interface EffectiveLimitsQuery {
+  project?: string;
+  session?: string;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -927,9 +1052,15 @@ export interface AgentSessionConfig {
   mode?: string;
   /**
    * The session's limits (statewalker/statewalker-root#179): the broader levels' session
-   * defaults and the start request's own, all counted in the agent session's DO.
+   * defaults (with a session started before #181, the start request's own too), all counted in
+   * the agent session's DO.
    */
   limits?: Limit[];
+  /**
+   * The session's own limits from its start request (statewalker/statewalker-root#181): its
+   * user replaces them later through the limits API, which leaves `limits` as they are.
+   */
+  ownLimits?: Limit[];
   /** Whether its models include the user's own provider: own-key spend is reserved with the user. */
   ownKeys?: boolean;
   /** No one answers approvals: a limit's ask denies. */
@@ -1001,6 +1132,14 @@ export interface UserPort {
   memory(token: string, call: MemoryCall): Promise<unknown>;
   exportProfile(token: string): Promise<Uint8Array>;
   eraseProfile(token: string): Promise<{ erased: true }>;
+  /** The limits on the caller's usage in the token's workspace (and a project), and their own. */
+  effectiveLimits(token: string, query: { project?: string }): Promise<{ limits: LimitState[] }>;
+  /** A usage report the caller may see; their own-key usage with its amounts at user level. */
+  usage(token: string, query: UsageQuery): Promise<UsageReport>;
+  /** One call on the limits the caller manages (a session's own are its agent session's). */
+  manageLimits(token: string, call: LimitsCall): Promise<LimitsView>;
+  /** A page of the workspace's usage records; EACCES unless the caller is its admin. */
+  usageRecords(token: string, query: UsageRecordsQuery): Promise<UsageRecordsPage>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -1074,6 +1213,12 @@ export interface AgentPort {
   answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
   /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
   mcp(message: McpMessage): Promise<McpResponse | null>;
+  /** The session level's limits now, with what is used, reserved and left of each. */
+  limits(): Promise<LimitState[]>;
+  /** The session's model usage, totalled; none before its first request. */
+  usage(): Promise<UsageTotals | undefined>;
+  /** The session's own limits, which its user set: undefined reads them, a list replaces them. */
+  ownLimits(limits?: Limit[]): Promise<Limit[]>;
   /** The turn tree (statewalker/statewalker-root#190). */
   rewind(req: RewindRequest): Promise<RewindResult>;
   setHead(turn: string | null): Promise<RewindResult>;
@@ -1099,6 +1244,9 @@ export interface SessionApiPorts {
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/** An agent session's id, as the User DO makes it. */
+const SESSION_ID = /^as-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const META_KEY = /^[A-Za-z0-9_.-]{1,64}$/;
 const MAX_META_KEYS = 16;
@@ -1158,6 +1306,52 @@ function sessionLimits(limits: unknown): Limit[] {
   const problem = parsed.problems.find((p) => !p.includes("its period is total"));
   if (problem) throw codedError("EINVAL", problem);
   return parsed.limits.map(({ target: _t, ...l }) => l);
+}
+
+/** Where limits are managed (EINVAL otherwise; the deployment's are its LIMITS, set by no one). */
+function limitsPlace(level: unknown, target: unknown): { level: LimitLevel; target: string } {
+  if (!(LIMIT_LEVELS as readonly unknown[]).includes(level))
+    throw codedError("EINVAL", `level is one of ${LIMIT_LEVELS.join(", ")}`);
+  if (level === "deployment")
+    throw codedError("EACCES", "the deployment's limits are its configuration (LIMITS)");
+  if (typeof target !== "string" || !NAME.test(target))
+    throw codedError("EINVAL", "target must be a name");
+  return { level: level as LimitLevel, target };
+}
+
+/** The limits of a `set`, each at the place's level and target (EINVAL names the first problem). */
+function limitsOfRequest(raw: unknown, place: { level: LimitLevel; target: string }): Limit[] {
+  if (!Array.isArray(raw) || raw.length > 32)
+    throw codedError("EINVAL", "limits is a list of at most 32 limits");
+  const parsed = parseLimits(
+    raw.map((l) => ({ ...((l ?? {}) as object), level: place.level, target: place.target })),
+  );
+  const problem = parsed.problems.find((p) => !p.includes("its period is total"));
+  if (problem) throw codedError("EINVAL", problem);
+  return parsed.limits;
+}
+
+/** A usage query as the API takes it (EINVAL otherwise); `group_by` may be a comma list. */
+function usageQuery(query: unknown): UsageQuery {
+  const q = (query ?? {}) as Record<string, unknown>;
+  const level = q.level ?? "user";
+  if (level !== "user" && level !== "project" && level !== "workspace")
+    throw codedError("EINVAL", "level is user, project or workspace");
+  const period = q.period ?? "month";
+  if (!["hour", "day", "month", "total"].includes(String(period)))
+    throw codedError("EINVAL", "period is hour, day, month or total");
+  if (level === "project" && (typeof q.project !== "string" || !NAME.test(q.project)))
+    throw codedError("EINVAL", "a project report names its project");
+  const raw = q.group_by ?? [];
+  const list = typeof raw === "string" ? raw.split(",").filter(Boolean) : raw;
+  if (!Array.isArray(list) || list.some((g) => !(USAGE_GROUPS as readonly unknown[]).includes(g)))
+    throw codedError("EINVAL", `group_by is a list of ${USAGE_GROUPS.join(", ")}`);
+  return {
+    level,
+    ...(level === "project" ? { project: q.project as string } : {}),
+    period: period as UsageQuery["period"],
+    group_by: [...new Set(list as UsageGroupBy[])],
+  };
 }
 
 function modelsQuery(query: unknown): ModelsQuery {
@@ -1318,6 +1512,17 @@ const streamUrl = (session: string, turn: string, offset: number) =>
 
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
   const own = (id: unknown) => ports.user.ownAgentSession(token, String(id));
+  /** A session's own limits are its agent session's; every other place is managed by the user's DO. */
+  const manage = async (call: LimitsCall): Promise<LimitsView> => {
+    // A session id exactly (`as-<uuid>`): a project may be named `as-…` too.
+    if (call.level !== "session" || !SESSION_ID.test(call.target))
+      return ports.user.manageLimits(token, call);
+    const session = await own(call.target);
+    const agent = ports.agent(session.id);
+    const limits =
+      call.op === "get" ? await agent.ownLimits() : await agent.ownLimits(call.limits ?? []);
+    return { level: "session", target: session.id, limits };
+  };
   /** Archives a session and its sub-agents: revoked first, so no new sub-agent joins the tree. */
   const archiveTree = async (id: string): Promise<AgentSessionView> => {
     const archived = await ports.user.archiveAgentSession(token, id);
@@ -1353,7 +1558,11 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       await ports.agent(session.id).start(config);
       return session;
     },
-    getSession: async (id) => withStatus(await own(id)),
+    async getSession(id) {
+      const session = await withStatus(await own(id));
+      const usage = await ports.agent(session.id).usage();
+      return usage ? { ...session, usage } : session;
+    },
     async updateSession(id, req) {
       const metadata = metadataOf((req as { metadata?: unknown } | undefined)?.metadata ?? {});
       const session = await own(id);
@@ -1588,6 +1797,50 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     exportProfile: () => ports.user.exportProfile(token),
     eraseProfile: () => ports.user.eraseProfile(token),
+    usage: async (query) => ports.user.usage(token, usageQuery(query)),
+    async usageRecords(query) {
+      const q = (query ?? {}) as Record<string, unknown>;
+      const num = (k: string) => {
+        if (q[k] === undefined || q[k] === "") return undefined;
+        const n = Number(q[k]);
+        if (!Number.isFinite(n) || n < 0) throw codedError("EINVAL", `${k} is a number`);
+        return n;
+      };
+      const since = num("since");
+      const after = num("after");
+      const limit = num("limit");
+      return ports.user.usageRecords(token, {
+        ...(since !== undefined ? { since } : {}),
+        ...(after !== undefined ? { after } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+    },
+    async getLimits(level, target) {
+      return manage({ op: "get", ...limitsPlace(level, target) });
+    },
+    async setLimits(level, target, req) {
+      const place = limitsPlace(level, target);
+      const raw = (req as { limits?: unknown } | undefined)?.limits;
+      return manage({ op: "set", ...place, limits: limitsOfRequest(raw, place) });
+    },
+    async deleteLimits(level, target) {
+      await manage({ op: "delete", ...limitsPlace(level, target) });
+      return { deleted: true as const };
+    },
+    async effectiveLimits(query) {
+      const q = (query ?? {}) as Record<string, unknown>;
+      for (const k of ["project", "session"] as const)
+        if (q[k] !== undefined && (typeof q[k] !== "string" || !NAME.test(q[k] as string)))
+          throw codedError("EINVAL", `${k} must be a ${k}'s name`);
+      const session = typeof q.session === "string" ? await own(q.session) : undefined;
+      const project = session?.project ?? (q.project as string | undefined);
+      if (session && q.project !== undefined && q.project !== session.project)
+        throw codedError("EINVAL", "the session is in another project");
+      const { limits } = await ports.user.effectiveLimits(token, project ? { project } : {});
+      return {
+        limits: session ? [...limits, ...(await ports.agent(session.id).limits())] : limits,
+      };
+    },
   };
 }
 

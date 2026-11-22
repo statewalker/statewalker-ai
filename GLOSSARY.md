@@ -223,6 +223,15 @@ The worst case of a model request (its input plus `max_tokens`), held against ev
 **Increment**:
 What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.
 
+**Effective limits**:
+Every limit that applies in a caller's context (their workspace, a project, one of their sessions, their own keys), each with what is used, reserved and left of it and when its window resets.
+
+**Own-key usage**:
+Usage under a user's own model key: counted and recorded in their User DO, shown with its amounts to that user alone and to anyone else only as "own key".
+
+**Operator token**:
+The deployment's own bearer key (`OPERATOR_KEY`) that exports the usage records of every workspace; not an access token, and it opens no session.
+
 ### Policy
 
 **Mode**:
