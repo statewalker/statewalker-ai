@@ -78,23 +78,28 @@ async function tree(fs: { list: MemFilesApi["list"] }): Promise<string[]> {
 }
 
 describe("the definitions view", () => {
-  it("shows the skills, agents and tools the permissions allow, under qualified names", async () => {
+  it("shows the skills, agents and tools the permissions allow, skills nested by plugin", async () => {
     const view = await definitionsView(catalog, {
       allow: allowing("skills:notes/*", "agents:notes/writer", "tools:notes/word_count"),
     });
     expect(await tree(view)).toEqual([
       "/agents/notes__writer.md",
-      "/skills/notes__draft/SKILL.md",
-      "/skills/notes__summarize/SKILL.md",
-      "/skills/notes__summarize/references/style.md",
+      "/skills/notes/draft/SKILL.md",
+      "/skills/notes/summarize/SKILL.md",
+      "/skills/notes/summarize/references/style.md",
       "/tools/notes__word_count.openapi.json",
     ]);
-    expect(await readText(view, "/skills/notes__summarize/SKILL.md")).toBe(SKILL("summarize"));
+    expect(await readText(view, "/skills/notes/summarize/SKILL.md")).toBe(SKILL("summarize"));
     const tool = JSON.parse(await readText(view, "/tools/notes__word_count.openapi.json"));
     expect(tool.paths["/tools/notes/word_count"].post.operationId).toBe("word_count");
     // Hidden ones are absent, under any path.
-    expect(await view.exists("/skills/review__checklist/SKILL.md")).toBe(false);
+    expect(await view.exists("/skills/review/checklist/SKILL.md")).toBe(false);
     expect(await view.exists("/tools/notes__delete_all.openapi.json")).toBe(false);
+    // A plugin's skills folder shows only while one of its skills does.
+    const top: string[] = [];
+    for await (const e of view.list("/skills")) top.push(e.name);
+    expect(top).toEqual(["notes"]);
+    expect(await view.exists("/skills/review")).toBe(false);
   });
 
   it("decides each read by the permissions now, so a demotion reaches an open view", async () => {
@@ -102,18 +107,18 @@ describe("the definitions view", () => {
     const view = await definitionsView(catalog, {
       allow: (area, target) => area === "skills" && skills && target.startsWith("notes/"),
     });
-    expect(await view.exists("/skills/notes__draft/SKILL.md")).toBe(true);
+    expect(await view.exists("/skills/notes/draft/SKILL.md")).toBe(true);
     skills = false;
-    expect(await view.exists("/skills/notes__draft/SKILL.md")).toBe(false);
+    expect(await view.exists("/skills/notes/draft/SKILL.md")).toBe(false);
     expect(await tree(view)).toEqual([]);
   });
 
   it("is read-only", async () => {
     const view = await definitionsView(catalog, { allow: allowing("skills:*") });
-    await expect(writeText(view, "/skills/notes__draft/SKILL.md", "x")).rejects.toThrow(/EACCES/);
-    await expect(view.remove("/skills/notes__draft")).rejects.toThrow(/EACCES/);
+    await expect(writeText(view, "/skills/notes/draft/SKILL.md", "x")).rejects.toThrow(/EACCES/);
+    await expect(view.remove("/skills/notes/draft")).rejects.toThrow(/EACCES/);
     await expect(view.mkdir("/skills/new")).rejects.toThrow(/EACCES/);
-    expect(await readText(view, "/skills/notes__draft/SKILL.md")).toBe(SKILL("draft"));
+    expect(await readText(view, "/skills/notes/draft/SKILL.md")).toBe(SKILL("draft"));
   });
 
   it("shows an agent's session only the skills the agent asks for, of those allowed", async () => {
@@ -121,9 +126,9 @@ describe("the definitions view", () => {
     const writer = await narrowAgent(catalog, await agentOf("notes/writer"), allow);
     const view = await definitionsView(catalog, { allow, agent: writer });
     expect((await tree(view)).filter((p) => p.startsWith("/skills/"))).toEqual([
-      "/skills/notes__summarize/SKILL.md",
-      "/skills/notes__summarize/references/style.md",
-      "/skills/review__checklist/SKILL.md",
+      "/skills/notes/summarize/SKILL.md",
+      "/skills/notes/summarize/references/style.md",
+      "/skills/review/checklist/SKILL.md",
     ]);
     // An agent without a skills list gets every visible skill.
     const lister = await narrowAgent(catalog, await agentOf("notes/lister"), allow);

@@ -400,6 +400,7 @@ export class Workspace extends DurableObject<Env> {
     return {
       ...(run ? { agent: run.id, run: agentRun(run) } : { agent: "default" }),
       model: models.model,
+      plugins: plugins.map((p) => p.name),
       ...(limits.length ? { limits } : {}),
       ...(ownKeys ? { ownKeys: true } : {}),
     };
@@ -1356,6 +1357,7 @@ export class Workspace extends DurableObject<Env> {
     agent: string;
     run?: AgentRun;
     model?: string;
+    plugins?: string[];
     limits?: Limit[];
     ownKeys?: boolean;
   }> {
@@ -1388,6 +1390,7 @@ export class Workspace extends DurableObject<Env> {
       agent: child.agent,
       ...(child.run ? { run: child.run } : {}),
       ...(child.model ? { model: child.model } : {}),
+      ...(child.plugins ? { plugins: child.plugins } : {}),
       ...(child.limits ? { limits: child.limits } : {}),
       ...(child.ownKeys ? { ownKeys: true } : {}),
     };

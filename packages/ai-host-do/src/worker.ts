@@ -148,6 +148,10 @@ async function devRoutes(request: Request, env: Env, path: string) {
     await userOf(env, id).makeUnreachable();
     return json({ unreachable: id });
   }
+  if (collection === "users" && id && sub === "clock") {
+    // Moves the user's clock forward (approvals expire by it), so a scenario sees a day pass.
+    return json({ offset: await userOf(env, id).advanceClock(Number(body.advance_ms)) });
+  }
   if (collection === "users" && id && sub === "revoke") {
     // The operator revokes a user everywhere, at the issuer.
     await issuerOf(env).revokeUser(id);
@@ -176,6 +180,11 @@ async function devRoutes(request: Request, env: Env, path: string) {
   if (collection === "users" && id && sub === "usage-records") {
     // A user's own-key usage records, in their User DO.
     return json({ records: await userOf(env, id).usageRecords(Number(body.since) || 0) });
+  }
+  if (collection === "sessions" && id && sub === "flue-storage") {
+    // The rows of Flue's tables in the session's DO; `forget` first drops its in-memory Flue
+    // session, as a fresh DO instance has none.
+    return json({ tables: await agentOf(env, id).flueStorage(body.forget === true) });
   }
   if (collection === "workspaces" && id && sub === "database-storage") {
     // Every database of the workspace and its size: the storage meter's input (#179).

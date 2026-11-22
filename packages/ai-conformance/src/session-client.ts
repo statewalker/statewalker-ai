@@ -561,6 +561,25 @@ const admin = async <T>(deployment: Deployment, adminKey: string, path: string, 
   );
 
 /**
+ * The rows of Flue's tables in an agent session's DO (test-only admin route), by table. With
+ * `forget`, the DO first drops its in-memory Flue session, as a fresh DO instance has none.
+ */
+export async function flueStorage(
+  deployment: Deployment,
+  adminKey: string,
+  sessionId: string,
+  options: { forget?: boolean } = {},
+): Promise<Record<string, number>> {
+  const { tables } = await admin<{ tables: Record<string, number> }>(
+    deployment,
+    adminKey,
+    `/admin/sessions/${encodeURIComponent(sessionId)}/flue-storage`,
+    options,
+  );
+  return tables;
+}
+
+/**
  * Writes fixture files into one of the deployment's workspaces, the default one unless named
  * (test-only, behind `ADMIN_KEY`).
  */
@@ -595,6 +614,25 @@ export async function makeUserUnreachable(
   user: string,
 ): Promise<void> {
   await admin(deployment, adminKey, `/admin/users/${encodeURIComponent(user)}/unreachable`, {});
+}
+
+/**
+ * Moves a user's clock `ms` forward: the clock their User DO decides approval expiry by (test-only,
+ * behind `ADMIN_KEY`). Answers the total offset.
+ */
+export async function advanceUserClock(
+  deployment: Deployment,
+  adminKey: string,
+  user: string,
+  ms: number,
+): Promise<number> {
+  const { offset } = await admin<{ offset: number }>(
+    deployment,
+    adminKey,
+    `/admin/users/${encodeURIComponent(user)}/clock`,
+    { advance_ms: ms },
+  );
+  return offset;
 }
 
 /**

@@ -25,7 +25,8 @@
     "lint:check": "biome check .",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "changeset": "changeset"
+    "changeset": "changeset",
+    "test:nightly": "pnpm --filter @statewalker/ai-conformance run test:nightly"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",

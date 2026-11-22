@@ -466,6 +466,11 @@ export interface PinnedDefinitions {
   run?: AgentRun;
   /** The session's model (an id), pinned with its fallbacks by the workspace. */
   model?: string;
+  /**
+   * The names of the plugins pinned, broadest level first (deployment, workspace, project): the
+   * order in which a skill name two plugins share goes to the first.
+   */
+  plugins?: string[];
   /** The session limits of the deployment, the workspace and the project (#179). */
   limits?: Limit[];
   /** Whether the session's models include a user's own provider (their own key, #179). */
@@ -617,6 +622,8 @@ export interface AgentSessionConfig {
   run?: AgentRun;
   /** The session's model (an id), pinned at start. */
   model?: string;
+  /** The plugins pinned at start, broadest level first (`PinnedDefinitions.plugins`). */
+  plugins?: string[];
   /** A sub-agent's parent session. */
   parent?: string;
   /** A sub-agent's root session (statewalker/statewalker-root#126). */

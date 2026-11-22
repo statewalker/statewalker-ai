@@ -104,6 +104,7 @@ export interface WorkspaceGrants {
     agent: string;
     run?: AgentRun;
     model?: string;
+    plugins?: string[];
     limits?: Limit[];
     ownKeys?: boolean;
   }>;
@@ -554,6 +555,7 @@ export class UserSessions implements UserPort {
         capability,
         ...(pinned.run ? { run: pinned.run } : {}),
         ...(pinned.model ? { model: pinned.model } : {}),
+        ...(pinned.plugins ? { plugins: pinned.plugins } : {}),
         ...limitsOf(pinned.limits, req.limits),
         ...(pinned.ownKeys ? { ownKeys: true } : {}),
         ...(req.unattended ? { unattended: true } : {}),
@@ -588,7 +590,7 @@ export class UserSessions implements UserPort {
     const id = `as-${crypto.randomUUID()}`;
     // The workspace checks the agent against the parent's definition and the user's roles, pins
     // the child's definitions and narrows the parent's capability for it.
-    const { capability, agent, run, model, limits, ownKeys } = await this.#o
+    const { capability, agent, run, model, plugins, limits, ownKeys } = await this.#o
       .workspace(us.workspace)
       .delegate(us.capability, parentCapability, {
         session: id,
@@ -636,6 +638,7 @@ export class UserSessions implements UserPort {
         project: row.project,
         agent: row.agent,
         capability,
+        ...(plugins ? { plugins } : {}),
         parent: String(row.parent),
         root: String(row.root),
         ...(run ? { run } : {}),

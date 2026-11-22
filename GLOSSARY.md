@@ -336,6 +336,9 @@ The whole system.
 The agent loop that drives a model and tools.
 _Avoid_: runtime, engine
 
+**Flue session**:
+An agent session's execution core: one instance of Flue's runtime per agent session, hosted on the agent session's Durable Object, which runs each turn as one Flue submission. Its history is Flue's private state in that DO; the model sees only the harness's context.
+
 **Environment**:
 Everything an execution core reaches through capabilities: the file view, databases, executors, tools, the model gateway and the store.
 _Avoid_: shell, sandbox

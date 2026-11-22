@@ -87,6 +87,7 @@ export class User extends DurableObject<Env> {
       },
       modes: deploymentModes(env),
       approvalTtlMs: approvalTtlMs(env),
+      now: () => Date.now() + this.#clockOffset(),
     });
   }
 
@@ -153,6 +154,16 @@ export class User extends DurableObject<Env> {
   /** Test-only: the user's own-key usage records after a seq. */
   async usageRecords(since = 0) {
     return this.#limits.ledger.records(Number(since) || 0);
+  }
+
+  /** How far a test moved this User DO's clock forward (`advanceClock`); 0 otherwise. */
+  #clockOffset(): number {
+    try {
+      const row = this.ctx.storage.sql.exec("SELECT ms FROM test_clock").toArray()[0];
+      return Number(row?.ms ?? 0);
+    } catch {
+      return 0;
+    }
   }
 
   /** Refuses every call once a test made this User DO unreachable. */
@@ -317,5 +328,18 @@ export class User extends DurableObject<Env> {
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */
   async makeUnreachable(): Promise<void> {
     await this.ctx.storage.put("unreachable", true);
+  }
+
+  /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): moves this User DO's clock, which
+   * decides when approvals expire, `ms` forward, so a scenario sees a day pass at once.
+   */
+  async advanceClock(ms: number): Promise<number> {
+    if (!Number.isFinite(ms) || ms < 0) throw codedError("EINVAL", "ms must be a number >= 0");
+    const offset = this.#clockOffset() + ms;
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS test_clock (ms INTEGER NOT NULL)");
+    this.ctx.storage.sql.exec("DELETE FROM test_clock");
+    this.ctx.storage.sql.exec("INSERT INTO test_clock VALUES (?)", offset);
+    return offset;
   }
 }

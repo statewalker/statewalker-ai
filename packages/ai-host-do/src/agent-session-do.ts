@@ -1,9 +1,11 @@
 // One DO per agent session: it holds the session's capability (the user capability its User DO
-// attenuated for it; never the access token or a provider key) and runs its turns on Flue, whose
-// models are the Workspace DO's model gateway and whose file view is the
-// Workspace DO's gate reached with that capability: a webrun-files-rpc client whose calls travel on
-// the Workspace DO's stub. A file call the gate stops for an approval ends the turn waiting on it;
-// the user's answer continues the session. Long sessions are compacted into hierarchical summaries
+// attenuated for it; never the access token or a provider key) and runs its turns as one Flue
+// session of Flue's Cloudflare-target runtime, hosted on this DO (its coordinator on the DO's
+// SQLite, woken by the DO's alarm; statewalker/statewalker-root#128). Its models are the Workspace
+// DO's model gateway and its sandbox is the Workspace DO's gate reached with that capability: a
+// webrun-files-rpc client whose calls travel on the Workspace DO's stub. A file call the gate stops
+// for an approval ends the turn waiting on it; the user's answer continues the session. Flue's own
+// compaction is off: long sessions are compacted into hierarchical summaries
 // (statewalker/statewalker-root#131) by a summarizer on the same model, tuned by the deployment's
 // COMPACTION var; each turn starts from the shaped context.
 
@@ -18,7 +20,13 @@ import {
   type ModelResponse,
   runStoredCall,
 } from "@statewalker/ai-environment";
-import { completeWith, type ModelPort, runFlueTurn, TRACER_TOOLS } from "@statewalker/ai-flue";
+import {
+  completeWith,
+  FlueSession,
+  type ModelPort,
+  purgeFlue,
+  TRACER_TOOLS,
+} from "@statewalker/ai-flue";
 import {
   type AgentMessage,
   type AgentSessionConfig,
@@ -103,6 +111,13 @@ export class AgentSession extends DurableObject<Env> {
   readonly #core: AgentSessionCore;
   /** The session level's limits and counters (statewalker/statewalker-root#179). */
   readonly #limits: SessionLimits;
+  #flue?: FlueSession;
+
+  /** The session's Flue session on this DO (the Flue instance id is the session's id). */
+  #flueOf(session: string): FlueSession {
+    this.#flue ??= new FlueSession({ state: this.ctx, env: this.env, session });
+    return this.#flue;
+  }
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -184,9 +199,10 @@ export class AgentSession extends DurableObject<Env> {
             userOf(env, config.user).startSubAgent(config.id, config.capability, req),
           run: (child, message, signal) => runChild(env, child, message, signal),
         });
-        return runFlueTurn(
+        return this.#flueOf(config.id).run(
           {
             id: config.id,
+            turn,
             agent: config.agent,
             ...(config.run ? { instructions: config.run.instructions } : {}),
             project: config.project,
@@ -217,6 +233,7 @@ export class AgentSession extends DurableObject<Env> {
                 return this.#breach(config, e, onApproval);
               }
             },
+            ...(config.plugins ? { plugins: config.plugins } : {}),
           },
           emit,
         );
@@ -452,8 +469,36 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.archive();
   }
 
-  purge() {
-    return this.#core.purge();
+  async purge() {
+    await this.#core.purge();
+    // Flue's tables go too, whether or not this instance built its Flue session.
+    purgeFlue(this.ctx.storage.sql);
+  }
+
+  /**
+   * The rows of Flue's tables in this DO, by table (test-only admin route). With `forget`, the DO
+   * first drops its in-memory Flue session, as a fresh instance has none.
+   */
+  flueStorage(forget: boolean): Record<string, number> {
+    if (forget) this.#flue = undefined;
+    const sql = this.ctx.storage.sql;
+    const tables = sql
+      .exec<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'flue\\_%' ESCAPE '\\'",
+      )
+      .toArray();
+    return Object.fromEntries(
+      tables.map(({ name }) => [
+        name,
+        Number(sql.exec<{ n: number }>(`SELECT count(*) AS n FROM "${name}"`).one().n),
+      ]),
+    );
+  }
+
+  /** Flue's heartbeat over the session's unsettled submissions. */
+  async alarm() {
+    const config = this.#core.config();
+    if (config) await this.#flueOf(config.id).alarm();
   }
 
   /** Told by a sub-agent's DO: the approvals its turn waits on, for this root's events stream. */
