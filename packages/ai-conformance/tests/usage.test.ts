@@ -18,6 +18,7 @@ import {
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
+const OPERATOR_KEY = "conformance-operator-key";
 
 const TRANSPORTS = ["rest", "rpc"];
 
@@ -88,6 +89,8 @@ beforeAll(async () => {
     ADMIN_KEY,
     SECRETS_KEY: "conformance-secrets-key",
     USER_PROVIDER_HOSTS: "127.0.0.1",
+    OPERATOR_KEY,
+    WORKSPACES: "default,other",
     MODELS: model.deploymentModels({
       models: [
         { id: "scripted/default", alias: "default" },
@@ -97,6 +100,12 @@ beforeAll(async () => {
     }),
   });
   await seed(deployment, ADMIN_KEY, FILES);
+  await seed(
+    deployment,
+    ADMIN_KEY,
+    { "/far/.system/access": JSON.stringify({ zed: "owner" }) },
+    "other",
+  );
 }, 120_000);
 afterAll(async () => {
   for (const s of sockets) s.close();
@@ -397,5 +406,71 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
     ).rejects.toMatchObject({ status: 403 });
     await dan.deleteLimits("user", u("dan"));
     expect((await dan.effectiveLimits()).limits.some((l) => l.level === "user")).toBe(false);
+  });
+
+  it("exports the workspace's usage records as NDJSON to its admin alone", async () => {
+    const boss = await as("boss");
+    const ann = await as("ann");
+    const since = Date.now();
+    const s = await ann.startSession({ project: `use-${t}`, model: "scripted/priced" });
+    const turn = await ann.sendMessage(s.id, { content: "hello" });
+    const records = await boss.usageRecords({ since });
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workspace: "default",
+          project: `use-${t}`,
+          user: u("ann"),
+          session: s.id,
+          meter: "turns",
+          amount: 1,
+        }),
+        expect.objectContaining({ session: s.id, turn: turn.id, meter: "model_spend", amount: 3 }),
+      ]),
+    );
+    expect(records.every((r) => Number(r.created) >= since)).toBe(true);
+    await expect(ann.usageRecords({ since })).rejects.toMatchObject({ status: 403 });
+    if (t === "rest") {
+      const res = await deployment.fetch(`/v1/usage/records?since=${since}`, {
+        headers: { authorization: `Bearer ${await login(deployment, u("boss"))}` },
+      });
+      expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+      const lines = (await res.text()).split("\n").filter(Boolean);
+      expect(lines.length).toBe(records.length);
+    }
+  });
+});
+
+describe("usage records for the operator", () => {
+  const exportAs = (key: string, query = "since=0") =>
+    deployment.fetch(`/v1/usage/records?${query}`, { headers: { authorization: `Bearer ${key}` } });
+
+  it("exports every workspace's records with the operator token, and nothing to a wrong one", async () => {
+    const zed = restClient(deployment, await login(deployment, "zed", { workspace: "other" }));
+    const s = await zed.startSession({ project: "far" });
+    await zed.sendMessage(s.id, { content: "hello" });
+    const res = await exportAs(OPERATOR_KEY);
+    expect(res.status).toBe(200);
+    const records = (await res.text())
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(new Set(records.map((r) => r.workspace))).toEqual(new Set(["default", "other"]));
+    expect(records).toContainEqual(
+      expect.objectContaining({ workspace: "other", session: s.id, meter: "turns" }),
+    );
+    // One workspace only.
+    const one = await (await exportAs(OPERATOR_KEY, "since=0&workspace=other")).text();
+    expect(
+      one
+        .split("\n")
+        .filter(Boolean)
+        .every((l) => JSON.parse(l).workspace === "other"),
+    ).toBe(true);
+    expect((await exportAs("not-the-key")).status).toBe(401);
+    // The admin of a workspace sees only theirs.
+    const boss = restClient(deployment, await login(deployment, "boss-rest"));
+    const theirs = await boss.usageRecords({ since: 0 });
+    expect(theirs.some((r) => r.workspace === "other")).toBe(false);
   });
 });

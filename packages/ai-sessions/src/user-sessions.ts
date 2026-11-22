@@ -68,6 +68,8 @@ import type {
   StartSessionRequest,
   SubAgentRequest,
   UsageQuery,
+  UsageRecordsPage,
+  UsageRecordsQuery,
   UsageReport,
   UserPort,
   UserSessionView,
@@ -167,6 +169,8 @@ export interface WorkspaceGrants {
   usage(userCapability: string, query: UsageQuery): Promise<UsageReport>;
   /** One call on the limits the user manages there (EACCES without `limits.write:<level>`). */
   manageLimits(userCapability: string, call: LimitsCall): Promise<LimitsView>;
+  /** A page of the workspace's usage records; EACCES unless the user is its admin. */
+  usageRecords(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -1215,6 +1219,11 @@ export class UserSessions implements UserPort {
   async manageLimits(token: string, call: LimitsCall): Promise<LimitsView> {
     const us = await this.#userSession(token);
     return this.#o.workspace(us.workspace).manageLimits(us.capability, call);
+  }
+
+  async usageRecords(token: string, query: UsageRecordsQuery): Promise<UsageRecordsPage> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).usageRecords(us.capability, query);
   }
 
   /** The agent each of these sessions of the user runs; unknown ones left out. */

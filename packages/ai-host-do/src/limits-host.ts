@@ -350,7 +350,7 @@ export async function editLimitsFile(
 ): Promise<Limit[]> {
   const text = await tryReadText(files, path);
   let list: Record<string, unknown>[] = [];
-  if (text !== undefined && text.trim()) {
+  if (text?.trim()) {
     let value: unknown;
     try {
       value = JSON.parse(text);

@@ -155,6 +155,8 @@ import type {
   ServiceAccountView,
   SetSecretRequest,
   UsageQuery,
+  UsageRecordsPage,
+  UsageRecordsQuery,
   UsageReport,
 } from "@statewalker/ai-sessions";
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
@@ -1310,16 +1312,12 @@ export class Workspace extends DurableObject<Env> {
     const { timeZone } = ledgerOptions(this.env);
     const window = windowOf(period, Date.now(), timeZone);
     const until = Number.isFinite(window.reset) ? window.reset : Number.MAX_SAFE_INTEGER;
-    const workspaceReader = async () => {
-      const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
-        Object.hasOwn(WORKSPACE_ROLES, r),
-      );
-      return decide(resolveRoles(held, {}).grants, {
+    const workspaceReader = async () =>
+      decide(await this.#workspaceGrants(user), {
         area: "usage",
         action: "read",
         target: "workspace",
       });
-    };
     let target: string;
     let filter: { user?: string; project?: string } = {};
     if (level === "user") {
@@ -1445,9 +1443,37 @@ export class Workspace extends DurableObject<Env> {
     return { level, target, limits };
   }
 
-  /** Test-only: the workspace's usage records after a seq. */
-  async usageRecords(since = 0) {
-    return this.#limits.ledger.records(Number(since) || 0);
+  /**
+   * A page of the workspace's usage records for its admin (a workspace role granting
+   * `usage.read:workspace`, statewalker/statewalker-root#181). Usage under users' own keys is
+   * kept in their User DOs, never here.
+   */
+  async usageExport(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    if (
+      !decide(await this.#workspaceGrants(user), {
+        area: "usage",
+        action: "read",
+        target: "workspace",
+      })
+    )
+      throw codedError("EACCES", `${user} may not export this workspace's usage`);
+    return this.operatorUsageExport(query);
+  }
+
+  /**
+   * A page of the workspace's usage records for the deployment's operator: the Worker answers it
+   * only to the operator token (OPERATOR_KEY).
+   */
+  operatorUsageExport(query: UsageRecordsQuery): UsageRecordsPage {
+    const limit = Math.min(Math.max(1, Number(query?.limit) || 1000), 1000);
+    const records = this.#limits.ledger.recordsFrom({
+      from: Number(query?.since) || 0,
+      after: Number(query?.after) || 0,
+      limit,
+    });
+    const last = records.at(-1);
+    return { records, ...(records.length === limit && last ? { next: last.seq } : {}) };
   }
 
   // --- tools (statewalker/statewalker-root#90, #129) -------------------------------------------

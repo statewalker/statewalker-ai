@@ -23,6 +23,7 @@ import {
   type StartSessionRequest,
   type SubAgentRequest,
   type UsageQuery,
+  type UsageRecordsQuery,
   type UsageReport,
   UserSessions,
 } from "@statewalker/ai-sessions";
@@ -91,6 +92,7 @@ export class User extends DurableObject<Env> {
           effectiveLimits: (capability, query) => ws.effectiveLimits(capability, query),
           usage: (capability, query) => ws.usageReport(capability, query),
           manageLimits: (capability, call) => ws.manageLimits(capability, call),
+          usageRecords: (capability, query) => ws.usageExport(capability, query),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -232,9 +234,9 @@ export class User extends DurableObject<Env> {
     return { level: "user", target: user, limits };
   }
 
-  /** Test-only: the user's own-key usage records after a seq. */
-  async usageRecords(since = 0) {
-    return this.#limits.ledger.records(Number(since) || 0);
+  async usageRecords(token: string, query: UsageRecordsQuery) {
+    await this.#reachable();
+    return this.#sessions.usageRecords(token, query);
   }
 
   /** How far a test moved this User DO's clock forward (`advanceClock`); 0 otherwise. */

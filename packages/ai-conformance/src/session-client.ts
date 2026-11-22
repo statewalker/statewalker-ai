@@ -530,8 +530,24 @@ export interface SessionClient {
     target: string,
     req: { limits: Record<string, unknown>[] },
   ): Promise<LimitsView>;
+  /** `GET /v1/usage/records?since` (NDJSON): the workspace's usage records, for its admin. */
+  usageRecords(query?: { since?: number }): Promise<UsageRecordView[]>;
   /** `DELETE /v1/limits/{level}/{target}`: removes them. */
   deleteLimits(level: string, target: string): Promise<{ deleted: true }>;
+}
+
+/** One usage record, as the export has it. */
+export interface UsageRecordView {
+  seq: number;
+  workspace: string;
+  project: string;
+  user: string;
+  session?: string;
+  turn?: string;
+  meter: string;
+  amount: number;
+  detail?: Record<string, unknown>;
+  created: number;
 }
 
 /** The limits one manager set at one level and target. */
@@ -792,6 +808,14 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         "GET",
         `/v1/usage${search({ ...q, ...(group_by ? { group_by: group_by.join(",") } : {}) })}`,
       ),
+    async usageRecords(q = {}) {
+      const res = await deployment.fetch(`/v1/usage/records${search(q)}`, { headers });
+      if (!res.ok) await answer(res);
+      return (await res.text())
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as UsageRecordView);
+    },
     getLimits: (level, target) => call("GET", limitsPath(level, target)),
     setLimits: (level, target, req) => call("PUT", limitsPath(level, target), req),
     deleteLimits: (level, target) => call("DELETE", limitsPath(level, target)),
@@ -989,6 +1013,25 @@ export async function sendPastUser(
   return admin(deployment, adminKey, `/admin/sessions/${encodeURIComponent(sessionId)}/messages`, {
     content,
   });
+}
+
+/**
+ * The operator's export of usage records (`GET /v1/usage/records` with the operator token): every
+ * workspace's, or one's, created at or after `since`.
+ */
+export async function exportUsage(
+  deployment: Deployment,
+  operatorKey: string,
+  query: { since?: number; workspace?: string } = {},
+): Promise<UsageRecordView[]> {
+  const res = await deployment.fetch(`/v1/usage/records${search(query)}`, {
+    headers: { authorization: `Bearer ${operatorKey}` },
+  });
+  if (!res.ok) await answer(res);
+  return (await res.text())
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as UsageRecordView);
 }
 
 /**

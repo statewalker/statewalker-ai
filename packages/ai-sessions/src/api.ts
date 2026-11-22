@@ -16,6 +16,7 @@ import {
   USAGE_GROUPS,
   type UsageGroup,
   type UsageGroupBy,
+  type UsageRecord,
 } from "@statewalker/ai-environment";
 import type {
   BatchResult,
@@ -44,6 +45,7 @@ export type {
   ModelUsage,
   UsageGroup,
   UsageGroupBy,
+  UsageRecord,
 };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
@@ -748,6 +750,11 @@ export interface SessionApi {
   /** Replaces the limits the caller manages there: `{limits: [{meter, value, period?, …}]}`. */
   setLimits(level: string, target: string, req: { limits: unknown[] }): Promise<LimitsView>;
   deleteLimits(level: string, target: string): Promise<{ deleted: true }>;
+  /**
+   * A page of the token's workspace's usage records, for its admin (`usage.read:workspace`):
+   * REST exports every page as NDJSON. Usage under users' own keys is never among them.
+   */
+  usageRecords(query?: UsageRecordsQuery): Promise<UsageRecordsPage>;
 }
 
 /** What a usage report is asked for (statewalker/statewalker-root#181). */
@@ -800,6 +807,20 @@ export interface LimitsCall {
   target: string;
   /** For `set`: each with that level and target. */
   limits?: Limit[];
+}
+
+/** A page of the usage records export: created at or after `since` (ms), past seq `after`. */
+export interface UsageRecordsQuery {
+  since?: number;
+  after?: number;
+  /** At most 1000 (the default). */
+  limit?: number;
+}
+
+export interface UsageRecordsPage {
+  records: UsageRecord[];
+  /** The `after` of the next page; none when this one is the last. */
+  next?: number;
 }
 
 export interface EffectiveLimitsQuery {
@@ -911,6 +932,8 @@ export interface UserPort {
   usage(token: string, query: UsageQuery): Promise<UsageReport>;
   /** One call on the limits the caller manages (a session's own are its agent session's). */
   manageLimits(token: string, call: LimitsCall): Promise<LimitsView>;
+  /** A page of the workspace's usage records; EACCES unless the caller is its admin. */
+  usageRecords(token: string, query: UsageRecordsQuery): Promise<UsageRecordsPage>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -1401,6 +1424,23 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     exportProfile: () => ports.user.exportProfile(token),
     eraseProfile: () => ports.user.eraseProfile(token),
     usage: async (query) => ports.user.usage(token, usageQuery(query)),
+    async usageRecords(query) {
+      const q = (query ?? {}) as Record<string, unknown>;
+      const num = (k: string) => {
+        if (q[k] === undefined || q[k] === "") return undefined;
+        const n = Number(q[k]);
+        if (!Number.isFinite(n) || n < 0) throw codedError("EINVAL", `${k} is a number`);
+        return n;
+      };
+      const since = num("since");
+      const after = num("after");
+      const limit = num("limit");
+      return ports.user.usageRecords(token, {
+        ...(since !== undefined ? { since } : {}),
+        ...(after !== undefined ? { after } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+      });
+    },
     async getLimits(level, target) {
       return manage({ op: "get", ...limitsPlace(level, target) });
     },

@@ -397,6 +397,19 @@ export interface UsageRow {
 
 const BUCKET_MS = 15 * 60_000;
 
+const recordOf = (r: Record<string, unknown>): UsageRecord => ({
+  seq: Number(r.seq),
+  created: Number(r.created),
+  meter: String(r.meter) as Meter,
+  amount: Number(r.amount),
+  workspace: String(r.workspace),
+  project: String(r.project),
+  user: String(r.user),
+  ...(r.session ? { session: String(r.session) } : {}),
+  ...(r.turn ? { turn: String(r.turn) } : {}),
+  ...(r.detail ? { detail: JSON.parse(String(r.detail)) } : {}),
+});
+
 /** What usage reports group by (statewalker/statewalker-root#181). */
 export const USAGE_GROUPS = ["project", "user", "agent", "model", "day"] as const;
 export type UsageGroupBy = (typeof USAGE_GROUPS)[number];
@@ -811,23 +824,25 @@ export class LimitLedger {
     return this.#counter({ ...scope, meter, period, window: this.#window(period).start }).reserved;
   }
 
+  /** Usage records created at or after `from` and past seq `after`, oldest first: an export page. */
+  recordsFrom(query: { from?: number; after?: number; limit?: number }): UsageRecord[] {
+    return this.#sql
+      .exec(
+        "SELECT * FROM usage_records WHERE created >= ? AND seq > ? ORDER BY seq LIMIT ?",
+        Math.max(0, Number(query.from) || 0),
+        Math.max(0, Number(query.after) || 0),
+        Math.min(Math.max(1, Number(query.limit) || 1000), 1000),
+      )
+      .toArray()
+      .map(recordOf);
+  }
+
   /** Usage records after `since` (a seq), oldest first. */
   records(since = 0, limit = 1000): UsageRecord[] {
     return this.#sql
       .exec("SELECT * FROM usage_records WHERE seq > ? ORDER BY seq LIMIT ?", since, limit)
       .toArray()
-      .map((r) => ({
-        seq: Number(r.seq),
-        created: Number(r.created),
-        meter: String(r.meter) as Meter,
-        amount: Number(r.amount),
-        workspace: String(r.workspace),
-        project: String(r.project),
-        user: String(r.user),
-        ...(r.session ? { session: String(r.session) } : {}),
-        ...(r.turn ? { turn: String(r.turn) } : {}),
-        ...(r.detail ? { detail: JSON.parse(String(r.detail)) } : {}),
-      }));
+      .map(recordOf);
   }
 
   /**

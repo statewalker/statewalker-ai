@@ -45,6 +45,7 @@ const METHODS = [
   "getLimits",
   "setLimits",
   "deleteLimits",
+  "usageRecords",
   "listDatabases",
   "listMemory",
   "memoryEntry",

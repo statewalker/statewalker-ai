@@ -95,6 +95,19 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     setLimits: (level, target, req) =>
       api.setLimits(level, target, req as never).catch(refusal) as never,
     deleteLimits: (level, target) => api.deleteLimits(level, target).catch(refusal) as never,
+    async usageRecords(q = {}) {
+      // Page by page, after the last record's seq.
+      const all: never[] = [];
+      let after: number | undefined;
+      for (;;) {
+        const page = await api
+          .usageRecords({ ...q, ...(after !== undefined ? { after } : {}) })
+          .catch(refusal);
+        all.push(...(page.records as never[]));
+        if (page.next === undefined) return all;
+        after = page.next;
+      }
+    },
     close: () => connection.close(),
   };
   return client;

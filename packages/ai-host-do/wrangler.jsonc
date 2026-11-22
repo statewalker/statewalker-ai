@@ -86,6 +86,9 @@
     //   SECRETS_KEY          seals workspace, project and user secrets in each Workspace DO's SQLite
     //   DEPLOYMENT_SECRETS   {"NAME": {"plugins": [...], "hosts": [...]}}: the runtime secrets that are
     //                        deployment-level secrets, and their bindings (the values are the NAME secrets)
+    // The operator token (statewalker/statewalker-root#181), a runtime secret: GET /v1/usage/records?since&workspace
+    // with "Authorization: Bearer <key>" exports every workspace's usage records as NDJSON. Unset: no such export.
+    //   OPERATOR_KEY
     // Test-only, never set in a real deployment:
     //   SSE_KEEPALIVE_MS     the event streams' keep-alive interval (30000 otherwise)
     //   USER_PROVIDER_HOSTS  hosts a user's own provider may use over http or at a private address

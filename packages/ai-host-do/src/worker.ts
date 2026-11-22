@@ -13,6 +13,7 @@ import {
   handleDatabasesRest,
   handleFilesRest,
   handleSessionRest,
+  ndjsonResponse,
   serveDatabasesRpc,
   serveFilesRpc,
   serveSessionRpc,
@@ -83,6 +84,7 @@ function sessionApi(env: Env, token: string) {
       effectiveLimits: async (t, q) => (await user()).effectiveLimits(t, q),
       usage: async (t, q) => (await user()).usage(t, q),
       manageLimits: async (t, call) => (await user()).manageLimits(t, call),
+      usageRecords: async (t, q) => (await user()).usageRecords(t, q),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -188,16 +190,6 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     return json({ usage: await workspaceOf(env, id).modelUsage() });
   }
-  if (collection === "workspaces" && id && sub === "usage-records") {
-    // The workspace's usage records (their reports and export are statewalker-root#181's).
-    if (!workspacesOf(env).includes(id))
-      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
-    return json({ records: await workspaceOf(env, id).usageRecords(Number(body.since) || 0) });
-  }
-  if (collection === "users" && id && sub === "usage-records") {
-    // A user's own-key usage records, in their User DO.
-    return json({ records: await userOf(env, id).usageRecords(Number(body.since) || 0) });
-  }
   if (collection === "sessions" && id && sub === "flue-storage") {
     // The rows of Flue's tables in the session's DO; `forget` first drops its in-memory Flue
     // session, as a fresh DO instance has none.
@@ -221,6 +213,54 @@ async function devRoutes(request: Request, env: Env, path: string) {
     return json(await agent.waitTurn(turn_id));
   }
   return undefined;
+}
+
+/** Whether two keys are the same, compared in constant time (over their SHA-256 digests). */
+async function sameKey(a: string, b: string): Promise<boolean> {
+  const encoder = new TextEncoder();
+  const digest = async (v: string) =>
+    new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(v)));
+  const x = await digest(a);
+  const y = await digest(b);
+  let diff = 0;
+  for (let i = 0; i < x.length; i++) diff |= (x[i] ?? 0) ^ (y[i] ?? 0);
+  return diff === 0;
+}
+
+/**
+ * The operator's export of usage records across workspaces (statewalker/statewalker-root#181):
+ * `GET /v1/usage/records?since&workspace` with the operator token (OPERATOR_KEY) as bearer, as
+ * NDJSON, every workspace the deployment serves (or the one named) in turn. Usage under users' own
+ * keys is theirs alone and is not among them. Any other bearer is a session API caller.
+ */
+async function operatorRoutes(request: Request, env: Env, path: string) {
+  if (path !== "/v1/usage/records" || request.method !== "GET" || !env.OPERATOR_KEY)
+    return undefined;
+  if (!(await sameKey(bearerOf(request), env.OPERATOR_KEY))) return undefined;
+  const url = new URL(request.url);
+  const since = Number(url.searchParams.get("since")) || 0;
+  const named = url.searchParams.get("workspace");
+  if (named && !workspacesOf(env).includes(named))
+    throw codedError("ENOENT", `this deployment does not serve '${named}'`);
+  const workspaces = named ? [named] : workspacesOf(env);
+  // The workspaces one after the other: `next` is the seq within the current one, and 0 starts
+  // the next workspace.
+  let index = 0;
+  const pageOf = async (after: number): Promise<{ records: unknown[]; next?: number }> => {
+    for (;;) {
+      const name = workspaces[index] as string;
+      const page = (await workspaceOf(env, name).operatorUsageExport({
+        since,
+        after,
+      })) as unknown as { records: unknown[]; next?: number };
+      if (page.next !== undefined) return page;
+      index += 1;
+      if (index >= workspaces.length) return { records: page.records };
+      if (page.records.length) return { records: page.records, next: 0 };
+      after = 0;
+    }
+  };
+  return ndjsonResponse(await pageOf(0), pageOf);
 }
 
 /** The session API's RPC channel: a WebSocket this Worker accepts and serves until it closes. */
@@ -269,6 +309,8 @@ export default {
       if (files) return files;
       const token = await tokenRoutes(request, env, path);
       if (token) return token;
+      const operator = await operatorRoutes(request, env, path);
+      if (operator) return operator;
       const dev = await devRoutes(request, env, path);
       if (dev) return dev;
       const rest = await handleSessionRest(request, (token) => sessionApi(env, token), {
