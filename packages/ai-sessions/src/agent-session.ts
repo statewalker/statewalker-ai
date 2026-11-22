@@ -1109,6 +1109,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
     const offset = this.#offset();
     if (message.after_turn !== undefined) await this.#chain(config, String(message.after_turn));
+    // UHP's rule (statewalker/statewalker-root#139): new input passes over the pending questions.
+    const voided = message.void_approvals ? await this.#voidPending(config) : [];
+    const said = voided.length ? { voided_approvals: voided } : {};
     const running = this.#running;
     if (message.delivery === "steer" && running && !running.endAs) {
       // The model can't change mid-turn: a steer's model is ignored.
@@ -1123,6 +1126,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         delivery: "steer",
         offset,
         ...(ignored.length ? { ignored } : {}),
+        ...said,
       };
     }
     // `steer` with no running turn acts as `next`.
@@ -1147,7 +1151,32 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       delivery,
       offset,
       ...(message.ignored.length ? { ignored: message.ignored } : {}),
+      ...said,
     };
+  }
+
+  /**
+   * Cancels the approvals the active path's waiting turns still wait on (asked in those turns or,
+   * for an answer turn left waiting on the rest, in the turn that asked them), as a rewind does.
+   */
+  async #voidPending(config: AgentSessionConfig): Promise<string[]> {
+    const path = this.#pathTo(this.#head());
+    const ids = new Set<string>();
+    for (const row of this.#rows<{ stop_reason: string | null }>(
+      "SELECT stop_reason FROM agent_turns WHERE status = 'waiting' AND id IN (SELECT value FROM json_each(?))",
+      JSON.stringify(path),
+    ))
+      for (const id of (JSON.parse(row.stop_reason ?? "{}") as StopReason).approval_ids ?? [])
+        if (this.#pendingOnPath(id, path)) ids.add(id);
+    if (!ids.size) return [];
+    const asked = this.#rows<{ turn: string }>(
+      `SELECT DISTINCT turn FROM items WHERE kind IN ('approval', 'question')
+        AND json_extract(body, '$.approval') IN (SELECT value FROM json_each(?))
+        AND turn IN (SELECT value FROM json_each(?))`,
+      JSON.stringify([...ids]),
+      JSON.stringify(path),
+    ).map((r) => String(r.turn));
+    return this.#cancelPending(config, asked);
   }
 
   /**

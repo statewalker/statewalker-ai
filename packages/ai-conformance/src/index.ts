@@ -84,6 +84,7 @@ export {
   sseFrames,
   TERMINAL_EVENTS,
   type Turn,
+  UHP_BASE_URL,
   type UIMessageChunk,
   type UsageGroup,
   type UsageQuery,

@@ -82,7 +82,7 @@ export const startRequest = (route: AgentRoute) => ({
 
 /** Every item of a session the query names, in order. */
 export async function allItems(
-  api: OpenAiApi,
+  api: Pick<OpenAiApi, "listItems">,
   session: string,
   query: { all?: boolean; types?: Item["kind"][] } = {},
 ): Promise<Item[]> {
@@ -484,37 +484,11 @@ export async function* responseEvents(
   const last = created.turns.at(-1) as string;
   const mapper = new OutputMapper(lookup.callOf);
   const emitted = new Set<string>();
-  let sequence = 0;
-  let index = 0;
-  const event = (type: string, data: Record<string, unknown>) => ({
-    type,
-    sequence_number: sequence++,
-    ...data,
-  });
+  const encoder = new EventEncoder();
+  const event = encoder.event;
   const itemEvents = (item: OpenAiItem) => {
-    const output_index = index++;
     emitted.add(item.id);
-    if (item.type !== "message")
-      return [
-        event("response.output_item.added", { output_index, item }),
-        event("response.output_item.done", { output_index, item }),
-      ];
-    const part = (item.content as { text: string }[])[0] as { text: string };
-    const at = { item_id: item.id, output_index, content_index: 0 };
-    return [
-      event("response.output_item.added", {
-        output_index,
-        item: { ...item, status: "in_progress", content: [] },
-      }),
-      event("response.content_part.added", {
-        ...at,
-        part: { type: "output_text", text: "", annotations: [] },
-      }),
-      event("response.output_text.delta", { ...at, delta: part.text, logprobs: [] }),
-      event("response.output_text.done", { ...at, text: part.text, logprobs: [] }),
-      event("response.content_part.done", { ...at, part }),
-      event("response.output_item.done", { output_index, item }),
-    ];
+    return encoder.itemEvents(item);
   };
   const initial = await responseOf(api, session, [await api.getTurn(last)], {
     ...(created.requestedModel ? { requestedModel: created.requestedModel } : {}),
@@ -570,4 +544,48 @@ export async function* responseEvents(
         ? "response.failed"
         : "response.incomplete";
   yield event(type, { response: final });
+}
+
+/**
+ * Numbers a Responses event stream from 0 (`sequence_number`) and its output items
+ * (`output_index`): `event` one event, `itemEvents` one whole item as `output_item.added` …
+ * `output_item.done`, a message with its one text part and its whole text as one delta (the log
+ * holds whole items). The UHP projection's stream is a subset of it (statewalker/statewalker-root#108).
+ */
+export class EventEncoder {
+  #sequence = 0;
+  #index = 0;
+
+  readonly event = (type: string, data: Record<string, unknown>): Record<string, unknown> => ({
+    type,
+    sequence_number: this.#sequence++,
+    ...data,
+  });
+
+  itemEvents(item: OpenAiItem): Record<string, unknown>[] {
+    const event = this.event;
+    const output_index = this.#index++;
+    const part = item.type === "message" ? (item.content as { text?: string }[])[0] : undefined;
+    if (!part || typeof part.text !== "string")
+      return [
+        event("response.output_item.added", { output_index, item }),
+        event("response.output_item.done", { output_index, item }),
+      ];
+    const text = part.text;
+    const at = { item_id: item.id, output_index, content_index: 0 };
+    return [
+      event("response.output_item.added", {
+        output_index,
+        item: { ...item, status: "in_progress", content: [] },
+      }),
+      event("response.content_part.added", {
+        ...at,
+        part: { type: "output_text", text: "", annotations: [] },
+      }),
+      event("response.output_text.delta", { ...at, delta: text, logprobs: [] }),
+      event("response.output_text.done", { ...at, text, logprobs: [] }),
+      event("response.content_part.done", { ...at, part }),
+      event("response.output_item.done", { output_index, item }),
+    ];
+  }
 }

@@ -562,6 +562,13 @@ export interface SessionClient {
    */
   openai(project: string, agent?: string): OpenAiClientOptions;
   /**
+   * What a UHP client takes to drive harness agents through the UHP projection
+   * (statewalker/statewalker-root#139): the base URL (`/uhp`, the suite appends `/v1/...`), the
+   * key (the access token) and a fetch: over REST the deployment's, over RPC the projection run
+   * here over the session API's methods.
+   */
+  uhp(): OpenAiClientOptions;
+  /**
    * One message to an agent session's own MCP endpoint (`POST /v1/sessions/{id}/mcp`, JSON
    * responses): its answer, or null for a notification.
    */
@@ -820,6 +827,9 @@ export const openAiBaseUrl = (project: string, agent = "default") =>
     .map(encodeURIComponent)
     .join("/")}/`;
 
+/** The UHP projection's base URL: its routes are `<base>/v1/...`. */
+export const UHP_BASE_URL = "http://localhost/uhp";
+
 export function restClient(deployment: Deployment, token: string): SessionClient {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const call = <T>(method: string, path: string, body?: unknown) =>
@@ -839,6 +849,14 @@ export function restClient(deployment: Deployment, token: string): SessionClient
   const client: SessionClient = {
     openai: (project, agent) => ({
       baseURL: openAiBaseUrl(project, agent),
+      apiKey: token,
+      fetch: ((input: string | URL | Request, init?: RequestInit) =>
+        input instanceof Request
+          ? deployment.fetch(input.url, input)
+          : deployment.fetch(String(input), init)) as typeof fetch,
+    }),
+    uhp: () => ({
+      baseURL: UHP_BASE_URL,
       apiKey: token,
       fetch: ((input: string | URL | Request, init?: RequestInit) =>
         input instanceof Request

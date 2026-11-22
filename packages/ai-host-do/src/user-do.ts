@@ -9,6 +9,7 @@ import type { FilesRpcMethod, Limit } from "@statewalker/ai-environment";
 import { filesOverRpc, groupUsage, type UsageMeta } from "@statewalker/ai-environment";
 import { KeyedLock } from "@statewalker/ai-memory";
 import {
+  type AgentsQuery,
   type ApprovalAnswer,
   type ApprovalRequest,
   type DatabaseCall,
@@ -99,6 +100,7 @@ export class User extends DurableObject<Env> {
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
           listModels: (capability, query) => ws.listModels(capability, query),
+          listAgents: (capability, query) => ws.listAgents(capability, query),
           getModelConfig: (capability) => ws.getModelConfig(capability),
           setModelConfig: (capability, config) => ws.setModelConfig(capability, config),
           memory: (capability, call) => ws.memory(capability, call),
@@ -434,6 +436,11 @@ export class User extends DurableObject<Env> {
   async listModels(token: string, query: ModelsQuery) {
     await this.#reachable();
     return this.#sessions.listModels(token, query);
+  }
+
+  async listAgents(token: string, query: AgentsQuery) {
+    await this.#reachable();
+    return this.#sessions.listAgents(token, query);
   }
 
   async getModelConfig(token: string) {
