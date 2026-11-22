@@ -113,8 +113,18 @@ describe("limits", () => {
   it("charges every scope on the path and refuses at the tightest limit", () => {
     const ledger = new LimitLedger(sqlite());
     const scopes: LimitScope[] = [
-      { level: "workspace", target: "w", limits: parseLimits('[{"meter":"tool_calls","level":"workspace","value":5,"period":"day"}]').limits },
-      { level: "member", target: "u", limits: parseLimits('[{"meter":"tool_calls","level":"member","value":2,"period":"day"}]').limits },
+      {
+        level: "workspace",
+        target: "w",
+        limits: parseLimits('[{"meter":"tool_calls","level":"workspace","value":5,"period":"day"}]')
+          .limits,
+      },
+      {
+        level: "member",
+        target: "u",
+        limits: parseLimits('[{"meter":"tool_calls","level":"member","value":2,"period":"day"}]')
+          .limits,
+      },
     ];
     ledger.charge(scopes, { tool_calls: 1 }, META);
     ledger.charge(scopes, { tool_calls: 1 }, META);
@@ -128,7 +138,10 @@ describe("limits", () => {
     expect((refused as LimitExceeded).limit).toMatchObject({ level: "member", value: 2 });
     expect(String((refused as Error).message)).toMatch(/^ELIMIT: /);
     // Another member is held by the workspace's limit only.
-    const other: LimitScope[] = [scopes[0] as LimitScope, { level: "member", target: "v", limits: [] }];
+    const other: LimitScope[] = [
+      scopes[0] as LimitScope,
+      { level: "member", target: "v", limits: [] },
+    ];
     ledger.charge(other, { tool_calls: 3 }, META);
     expect(() => ledger.charge(other, { tool_calls: 1 }, META)).toThrow(/workspace/);
     expect(ledger.used({ level: "workspace", target: "w" }, "tool_calls", "day")).toBe(5);
@@ -138,7 +151,13 @@ describe("limits", () => {
   it("reserves the worst case, so parallel requests never overshoot, then settles to the real cost", () => {
     const ledger = new LimitLedger(sqlite());
     const scopes: LimitScope[] = [
-      { level: "workspace", target: "w", limits: parseLimits('[{"meter":"model_spend","level":"workspace","value":10,"period":"month"}]').limits },
+      {
+        level: "workspace",
+        target: "w",
+        limits: parseLimits(
+          '[{"meter":"model_spend","level":"workspace","value":10,"period":"month"}]',
+        ).limits,
+      },
     ];
     const a = ledger.reserve(scopes, { model_spend: 4 }, META);
     const b = ledger.reserve(scopes, { model_spend: 4 }, META);
@@ -160,7 +179,13 @@ describe("limits", () => {
   it("warns once per window when usage crosses warn_at", () => {
     const ledger = new LimitLedger(sqlite());
     const scopes: LimitScope[] = [
-      { level: "session", target: "s", limits: parseLimits('[{"meter":"turns","level":"session","value":10,"period":"total","warn_at":0.5}]').limits },
+      {
+        level: "session",
+        target: "s",
+        limits: parseLimits(
+          '[{"meter":"turns","level":"session","value":10,"period":"total","warn_at":0.5}]',
+        ).limits,
+      },
     ];
     const warnings = [1, 2, 3, 4, 5, 6].map(() => ledger.charge(scopes, { turns: 1 }, META).length);
     expect(warnings).toEqual([0, 0, 0, 0, 1, 0]);
@@ -188,7 +213,11 @@ describe("limits", () => {
   it("holds gauges as what is held now: adding over the limit fails, taking away always works", () => {
     const ledger = new LimitLedger(sqlite());
     const scopes: LimitScope[] = [
-      { level: "project", target: "p", limits: parseLimits('[{"meter":"storage_bytes","level":"project","value":100}]').limits },
+      {
+        level: "project",
+        target: "p",
+        limits: parseLimits('[{"meter":"storage_bytes","level":"project","value":100}]').limits,
+      },
     ];
     ledger.adjust(scopes, "storage_bytes", 90, META);
     expect(() => ledger.adjust(scopes, "storage_bytes", 20, META)).toThrow(LimitExceeded);

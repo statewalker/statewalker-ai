@@ -68,12 +68,12 @@ import {
   type FilesRpcMethod,
   type GatedFilesOptions,
   type GatewayResult,
-  type Limit,
-  lookupModel,
   gatedFilesRpc,
   gatewayFetch,
   IGNORE_FILE,
   ignoreRules,
+  type Limit,
+  lookupModel,
   type ModeGate,
   type ModelCall,
   type ModelCatalog,
@@ -1092,6 +1092,34 @@ export class Workspace extends DurableObject<Env> {
       const pinned = this.#models.pinned(session);
       if (pinned && pinned.user === user) await this.#limits.endSession(session);
     }
+  }
+
+  /**
+   * Raises a member limit that asked by one increment, once the user approved it: the approval
+   * the user granted at this gate (their User DO pushed it) is consumed, so a raise happens only
+   * with the user's answer, and once (statewalker/statewalker-root#179).
+   */
+  async raiseLimit(
+    capability: string,
+    raise: { approval: string; key: string; increment: number },
+  ): Promise<void> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    let ref: unknown[];
+    try {
+      ref = JSON.parse(String(raise.key)) as unknown[];
+    } catch {
+      throw codedError("EINVAL", "no such limit");
+    }
+    if (ref[0] !== "member" || ref[1] !== facts.user)
+      throw codedError("EACCES", "only the session's own member limit is raised here");
+    if (!this.#registry.consume(String(raise.approval), facts.session, facts.user))
+      throw codedError("EACCES", "the user did not approve raising this limit");
+    // The increment is the limit's own (what it says now), never the caller's word.
+    const limit = (await this.#limits.scopes(facts.project, facts.user))
+      .find((s) => s.level === "member")
+      ?.limits.find((l) => l.meter === ref[2] && l.period === ref[3]);
+    if (!limit) throw codedError("ENOENT", "no such limit");
+    this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
   }
 
   /** Test-only: the workspace's usage records after a seq. */

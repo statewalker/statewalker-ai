@@ -174,7 +174,8 @@ function localParts(t: number, timeZone: string) {
     FORMATS.set(timeZone, f);
   }
   const p: Record<string, number> = {};
-  for (const part of f.formatToParts(t)) if (part.type !== "literal") p[part.type] = Number(part.value);
+  for (const part of f.formatToParts(t))
+    if (part.type !== "literal") p[part.type] = Number(part.value);
   return {
     year: p.year ?? 1970,
     month: p.month ?? 1,
@@ -586,7 +587,13 @@ export class LimitLedger {
         for (const limit of scope.limits) {
           if (limit.meter !== meter) continue;
           const window = this.#window(limit.period, now).start;
-          const ref = { level: scope.level, target: scope.target, meter, period: limit.period, window };
+          const ref = {
+            level: scope.level,
+            target: scope.target,
+            meter,
+            period: limit.period,
+            window,
+          };
           const key = keyOf(ref);
           const value = limit.value + this.#raised(key);
           const { used } = this.#counter(ref);

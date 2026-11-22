@@ -69,7 +69,12 @@ function projectFiles(t: string): Record<string, string> {
 const FILES: Record<string, string> = {
   // Member limits live in the workspace's file: bob may hold one active session at a time.
   "/.system/limits": limits(
-    ...TRANSPORTS.map((t) => ({ meter: "sessions", level: "member", target: `bob-${t}`, value: 1 })),
+    ...TRANSPORTS.map((t) => ({
+      meter: "sessions",
+      level: "member",
+      target: `bob-${t}`,
+      value: 1,
+    })),
   ),
   ...Object.fromEntries(TRANSPORTS.flatMap((t) => Object.entries(projectFiles(t)))),
 };
@@ -309,5 +314,48 @@ describe.each(transports)("limits over %s", (name, connect) => {
     // Own-key spend is recorded with the user, never in the workspace's usage records.
     const records = await usageRecords("default");
     expect(records.some((r) => r.session === s.id && r.meter === "model_spend")).toBe(false);
+  });
+
+  it("asks at session level: an approval raises the limit by one increment", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({
+      project: `tools-${t}`,
+      limits: [{ meter: "tool_calls", value: 1, period: "total", on_exceed: "ask", increment: 1 }],
+    });
+    const read = `CALL read ${JSON.stringify({ path: "readme.md" })}`;
+    await ann.sendMessage(s.id, { content: read });
+    const asked = await ann.sendMessage(s.id, { content: read });
+    expect(asked).toMatchObject({ status: "waiting", stop_reason: { type: "approval" } });
+    const id = String(asked.stop_reason?.approval_ids?.[0]);
+    const { approvals } = await ann.listApprovals();
+    expect(approvals.find((a) => a.id === id)).toMatchObject({
+      session: s.id,
+      action: { method: "limit" },
+      permission: "limits.raise:tool_calls",
+      status: "pending",
+    });
+    const { accepted } = await ann.answerApproval(id, { decision: "allow", scope: "once" });
+    expect(await ann.waitTurn(accepted)).toMatchObject({ status: "completed" });
+    // One increment: one more tool call, then it asks again.
+    const third = await ann.sendMessage(s.id, { content: read });
+    expect(third.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });
+    expect(await ann.sendMessage(s.id, { content: read })).toMatchObject({ status: "waiting" });
+  });
+
+  it("denies what a limit would ask about when the session is unattended", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({
+      project: `tools-${t}`,
+      unattended: true,
+      limits: [{ meter: "tool_calls", value: 1, period: "total", on_exceed: "ask" }],
+    });
+    const read = `CALL read ${JSON.stringify({ path: "readme.md" })}`;
+    await ann.sendMessage(s.id, { content: read });
+    const second = await ann.sendMessage(s.id, { content: read });
+    expect(second.status).toBe("completed");
+    expect(second.items.find((i) => i.kind === "tool_result")).toMatchObject({
+      isError: true,
+      output: expect.stringContaining("unattended"),
+    });
   });
 });

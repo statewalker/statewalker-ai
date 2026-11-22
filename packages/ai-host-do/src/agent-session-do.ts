@@ -8,9 +8,12 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
+import { approvalId, settleAsk } from "@statewalker/ai-access";
 import {
   approvalAware,
+  errorMessage,
   filesOverRpc,
+  limitOfMessage,
   type ModelCall,
   type ModelResponse,
   runStoredCall,
@@ -28,6 +31,7 @@ import {
   type ItemInput,
   type ItemsQuery,
   parseCompaction,
+  type TurnRun,
 } from "@statewalker/ai-sessions";
 import {
   type DatabaseHost,
@@ -40,6 +44,8 @@ import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
 import { restTools } from "./rest-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
+
+type OnApproval = TurnRun["onApproval"];
 
 /**
  * Runs a sub-agent's first turn: starts its DO, sends it the message, and waits for the turn to
@@ -108,13 +114,30 @@ export class AgentSession extends DurableObject<Env> {
       config: AgentSessionConfig,
       turn?: string,
       emit?: (item: ItemInput) => void,
+      onApproval?: OnApproval,
     ): ModelPort => {
       const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
       return {
-        request: (call) =>
-          this.#metered(config, turn, call, emit, (c) =>
-            workspace.modelRequest(config.capability, { ...c, ...(turn ? { turn } : {}) }),
-          ),
+        request: async (call) => {
+          try {
+            return await this.#metered(config, turn, call, emit, (c) =>
+              workspace.modelRequest(config.capability, { ...c, ...(turn ? { turn } : {}) }),
+            );
+          } catch (e) {
+            // A limit that asks (session or user level, attended): the turn ends waiting on the
+            // user's approval, without asking the model. Any other refusal fails the request.
+            if (!onApproval || !(await this.#asks(config, e, onApproval))) throw e;
+            return {
+              message: {
+                ...errorMessage(undefined, ""),
+                stopReason: "stop",
+                errorMessage: undefined,
+              },
+              model: config.model ?? "gateway",
+              attempts: [],
+            } as ModelResponse;
+          }
+        },
       };
     };
     const compaction = parseCompaction(env.COMPACTION);
@@ -168,7 +191,7 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            models: gateway(config, turn, emit),
+            models: gateway(config, turn, emit, onApproval),
             ...(config.model ? { model: config.model } : {}),
             ...(model ? { requested: model } : {}),
             content,
@@ -186,7 +209,7 @@ export class AgentSession extends DurableObject<Env> {
                 for (const warning of crossed) emit({ kind: "limit_warning", warning });
                 return undefined;
               } catch (e) {
-                return String((e as Error)?.message ?? e);
+                return this.#breach(config, e, onApproval);
               }
             },
           },
@@ -194,6 +217,7 @@ export class AgentSession extends DurableObject<Env> {
         );
       },
       runAction: (config, call) => {
+        if (call.method === "limit") return this.#raise(config, call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -215,6 +239,70 @@ export class AgentSession extends DurableObject<Env> {
 
   start(config: AgentSessionConfig): Promise<void> {
     return this.#core.start(config);
+  }
+
+  /**
+   * What a refusal by a limit tells the agent. A limit that asks (session, member or user level)
+   * waits on the user's approval when someone is there to give it (the turn then ends waiting),
+   * and denies when the session is unattended (statewalker/statewalker-root#127).
+   */
+  async #breach(config: AgentSessionConfig, e: unknown, onApproval?: OnApproval): Promise<string> {
+    const text = String((e as Error)?.message ?? e);
+    if (onApproval && (await this.#asks(config, e, onApproval)))
+      return `${text}; waiting on the user's approval to raise it`;
+    const limit = limitOfMessage(text);
+    if (limit?.verdict === "ask")
+      return settleAsk({ verdict: "ask", reason: text }, { unattended: !!config.unattended })
+        .reason;
+    return text;
+  }
+
+  /** Records an approval for a limit that asks, when the session is attended: true if it did. */
+  async #asks(config: AgentSessionConfig, e: unknown, onApproval: OnApproval): Promise<boolean> {
+    const text = String((e as Error)?.message ?? e);
+    const limit = limitOfMessage(text);
+    if (!text.includes("ELIMIT") || limit?.verdict !== "ask") return false;
+    if (
+      settleAsk({ verdict: "ask" as const, reason: text }, { unattended: !!config.unattended })
+        .verdict !== "ask"
+    )
+      return false;
+    const path = `${String(limit.key)}@${Number(limit.value)}`;
+    const id = await approvalId(config.id, "limit", path);
+    onApproval(
+      {
+        id,
+        session: config.id,
+        project: config.project,
+        action: { method: "limit", path },
+        permission: `limits.raise:${String(limit.meter)}`,
+        reason: text.slice(text.indexOf("ELIMIT")),
+      },
+      { method: "limit", path, target: String(Number(limit.increment) || 0) },
+    );
+    return true;
+  }
+
+  /**
+   * Runs an approved raise of a limit (statewalker/statewalker-root#179): by one increment, at the
+   * DO that counts its level; the member's and the user's check the user's approval themselves.
+   */
+  async #raise(config: AgentSessionConfig, call: { path: string; target?: string }) {
+    const at = call.path.lastIndexOf("@");
+    const key = call.path.slice(0, at);
+    const increment = Number(call.target) || 0;
+    const level = (JSON.parse(key) as unknown[])[0];
+    const approval = await approvalId(config.id, "limit", call.path);
+    if (level === "session") this.#limits.ledger.raise(key, increment);
+    else if (level === "member")
+      await this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace)).raiseLimit(
+        config.capability,
+        { approval, key, increment },
+      );
+    else if (level === "user")
+      await userOf(this.env, config.user).raiseLimit(config.id, { approval, key, increment });
+    else throw new Error(`EACCES: a ${String(level)} limit is never raised by an approval`);
+    return { raised: true };
   }
 
   /**
@@ -265,8 +353,7 @@ export class AgentSession extends DurableObject<Env> {
           into.model_tokens += usage.input_tokens + usage.output_tokens;
           into.model_spend += usage.cost ?? 0;
         }
-      if (reserved)
-        warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
+      if (reserved) warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
       if (own) warn(await user.settleOwnKey(own, mine, meta));
     }
     warn(response.warnings);

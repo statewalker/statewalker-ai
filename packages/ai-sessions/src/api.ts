@@ -226,7 +226,7 @@ export interface GateDecisionInput {
 /** The exact file call an approval runs, as the agent session stores it in its items. */
 export interface StoredAction {
   /** A file change, or a database action (`db`: the path is the database). */
-  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db";
+  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "limit";
   path: string;
   /** A copy's or move's target. */
   target?: string;

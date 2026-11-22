@@ -147,7 +147,13 @@ export class WorkspaceLimits {
         ],
       },
       ...(project
-        ? [{ level: "project" as const, target: project, limits: limitsFor(all, "project", project) }]
+        ? [
+            {
+              level: "project" as const,
+              target: project,
+              limits: limitsFor(all, "project", project),
+            },
+          ]
         : []),
       { level: "member", target: user, limits: limitsFor(all, "member", user) },
     ];
@@ -204,7 +210,12 @@ export class WorkspaceLimits {
     this.#sql.exec("DELETE FROM limit_sessions WHERE session = ?", session);
     const project = String(row.project);
     const user = String(row.user);
-    this.ledger.adjust(await this.scopes(project, user), "sessions", -1, this.meta(project, user, session));
+    this.ledger.adjust(
+      await this.scopes(project, user),
+      "sessions",
+      -1,
+      this.meta(project, user, session),
+    );
   }
 }
 
@@ -243,10 +254,21 @@ export class UserLimits {
   readonly ledger: LimitLedger;
   readonly #env: Env;
   readonly #user: string;
+  readonly #sql: SqlLike;
   readonly #read: () => Promise<string | undefined>;
+
+  /** Takes an approval for a raise: true the first time only, so one approval raises once. */
+  useApproval(id: string): boolean {
+    if (this.#sql.exec("SELECT 1 FROM limit_approvals_used WHERE id = ?", id).toArray().length)
+      return false;
+    this.#sql.exec("INSERT INTO limit_approvals_used VALUES (?)", id);
+    return true;
+  }
 
   constructor(sql: SqlLike, env: Env, user: string, read: () => Promise<string | undefined>) {
     this.ledger = new LimitLedger(sql, ledgerOptions(env));
+    this.#sql = sql;
+    sql.exec("CREATE TABLE IF NOT EXISTS limit_approvals_used (id TEXT PRIMARY KEY)");
     this.#env = env;
     this.#user = user;
     this.#read = read;

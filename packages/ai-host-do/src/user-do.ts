@@ -7,7 +7,6 @@ import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { filesOverRpc, type UsageMeta } from "@statewalker/ai-environment";
-import { tryReadText } from "@statewalker/webrun-files";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
@@ -21,6 +20,7 @@ import {
   type SubAgentRequest,
   UserSessions,
 } from "@statewalker/ai-sessions";
+import { tryReadText } from "@statewalker/webrun-files";
 import {
   approvalTtlMs,
   blockSizeOf,
@@ -111,6 +111,31 @@ export class User extends DurableObject<Env> {
     detail?: Record<string, unknown>,
   ) {
     return this.#limits.ledger.settle(String(id), used, meta, detail).map(warningView);
+  }
+
+  /**
+   * Raises a user limit that asked by one increment, once the user allowed that approval here
+   * (statewalker/statewalker-root#179); told by the asking session's DO.
+   */
+  async raiseLimit(session: string, raise: { approval: string; key: string; increment: number }) {
+    let ref: unknown[];
+    try {
+      ref = JSON.parse(String(raise.key)) as unknown[];
+    } catch {
+      throw codedError("EINVAL", "no such limit");
+    }
+    if (ref[0] !== "user" || ref[1] !== nameOf(this.ctx))
+      throw codedError("EACCES", "not this user's limit");
+    if (
+      !this.#sessions.approvalAllowed(String(session), String(raise.approval)) ||
+      !this.#limits.useApproval(String(raise.approval))
+    )
+      throw codedError("EACCES", "the user did not approve raising this limit");
+    const limit = (await this.#limits.scopes())[0]?.limits.find(
+      (l) => l.meter === ref[2] && l.period === ref[3],
+    );
+    if (!limit) throw codedError("ENOENT", "no such limit");
+    this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
   }
 
   /** Test-only: the user's own-key usage records after a seq. */

@@ -435,6 +435,16 @@ export class UserSessions implements UserPort {
    * Answers one of the caller's pending approvals. An allow is granted at the gate (with the
    * user capability), which re-checks it against the mode and roles when the action runs.
    */
+  /** Whether the user allowed this approval of this agent session (statewalker/statewalker-root#179). */
+  approvalAllowed(session: string, id: string): boolean {
+    const row = this.#one<{ status: string }>(
+      "SELECT status FROM approvals WHERE session = ? AND id = ?",
+      session,
+      id,
+    );
+    return row?.status === "allowed";
+  }
+
   async answerApproval(token: string, id: string, answer: ApprovalAnswer): Promise<ApprovalView> {
     const us = await this.#userSession(token);
     const row = this.#one<ApprovalRow>(

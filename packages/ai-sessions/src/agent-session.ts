@@ -634,7 +634,8 @@ export class AgentSessionCore implements AgentPort {
       if (done && typeof done === "object" && "$approval" in done) {
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });
-      } else if (method === "db" && done !== null && done !== undefined)
+      } else if (method === "limit") result("the user raised the limit: carry on", false);
+      else if (method === "db" && done !== null && done !== undefined)
         // A database query's answer: its rows, as the tool would have answered them.
         result(`db ${path}: ${rowsText(done)}`, false);
       else result(`${method} ${path}${target ? ` ${target}` : ""}: done`, false);
