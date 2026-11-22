@@ -57,6 +57,7 @@ import {
   type AgentDefinition,
   type Allow,
   buildPlugin,
+  catalogAgents,
   catalogMcpServers,
   catalogToolDefinitions,
   catalogTools,
@@ -149,6 +150,8 @@ import {
 } from "@statewalker/ai-memory";
 import type {
   AgentRun,
+  AgentsQuery,
+  AgentView,
   CreatedServiceAccount,
   DeleteSecretRequest,
   LimitsCall,
@@ -873,6 +876,73 @@ export class Workspace extends DurableObject<Env> {
       }
     }
     return views.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * The agents a user may start sessions on (statewalker/statewalker-root#139): in one project
+   * (EACCES for a non-member) or in every project of the workspace they are a member of. The same
+   * agents `pinDefinitions` would start: in the project's catalog, allowed by `agents.use`, and a
+   * plugin agent whose core is remote only with that remote agent too.
+   */
+  async listAgents(userCapability: string, query: AgentsQuery): Promise<AgentView[]> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const store = await this.#store;
+    const projects: string[] = [];
+    if (query.project) projects.push(String(query.project));
+    else
+      for await (const entry of store.list("/"))
+        if (entry.kind === "directory" && !entry.name.startsWith(".")) projects.push(entry.name);
+    const views: AgentView[] = [];
+    for (const project of projects.sort()) {
+      const access = await this.#access(project, user).catch(() => undefined);
+      if (!access?.member) {
+        if (query.project) throw codedError("EACCES", `${user} is not a member of ${project}`);
+        continue;
+      }
+      const catalog = await this.#definitions.catalogOf(await this.#plugins(project));
+      const allow = this.#allow(access.grants);
+      let remotes: string[] | undefined;
+      let projectDefault: string | undefined;
+      try {
+        const settings = await tryReadText(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/settings`);
+        const named = settings ? JSON.parse(settings)?.agent : undefined;
+        projectDefault = typeof named === "string" ? named : undefined;
+      } catch {
+        // Settings that are not JSON name no default.
+      }
+      const modelCatalog = await this.#modelCatalog(project, user);
+      for (const id of await catalogAgents(catalog)) {
+        const agent = await findAgent(catalog, id);
+        if (!agent || !(await allow("agents", agent.id))) continue;
+        if (agent.remote) {
+          if (!remotes) {
+            remotes = [];
+            for (const r of remoteAgents(await this.#uhpServers()))
+              if (await allow("agents", r)) remotes.push(r);
+          }
+          if (!remotes.includes(remoteAgentId(agent.remote.server, agent.remote.harness))) continue;
+        }
+        let model: string | undefined;
+        try {
+          model = (
+            await pickSessionModel(modelCatalog, {
+              agentModels: agent.models,
+              right: this.#modelRight(access.grants),
+            })
+          ).model;
+        } catch {
+          // No model fits: the agent is listed without one.
+        }
+        views.push({
+          project,
+          id: agent.id,
+          ...(agent.description ? { description: agent.description } : {}),
+          ...(model ? { model } : {}),
+          ...(agent.id === projectDefault ? { default: true as const } : {}),
+        });
+      }
+    }
+    return views;
   }
 
   /** The user's own model configuration (user level) in this workspace. */

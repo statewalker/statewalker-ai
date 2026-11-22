@@ -18,6 +18,9 @@ name: Nightly
 #                provider, model, prices and budget are repository variables (NIGHTLY_LLM_API,
 #                NIGHTLY_LLM_BASE_URL, NIGHTLY_LLM_MODEL, NIGHTLY_LLM_PRICES, NIGHTLY_LLM_BUDGET),
 #                defaulting to Anthropic's Claude Haiku 5.5 and a budget of 0.5 (USD).
+#   uhp-core     UHP's own conformance suite (`uhp-conformance --class core`, statewalker-root#139,
+#                decided in #108), installed at the spec commit `ai-uhp` is pinned to
+#                (UHP_SPEC_COMMIT), against a deployment with the scripted model
 
 on:
   schedule:
@@ -50,6 +53,9 @@ jobs:
             run: pnpm --filter @statewalker/ai-flue --filter @statewalker/ai-conformance run test
           - job: mutation
             run: node packages/ai-conformance/src/nightly/mutate.ts packages/ai-conformance/mutations.json --report "$RUNNER_TEMP/details.md"
+          - job: uhp-core
+            setup: python3 -m venv "$RUNNER_TEMP/uhp" && "$RUNNER_TEMP/uhp/bin/pip" install "git+https://github.com/HarnessRouter/harnessrouter.git@300dc9da9baa8f1f6eb98090075e5c4482ca44d0#subdirectory=protocol/conformance"
+            run: UHP_CONFORMANCE="$RUNNER_TEMP/uhp/bin/uhp-conformance" UHP_CONFORMANCE_REQUIRED=1 pnpm --filter @statewalker/ai-conformance exec vitest run --config vitest.nightly.config.ts tests/nightly/uhp-conformance.test.ts
           - job: real-models
             needs-key: true
             run: pnpm --filter @statewalker/ai-conformance exec vitest run --config vitest.nightly.config.ts tests/nightly/real-models.test.ts

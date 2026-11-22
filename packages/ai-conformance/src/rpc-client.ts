@@ -9,6 +9,7 @@ import {
   statusOf,
   uiMessageChunks,
 } from "@statewalker/ai-sessions";
+import { uhpFetch } from "@statewalker/ai-uhp";
 import type { Deployment } from "./deployment.js";
 import {
   ApiError,
@@ -16,6 +17,7 @@ import {
   type SessionClient,
   TERMINAL_EVENTS,
   type Turn,
+  UHP_BASE_URL,
 } from "./session-client.js";
 
 interface ClientSocket {
@@ -45,6 +47,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
       apiKey: token,
       fetch: openAiFetch(api) as typeof fetch,
     }),
+    uhp: () => ({ baseURL: UHP_BASE_URL, apiKey: token, fetch: uhpFetch(api) as typeof fetch }),
     chat: (id) => sessionChatTransport(api, id),
     async replayChat(id, from = {}) {
       const plan = await resumePlan(api, id, from).catch(refusal);
