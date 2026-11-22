@@ -5,7 +5,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
-import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import type { FilesRpcMethod, Limit } from "@statewalker/ai-environment";
 import { filesOverRpc, type UsageMeta } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
@@ -63,6 +63,7 @@ export class User extends DurableObject<Env> {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
           pinDefinitions: (capability, req) => ws.pinDefinitions(capability, req),
+          forkDefinitions: (capability, req) => ws.forkDefinitions(capability, req),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
@@ -180,6 +181,21 @@ export class User extends DurableObject<Env> {
   async startAgentSession(token: string, req: StartSessionRequest) {
     await this.#reachable();
     return this.#sessions.startAgentSession(token, req);
+  }
+
+  async forkAgentSession(
+    token: string,
+    from: string,
+    req: { at_turn: string; model?: string; limits?: Limit[] },
+  ) {
+    await this.#reachable();
+    return this.#sessions.forkAgentSession(token, from, req);
+  }
+
+  /** Told by an agent session's DO: the pending approvals of turns it rewound are cancelled. */
+  async cancelApprovals(session: string, ids: string[]) {
+    await this.#reachable();
+    return this.#sessions.cancelApprovals(session, ids);
   }
 
   async ownAgentSession(token: string, id: string) {

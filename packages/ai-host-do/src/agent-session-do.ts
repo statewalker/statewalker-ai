@@ -38,12 +38,17 @@ import {
   type ApprovalAnswer,
   type ApprovalRequest,
   createModelSummarizer,
+  type EditRequest,
+  type EffectOf,
   type EventsQuery,
   type GateDecisionInput,
   type ItemInput,
   type ItemsQuery,
   type McpMessage,
   parseCompaction,
+  type RegenerateRequest,
+  type RewindRequest,
+  type SessionHistory,
   type TurnRun,
 } from "@statewalker/ai-sessions";
 import {
@@ -56,9 +61,25 @@ import {
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
-import { AGENT_START, agentStartTool } from "./sub-agents.js";
+import { AGENT_START, agentStartTool, type SubAgentHost } from "./sub-agents.js";
 
 type OnApproval = TurnRun["onApproval"];
+
+/** The harness tool calls that change a project's databases. */
+const DB_CHANGES = new Set(["db_exec", "db_create", "db_drop"]);
+/** Tools whose effects stay inside the session (files: reverted by #191, sub-agents: stopped). */
+const LOCAL_TOOLS = new Set<string>([...TRACER_TOOLS, ...DB_TOOLS, AGENT_START]);
+
+/**
+ * What a rewind lists of a rewound turn's tool call (statewalker/statewalker-root#190): memory
+ * writes, database changes, and the effects of plugin tools, which reach outside the harness.
+ */
+const effectOf: EffectOf = (item) => {
+  const name = String(item.name ?? "");
+  if (name === "memory") return "memory";
+  if (DB_CHANGES.has(name)) return "database";
+  return name && !LOCAL_TOOLS.has(name) ? "outside" : undefined;
+};
 
 /**
  * Runs a sub-agent's first turn: starts its DO, sends it the message, and waits for the turn to
@@ -156,8 +177,16 @@ export class AgentSession extends DurableObject<Env> {
     const harness: HostTool[] = [
       ...databaseTools(databaseHost(env, config, config.capability), onApproval),
       agentStartTool(offered, {
-        startSubAgent: (req) =>
-          userOf(env, config.user).startSubAgent(config.id, config.capability, req),
+        startSubAgent: async (req) => {
+          const started = (await userOf(env, config.user).startSubAgent(
+            config.id,
+            config.capability,
+            req,
+          )) as Awaited<ReturnType<SubAgentHost["startSubAgent"]>>;
+          // A rewind of this turn stops the child (statewalker/statewalker-root#190).
+          if (turn) await this.#core.childStarted(turn, started.session.id);
+          return started;
+        },
         run: (child, message, signal) => runChild(env, child, message, signal),
       }),
     ]
@@ -390,6 +419,9 @@ export class AgentSession extends DurableObject<Env> {
       wake: (at) => {
         void this.#arm(at);
       },
+      // A rewind cancels the approvals of the turns it rewound, at the user's User DO.
+      cancelApprovals: (config, ids) => userOf(env, config.user).cancelApprovals(config.id, ids),
+      effectOf,
     });
   }
 
@@ -555,23 +587,79 @@ export class AgentSession extends DurableObject<Env> {
    * the session, its member, project and workspace, at once; ELIMIT (429) over one.
    */
   async send(message: AgentMessage) {
-    const config = this.#core.config();
-    let crossed: WarningView[] = [];
-    if (config && message.delivery !== "steer")
-      try {
-        crossed = await this.#charge(config, "turns", 1);
-      } catch (e) {
-        // Only a limit refuses a message here: a capability the gate refuses (revoked, removed)
-        // fails the turn at its first action, as before.
-        if (codeOf(e) === "ELIMIT") throw e;
-      }
+    const crossed = message.delivery !== "steer" ? await this.#chargeTurn() : [];
     const accepted = await this.#core.send(message);
     if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
     return accepted;
   }
 
+  /** A new turn, charged to the limits on turns; ELIMIT (429) over one. */
+  async #chargeTurn(): Promise<WarningView[]> {
+    const config = this.#core.config();
+    if (!config) return [];
+    try {
+      return await this.#charge(config, "turns", 1);
+    } catch (e) {
+      // Only a limit refuses a message here: a capability the gate refuses (revoked, removed)
+      // fails the turn at its first action, as before.
+      if (codeOf(e) === "ELIMIT") throw e;
+      return [];
+    }
+  }
+
   turn(turnId: string) {
     return this.#core.turn(turnId);
+  }
+
+  // --- the turn tree (statewalker/statewalker-root#190) -----------------------------------------
+
+  rewind(req: RewindRequest) {
+    return this.#core.rewind(req);
+  }
+
+  setHead(turn: string | null) {
+    return this.#core.setHead(turn);
+  }
+
+  /** Refuses an edit of an unknown turn, or while a turn runs, before the new turn is charged. */
+  async #idle(turnId: string): Promise<void> {
+    await this.#core.turn(turnId);
+    if ((await this.#core.status()) === "running")
+      throw new Error("EBUSY: a turn is running or queued: cancel it first");
+  }
+
+  /** An edit's new turn counts against the limits on turns, as a message does. */
+  async edit(turnId: string, req: EditRequest) {
+    await this.#idle(turnId);
+    const crossed = await this.#chargeTurn();
+    const accepted = await this.#core.edit(turnId, req);
+    if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
+    return accepted;
+  }
+
+  async regenerate(turnId: string, req?: RegenerateRequest) {
+    await this.#idle(turnId);
+    const crossed = await this.#chargeTurn();
+    const accepted = await this.#core.regenerate(turnId, req);
+    if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
+    return accepted;
+  }
+
+  branches() {
+    return this.#core.branches();
+  }
+
+  eraseBranch(turnId: string) {
+    return this.#core.eraseBranch(turnId);
+  }
+
+  exportPath(atTurn: string) {
+    return this.#core.exportPath(atTurn);
+  }
+
+  /** A fork's copied history: nothing is charged for it (statewalker/statewalker-root#190). */
+  importHistory(history: SessionHistory) {
+    return this.#core.importHistory(history);
   }
 
   /** Waits for a turn to end (test-only admin route). */

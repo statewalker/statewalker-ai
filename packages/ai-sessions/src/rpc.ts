@@ -41,6 +41,13 @@ const METHODS = [
   "getModelConfig",
   "setModelConfig",
   "listDatabases",
+  "rewind",
+  "setHead",
+  "editTurn",
+  "regenerateTurn",
+  "listBranches",
+  "eraseBranch",
+  "forkSession",
 ] as const;
 type Method = (typeof METHODS)[number];
 type Channel = Pick<SessionApi, Method> & { authenticate(token: string): Promise<UserSessionView> };

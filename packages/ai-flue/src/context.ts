@@ -116,7 +116,9 @@ export function contextMessages(context: ContextEntry[], model: ContextModel): C
         // A result with no call before it (an answered approval's action): told as a message.
         user(`[Result of ${item.denied ? "a denied" : "an approved"} action] ${item.output ?? ""}`);
       }
-    }
+    } else if (item.kind === "rewind")
+      // The session was rewound before this turn (statewalker/statewalker-root#190).
+      user(`[Rewind] ${item.text ?? "The conversation was rewound."}`);
     // Approval items are not part of the model context: the waiting call's result says it.
   }
   return out;
