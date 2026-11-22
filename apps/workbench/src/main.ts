@@ -5,7 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { type DeploymentFetch, devLogin, sessionClient } from "./client.js";
-import { createShell } from "./commands.js";
+import { createShell, type LocalModels } from "./commands.js";
 import { startInPageHarness } from "./in-page.js";
 
 const PROJECT = "home";
@@ -20,10 +20,12 @@ function randomKey(): string {
 }
 
 /** The harness in this page, with a project of the user's own. */
-async function inPage(user: string): Promise<{ fetch: DeploymentFetch; token: string }> {
+async function inPage(
+  user: string,
+): Promise<{ fetch: DeploymentFetch; token: string; local: LocalModels }> {
   // The page's own admin key, made for this load: only this page reaches its harness.
   const adminKey = randomKey();
-  const fetch = await startInPageHarness({ ADMIN_KEY: adminKey });
+  const { fetch, local } = await startInPageHarness({ ADMIN_KEY: adminKey });
   const res = await fetch("/admin/seed", {
     method: "POST",
     headers: { authorization: `Bearer ${adminKey}`, "content-type": "application/json" },
@@ -33,7 +35,7 @@ async function inPage(user: string): Promise<{ fetch: DeploymentFetch; token: st
   });
   if (!res.ok)
     throw new Error(`the harness refused its project: ${res.status} ${await res.text()}`);
-  return { fetch, token: await devLogin(fetch, user) };
+  return { fetch, token: await devLogin(fetch, user), local };
 }
 
 async function main() {
@@ -55,12 +57,14 @@ async function main() {
   const remote = params.get("deployment");
   let fetch: DeploymentFetch;
   let token: string;
+  // The page's local model engine, when the harness runs here.
+  let local: LocalModels | undefined;
   if (remote) {
     fetch = (path, init) => globalThis.fetch(new URL(path, remote), init);
     token = params.get("token") ?? "";
   } else {
     const user = localStorage.getItem("ai-workbench.user") || "me";
-    ({ fetch, token } = await inPage(user));
+    ({ fetch, token, local } = await inPage(user));
   }
   // A value asked for without echo (a secret's): what is typed goes here until Enter.
   let hidden: { value: string; done(value: string): void } | undefined;
@@ -74,6 +78,7 @@ async function main() {
     project: PROJECT,
     out: term,
     askHidden,
+    ...(local ? { local } : {}),
   });
   term.writeln(remote ? `connected to ${remote}` : "the harness runs in this page; type `help`.");
   term.write(PROMPT);

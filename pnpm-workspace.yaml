@@ -51,6 +51,8 @@ catalog:
   # The workbench's terminal (apps/workbench).
   "@xterm/addon-fit": ^0.11.0
   "@xterm/xterm": ^6.0.0
+  # The workbench's local model engine (WebLLM on WebGPU, statewalker/statewalker-root#143).
+  "@mlc-ai/web-llm": 0.2.87
   esbuild: ^0.28.2
   # Tool scripts are bundled by webrun-bundler on esbuild-wasm, on every runtime (statewalker/statewalker-root#130).
   "@statewalker/webrun-bundler": ^0.2.0

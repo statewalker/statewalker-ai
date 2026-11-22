@@ -7,6 +7,20 @@ export interface Output {
   writeln(line: string): void;
 }
 
+/**
+ * The page's local model engine (statewalker/statewalker-root#143), where the harness runs in the
+ * page: the user downloads a model's weights into the browser here, never through the harness.
+ */
+export interface LocalModels {
+  /** Whether a model's weights are in this browser. */
+  has(model: string): Promise<boolean>;
+  /** Downloads a model's weights into this browser: the user's own action. */
+  download(
+    model: string,
+    onProgress?: (report: { progress: number; text: string }) => void,
+  ): Promise<void>;
+}
+
 export interface ShellOptions {
   client: SessionClient;
   out: Output;
@@ -14,6 +28,8 @@ export interface ShellOptions {
   project: string;
   /** Asks the person for a value without showing it (a secret's); without it, values are typed inline. */
   askHidden?: (question: string) => Promise<string>;
+  /** The page's local model engine, when the harness runs in the page. */
+  local?: LocalModels;
 }
 
 export interface Shell {
@@ -44,6 +60,8 @@ const HELP = [
   "  models                      models you may use in the current project",
   "  provider <api> <baseUrl> <model> [<secret>]",
   "                              your own model provider (api: openai-completions, ...)",
+  "  local [download <model> | use <model>]",
+  "                              models running in this page: list, download (once), use",
   "  secret set <NAME> <plugin> <host> [<value>]   (asked for, unseen, when left out)",
   "  secret list | secret rm <NAME>",
   "                              your own secrets (a browser page keeps no one else's)",
@@ -114,6 +132,42 @@ export function createShell(options: ShellOptions): Shell {
     if (!message) return out.writeln("usage: agent <message>");
     if (!session) await start();
     await follow(await client.postMessage(String(session), message), signal);
+  }
+
+  async function localCommand([sub, name]: string[]) {
+    const local = options.local;
+    if (!local) return out.writeln(dim("no local model engine in this page"));
+    if (sub === "download" && name) {
+      let shown = -1;
+      await local.download(name, ({ progress, text }) => {
+        const pct = Math.floor(progress * 100);
+        if (pct === shown) return;
+        shown = pct;
+        out.writeln(dim(`${pct}% ${text}`));
+      });
+      return out.writeln(dim(`downloaded ${name}: it stays in this browser`));
+    }
+    if (sub === "use" && name) {
+      const id = `local/${name}`;
+      await client.setModelConfig({
+        providers: [{ id: "local", api: "local" }],
+        models: [{ id }],
+        default: id,
+      });
+      out.writeln(dim(`your default model: ${id}, running in this page`));
+      if (!(await local.has(name))) out.writeln(dim(`download it first: local download ${name}`));
+      return;
+    }
+    if (sub) return out.writeln("usage: local [download <model> | use <model>]");
+    const { models } = await client.listModels(project);
+    const mine = models.filter((m) => m.provider === "local");
+    if (!mine.length) out.writeln(dim("no local model configured: local use <model>"));
+    for (const m of mine) {
+      const name = m.id.slice("local/".length);
+      out.writeln(
+        `${m.id} (${(await local.has(name)) ? "downloaded" : `not downloaded: local download ${name}`})`,
+      );
+    }
   }
 
   async function run(line: string, signal?: AbortSignal): Promise<void> {
@@ -188,7 +242,7 @@ export function createShell(options: ShellOptions): Shell {
           const { models } = await client.listModels(project);
           if (!models.length) out.writeln(dim("no model you may use here: try `provider`"));
           for (const m of models)
-            out.writeln(`${m.id}${m.alias?.length ? ` (${m.alias.join(", ")})` : ""}`);
+            out.writeln(`${m.id}${m.aliases?.length ? ` (${m.aliases.join(", ")})` : ""}`);
           return;
         }
         case "provider": {
@@ -210,6 +264,8 @@ export function createShell(options: ShellOptions): Shell {
         }
         case "secret":
           return await secretCommand(args);
+        case "local":
+          return await localCommand(args);
         default:
           return await send(trimmed, signal);
       }

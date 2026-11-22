@@ -10,6 +10,8 @@ declare global {
 
 interface CellbHost {
   start(deployment: string, url: string): Promise<{ unsupported: string[] }>;
+  /** The user downloads a local model's weights (the stand-in engine's: see host-worker.ts). */
+  localDownload(deployment: string, model: string, scripted: string): Promise<void>;
   post(deployment: string, message: Record<string, unknown>): void;
   close(deployment: string): Promise<void>;
 }
@@ -62,6 +64,9 @@ window.cellbHost = {
       data: `ai-conformance-${deployment}`,
     });
     return { unsupported: answer.unsupported ?? [] };
+  },
+  async localDownload(deployment, model, scripted) {
+    await call(deployment, { type: "local-download", model, scripted });
   },
   post(deployment, message) {
     const out = { ...message };
