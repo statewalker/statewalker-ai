@@ -599,10 +599,10 @@ function HarnessAgent(props: { id: string }) {
     } as never,
     { cwd: `/${project}` },
   );
-  // A message steered while the model answered its last step continues the turn: Flue runs one
-  // more step, whose model call takes it.
   // The skills of the `.agents/` view, as Flue skills (its catalog, `activate_skill`).
   for (const skill of live?.skills ?? []) useSkill(skill as never);
+  // A message steered while the model answered its last step continues the turn: Flue runs one
+  // more step, whose model call takes it.
   useAgentFinish(({ append }) => {
     const current = LIVE.get(session);
     if (current && !current.closed && current.steers.length)
