@@ -39,7 +39,13 @@ import {
   verifyToken,
   workspaceOf,
 } from "./env.js";
-import { editLimitsFile, LIMITS_FILE, refusal, UserLimits, warningView } from "./limits-host.js";
+import {
+  type ApiRequestKind,
+  editLimitsFile,
+  LIMITS_FILE,
+  UserLimits,
+  warningView,
+} from "./limits-host.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
@@ -81,6 +87,7 @@ export class User extends DurableObject<Env> {
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
           holdStream: (capability, id) => ws.holdStream(capability, id),
           releaseStream: (capability, id) => ws.releaseStream(capability, id),
+          admitRequest: (capability, kind) => ws.admitRequest(capability, kind),
           files: (capability, method, args) => ws.files(capability, method, args),
           listDatabases: (capability, project) => ws.listDatabases(capability, project),
           databaseCall: (capability, call) => ws.databaseCall(capability, call),
@@ -109,7 +116,8 @@ export class User extends DurableObject<Env> {
       modes: deploymentModes(env),
       approvalTtlMs: approvalTtlMs(env),
       memoryCaps: env.MEMORY_CAPS,
-      now: () => Date.now() + this.#clockOffset(),
+      // The User DO's one clock: approvals expire by it, and limits count by it.
+      now: () => this.#limits.clock.now(),
     });
   }
 
@@ -131,10 +139,27 @@ export class User extends DurableObject<Env> {
   async reserveOwnKey(meta: UsageMeta, amounts: Record<string, number>): Promise<string> {
     await this.#reachable();
     if (meta.user !== nameOf(this.ctx)) throw codedError("EACCES", "not this user's session");
+    return this.#limits.reserve(amounts, meta);
+  }
+
+  /**
+   * Counts one session API request (a message, a stream opened, a session started) against the
+   * user's rate limits here, across workspaces, then the token's workspace's
+   * (statewalker/statewalker-root#180): each waits on a `delay` limit, then answers 429.
+   */
+  async admitRequest(token: string, kind: ApiRequestKind) {
+    await this.#reachable();
+    if (!["message", "stream", "session"].includes(kind))
+      throw codedError("EINVAL", "no such kind of request");
+    const { user, workspace } = await this.#sessions.claims(token);
+    const meta = { workspace, project: "", user };
+    await this.#limits.admitRequest(meta, kind);
     try {
-      return this.#limits.ledger.reserve(await this.#limits.scopes(), amounts, meta).id;
+      await this.#sessions.admitRequest(token, kind);
     } catch (e) {
-      throw refusal(e);
+      // A request the workspace refused is not counted against the user.
+      await this.#limits.refundRequest(meta).catch(() => {});
+      throw e;
     }
   }
 
@@ -238,16 +263,6 @@ export class User extends DurableObject<Env> {
   async usageRecords(token: string, query: UsageRecordsQuery) {
     await this.#reachable();
     return this.#sessions.usageRecords(token, query);
-  }
-
-  /** How far a test moved this User DO's clock forward (`advanceClock`); 0 otherwise. */
-  #clockOffset(): number {
-    try {
-      const row = this.ctx.storage.sql.exec("SELECT ms FROM test_clock").toArray()[0];
-      return Number(row?.ms ?? 0);
-    } catch {
-      return 0;
-    }
   }
 
   /** Refuses every call once a test made this User DO unreachable. */
@@ -456,10 +471,6 @@ export class User extends DurableObject<Env> {
    */
   async advanceClock(ms: number): Promise<number> {
     if (!Number.isFinite(ms) || ms < 0) throw codedError("EINVAL", "ms must be a number >= 0");
-    const offset = this.#clockOffset() + ms;
-    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS test_clock (ms INTEGER NOT NULL)");
-    this.ctx.storage.sql.exec("DELETE FROM test_clock");
-    this.ctx.storage.sql.exec("INSERT INTO test_clock VALUES (?)", offset);
-    return offset;
+    return this.#limits.clock.advance(ms);
   }
 }

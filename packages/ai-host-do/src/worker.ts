@@ -49,6 +49,7 @@ function sessionApi(env: Env, token: string) {
   };
   return createSessionApi(token, {
     user: {
+      admitRequest: async (t, kind) => (await user()).admitRequest(t, kind),
       openUserSession: async (t) => (await user()).openUserSession(t),
       startAgentSession: async (t, req) => (await user()).startAgentSession(t, req),
       ownAgentSession: async (t, id) => (await user()).ownAgentSession(t, id),

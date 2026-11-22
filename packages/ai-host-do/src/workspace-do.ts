@@ -711,7 +711,8 @@ export class Workspace extends DurableObject<Env> {
         ...(typeof call.maxTokens === "number" ? { maxTokens: call.maxTokens } : {}),
       });
       const amounts = { model_tokens: e.input_tokens + e.max_tokens, model_spend: e.cost ?? 0 };
-      if (e.own_key) own ??= { model_tokens: 0 };
+      // A request on the user's own key counts one against their buckets (#180).
+      if (e.own_key) own ??= { model_tokens: 0, model_requests: 1 };
       for (const into of e.own_key && own ? [worst, own] : [worst])
         for (const [k, v] of Object.entries(amounts)) into[k] = Math.max(into[k] ?? 0, v);
     }
@@ -726,23 +727,31 @@ export class Workspace extends DurableObject<Env> {
    */
   #modelMeter(project: string, user: string): ModelMeter {
     return {
-      admit: async (_model, meta, estimate) => {
-        if (estimate.own_key) return undefined;
+      admit: async (_model, meta, estimate, provider) => {
+        // The workspace's share of the provider key's rate limits first (#180): a request over it
+        // waits for the next minute, or is refused as the provider's 429 would be.
+        const rate = await this.#limits.admitProvider(provider, this.#modelUsageMeta(meta));
+        if (estimate.own_key) return rate ? { rate } : undefined;
         const scopes = await this.#limits.scopes(project, user);
         const amounts = {
           model_tokens: estimate.input_tokens + estimate.max_tokens,
           ...(estimate.cost ? { model_spend: estimate.cost } : {}),
         };
         try {
-          return await withDelay(() =>
-            this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
+          const { id } = await withDelay(
+            () => this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
+            this.#limits.delay(),
           );
+          return { id, ...(rate ? { rate } : {}) };
         } catch (e) {
+          if (rate) this.#limits.settleProvider(rate, undefined);
           throw refusal(e);
         }
       },
       record: (usage, meta, admitted) => {
         this.#models.record(usage, meta);
+        const rate = (admitted as { rate?: string } | undefined)?.rate;
+        if (rate) this.#limits.settleProvider(rate, usage);
         const id = (admitted as { id?: string } | undefined)?.id;
         if (!id) return [];
         return this.#limits.ledger
@@ -1277,6 +1286,17 @@ export class Workspace extends DurableObject<Env> {
   async holdStream(userCapability: string, id: string): Promise<void> {
     const user = await this.#authority.userOfUserCapability(userCapability);
     await this.#limits.holdStream(user, String(id));
+  }
+
+  /**
+   * Counts one session API request of the user (a message, a stream opened, a session started)
+   * against the workspace's and the member's rate limits (statewalker/statewalker-root#180).
+   */
+  async admitRequest(userCapability: string, kind: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    if (kind !== "message" && kind !== "stream" && kind !== "session")
+      throw codedError("EINVAL", "no such kind of request");
+    await this.#limits.admitRequest(user, kind);
   }
 
   /** Releases one of the user's streams. */

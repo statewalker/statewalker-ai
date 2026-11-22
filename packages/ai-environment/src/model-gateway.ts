@@ -8,6 +8,7 @@ import { streamSimple as anthropicMessages } from "@earendil-works/pi-ai/api/ant
 import { streamSimple as openaiCompletions } from "@earendil-works/pi-ai/api/openai-completions";
 import { streamSimple as openaiResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { codedError } from "@statewalker/ai-access";
+import { limitOfMessage } from "./limits.js";
 import {
   type CatalogModel,
   type CatalogProvider,
@@ -139,6 +140,7 @@ export interface ModelMeter {
     model: CatalogModel,
     meta: ModelRequestMeta,
     estimate: ModelEstimate,
+    provider: CatalogProvider,
   ): Promise<unknown> | unknown;
   record(
     usage: ModelUsage,
@@ -158,6 +160,15 @@ const STREAMS: Record<string, StreamFn> = {
   "openai-responses": openaiResponses as unknown as StreamFn,
   "anthropic-messages": anthropicMessages as unknown as StreamFn,
 };
+
+/**
+ * Whether a refusal is a rate limit's (statewalker/statewalker-root#180): an `ELIMIT` whose limit
+ * delays, which could not wait for its window. The gateway treats it as the provider's 429.
+ */
+export function isRateRefusal(error: unknown): boolean {
+  const text = String((error as Error)?.message ?? error);
+  return text.includes("ELIMIT") && limitOfMessage(text)?.verdict === "delay";
+}
 
 /** Overload, rate-limit and unavailable errors, from a provider's status or message. */
 export function classifyModelError(message: string | undefined): ModelOutcome {
@@ -359,9 +370,11 @@ export class ModelGateway {
           warnings,
         );
       } catch (e) {
-        // Refused before the model was asked (a key, a limit): nothing was sent or metered. The
+        // Refused before the model was asked (a key, a limit): nothing was sent or metered. A
+        // rate limit that could not wait is a 429 of the model, which falls back (#180). Else the
         // first model's refusal is the request's; a fallback's is recorded with the attempts made.
-        if (i === 0) throw e;
+        const rated = isRateRefusal(e);
+        if (i === 0 && !rated) throw e;
         const error = String((e as Error)?.message ?? e);
         attempts.push({
           usage: {
@@ -371,12 +384,14 @@ export class ModelGateway {
             output_tokens: 0,
             cached_tokens: 0,
             latency_ms: 0,
-            outcome: "error",
-            charged: false,
+            outcome: rated ? "rate_limited" : "error",
+            // Nothing was spent; the attempt is the budget's its provider charges (#180).
+            charged: catalog.providers[model.provider]?.level !== "user",
           },
           error,
         });
         message = errorMessage(model, error);
+        if (rated && i < chain.length - 1) continue;
         break;
       }
       attempts.push(attempt.attempt);
@@ -409,7 +424,7 @@ export class ModelGateway {
     // The worst case is reserved against every limit before the model is asked, and the request
     // is capped at the `max_tokens` reserved, so spend never overshoots.
     const estimate = estimateRequest(model, provider, call);
-    const admitted = await this.#o.meter.admit?.(model, meta, estimate);
+    const admitted = await this.#o.meter.admit?.(model, meta, estimate, provider);
     const piModel = {
       id: model.name,
       name: model.name,

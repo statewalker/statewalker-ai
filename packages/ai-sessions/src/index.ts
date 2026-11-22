@@ -22,6 +22,7 @@ export {
   type AgentRun,
   type AgentSessionConfig,
   type AgentSessionView,
+  type ApiRequestKind,
   type ApprovalAnswer,
   type ApprovalRequest,
   type ApprovalView,
