@@ -24,11 +24,13 @@ import type {
   AgentSessionView,
   ApprovalAnswer,
   ApprovalView,
+  CreatedServiceAccount,
   DeleteSecretRequest,
   Metadata,
   ProfileView,
   SecretScope,
   SecretView,
+  ServiceAccountView,
   SetSecretRequest,
   StartSessionRequest,
   UserPort,
@@ -57,6 +59,15 @@ export interface WorkspaceGrants {
   deleteSecret(userCapability: string, req: DeleteSecretRequest): Promise<void>;
   /** Deletes every user-level secret of the user there (the user is being erased). */
   eraseUserSecrets(userCapability: string): Promise<void>;
+  /**
+   * Puts a capability narrowed from this user capability (or the user capability itself) on the
+   * workspace's revocation list: it, and everything narrowed from it, is refused from now on.
+   */
+  revoke(userCapability: string, capability: string): Promise<void>;
+  /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
+  listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
+  createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
+  deleteServiceAccount(userCapability: string, name: string): Promise<void>;
 }
 
 export interface UserSessionsOptions {
@@ -108,6 +119,10 @@ interface AgentRow {
   project: string;
   agent: string;
   created: number;
+  /** The agent session's capability, kept so the user can revoke it. */
+  capability: string | null;
+  unattended: number;
+  revoked: number;
 }
 
 interface AgentMetaRow {
@@ -121,6 +136,8 @@ const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   project: row.project,
   agent: row.agent,
   created: Number(row.created),
+  unattended: Boolean(row.unattended),
+  revoked: Boolean(row.revoked),
   metadata: row.metadata ? (JSON.parse(row.metadata) as Metadata) : {},
   ...(row.archived ? { archived: Number(row.archived) } : {}),
 });
@@ -145,6 +162,20 @@ export class UserSessions implements UserPort {
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_sessions (
       id TEXT PRIMARY KEY, workspace TEXT NOT NULL, project TEXT NOT NULL, agent TEXT NOT NULL,
       created INTEGER NOT NULL)`);
+    // Added by statewalker/statewalker-root#127; a User DO made before it gets the columns here.
+    const columns = new Set(
+      this.#o.sql
+        .exec("SELECT name FROM pragma_table_info('agent_sessions')")
+        .toArray()
+        .map((r) => String((r as { name: unknown }).name)),
+    );
+    for (const [name, type] of [
+      ["capability", "TEXT"],
+      ["unattended", "INTEGER NOT NULL DEFAULT 0"],
+      ["revoked", "INTEGER NOT NULL DEFAULT 0"],
+    ] as const)
+      if (!columns.has(name))
+        this.#o.sql.exec(`ALTER TABLE agent_sessions ADD COLUMN ${name} ${type}`);
     // One row per approval (keyed by the action, so per session): a retried identical action
     // reopens the same row once it was answered or expired.
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS approvals (
@@ -347,27 +378,36 @@ export class UserSessions implements UserPort {
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
     const us = await this.#userSession(token);
     await this.#o.workspace(us.workspace).memberRoles(us.capability, req.project);
+    const id = `as-${crypto.randomUUID()}`;
+    const capability = attenuateForAgentSession(us.capability, {
+      session: id,
+      project: req.project,
+      agent: req.agent,
+      unattended: req.unattended === true,
+    });
     const row: AgentRow = {
-      id: `as-${crypto.randomUUID()}`,
+      id,
       workspace: us.workspace,
       project: req.project,
       agent: req.agent,
       created: Date.now(),
+      capability,
+      unattended: req.unattended ? 1 : 0,
+      revoked: 0,
     };
-    const capability = attenuateForAgentSession(us.capability, {
-      session: row.id,
-      project: row.project,
-      agent: row.agent,
-    });
     // The gate decides every action by the user session's current mode, so it is told now.
     await this.#pushUserSession(us);
     this.#o.sql.exec(
-      "INSERT INTO agent_sessions VALUES (?, ?, ?, ?, ?)",
+      `INSERT INTO agent_sessions (id, workspace, project, agent, created, capability, unattended,
+        revoked) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       row.id,
       row.workspace,
       row.project,
       row.agent,
       row.created,
+      row.capability,
+      row.unattended,
+      row.revoked,
     );
     const metadata = req.metadata ?? {};
     this.#o.sql.exec(
@@ -456,8 +496,11 @@ export class UserSessions implements UserPort {
     const sessions = this.#o.sql
       .exec("SELECT * FROM user_sessions")
       .toArray() as unknown as UserSessionRow[];
-    for (const us of sessions)
+    // Their user sessions are revoked there too, so no agent session they started acts on.
+    for (const us of sessions) {
       await this.#o.workspace(us.workspace).eraseUserSecrets(us.capability);
+      await this.#o.workspace(us.workspace).revoke(us.capability, us.capability);
+    }
     await this.#o.eraseProfile();
     await this.#o.eraseStorage();
     this.createTables();
@@ -486,6 +529,66 @@ export class UserSessions implements UserPort {
   async deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }> {
     const us = await this.#userSession(token);
     await this.#o.workspace(us.workspace).deleteSecret(us.capability, req);
+    return { deleted: true };
+  }
+
+  /**
+   * Revokes one of the user's agent sessions in the token's workspace: the workspace puts its
+   * capability on its revocation list, so the gate refuses it (and every capability narrowed from
+   * it) at its next operation, and the User DO sends it no more messages.
+   */
+  async revokeAgentSession(token: string, id: string): Promise<{ revoked: true }> {
+    const us = await this.#userSession(token);
+    const row = this.#one<AgentRow>(
+      "SELECT * FROM agent_sessions WHERE id = ? AND workspace = ?",
+      id,
+      us.workspace,
+    );
+    if (!row) throw codedError("ENOENT", "no such agent session");
+    if (!row.revoked) {
+      // A session recorded before its capability was kept cannot be named on the revocation
+      // list alone; answering "revoked" while the gate still accepts it would be a lie.
+      if (!row.capability)
+        throw codedError(
+          "EINVAL",
+          "this agent session predates per-session revocation: revoke the user session instead",
+        );
+      await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
+      this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE id = ?", id);
+    }
+    return { revoked: true };
+  }
+
+  /**
+   * Revokes the user session of the token's workspace: its capability goes on the workspace's
+   * revocation list, so every agent session narrowed from it stops at its next operation. The next
+   * call opens a new user session, with a new capability.
+   */
+  async revokeUserSession(token: string): Promise<{ revoked: true }> {
+    const { workspace } = await this.claims(token);
+    const us = this.#one<UserSessionRow>(
+      "SELECT * FROM user_sessions WHERE workspace = ?",
+      workspace,
+    );
+    if (us) await this.#o.workspace(workspace).revoke(us.capability, us.capability);
+    this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE workspace = ?", workspace);
+    this.#o.sql.exec("DELETE FROM user_sessions WHERE workspace = ?", workspace);
+    return { revoked: true };
+  }
+
+  async listServiceAccounts(token: string): Promise<{ accounts: ServiceAccountView[] }> {
+    const us = await this.#userSession(token);
+    return { accounts: await this.#o.workspace(us.workspace).listServiceAccounts(us.capability) };
+  }
+
+  async createServiceAccount(token: string, name: string): Promise<CreatedServiceAccount> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).createServiceAccount(us.capability, name);
+  }
+
+  async deleteServiceAccount(token: string, name: string): Promise<{ deleted: true }> {
+    const us = await this.#userSession(token);
+    await this.#o.workspace(us.workspace).deleteServiceAccount(us.capability, name);
     return { deleted: true };
   }
 

@@ -72,6 +72,13 @@ An external source of identity that the token issuer trusts, such as an OIDC pro
 The short-lived token a user arrives with, naming only the user, the workspace, the issuer and its expiry.
 _Avoid_: key, credential
 
+**API key**:
+The proof of identity a service account presents to the token issuer for an access token; shown once when made, and kept only as a hash.
+_Avoid_: password, secret
+
+**Revocation list**:
+A workspace's list of revoked capabilities, checked at every operation: a capability on it, and every capability narrowed from it, is refused.
+
 **Capability**:
 Any narrowed authority the harness hands to a session, agent or tool. It can only narrow what it came from.
 _Avoid_: grant

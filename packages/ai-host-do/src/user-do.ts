@@ -56,6 +56,10 @@ export class User extends DurableObject<Env> {
           setSecret: (capability, req) => ws.setSecret(capability, req),
           deleteSecret: (capability, req) => ws.deleteSecret(capability, req),
           eraseUserSecrets: (capability) => ws.eraseUserSecrets(capability),
+          revoke: (capability, target) => ws.revoke(capability, target),
+          listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
+          createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
+          deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
         };
       },
       modes: deploymentModes(env),
@@ -153,6 +157,31 @@ export class User extends DurableObject<Env> {
   async deleteSecret(token: string, req: DeleteSecretRequest) {
     await this.#reachable();
     return this.#sessions.deleteSecret(token, req);
+  }
+
+  async revokeAgentSession(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.revokeAgentSession(token, id);
+  }
+
+  async revokeUserSession(token: string) {
+    await this.#reachable();
+    return this.#sessions.revokeUserSession(token);
+  }
+
+  async listServiceAccounts(token: string) {
+    await this.#reachable();
+    return this.#sessions.listServiceAccounts(token);
+  }
+
+  async createServiceAccount(token: string, name: string) {
+    await this.#reachable();
+    return this.#sessions.createServiceAccount(token, name);
+  }
+
+  async deleteServiceAccount(token: string, name: string) {
+    await this.#reachable();
+    return this.#sessions.deleteServiceAccount(token, name);
   }
 
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */

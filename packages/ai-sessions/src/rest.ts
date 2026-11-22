@@ -34,6 +34,10 @@ export async function handleSessionRest(
     if (route === "GET /me") return api().me();
     if (route === "GET /me/profile") return api().profile();
     if (route === "DELETE /me") return api().eraseUser();
+    if (route === "DELETE /me/session") return api().revokeUserSession();
+    if (route === "GET /service-accounts") return api().listServiceAccounts();
+    if (route === "POST /service-accounts")
+      return api().createServiceAccount((await bodyOf(request)) as never);
     if (route === "POST /sessions") return api().startSession((await bodyOf(request)) as never);
     if (route === "GET /sessions") return api().listSessions(sessionsQuery(url));
     if (route === "PUT /me/mode") return api().setMode((await bodyOf(request)) as never);
@@ -53,6 +57,13 @@ export async function handleSessionRest(
       if (request.method === "DELETE")
         return api().deleteSecret({ level: id, name: sub, project } as never);
     }
+    if (
+      collection === "service-accounts" &&
+      id &&
+      parts.length === 3 &&
+      request.method === "DELETE"
+    )
+      return api().deleteServiceAccount(id);
     if (collection === "sessions" && id && parts.length === 3) {
       if (request.method === "GET") return api().getSession(id);
       if (request.method === "PATCH")
@@ -71,6 +82,7 @@ export async function handleSessionRest(
           },
         });
       }
+      if (request.method === "POST" && sub === "revoke") return api().revokeSession(id);
       if (request.method === "POST" && sub === "archive") return api().archiveSession(id);
       if (request.method === "GET" && sub === "items") return api().listItems(id, itemsQuery(url));
       if (request.method === "GET" && sub === "events") {
