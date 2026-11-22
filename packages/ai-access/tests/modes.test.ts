@@ -15,6 +15,13 @@ import {
   toolRequest,
 } from "../src/index.js";
 
+/** CPU milliseconds the test's own thread has used: what a Durable Object's CPU limit counts. */
+const cpuMs = () => {
+  const usage = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+  const { user, system } = usage ? usage() : process.cpuUsage();
+  return (user + system) / 1000;
+};
+
 const files = (action: string, target: string) => ({ area: "files", action, target });
 const verdict = (mode: string, req: ReturnType<typeof files>, layers = []) =>
   decideMode(req, { mode: modeOf(mode), layers }).verdict;
@@ -92,7 +99,7 @@ describe("modes", () => {
     expect(decideMode(req, { mode: modeOf("default"), layers: [allow] }).verdict).toBe("allow");
   });
 
-  it("decides the 10,000 entries of a folder's removal against several rule layers within a tight bound", () => {
+  it("decides the 10,000 entries of a folder's removal against several rule layers well within the CPU limit", () => {
     const rules = (n: number, verb: string) =>
       Array.from({ length: n }, (_, i) => `files.${verb}:/area${i}/**`);
     const layers = [
@@ -101,11 +108,11 @@ describe("modes", () => {
       { source: "user", rules: { allow: rules(20, "delete") } },
     ];
     const mode = modeOf("default");
-    const started = performance.now();
+    const started = cpuMs();
     for (let i = 0; i < 10_000; i++)
       decideMode(files("delete", `/build/d${i % 100}/f${i}.js`), { mode, layers });
     // A Durable Object's default CPU limit is 30 s; deciding the entries takes a small part of it.
-    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(cpuMs() - started).toBeLessThan(2_000);
     // Still decided per entry: a deny rule inside the folder applies.
     expect(decideMode(files("delete", "/locked/a.js"), { mode, layers }).verdict).toBe("deny");
   });

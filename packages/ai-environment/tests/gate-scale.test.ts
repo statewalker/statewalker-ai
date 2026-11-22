@@ -15,6 +15,13 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
 import { gatedFiles, modeGated } from "../src/index.js";
 
+/** CPU milliseconds the test's own thread has used: what a Durable Object's CPU limit counts. */
+const cpuMs = () => {
+  const usage = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+  const { user, system } = usage ? usage() : process.cpuUsage();
+  return (user + system) / 1000;
+};
+
 const authority = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
 const capability = attenuateForAgentSession(authority.mintUser("ann"), {
   session: "as-1",
@@ -60,9 +67,9 @@ async function gate(entries: number, deny: string[] = []) {
 describe("a folder's removal through the gate", () => {
   it("removes a folder of 10,000 entries well within a Durable Object's CPU limit", async () => {
     const { store, files } = await gate(10_000);
-    const started = performance.now();
+    const started = cpuMs();
     expect(await files.remove("/alpha/build")).toBe(true);
-    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(cpuMs() - started).toBeLessThan(10_000);
     expect(await store.exists("/alpha/build")).toBe(false);
   }, 60_000);
 

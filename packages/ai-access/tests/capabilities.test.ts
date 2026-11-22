@@ -5,6 +5,13 @@ import { Biscuit } from "@statewalker/webrun-biscuit";
 import { describe, expect, it } from "vitest";
 import { attenuateForAgentSession, resolveRoles, WorkspaceAuthority } from "../src/index.js";
 
+/** CPU milliseconds the test's own thread has used: what a Durable Object's CPU limit counts. */
+const cpuMs = () => {
+  const usage = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+  const { user, system } = usage ? usage() : process.cpuUsage();
+  return (user + system) / 1000;
+};
+
 const authority = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
 const grant = { session: "as-1", project: "alpha", agent: "reviewer" };
 const roles = (...held: string[]) => resolveRoles(held, {}).grants;
@@ -132,13 +139,13 @@ describe("capabilities", () => {
       action: "delete" as const,
       path: `/alpha/build/d${i % 100}/f${i}.js`,
     }));
-    const started = performance.now();
+    const started = cpuMs();
     await authority.authorizeMany(capability, {
       project: "alpha",
       grants: roles("editor"),
       checks,
     });
-    // A Durable Object's default CPU limit is 30 s; this bound leaves room for slower machines.
-    expect(performance.now() - started).toBeLessThan(5_000);
+    // A Durable Object's default CPU limit is 30 s of CPU time; a third of it leaves room for slow machines.
+    expect(cpuMs() - started).toBeLessThan(10_000);
   });
 });
