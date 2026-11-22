@@ -221,7 +221,12 @@ export async function startBrowserDeployment(
   const config = JSON.parse(readFileSync(join(folder, "wrangler.json"), "utf8"));
   s.deployments.set(name, {
     folder,
-    config: JSON.stringify(browserDeploymentConfig(config, vars)),
+    config: JSON.stringify(
+      browserDeploymentConfig(config, vars, {
+        // The run's own admin key, for its test-only routes.
+        keep: ["ADMIN_KEY"],
+      }),
+    ),
   });
   let page: Page | undefined;
   const pending = new Map<number, Pending>();

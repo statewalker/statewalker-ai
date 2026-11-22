@@ -6,7 +6,8 @@
 
 /** The variables a deployment-held secret lives in, which never reach a browser deployment. */
 function heldSecretNames(vars: Record<string, string>): string[] {
-  const names = ["SECRETS_KEY", "DEPLOYMENT_SECRETS"];
+  // ADMIN_KEY opens the test-only admin routes: a server's never reaches a page.
+  const names = ["SECRETS_KEY", "DEPLOYMENT_SECRETS", "ADMIN_KEY"];
   try {
     const declared = JSON.parse(vars.DEPLOYMENT_SECRETS ?? "{}");
     if (declared && typeof declared === "object") names.push(...Object.keys(declared));
@@ -16,10 +17,27 @@ function heldSecretNames(vars: Record<string, string>): string[] {
   return names;
 }
 
-/** `vars` as a browser deployment gets them: without deployment-held secrets, HOSTING "browser". */
-export function browserDeploymentVars(vars: Record<string, string>): Record<string, string> {
+export interface BrowserDeploymentOptions {
+  /**
+   * Held names the caller keeps on purpose: only "ADMIN_KEY", for a key the page made for itself
+   * (the conformance runner's, the workbench's). SECRETS_KEY and DEPLOYMENT_SECRETS are never kept.
+   */
+  keep?: readonly "ADMIN_KEY"[];
+}
+
+/**
+ * `vars` as a browser deployment gets them: without deployment-held secrets (and without a
+ * server's ADMIN_KEY), HOSTING "browser".
+ */
+export function browserDeploymentVars(
+  vars: Record<string, string>,
+  options: BrowserDeploymentOptions = {},
+): Record<string, string> {
   const out = { ...vars };
-  for (const name of heldSecretNames(vars)) delete out[name];
+  const keep = new Set<string>(options.keep ?? []);
+  keep.delete("SECRETS_KEY");
+  keep.delete("DEPLOYMENT_SECRETS");
+  for (const name of heldSecretNames(vars)) if (!keep.has(name)) delete out[name];
   out.HOSTING = "browser";
   return out;
 }
@@ -28,8 +46,9 @@ export function browserDeploymentVars(vars: Record<string, string>): Record<stri
 export function browserDeploymentConfig<C extends { vars?: Record<string, string> }>(
   config: C,
   vars: Record<string, string> = {},
+  options: BrowserDeploymentOptions = {},
 ): C {
-  return { ...config, vars: browserDeploymentVars({ ...config.vars, ...vars }) };
+  return { ...config, vars: browserDeploymentVars({ ...config.vars, ...vars }, options) };
 }
 
 /** Whether the deployment runs in a browser page (HOSTING "browser"). */

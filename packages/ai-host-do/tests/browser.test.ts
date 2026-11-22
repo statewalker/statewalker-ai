@@ -32,6 +32,16 @@ describe("a browser deployment's configuration", () => {
     });
   });
 
+  it("keeps a server's ADMIN_KEY off a browser page unless the caller keeps it on purpose", () => {
+    expect(browserDeploymentVars({ ADMIN_KEY: "server-admin", MODELS: "{}" })).toEqual({
+      MODELS: "{}",
+      HOSTING: "browser",
+    });
+    expect(
+      browserDeploymentVars({ ADMIN_KEY: "page-made", SECRETS_KEY: "x" }, { keep: ["ADMIN_KEY"] }),
+    ).toEqual({ ADMIN_KEY: "page-made", HOSTING: "browser" });
+  });
+
   it("drops DEPLOYMENT_SECRETS even when it cannot be read", () => {
     expect(browserDeploymentVars({ DEPLOYMENT_SECRETS: "{not json" })).toEqual({
       HOSTING: "browser",
