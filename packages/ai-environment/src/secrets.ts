@@ -493,7 +493,7 @@ export async function gatewayFetch(
           headers: init.headers,
           ...(request.body !== undefined ? { body: new TextEncoder().encode(request.body) } : {}),
         },
-        fixed ? () => {} : admit,
+        admit,
       );
     } else res = await fetcher(resolved.url, { ...init, redirect: "manual" });
     let body = await res.text();

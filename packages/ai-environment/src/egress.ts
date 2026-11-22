@@ -422,6 +422,8 @@ export async function nodeTransport(resolver?: Resolver): Promise<EgressTranspor
             method: init.method,
             headers: init.headers,
             lookup,
+            // No kept-alive socket is reused: every request runs the gateway's own lookup.
+            agent: false,
             ...(init.signal ? { signal: init.signal } : {}),
           },
           (raw) => {
@@ -618,11 +620,14 @@ export async function egressFetch(
     } catch {
       throw codedError("EINVAL", "the request's URL is not absolute");
     }
+    // The first hop's placeholders are read from the URL as written: a parsed URL percent-encodes
+    // `{` and `}` in its path, where a placeholder would no longer be found.
+    const written = hop === 0 ? target : url.href;
     // Placeholders are resolved for this hop's host (a secret never follows a redirect elsewhere).
     let headers = { ...templates };
     if (options.secrets) {
       const resolved = await resolveSecrets(
-        { url: url.href, headers, ...(body && bodyText !== undefined ? { body: bodyText } : {}) },
+        { url: written, headers, ...(body && bodyText !== undefined ? { body: bodyText } : {}) },
         options.secrets.plugin,
         options.secrets.lookup,
       );
@@ -648,7 +653,7 @@ export async function egressFetch(
           pinned: true,
           fetch: (u, init, a) => {
             for (const address of pinnedHosts) a(address);
-            return options.transport.fetch(u, init, () => {});
+            return options.transport.fetch(u, init, a);
           },
         }
       : options.transport;

@@ -425,3 +425,61 @@ describe("egressFetch where the runtime hides redirects (a browser)", () => {
     ).rejects.toThrow(/EACCES: .*hides redirects/);
   });
 });
+
+describe("review pass 1 fixes", () => {
+  it("runs the gateway's lookup on every request to a named host, even where Node would reuse a kept-alive socket", async () => {
+    const http = await import("node:http");
+    const server = http.createServer((_req, res) => res.end("ok"));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", () => r()));
+    const port = (server.address() as { port: number }).port;
+    try {
+      const { nodeTransport } = await import("../src/egress.js");
+      let lookups = 0;
+      const transport = await nodeTransport(async () => {
+        lookups++;
+        return ["127.0.0.1"];
+      });
+      const out: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        // The transport alone (no address rule here): each request must ask the lookup again.
+        const r = await transport.fetch(
+          new URL(`http://fake.test:${port}/`),
+          { method: "GET", headers: {} },
+          () => {},
+        );
+        out.push(`${r.status}:${await r.text()}`);
+      }
+      expect(out).toEqual(["200:ok", "200:ok", "200:ok"]);
+      expect(lookups).toBe(3);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("puts a secret named in the URL's path in, for its host", async () => {
+    const secret = {
+      name: "BOT",
+      value: "tok3n",
+      level: "user",
+      bindings: { plugins: ["code"], hosts: ["a.example"] },
+    } as ResolvedSecret;
+    const t = fakeTransport(
+      { "https://a.example/bot/tok3n/send?k=tok3n": () => new Response("sent with tok3n") },
+      { "a.example": ["93.184.216.34"] },
+    );
+    const r = await egressFetch(
+      { url: "https://a.example/bot/{{secret:BOT}}/send?k={{secret:BOT}}" },
+      {
+        config: config(),
+        transport: t,
+        secrets: {
+          plugin: "code",
+          lookup: async (n: string) => (n === "BOT" ? secret : undefined),
+        },
+      },
+    );
+    expect(t.hops[0]?.url).toBe("https://a.example/bot/tok3n/send?k=tok3n");
+    expect(new TextDecoder().decode(r.body)).toBe("sent with [secret BOT]");
+    expect(r.url).not.toContain("tok3n");
+  });
+});
