@@ -138,6 +138,22 @@ type CompiledRule = { permission: Permission } | { tool: string };
 const VERDICTS: readonly Verdict[] = ["deny", "ask", "allow"];
 const MODE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
+/**
+ * A rule layer's entries, compiled once per list (statewalker-ai#49: a folder's removal decides
+ * every entry inside it against the same layers). Lists are keyed by identity: a layer read again
+ * is a new list, compiled again.
+ */
+const COMPILED = new WeakMap<readonly string[], CompiledRule[]>();
+function compiledLayer(entries: readonly string[] | undefined): CompiledRule[] {
+  if (!Array.isArray(entries)) return compile(entries, [], []);
+  let out = COMPILED.get(entries);
+  if (!out) {
+    out = compile(entries, [], []);
+    COMPILED.set(entries, out);
+  }
+  return out;
+}
+
 function compile(
   entries: readonly string[] | undefined,
   folders: readonly string[],
@@ -342,11 +358,10 @@ export function matchRules(
     ask: undefined,
     allow: undefined,
   };
-  const problems: string[] = [];
   for (const verdict of VERDICTS) {
     if (mode[verdict].some((r) => matches(r, req))) sources[verdict] ??= "mode";
     for (const layer of layers)
-      if (compile(layer.rules[verdict], [], problems).some((r) => matches(r, req, layer.exact)))
+      if (compiledLayer(layer.rules[verdict]).some((r) => matches(r, req, layer.exact)))
         sources[verdict] ??= layer.source;
   }
   const found = VERDICTS.find((v) => sources[v] !== undefined);

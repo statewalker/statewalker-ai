@@ -5,6 +5,13 @@ import { Biscuit } from "@statewalker/webrun-biscuit";
 import { describe, expect, it } from "vitest";
 import { attenuateForAgentSession, resolveRoles, WorkspaceAuthority } from "../src/index.js";
 
+/** CPU milliseconds the test's own thread has used: what a Durable Object's CPU limit counts. */
+const cpuMs = () => {
+  const usage = (process as { threadCpuUsage?: () => NodeJS.CpuUsage }).threadCpuUsage;
+  const { user, system } = usage ? usage() : process.cpuUsage();
+  return (user + system) / 1000;
+};
+
 const authority = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
 const grant = { session: "as-1", project: "alpha", agent: "reviewer" };
 const roles = (...held: string[]) => resolveRoles(held, {}).grants;
@@ -104,5 +111,41 @@ describe("capabilities", () => {
     const user = authority.mintUser("ann");
     for (const project of ["", ".", "..", "alpha/notes", "alpha/", "/alpha", "-x", "a b"])
       expect(() => attenuateForAgentSession(user, { ...grant, project })).toThrow(/EINVAL/);
+  });
+
+  it("authorizes many file actions under one capability, verified once, refusing if any is refused", async () => {
+    const capability = attenuateForAgentSession(authority.mintUser("ann"), grant);
+    const editor = roles("editor");
+    const many = (paths: string[], grants = editor) =>
+      authority.authorizeMany(capability, {
+        project: "alpha",
+        grants,
+        checks: paths.map((path) => ({ action: "delete" as const, path })),
+      });
+    await expect(many(["/alpha/a", "/alpha/a/b.md"])).resolves.toBeUndefined();
+    // One refused entry refuses them all, and names it.
+    await expect(many(["/alpha/a", "/beta/b.md"])).rejects.toThrow(/EACCES.*\/beta\/b\.md/);
+    await expect(many(["/alpha/a"], roles("reader"))).rejects.toThrow(/EACCES/);
+    const elsewhere = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
+    const forged = attenuateForAgentSession(elsewhere.mintUser("ann"), grant);
+    await expect(
+      authority.authorizeMany(forged, { project: "alpha", grants: editor, checks: [] }),
+    ).rejects.toThrow(/EACCES/);
+  });
+
+  it("authorizes the 10,000 entries of a folder's removal well within a Durable Object's CPU limit", async () => {
+    const capability = attenuateForAgentSession(authority.mintUser("ann"), grant);
+    const checks = Array.from({ length: 10_000 }, (_, i) => ({
+      action: "delete" as const,
+      path: `/alpha/build/d${i % 100}/f${i}.js`,
+    }));
+    const started = cpuMs();
+    await authority.authorizeMany(capability, {
+      project: "alpha",
+      grants: roles("editor"),
+      checks,
+    });
+    // A Durable Object's default CPU limit is 30 s of CPU time; a third of it leaves room for slow machines.
+    expect(cpuMs() - started).toBeLessThan(10_000);
   });
 });
