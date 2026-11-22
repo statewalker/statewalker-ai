@@ -1,6 +1,5 @@
 // Access: tokens and the issuer, the permission language, roles and role sources, capabilities,
-// modes and permission rules, and what the gate knows of approvals. A later ticket adds the risk
-// classifier (statewalker/statewalker-root#111).
+// modes and permission rules, what the gate knows of approvals, and `auto` mode's risk classifier.
 
 export { fromBase64, type Keypair, toBase64 } from "@statewalker/webrun-biscuit";
 export {
@@ -10,6 +9,14 @@ export {
   approvalId,
   type UserSessionState,
 } from "./approvals.js";
+export {
+  type AutoDecision,
+  type AutoStep,
+  decideAuto,
+  isBroadRule,
+  isProtectedPath,
+  withoutBroadAllows,
+} from "./auto-mode.js";
 export {
   type AgentSessionFacts,
   type AgentSessionGrant,
@@ -21,6 +28,19 @@ export {
   type SubAgentGrant,
   WorkspaceAuthority,
 } from "./capabilities.js";
+export {
+  type AutoSettings,
+  CLASSIFIER_SYSTEM,
+  type ClassifierInput,
+  classifierPrompt,
+  classifierTranscript,
+  DenialCounter,
+  type PendingAction,
+  parseAutoMode,
+  parseClassifierAnswer,
+  type TranscriptEntry,
+  type TranscriptItem,
+} from "./classifier.js";
 export { type CodedError, codedError, codeOf, type ErrorCode, statusOf } from "./errors.js";
 export {
   BUILT_IN_MODES,
@@ -30,6 +50,7 @@ export {
   type ModeDecision,
   type ModeDefinition,
   type ModeRequest,
+  matchRules,
   modeOf,
   PERMISSION_RULES_FILE,
   type PermissionRules,

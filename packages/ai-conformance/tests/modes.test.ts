@@ -283,9 +283,14 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(removed.status).toBe("completed");
     expect(await contentOf(fay, s.id, "notes/f.md")).toMatch(/ENOENT/);
 
-    // auto is default until the risk classifier.
+    // auto settles an in-project write itself; this deployment names no risk classifier model, so
+    // what auto would classify is denied (auto.test.ts).
     await fay.setMode({ mode: "auto" });
-    await approvalOf(fay, await fay.sendMessage(s.id, { content: write("notes/f.md", "5\n") }));
+    const auto = await fay.sendMessage(s.id, { content: write("notes/f.md", "5\n") });
+    expect(auto.status).toBe("completed");
+    expect(await contentOf(fay, s.id, "notes/f.md")).toBe("5\n");
+    const blocked = await fay.sendMessage(s.id, { content: bash("rm /proj/notes/f.md") });
+    expect(toolResult(blocked)?.output).toMatch(/no risk classifier model/);
   });
 
   it("only the user switches modes, to a mode that exists, for their own sessions", async () => {

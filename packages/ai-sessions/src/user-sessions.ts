@@ -229,7 +229,8 @@ export class UserSessions implements UserPort {
   }
 
   #approvalView(row: ApprovalRow): ApprovalView {
-    const expired = row.status === "pending" && Number(row.expires) <= this.#now();
+    const expired =
+      (row.status === "pending" || row.status === "blocked") && Number(row.expires) <= this.#now();
     return {
       ...(JSON.parse(row.request) as ApprovalRequest),
       workspace: row.workspace,
@@ -308,6 +309,7 @@ export class UserSessions implements UserPort {
       mode: row.mode,
       created: Number(row.created),
       approvals: this.#approvals(row.workspace).filter((a) => a.status === "pending"),
+      blocked: this.#approvals(row.workspace).filter((a) => a.status === "blocked"),
     };
   }
 
@@ -371,6 +373,44 @@ export class UserSessions implements UserPort {
     return out;
   }
 
+  /**
+   * Records an action auto mode's risk classifier blocked in one of this user's agent sessions
+   * (statewalker/statewalker-root#137), listed on /v1/me until it expires; approving it retries
+   * exactly that action. Told by the agent session's DO, for a session in this user's index only.
+   * An approval pending for the same action stays as it is.
+   */
+  async recordBlocked(session: string, request: ApprovalRequest): Promise<ApprovalView> {
+    const row = this.#one<AgentRow>("SELECT * FROM agent_sessions WHERE id = ?", String(session));
+    if (!row) throw codedError("ENOENT", "no such agent session");
+    const own = view(row);
+    if (request.session !== own.id || request.project !== own.project)
+      throw codedError("EINVAL", "a block of another session");
+    const now = this.#now();
+    const found = this.#one<ApprovalRow>(
+      "SELECT * FROM approvals WHERE workspace = ? AND id = ?",
+      own.workspace,
+      request.id,
+    );
+    if (found?.status !== "pending" || Number(found.expires) <= now)
+      this.#o.sql.exec(
+        "INSERT OR REPLACE INTO approvals VALUES (?, ?, ?, ?, ?, 'blocked', ?, ?)",
+        request.id,
+        own.workspace,
+        own.id,
+        own.project,
+        JSON.stringify(request),
+        now,
+        now + this.#o.approvalTtlMs,
+      );
+    return this.#approvalView(
+      this.#one<ApprovalRow>(
+        "SELECT * FROM approvals WHERE workspace = ? AND id = ?",
+        own.workspace,
+        request.id,
+      ) as ApprovalRow,
+    );
+  }
+
   async listApprovals(token: string): Promise<{ approvals: ApprovalView[] }> {
     const { workspace } = await this.claims(token);
     return { approvals: this.#approvals(workspace) };
@@ -390,7 +430,9 @@ export class UserSessions implements UserPort {
     if (!row) throw codedError("ENOENT", "no such approval");
     const current = this.#approvalView(row);
     if (current.status === "expired") throw codedError("EINVAL", "the approval expired");
-    if (current.status !== "pending") throw codedError("EINVAL", "the approval was answered");
+    // A block of auto mode's classifier is answered like a pending approval: allow retries it.
+    if (current.status !== "pending" && current.status !== "blocked")
+      throw codedError("EINVAL", "the approval was answered");
     const status = answer.decision === "allow" ? "allowed" : "denied";
     if (status === "allowed")
       await this.#o.workspace(us.workspace).grantApproval(us.capability, {
@@ -401,7 +443,7 @@ export class UserSessions implements UserPort {
         expires: current.expires,
       });
     this.#o.sql.exec(
-      "UPDATE approvals SET status = ? WHERE workspace = ? AND id = ? AND status = 'pending'",
+      "UPDATE approvals SET status = ? WHERE workspace = ? AND id = ? AND status IN ('pending', 'blocked')",
       status,
       us.workspace,
       id,
