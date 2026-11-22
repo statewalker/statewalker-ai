@@ -455,9 +455,9 @@ describe.each(transports)("memory over %s", (name, connect) => {
     ]);
     const id = String(added.results[0]?.id);
     // The value became a stored secret after it was written.
+    // A user secret: browser deployments keep no project secrets.
     await ann.setSecret({
-      level: "project",
-      project: p,
+      level: "user",
       name: "STAGING",
       value: "tango-77-delta-q",
       bindings: { plugins: ["team"], hosts: ["example.com"] },
