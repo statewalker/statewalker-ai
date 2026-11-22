@@ -77,6 +77,7 @@ import type {
   UserPort,
   UserSessionView,
 } from "./api.js";
+import type { IndexedSession } from "./search.js";
 import type { SqlLike } from "./sql.js";
 
 /** What a User DO asks of one workspace's Workspace DO. */
@@ -272,6 +273,8 @@ interface AgentRow {
   root: string | null;
   /** A fork's source, `{session, turn}` as JSON (statewalker/statewalker-root#190). */
   forked_from?: string | null;
+  /** Its topic titles on the active path, as JSON (statewalker/statewalker-root#174). */
+  topics?: string | null;
 }
 
 interface AgentMetaRow {
@@ -291,7 +294,22 @@ const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   ...(row.archived ? { archived: Number(row.archived) } : {}),
   ...(row.parent ? { parent: row.parent, root: String(row.root) } : {}),
   ...(row.forked_from ? { forked_from: JSON.parse(row.forked_from) as TurnRef } : {}),
+  ...(titlesOf(row).length ? { topics: titlesOf(row) } : {}),
 });
+
+/** A session's topic titles in the index. */
+function titlesOf(row: { topics?: string | null }): string[] {
+  try {
+    const titles = row.topics ? (JSON.parse(row.topics) as unknown) : [];
+    return Array.isArray(titles) ? titles.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** How many topic titles the index keeps per session, and how long each. */
+const MAX_INDEXED_TOPICS = 100;
+const MAX_INDEXED_TITLE = 200;
 
 /** The session index with each session's metadata and archive time (a table of its own). */
 const INDEX = `SELECT a.*, m.metadata, m.archived FROM agent_sessions a
@@ -331,6 +349,8 @@ export class UserSessions implements UserPort {
       ["root", "TEXT"],
       // statewalker/statewalker-root#190: a fork's source.
       ["forked_from", "TEXT"],
+      // statewalker/statewalker-root#174: the topic titles on the session's active path.
+      ["topics", "TEXT"],
     ] as const)
       if (!columns.has(name))
         this.#o.sql.exec(`ALTER TABLE agent_sessions ADD COLUMN ${name} ${type}`);
@@ -1065,6 +1085,53 @@ export class UserSessions implements UserPort {
    * capability it holds. The workspace decides the capability, the membership and the mode; a
    * sub-agent writes neither; a change of preferences waits on the user's approval in every mode.
    */
+  /** The agent session a capability proves (EACCES for any other). */
+  #provenSession(session: string, capability: string): AgentRow & AgentMetaRow {
+    const row = this.#one<AgentRow & AgentMetaRow>(`${INDEX} WHERE a.id = ?`, String(session));
+    if (!row?.capability || row.capability !== capability)
+      throw codedError("EACCES", "not an agent session of this user");
+    return row;
+  }
+
+  async sessionTopics(session: string, capability: string, titles: string[]): Promise<void> {
+    const row = this.#provenSession(session, capability);
+    const list = (Array.isArray(titles) ? titles : [])
+      .slice(0, MAX_INDEXED_TOPICS)
+      .map((t) => String(t).slice(0, MAX_INDEXED_TITLE));
+    this.#o.sql.exec(
+      "UPDATE agent_sessions SET topics = ? WHERE id = ?",
+      list.length ? JSON.stringify(list) : null,
+      row.id,
+    );
+  }
+
+  /**
+   * The sessions an agent session's search reaches: the user's own agent sessions in the same
+   * workspace and project, sub-agents', archived and revoked ones included, never the caller. A
+   * revoked or archived caller searches nothing (EACCES).
+   */
+  async searchScope(session: string, capability: string): Promise<{ sessions: IndexedSession[] }> {
+    const row = this.#provenSession(session, capability);
+    if (row.revoked || row.archived) throw codedError("EACCES", "the agent session is revoked");
+    const rows = this.#o.sql
+      .exec(
+        "SELECT * FROM agent_sessions WHERE workspace = ? AND project = ? AND id != ? ORDER BY created DESC",
+        row.workspace,
+        row.project,
+        row.id,
+      )
+      .toArray() as unknown as AgentRow[];
+    return {
+      sessions: rows.map((r) => ({
+        id: r.id,
+        agent: r.agent,
+        created: Number(r.created),
+        ...(r.parent ? { parent: r.parent } : {}),
+        topics: titlesOf(r),
+      })),
+    };
+  }
+
   async sessionMemory(session: string, capability: string, raw: MemoryCall): Promise<unknown> {
     const call = memoryCall(raw);
     const row = this.#one<AgentRow & AgentMetaRow>(`${INDEX} WHERE a.id = ?`, String(session));

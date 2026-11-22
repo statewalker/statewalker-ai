@@ -283,6 +283,19 @@ describe("memory service", () => {
     ).rejects.toThrow(/EINVAL/);
   });
 
+  it("refuses a regular expression that can backtrack for ever: a repeated group holding a repetition or an alternation", async () => {
+    const { service } = setup();
+    for (const query of ["(a+)+$", "(a|a)*$", "(\\w|\\d)+$", "((a|b))+x", "(?:x*y)*z", "(a|b){2,}"])
+      await expect(
+        service.batch("agent", [{ op: "search", query, regex: true }], ann),
+      ).rejects.toThrow(/EINVAL/);
+    // Groups that repeat nothing risky, or that are not repeated, still search.
+    for (const query of ["^(Deploy|Ship) on", "(ab)+c", "(a+)?b", "[\\w|]+x"])
+      await expect(
+        service.batch("agent", [{ op: "search", query, regex: true }], ann),
+      ).resolves.toMatchObject({ results: [{ op: "search" }] });
+  });
+
   it("is atomic: a failing action leaves nothing of the batch", async () => {
     const { stores, service } = setup();
     await expect(

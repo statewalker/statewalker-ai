@@ -11,8 +11,10 @@
 // answer reports the same usage (12 prompt tokens, 4 of them cached, 3 completion tokens), and
 // GET /v1/models lists the names in `listed` (a provider's discovery endpoint).
 // A summarizer request (its system prompt starts "You are summarising") is answered with the JSON
-// summary the harness asks for: content "SUMMARY[<each input line without its id> / ...]", and one
-// section whose refs are the first id of the input.
+// summary the harness asks for: content "SUMMARY[<each input line without its id> / ...]", one
+// section whose refs are the first id of the input, and a topic per `TOPIC <title>` in the input
+// (refs: the entries naming it; the id of the current topic of that title, which the harness
+// lists as `[tp-…] <title>: <body>` lines, when there is one).
 // A risk classifier request (its system prompt starts "You are the risk classifier") obeys the
 // last `CLASSIFY <answer>` anywhere in what it is shown, as a model open to injection would:
 // allow, ask or deny answer that verdict as JSON, `garbage` answers something that is not JSON,
@@ -187,17 +189,42 @@ export async function fakeModel(): Promise<FakeModel> {
       };
       finish = "stop";
     } else if (summary) {
-      const lines = lastUserText.split("\n");
+      const all = lastUserText.split("\n");
+      // The current topics (`[tp-…] <title>: <body>`) are not part of the range.
+      const current = new Map<string, string>();
+      for (const l of all) {
+        const m = /^\[(tp-[^\]]+)\]\s+([^:]+):/.exec(l);
+        if (m) current.set(String(m[2]).trim(), String(m[1]));
+      }
+      const lines = all.filter((l) => l.startsWith("[") && !l.startsWith("[tp-"));
       const first = /^\[([^\]]+)\]/.exec(lines[0] ?? "")?.[1];
-      const content = `SUMMARY[${lines
-        .filter((l) => l.startsWith("["))
-        .map((l) => l.replace(/^\[[^\]]+\]\s*/, ""))
-        .join(" / ")}]`;
+      const content = `SUMMARY[${lines.map((l) => l.replace(/^\[[^\]]+\]\s*/, "")).join(" / ")}]`;
+      // `TOPIC <title>` in an entry: a topic of that title drawing from it, merged into the
+      // current topic of the same title.
+      const topics = new Map<
+        string,
+        { id: string | null; title: string; body: string; refs: string[] }
+      >();
+      for (const l of lines) {
+        const m = /^\[([^\]]+)\][^\n]*?\bTOPIC\s+(\S+)/.exec(l);
+        if (!m) continue;
+        const title = String(m[2]);
+        const topic = topics.get(title) ?? {
+          id: current.get(title) ?? null,
+          title,
+          body: "",
+          refs: [],
+        };
+        topic.refs.push(String(m[1]));
+        topic.body = [topic.body, l.replace(/^\[[^\]]+\]\s*/, "")].filter(Boolean).join(" / ");
+        topics.set(title, topic);
+      }
       message = {
         role: "assistant",
         content: JSON.stringify({
           content,
           sections: first ? [{ title: "Part", body: content, refs: [first] }] : null,
+          ...(topics.size ? { topics: [...topics.values()] } : {}),
         }),
       };
       finish = "stop";

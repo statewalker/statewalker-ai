@@ -83,6 +83,7 @@ export {
   setAccess,
   sseFrames,
   TERMINAL_EVENTS,
+  type Topic,
   type Turn,
   UHP_BASE_URL,
   type UIMessageChunk,
