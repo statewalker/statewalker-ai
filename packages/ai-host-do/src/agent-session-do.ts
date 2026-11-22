@@ -30,7 +30,7 @@ import {
   runStoredDatabaseCall,
 } from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
-import { refusal, SessionLimits } from "./limits-host.js";
+import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
 import { restTools } from "./rest-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
 
@@ -169,7 +169,8 @@ export class AgentSession extends DurableObject<Env> {
             // not run, and the agent carries on with the refusal.
             admitTool: async (name) => {
               try {
-                await this.#charge(config, "tool_calls", 1, turn, { tool: name });
+                const crossed = await this.#charge(config, "tool_calls", 1, turn, { tool: name });
+                for (const warning of crossed) emit({ kind: "limit_warning", warning });
                 return undefined;
               } catch (e) {
                 return String((e as Error)?.message ?? e);
@@ -214,7 +215,7 @@ export class AgentSession extends DurableObject<Env> {
     amount: number,
     turn?: string,
     detail?: Record<string, unknown>,
-  ): Promise<void> {
+  ): Promise<WarningView[]> {
     const scopes = this.#limits.scopes(config);
     try {
       this.#limits.ledger.check(scopes, { [meter]: amount });
@@ -222,13 +223,19 @@ export class AgentSession extends DurableObject<Env> {
       throw refusal(e);
     }
     const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
-    await workspace.chargeUsage(config.capability, {
+    const crossed = await workspace.chargeUsage(config.capability, {
       meter,
       amount,
       ...(turn ? { turn } : {}),
       ...(detail ? { detail } : {}),
     });
-    this.#limits.ledger.charge(scopes, { [meter]: amount }, this.#limits.meta(config, turn), detail);
+    const own = this.#limits.ledger.charge(
+      scopes,
+      { [meter]: amount },
+      this.#limits.meta(config, turn),
+      detail,
+    );
+    return [...crossed, ...own.map(warningView)];
   }
 
   /**
@@ -237,8 +244,11 @@ export class AgentSession extends DurableObject<Env> {
    */
   async send(message: AgentMessage) {
     const config = this.#core.config();
-    if (config && message.delivery !== "steer") await this.#charge(config, "turns", 1);
-    return this.#core.send(message);
+    const crossed =
+      config && message.delivery !== "steer" ? await this.#charge(config, "turns", 1) : [];
+    const accepted = await this.#core.send(message);
+    if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
+    return accepted;
   }
 
   turn(turnId: string) {

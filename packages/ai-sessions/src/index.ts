@@ -58,6 +58,7 @@ export {
   type SessionsQuery,
   type SetSecretRequest,
   type StartSessionRequest,
+  type LimitWarningView,
   type StopLimit,
   type StopReason,
   type StoredAction,

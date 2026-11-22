@@ -27,6 +27,7 @@ import type {
   ItemInput,
   ItemsPage,
   ItemsQuery,
+  LimitWarningView,
   MessageAccepted,
   ModelSubstitution,
   SessionEvent,
@@ -223,6 +224,7 @@ const KINDS: readonly string[] = [
   "approval",
   "model_fallback",
   "mode_decision",
+  "limit_warning",
 ];
 const MAX_PAGE = 1000;
 const MAX_WAIT_MS = 60_000;
@@ -332,6 +334,8 @@ export class AgentSessionCore implements AgentPort {
     );
     const stored = itemOf(this.#one<ItemRow>("SELECT * FROM items WHERE id = ?", id) as ItemRow);
     this.#log("item.created", turn, stored);
+    // A warning of a limit is also its own event (statewalker/statewalker-root#179).
+    if (kind === "limit_warning" && item.warning) this.#log("limit.warning", turn, item.warning);
     return stored;
   }
 
@@ -647,6 +651,12 @@ export class AgentSessionCore implements AgentPort {
   }
 
   // --- the port -------------------------------------------------------------------------------
+
+  /** Leaves the limits a turn's start crossed the warning share of, as items of that turn. */
+  warn(turn: string, warnings: LimitWarningView[]): void {
+    this.#turnRow(turn);
+    for (const warning of warnings) this.#append(turn, { kind: "limit_warning", warning });
+  }
 
   async start(config: AgentSessionConfig): Promise<void> {
     if (this.config()) throw codedError("EINVAL", `agent session ${config.id} already started`);

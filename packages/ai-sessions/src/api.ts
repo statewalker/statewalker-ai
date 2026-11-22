@@ -131,7 +131,14 @@ export interface ProfileView {
 
 /** What a turn adds to its session, in order. */
 export interface ItemInput {
-  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback" | "mode_decision";
+  kind:
+    | "message"
+    | "tool_call"
+    | "tool_result"
+    | "approval"
+    | "model_fallback"
+    | "mode_decision"
+    | "limit_warning";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -179,6 +186,24 @@ export interface ItemInput {
   latency_ms?: number;
   /** Set on the denial after which the session fell back to this mode. */
   fallback?: string;
+  /**
+   * A `limit_warning` item (statewalker/statewalker-root#179): the limit whose `warn_at` share the
+   * turn's usage crossed, `{meter, level, target, limit_level, period, used, value, warn_at}`.
+   */
+  warning?: LimitWarningView;
+}
+
+/** A limit whose warning share usage crossed (statewalker/statewalker-root#179). */
+export interface LimitWarningView {
+  meter: string;
+  level: string;
+  target: string;
+  /** The limit's own level: a deployment ceiling held by a workspace says `deployment`. */
+  limit_level: string;
+  period: string;
+  used: number;
+  value: number;
+  warn_at: number;
 }
 
 /** One decision of auto mode on a change, as the gate reports it to the agent session. */

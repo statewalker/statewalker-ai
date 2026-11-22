@@ -39,6 +39,21 @@ function projectFiles(t: string): Record<string, string> {
     [`/sessions-${t}/.system/access`]: owner("ann", "bob"),
     [`/tools-${t}/.system/access`]: owner("ann"),
     [`/tools-${t}/readme.md`]: "README",
+    [`/parallel-${t}/.system/access`]: owner("ann"),
+    [`/parallel-${t}/.system/limits`]: limits({
+      meter: "model_spend",
+      level: "project",
+      value: 25,
+      period: "month",
+    }),
+    [`/warn-${t}/.system/access`]: owner("ann"),
+    [`/warn-${t}/.system/limits`]: limits({
+      meter: "turns",
+      level: "project",
+      value: 4,
+      period: "day",
+      warn_at: 0.5,
+    }),
     [`/spend-${t}/.system/access`]: owner("ann"),
     [`/spend-${t}/.system/limits`]: limits({
       meter: "model_spend",
@@ -168,5 +183,55 @@ describe.each(transports)("limits over %s", (name, connect) => {
       },
     });
     expect(model.requests.length).toBe(asked);
+  });
+
+  it("reserves each request's worst case against every level, so parallel sessions never overshoot", async () => {
+    const ann = await as("ann");
+    const sessions = await Promise.all(
+      [0, 1, 2].map(() => ann.startSession({ project: `parallel-${t}`, model: "scripted/priced" })),
+    );
+    // Two requests are held at the model: their worst cases (10 each) are reserved.
+    const held = await Promise.all(
+      [0, 1].map((i) =>
+        ann.postMessage(String(sessions[i]?.id), { content: `HOLD par-${t}-${i}` }),
+      ),
+    );
+    await Promise.all([0, 1].map((i) => model.held(`par-${t}-${i}`)));
+    // A third would make 30 of 25 if all of them spent their worst: refused.
+    const third = await ann.sendMessage(String(sessions[2]?.id), { content: "hello" });
+    expect(third).toMatchObject({ status: "incomplete", stop_reason: { type: "budget" } });
+    for (const i of [0, 1]) model.release(`par-${t}-${i}`);
+    for (const accepted of held)
+      expect(await ann.waitTurn(accepted)).toMatchObject({ status: "completed" });
+    // Settled to the real cost (3 each): there is room again.
+    expect(await ann.sendMessage(String(sessions[2]?.id), { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("leaves an item and an event once usage crosses a limit's warn_at", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `warn-${t}` });
+    const first = await ann.sendMessage(s.id, { content: "hello" });
+    expect(first.items.some((i) => i.kind === "limit_warning")).toBe(false);
+    const second = await ann.sendMessage(s.id, { content: "hello" });
+    expect(second.items.filter((i) => i.kind === "limit_warning")).toEqual([
+      expect.objectContaining({
+        warning: expect.objectContaining({
+          meter: "turns",
+          level: "project",
+          target: `warn-${t}`,
+          used: 2,
+          value: 4,
+        }),
+      }),
+    ]);
+    const { events } = await ann.readEvents(s.id);
+    expect(events.filter((e) => e.type === "limit.warning")).toEqual([
+      expect.objectContaining({ data: expect.objectContaining({ meter: "turns", used: 2 }) }),
+    ]);
+    // Once per window: the third turn warns no more.
+    const third = await ann.sendMessage(s.id, { content: "hello" });
+    expect(third.items.some((i) => i.kind === "limit_warning")).toBe(false);
   });
 });
