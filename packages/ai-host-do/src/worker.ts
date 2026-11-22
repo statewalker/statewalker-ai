@@ -4,11 +4,12 @@
 // (/v1/projects/<p>/databases) and over db-rpc on a WebSocket at /v1/databases; and the test-only routes a conformance
 // run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
 // user the caller's access token names, which checks the token each time.
-import { codedError, statusOf } from "@statewalker/ai-access";
+import { codedError } from "@statewalker/ai-access";
 import {
   bearerOf,
   bodyOf,
   createSessionApi,
+  errorResponse,
   handleDatabasesRest,
   handleFilesRest,
   handleSessionRest,
@@ -260,7 +261,7 @@ export default {
       if (rest) return rest;
       return json({ error: "ENOENT: no such route" }, 404);
     } catch (e) {
-      return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
+      return errorResponse(e);
     }
   },
 };

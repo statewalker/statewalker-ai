@@ -203,6 +203,18 @@ describe.each(transports)("limits over %s", (name, connect) => {
       status: 429,
       message: expect.stringContaining("turns"),
     });
+    // REST says when the day's window resets.
+    const res = await deployment.fetch(`/v1/sessions/${s.id}/messages`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${await login(deployment, u("ann"))}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ content: "hello" }),
+    });
+    expect(res.status).toBe(429);
+    const retry = Number(res.headers.get("retry-after"));
+    expect(retry > 0 && retry <= 86_400).toBe(true);
   });
 
   it("answers 429 to a session start over the member's limit on active sessions, until one ends", async () => {

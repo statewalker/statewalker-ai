@@ -116,7 +116,7 @@ export {
   handleFilesRest,
   serveFilesRpc,
 } from "./files.js";
-export { bearerOf, bodyOf, handleSessionRest } from "./rest.js";
+export { bearerOf, bodyOf, errorResponse, handleSessionRest } from "./rest.js";
 export { type SessionRpcConnection, serveSessionRpc, sessionRpcClient } from "./rpc.js";
 export type { SqlLike } from "./sql.js";
 export { sessionOfTurn } from "./turns.js";
