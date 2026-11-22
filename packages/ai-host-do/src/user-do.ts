@@ -321,6 +321,18 @@ export class User extends DurableObject<Env> {
     return this.#sessions.memory(token, call);
   }
 
+  /** Told by an agent session's DO: its topic titles on the active path (#174). */
+  async sessionTopics(session: string, capability: string, titles: string[]) {
+    await this.#reachable();
+    return this.#sessions.sessionTopics(session, capability, titles);
+  }
+
+  /** Asked by an agent session's DO: the sessions its session search reaches (#174). */
+  async searchScope(session: string, capability: string) {
+    await this.#reachable();
+    return this.#sessions.searchScope(session, capability);
+  }
+
   /** Told by an agent session's DO: a memory tool call on its user memory or preferences. */
   async sessionMemory(session: string, capability: string, call: MemoryCall) {
     await this.#reachable();

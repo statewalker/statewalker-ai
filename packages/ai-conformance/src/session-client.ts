@@ -256,6 +256,19 @@ export interface AgentSession {
   usage?: UsageTotals;
   /** A fork's source: the session and turn its history was copied from. */
   forked_from?: { session: string; turn: string };
+  /** The titles of the session's topics on its active path, from the session index. */
+  topics?: string[];
+}
+
+/** One topic of a session's table of contents (statewalker/statewalker-root#174). */
+export interface Topic {
+  id: string;
+  title: string;
+  body: string;
+  /** The items it draws from. */
+  refs: string[];
+  through_turn: string;
+  updated_at: number;
 }
 
 /** A rewind's or a branch switch's result. */
@@ -574,6 +587,11 @@ export interface SessionClient {
   ): Promise<MessageAccepted & { rewind: RewindResult }>;
   /** `GET /v1/sessions/{id}/branches`. */
   listBranches(sessionId: string): Promise<Branches>;
+  /** `GET /v1/sessions/{id}/topics`: the session's table of contents. */
+  listTopics(
+    sessionId: string,
+    query?: { branch?: string; all?: boolean },
+  ): Promise<{ topics: Topic[] }>;
   /** `DELETE /v1/sessions/{id}/branches/{turn}`. */
   eraseBranch(sessionId: string, turnId: string): Promise<{ erased: string[] }>;
   /** `POST /v1/sessions/{id}/fork` (REST `201`). */
@@ -933,6 +951,8 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     regenerateTurn: (id, req) =>
       call("POST", `/v1/turns/${encodeURIComponent(id)}/regenerate`, req ?? {}),
     listBranches: (id) => call("GET", `${s(id)}/branches`),
+    listTopics: (id, q = {}) =>
+      call("GET", `${s(id)}/topics${search(q as Record<string, unknown>)}`),
     eraseBranch: (id, turn) => call("DELETE", `${s(id)}/branches/${encodeURIComponent(turn)}`),
     forkSession: (id, req) => call("POST", `${s(id)}/fork`, req),
     listMemory: (target) => call("GET", memoryCollection(target)),

@@ -113,6 +113,7 @@ function sessionApi(env: Env, token: string) {
         regenerate: (turnId, req) => agent.regenerate(turnId, req),
         branches: () => agent.branches(),
         eraseBranch: (turnId) => agent.eraseBranch(turnId),
+        topics: (query) => agent.topics(query),
         exportPath: (atTurn) => agent.exportPath(atTurn),
         importHistory: (history) => agent.importHistory(history),
       };

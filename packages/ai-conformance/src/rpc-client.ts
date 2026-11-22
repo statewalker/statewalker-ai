@@ -78,6 +78,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     editTurn: (id, req) => api.editTurn(id, req).catch(refusal),
     regenerateTurn: (id, req) => api.regenerateTurn(id, req).catch(refusal),
     listBranches: (id) => api.listBranches(id).catch(refusal),
+    listTopics: (id, q) => api.listTopics(id, q).catch(refusal),
     eraseBranch: (id, turn) => api.eraseBranch(id, turn).catch(refusal),
     forkSession: (id, req) => api.forkSession(id, req).catch(refusal) as never,
     cancelTurn: (id) => api.cancelTurn(id).catch(refusal),

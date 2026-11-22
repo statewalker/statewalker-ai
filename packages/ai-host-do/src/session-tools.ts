@@ -24,6 +24,7 @@ const HARNESS_ACTIONS: Readonly<Record<string, ToolAction>> = {
   db_create: "admin",
   db_drop: "admin",
   agent_start: "write",
+  session_search: "read",
 };
 
 /** The permission each harness tool's effects are decided by, at its own gate. */

@@ -204,6 +204,13 @@ export async function handleSessionRest(
       if (request.method === "PUT" && sub === "head")
         return api().setHead(id, (await bodyOf(request)) as never);
       if (request.method === "GET" && sub === "branches") return api().listBranches(id);
+      if (request.method === "GET" && sub === "topics")
+        return api().listTopics(id, {
+          ...(url.searchParams.get("branch")
+            ? { branch: url.searchParams.get("branch") as string }
+            : {}),
+          ...(url.searchParams.get("all") === "true" ? { all: true } : {}),
+        });
       if (request.method === "POST" && sub === "fork") {
         const forked = await api().forkSession(id, (await bodyOf(request)) as never);
         return new Response(JSON.stringify(forked), {

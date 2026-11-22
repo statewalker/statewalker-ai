@@ -51,6 +51,7 @@ import type {
   StopLimit,
   StopReason,
   StoredAction,
+  TopicsQuery,
   TurnEffect,
   TurnOrigin,
   TurnRef,
@@ -60,7 +61,16 @@ import type {
 } from "./api.js";
 import { type CompactionOptions, type ContextEntry, ContextShaper } from "./context/shaper.js";
 import type { Summarizer } from "./context/summarizer.js";
+import { type Topic, type TopicScope, TopicStore } from "./context/topics.js";
 import { type ItemRow, itemOf } from "./items.js";
+import {
+  MAX_SCANNED_CHARS,
+  matcher,
+  type OpenedItem,
+  type SessionScanHit,
+  type SessionScanQuery,
+  snippet,
+} from "./search.js";
 import type { SqlLike } from "./sql.js";
 
 /** A message handed to the running turn, to take at its next step. */
@@ -204,6 +214,9 @@ export interface TurnOutcome {
  */
 export type CancelApprovals = (config: AgentSessionConfig, ids: string[]) => Promise<unknown>;
 
+/** Told a session's topic titles on its active path (statewalker/statewalker-root#174). */
+export type OnTopics = (config: AgentSessionConfig, titles: string[]) => Promise<unknown>;
+
 /** Which effect a tool call has that a rewind lists and does not revert, if any. */
 export type EffectOf = (item: Item) => "memory" | "database" | "outside" | undefined;
 
@@ -284,6 +297,20 @@ const KINDS: readonly string[] = [
 const MAX_PAGE = 1000;
 /** Where the head is kept in `agent_config` ("" before the first turn). */
 const HEAD = "head";
+/** The topic titles the host was last told, in `agent_config` (JSON). */
+const TOPIC_TITLES = "topic_titles";
+/** How much of one item an opened turn shows. */
+const OPENED_CHARS = 4000;
+
+/** What a session search scans of an item: a message's text, a tool call's name and arguments, a result. */
+function searchableText(item: Item): string {
+  if (item.kind === "message") return item.text ?? "";
+  if (item.kind === "tool_call")
+    return `${item.name ?? ""} ${JSON.stringify(item.args ?? {})}`.slice(0, MAX_SCANNED_CHARS);
+  if (item.kind === "tool_result") return item.output ?? "";
+  return "";
+}
+
 /** The note the next turn starts with after a rewind, in `agent_config`. */
 const REWIND_NOTE = "rewind_note";
 
@@ -310,7 +337,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   readonly #cancelApprovals: CancelApprovals | undefined;
   readonly #effectOf: EffectOf | undefined;
   readonly #shaper: ContextShaper;
+  readonly #topics: TopicStore;
   readonly #summarizer: Summarizer | undefined;
+  readonly #onTopics: OnTopics | undefined;
   #running: Running | undefined;
   /** Set while the head moves: no queued turn starts meanwhile. */
   #moving = false;
@@ -343,6 +372,11 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
      * long tool results outside the tail trimmed).
      */
     compaction?: { summarizer?: Summarizer; options?: Partial<CompactionOptions> };
+    /**
+     * Told the topic titles on the active path when they change (statewalker/statewalker-root#174):
+     * the host keeps them in the User DO's session index.
+     */
+    onTopics?: OnTopics;
   }) {
     this.#sql = options.sql;
     this.#runTurn = options.runTurn;
@@ -353,6 +387,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     this.#compacts = options.compacts;
     this.#cancelApprovals = options.cancelApprovals;
     this.#effectOf = options.effectOf;
+    this.#onTopics = options.onTopics;
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS agent_config (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS agent_turns (id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -374,7 +409,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         PRIMARY KEY (turn, session));
       CREATE TABLE IF NOT EXISTS cancelled_approvals (turn TEXT NOT NULL, approval TEXT NOT NULL,
         PRIMARY KEY (turn, approval));`);
-    this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
+    this.#topics = new TopicStore({ sql: this.#sql, pathTo: (turn) => this.#pathTo(turn) });
+    this.#shaper = new ContextShaper({
+      sql: this.#sql,
+      options: options.compaction?.options,
+      topics: this.#topics,
+    });
     this.#summarizer = options.compaction?.summarizer;
     this.#migrate();
     this.#recover();
@@ -895,18 +935,23 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     signal: AbortSignal,
   ): Promise<ContextEntry[]> {
     if (this.#summarizer && (this.#compacts?.(config) ?? true)) {
+      let topics = false;
       try {
         await this.#shaper.compact(before, this.#summarizer, {
           path: this.#pathTo(turn),
           signal,
           onSummary: (summary) => this.#log("summary.created", turn, summary),
           onThrash: (info) => this.#log("context.over_budget", turn, info),
+          onTopics: () => {
+            topics = true;
+          },
         });
       } catch (e) {
         // A failed summary leaves the context uncompacted; the turn still runs.
         if (signal.aborted) throw e;
         this.#log("compaction.failed", turn, { message: String((e as Error)?.message ?? e) });
       }
+      if (topics) await this.#publishTopics(config);
     }
     return this.#shaper.context(before, this.#pathTo(turn));
   }
@@ -1575,6 +1620,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       };
       this.#setHead(target);
       this.#note(previous, target, rewound, path, options.reason);
+      await this.#publishTopics(config);
       if (options.rewind) this.#log("session.rewound", undefined, result);
       this.#log("session.head_changed", undefined, { head: target, previous });
       return result;
@@ -1752,6 +1798,166 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     return { head, turns, leaves: rows.filter((r) => !parents.has(r.id)).map((r) => r.id) };
   }
 
+  // --- the table of contents and session search (statewalker/statewalker-root#174) -------------
+
+  /** The path a query names: the active path, a branch's (the path to one of its turns), or all. */
+  #scopeOf(query: { branch?: string | null; all?: boolean | string }): TopicScope {
+    if (query.all === true || query.all === "true") return { all: true };
+    if (query.branch !== undefined && query.branch !== null && query.branch !== "") {
+      const row = this.#one<{ id: string }>(
+        "SELECT id FROM agent_turns WHERE id = ? AND started IS NOT NULL",
+        String(query.branch),
+      );
+      if (!row) throw codedError("EINVAL", `no turn '${query.branch}' in this session's tree`);
+      return { path: this.#pathTo(String(row.id)) };
+    }
+    return { path: this.#pathTo(this.#head()) };
+  }
+
+  /** The session's table of contents: on the active path, a branch's, or every branch's. */
+  async topics(query: TopicsQuery = {}): Promise<{ topics: Topic[] }> {
+    this.#started();
+    return { topics: this.#topics.list(this.#scopeOf(query ?? {})) };
+  }
+
+  /** Tells the host the topic titles on the active path, when they changed since it was told. */
+  async #publishTopics(config: AgentSessionConfig): Promise<void> {
+    if (!this.#onTopics) return;
+    const titles = this.#topics.list({ path: this.#pathTo(this.#head()) }).map((t) => t.title);
+    const text = JSON.stringify(titles);
+    const told = this.#one<{ value: string }>(
+      "SELECT value FROM agent_config WHERE key = ?",
+      TOPIC_TITLES,
+    );
+    if ((told?.value ?? "[]") === text) return;
+    try {
+      await this.#onTopics(config, titles);
+      this.#sql.exec("INSERT OR REPLACE INTO agent_config VALUES (?, ?)", TOPIC_TITLES, text);
+    } catch (e) {
+      // The index catches up the next time the titles change; the session goes on.
+      console.warn(`topics of ${config.id}: ${String((e as Error)?.message ?? e)}`);
+    }
+  }
+
+  /** When a turn ran: its start (its creation if it never started). */
+  #turnTimes(turns: string[]): Map<string, number> {
+    return new Map(
+      this.#rows<{ id: string; started: number | null; created: number }>(
+        "SELECT id, started, created FROM agent_turns WHERE id IN (SELECT value FROM json_each(?))",
+        JSON.stringify([...new Set(turns)]),
+      ).map((r) => [String(r.id), Number(r.started ?? r.created)]),
+    );
+  }
+
+  /**
+   * This session's part of a session search: its topics, then its items (messages, tool calls
+   * and results), on the active path, a branch's or every branch's, up to `limit` hits.
+   */
+  async scan(query: SessionScanQuery): Promise<{ hits: SessionScanHit[] }> {
+    this.#started();
+    const q = (query ?? {}) as SessionScanQuery;
+    const test = matcher(q.query, q.regex === true);
+    const scope = this.#scopeOf(q);
+    const path = "path" in scope ? scope.path : undefined;
+    const limit = Math.max(1, Math.min(100, Number(q.limit) || 20));
+    const hits: SessionScanHit[] = [];
+    if (q.topics) {
+      const topics = this.#topics.list(scope);
+      const firstTurns = new Map<string, string>();
+      for (const row of this.#rows<{ id: string; turn: string }>(
+        "SELECT id, turn FROM items WHERE id IN (SELECT value FROM json_each(?))",
+        JSON.stringify(topics.map((t) => t.refs[0]).filter(Boolean)),
+      ))
+        firstTurns.set(String(row.id), String(row.turn));
+      for (const t of topics) {
+        if (hits.length >= limit) break;
+        const at = test(`${t.title}\n${t.body}`);
+        if (at < 0) continue;
+        hits.push({
+          kind: "topic",
+          id: t.id,
+          turn: firstTurns.get(String(t.refs[0])) ?? t.through_turn,
+          time: t.updated_at,
+          title: t.title,
+          text: snippet(t.body, Math.max(0, at - t.title.length - 1)),
+          refs: t.refs,
+        });
+      }
+    }
+    if (q.items && hits.length < limit) {
+      const found: { item: Item; at: number; text: string }[] = [];
+      let after = 0;
+      // Paged by seq, so a long session is never read whole.
+      for (;;) {
+        const rows = this.#rows<ItemRow>(
+          `SELECT * FROM items WHERE seq > ? AND kind IN ('message', 'tool_call', 'tool_result')
+            ${path ? "AND turn IN (SELECT value FROM json_each(?))" : ""} ORDER BY seq LIMIT 200`,
+          after,
+          ...(path ? [JSON.stringify(path)] : []),
+        );
+        for (const row of rows) {
+          const item = itemOf(row);
+          const text = searchableText(item);
+          const at = text ? test(text) : -1;
+          if (at >= 0) found.push({ item, at, text });
+          if (hits.length + found.length >= limit) break;
+        }
+        if (rows.length < 200 || hits.length + found.length >= limit) break;
+        after = Number(rows[rows.length - 1]?.seq);
+      }
+      const times = this.#turnTimes(found.map((f) => f.item.turn));
+      for (const { item, at, text } of found)
+        hits.push({
+          kind: "item",
+          id: item.id,
+          turn: item.turn,
+          time: times.get(item.turn) ?? 0,
+          text: snippet(text, at),
+          item_kind: item.kind,
+          ...(item.role ? { role: item.role } : {}),
+          ...(item.name ? { name: item.name } : {}),
+        });
+    }
+    return { hits };
+  }
+
+  /**
+   * A turn and the turns around it (`around` before and after), with their messages, tool calls
+   * and results: on the active path when the turn is on it, else on the path to it.
+   */
+  async openTurns(req: { turn: string; around?: number }): Promise<{
+    turns: { id: string; time: number; items: OpenedItem[] }[];
+  }> {
+    this.#started();
+    const row = this.#treeTurn(String(req?.turn));
+    const around = Math.max(0, Math.min(5, Number.isInteger(req?.around) ? Number(req.around) : 1));
+    const active = this.#pathTo(this.#head());
+    const path = active.includes(row.id) ? active : this.#pathTo(row.id);
+    const at = path.indexOf(row.id);
+    const turns = path.slice(Math.max(0, at - around), at + around + 1);
+    const times = this.#turnTimes(turns);
+    return {
+      turns: turns.map((id) => ({
+        id,
+        time: times.get(id) ?? 0,
+        items: this.#rows<ItemRow>(
+          "SELECT * FROM items WHERE turn = ? AND kind IN ('message', 'tool_call', 'tool_result') ORDER BY seq",
+          id,
+        ).map((r) => {
+          const item = itemOf(r);
+          const text = searchableText(item);
+          return {
+            id: item.id,
+            kind: item.kind,
+            ...(item.role ? { role: item.role } : {}),
+            ...(item.name ? { name: item.name } : {}),
+            text: text.length > OPENED_CHARS ? `${text.slice(0, OPENED_CHARS)}…` : text,
+          };
+        }),
+      })),
+    };
+  }
+
   /**
    * Erases an inactive branch: the turn and every turn after it, with their items, events and
    * summaries. The active path is never erased (EINVAL): rewind first.
@@ -1777,6 +1983,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       set,
     );
     this.#sql.exec(`DELETE FROM summaries WHERE through_turn ${IN}`, set);
+    this.#sql.exec(`DELETE FROM topics WHERE through_turn ${IN}`, set);
     for (const table of [
       "items",
       "events",
@@ -1873,12 +2080,24 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       through_turn: String(r.through_turn),
       created: Number(r.created),
     }));
+    const topics = this.#rows<NonNullable<SessionHistory["topics"]>[number]>(
+      "SELECT id, title, body, refs, through_turn, updated_at FROM topics WHERE through_turn IN (SELECT value FROM json_each(?)) ORDER BY row",
+      json,
+    ).map((r) => ({
+      id: String(r.id),
+      title: String(r.title),
+      body: String(r.body),
+      refs: String(r.refs),
+      through_turn: String(r.through_turn),
+      updated_at: Number(r.updated_at),
+    }));
     return {
       session: config.id,
       at_turn: at.id,
       turns,
       items,
       summaries,
+      ...(topics.length ? { topics } : {}),
       ...(config.limits?.length ? { limits: config.limits } : {}),
     };
   }
@@ -1988,9 +2207,33 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         Number(su.created),
       );
     }
+    // The table of contents on the copied path: the same topic ids, refs to the copied items.
+    for (const tp of h.topics ?? []) {
+      const through = turnIds.get(String(tp.through_turn));
+      if (!through) continue;
+      let refs: string[] = [];
+      try {
+        refs = (JSON.parse(String(tp.refs)) as unknown[]).flatMap((r) => {
+          const id = itemIds.get(String(r));
+          return id ? [id] : [];
+        });
+      } catch {
+        refs = [];
+      }
+      this.#sql.exec(
+        "INSERT INTO topics (id, title, body, refs, through_turn, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+        String(tp.id),
+        String(tp.title),
+        String(tp.body),
+        JSON.stringify(refs),
+        through,
+        Number(tp.updated_at),
+      );
+    }
     const head = turnIds.get(String(h.at_turn)) ?? null;
     this.#setHead(head);
     this.#log("session.head_changed", undefined, { head, previous: null });
+    await this.#publishTopics(config);
     return { head };
   }
 
@@ -1999,7 +2242,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries; DELETE FROM turn_children; DELETE FROM agent_origin_turns; DELETE FROM cancelled_approvals;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries; DELETE FROM topics; DELETE FROM turn_children; DELETE FROM agent_origin_turns; DELETE FROM cancelled_approvals;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

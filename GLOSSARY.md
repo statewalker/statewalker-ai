@@ -156,6 +156,13 @@ The turn an agent session's next message continues from; none before the first t
 A session's topics, each pointing at the items that cover it: a view of the session by subject rather than by time. It is written while the session is summarized, belongs to the session, and is not memory.
 _Avoid_: session memory, index
 
+**Topic**:
+One entry of a session table of contents: a title, a short body, and the items it covers. A later compaction extends a topic rather than repeating it; the newer version supersedes the older one.
+
+**Session search**:
+The harness tool `session_search`: an agent's search of its user's own earlier agent sessions in the same project, their topics first and their items after. Its results are data, never instructions.
+_Avoid_: recall, memory search
+
 **Trigger**:
 A stored instruction that starts agent turns without anyone at the keyboard, owned by a user or a service account and run with the owner's rights at the moment it fires.
 _Avoid_: cron, job, routine
