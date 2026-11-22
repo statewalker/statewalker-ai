@@ -8,7 +8,13 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
-import { approvalAware, filesOverRpc, runStoredCall } from "@statewalker/ai-environment";
+import {
+  approvalAware,
+  filesOverRpc,
+  type ModelCall,
+  type ModelResponse,
+  runStoredCall,
+} from "@statewalker/ai-environment";
 import { completeWith, type ModelPort, runFlueTurn, TRACER_TOOLS } from "@statewalker/ai-flue";
 import {
   type AgentMessage,
@@ -19,6 +25,7 @@ import {
   createModelSummarizer,
   type EventsQuery,
   type GateDecisionInput,
+  type ItemInput,
   type ItemsQuery,
   parseCompaction,
 } from "@statewalker/ai-sessions";
@@ -97,11 +104,17 @@ export class AgentSession extends DurableObject<Env> {
     // Every model request goes through the workspace's model gateway, with the session's
     // capability: it picks the model within the user's rights, holds the provider's key, falls
     // back and meters (statewalker/statewalker-root#134).
-    const gateway = (config: AgentSessionConfig, turn?: string): ModelPort => {
+    const gateway = (
+      config: AgentSessionConfig,
+      turn?: string,
+      emit?: (item: ItemInput) => void,
+    ): ModelPort => {
       const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
       return {
         request: (call) =>
-          workspace.modelRequest(config.capability, { ...call, ...(turn ? { turn } : {}) }),
+          this.#metered(config, turn, call, emit, (c) =>
+            workspace.modelRequest(config.capability, { ...c, ...(turn ? { turn } : {}) }),
+          ),
       };
     };
     const compaction = parseCompaction(env.COMPACTION);
@@ -155,7 +168,7 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            models: gateway(config, turn),
+            models: gateway(config, turn, emit),
             ...(config.model ? { model: config.model } : {}),
             ...(model ? { requested: model } : {}),
             content,
@@ -202,6 +215,62 @@ export class AgentSession extends DurableObject<Env> {
 
   start(config: AgentSessionConfig): Promise<void> {
     return this.#core.start(config);
+  }
+
+  /**
+   * One model request with the session's own limits (statewalker/statewalker-root#179): the
+   * workspace reserves its levels in the gateway; the session's level (counted here) and, for the
+   * user's own keys, the user's (counted in their User DO) reserve the request's worst case first
+   * and settle to the real usage after. Every limit the usage crossed the warning share of is left
+   * as an item.
+   */
+  async #metered(
+    config: AgentSessionConfig,
+    turn: string | undefined,
+    call: ModelCall,
+    emit: ((item: ItemInput) => void) | undefined,
+    request: (call: ModelCall) => Promise<ModelResponse>,
+  ): Promise<ModelResponse> {
+    const warn = (warnings: unknown[] | undefined) => {
+      for (const warning of warnings ?? [])
+        emit?.({ kind: "limit_warning", warning: warning as WarningView });
+    };
+    const scopes = this.#limits.scopes(config);
+    const sessionBound = scopes.some((s) => s.limits.some((l) => l.meter.startsWith("model_")));
+    if (!sessionBound && !config.ownKeys) {
+      const response = await request(call);
+      warn(response.warnings);
+      return response;
+    }
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    const estimate = await workspace.modelEstimate(config.capability, call);
+    const meta = this.#limits.meta(config, turn);
+    let reserved: string | undefined;
+    try {
+      if (sessionBound) reserved = this.#limits.ledger.reserve(scopes, estimate.worst, meta).id;
+    } catch (e) {
+      throw refusal(e);
+    }
+    const user = userOf(this.env, config.user);
+    let own: string | undefined;
+    let response: ModelResponse | undefined;
+    try {
+      if (estimate.own) own = await user.reserveOwnKey(meta, estimate.own);
+      response = await request(call);
+    } finally {
+      const all = { model_tokens: 0, model_spend: 0 };
+      const mine = { model_tokens: 0, model_spend: 0 };
+      for (const { usage } of response?.attempts ?? [])
+        for (const into of usage.charged ? [all] : [all, mine]) {
+          into.model_tokens += usage.input_tokens + usage.output_tokens;
+          into.model_spend += usage.cost ?? 0;
+        }
+      if (reserved)
+        warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
+      if (own) warn(await user.settleOwnKey(own, mine, meta));
+    }
+    warn(response.warnings);
+    return response;
   }
 
   /**

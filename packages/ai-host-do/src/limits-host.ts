@@ -233,3 +233,39 @@ export class SessionLimits {
     };
   }
 }
+
+/**
+ * The User DO's limits: the user level, which counts spend on the user's own keys across the
+ * deployment. Its limits are the deployment's (`deployment` ceilings and `user` defaults) and the
+ * user's own, in their profile's `/limits`.
+ */
+export class UserLimits {
+  readonly ledger: LimitLedger;
+  readonly #env: Env;
+  readonly #user: string;
+  readonly #read: () => Promise<string | undefined>;
+
+  constructor(sql: SqlLike, env: Env, user: string, read: () => Promise<string | undefined>) {
+    this.ledger = new LimitLedger(sql, ledgerOptions(env));
+    this.#env = env;
+    this.#user = user;
+    this.#read = read;
+  }
+
+  async scopes(): Promise<LimitScope[]> {
+    const { limits, problems } = parseLimits(await this.#read());
+    if (problems.length) console.warn(`limits of ${this.#user}: ${problems.join("; ")}`);
+    const deployment = deploymentLimits(this.#env);
+    return [
+      {
+        level: "user",
+        target: this.#user,
+        limits: [
+          ...deployment.filter((l) => l.level === "deployment"),
+          ...limitsFor(deployment, "user", this.#user),
+          ...limitsFor(limits, "user", this.#user),
+        ],
+      },
+    ];
+  }
+}

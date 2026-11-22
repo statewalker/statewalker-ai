@@ -165,6 +165,16 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     return json({ usage: await workspaceOf(env, id).modelUsage() });
   }
+  if (collection === "workspaces" && id && sub === "usage-records") {
+    // The workspace's usage records (their reports and export are statewalker-root#181's).
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    return json({ records: await workspaceOf(env, id).usageRecords(Number(body.since) || 0) });
+  }
+  if (collection === "users" && id && sub === "usage-records") {
+    // A user's own-key usage records, in their User DO.
+    return json({ records: await userOf(env, id).usageRecords(Number(body.since) || 0) });
+  }
   if (collection === "workspaces" && id && sub === "database-storage") {
     // Every database of the workspace and its size: the storage meter's input (#179).
     if (!workspacesOf(env).includes(id))

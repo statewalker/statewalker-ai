@@ -63,6 +63,7 @@ import {
   checkUserProvider,
   deploymentSecrets,
   discoverModels,
+  estimateRequest,
   FilesRpcHost,
   type FilesRpcMethod,
   type GatedFilesOptions,
@@ -499,6 +500,42 @@ export class Workspace extends DurableObject<Env> {
         project: facts.project,
       },
     );
+  }
+
+  /**
+   * The worst case of an agent session's next model request (statewalker/statewalker-root#179),
+   * over every model it may run on (the one asked for, the session's and its fallbacks): what the
+   * session reserves against its own limits, and, for the user's own keys, against the user's.
+   */
+  async modelEstimate(
+    capability: string,
+    call: ModelCall,
+  ): Promise<{ worst: Record<string, number>; own?: Record<string, number> }> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    const found = this.#models.pinned(facts.session);
+    if (!found || found.user !== facts.user || found.project !== facts.project)
+      throw codedError("ENOENT", "the agent session pinned no model");
+    const { catalog } = found.pinned;
+    const ids = [
+      ...(typeof call.model === "string" && call.model ? [call.model] : []),
+      found.pinned.model,
+      ...found.pinned.fallbacks,
+    ];
+    const worst: Record<string, number> = { model_tokens: 0 };
+    let own: Record<string, number> | undefined;
+    for (const id of ids) {
+      const model = lookupModel(catalog, id);
+      const provider = model ? catalog.providers[model.provider] : undefined;
+      if (!model || !provider) continue;
+      const e = estimateRequest(model, provider, {
+        context: call.context,
+        ...(typeof call.maxTokens === "number" ? { maxTokens: call.maxTokens } : {}),
+      });
+      const amounts = { model_tokens: e.input_tokens + e.max_tokens, model_spend: e.cost ?? 0 };
+      for (const into of e.own_key ? [worst, (own ??= { model_tokens: 0 })] : [worst])
+        for (const [k, v] of Object.entries(amounts)) into[k] = Math.max(into[k] ?? 0, v);
+    }
+    return { worst, ...(own ? { own } : {}) };
   }
 
   /**

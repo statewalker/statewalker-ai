@@ -14,6 +14,7 @@ import {
   rpcClient,
   type SessionClient,
   seed,
+  seedProfiles,
   startDeployment,
 } from "../src/index.js";
 
@@ -54,6 +55,7 @@ function projectFiles(t: string): Record<string, string> {
       period: "day",
       warn_at: 0.5,
     }),
+    [`/free-${t}/.system/access`]: owner("ann", "kim"),
     [`/spend-${t}/.system/access`]: owner("ann"),
     [`/spend-${t}/.system/limits`]: limits({
       meter: "model_spend",
@@ -86,6 +88,16 @@ const transports: [string, Connect][] = [
   ],
 ];
 
+/** The workspace's usage records (test-only admin route). */
+async function usageRecords(workspace: string): Promise<Record<string, unknown>[]> {
+  const res = await deployment.fetch(`/admin/workspaces/${workspace}/usage-records`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${ADMIN_KEY}`, "content-type": "application/json" },
+    body: "{}",
+  });
+  return ((await res.json()) as { records: Record<string, unknown>[] }).records;
+}
+
 let model: FakeModel;
 let deployment: Deployment;
 
@@ -94,6 +106,8 @@ beforeAll(async () => {
   deployment = await startDeployment(HOST, {
     DEV_LOGIN: "true",
     ADMIN_KEY,
+    SECRETS_KEY: "conformance-secrets-key",
+    USER_PROVIDER_HOSTS: "127.0.0.1",
     MODELS: model.deploymentModels({
       models: [
         { id: "scripted/default", alias: "default" },
@@ -103,6 +117,17 @@ beforeAll(async () => {
     }),
   });
   await seed(deployment, ADMIN_KEY, FILES);
+  // Each user's own limits are in their profile: they cap spend on their own keys.
+  await seedProfiles(
+    deployment,
+    ADMIN_KEY,
+    Object.fromEntries(
+      TRANSPORTS.map((t) => [
+        `/profiles/kim-${t}/limits`,
+        limits({ meter: "model_spend", level: "user", value: 12, period: "month" }),
+      ]),
+    ),
+  );
 }, 120_000);
 afterAll(async () => {
   for (const s of sockets) s.close();
@@ -233,5 +258,56 @@ describe.each(transports)("limits over %s", (name, connect) => {
     // Once per window: the third turn warns no more.
     const third = await ann.sendMessage(s.id, { content: "hello" });
     expect(third.items.some((i) => i.kind === "limit_warning")).toBe(false);
+  });
+
+  it("holds a session to its own limit on model spend, counted in its own DO", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({
+      project: `free-${t}`,
+      model: "scripted/priced",
+      limits: [{ meter: "model_spend", value: 12, period: "total" }],
+    });
+    expect(await ann.sendMessage(s.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+    expect(await ann.sendMessage(s.id, { content: "hello" })).toMatchObject({
+      status: "incomplete",
+      stop_reason: { type: "budget", limit: { level: "session", target: s.id, value: 12 } },
+    });
+    // Another session of the same user in the same project is not held by it.
+    const other = await ann.startSession({ project: `free-${t}`, model: "scripted/priced" });
+    expect(await ann.sendMessage(other.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+  });
+
+  it("charges spend on the user's own key to the user's limits, not the workspace's", async () => {
+    const kim = await as("kim");
+    await kim.setSecret({
+      level: "user",
+      name: "KIM_KEY",
+      value: "kim-model-key",
+      bindings: { plugins: ["model-gateway"], hosts: ["127.0.0.1"] },
+    });
+    await kim.setModelConfig({
+      providers: [{ id: "kims", api: "openai-completions", baseUrl: model.url, secret: "KIM_KEY" }],
+      models: [{ id: "kims/own", maxTokens: 10, cost: { input: 0, output: 1_000_000 } }],
+    });
+    const s = await kim.startSession({ project: `free-${t}`, model: "kims/own" });
+    expect(await kim.sendMessage(s.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+    expect(await kim.sendMessage(s.id, { content: "hello" })).toMatchObject({
+      status: "incomplete",
+      stop_reason: { type: "budget", limit: { level: "user", target: `kim-${t}`, value: 12 } },
+    });
+    // The workspace's own models are not the user's keys: they still run for kim.
+    const priced = await kim.startSession({ project: `free-${t}`, model: "scripted/priced" });
+    expect(await kim.sendMessage(priced.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+    // Own-key spend is recorded with the user, never in the workspace's usage records.
+    const records = await usageRecords("default");
+    expect(records.some((r) => r.session === s.id && r.meter === "model_spend")).toBe(false);
   });
 });
