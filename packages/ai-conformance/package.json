@@ -11,7 +11,8 @@
   "scripts": {
     "test": "vitest run",
     "test:nightly": "vitest run --config vitest.nightly.config.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p browser",
+    "test:browser": "CONFORMANCE_RUNTIME=browser vitest run"
   },
   "devDependencies": {
     "@statewalker/ai-sessions": "workspace:^",
@@ -24,6 +25,9 @@
     "vitest": "catalog:",
     "@statewalker/ai-environment": "workspace:^",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/webrun-files-rpc": "catalog:"
+    "@statewalker/webrun-files-rpc": "catalog:",
+    "playwright": "catalog:",
+    "vite": "catalog:",
+    "@statewalker/ai-host-do": "workspace:^"
   }
 }

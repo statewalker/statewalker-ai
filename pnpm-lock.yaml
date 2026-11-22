@@ -84,6 +84,9 @@ catalogs:
     just-bash:
       specifier: ^3.6.0
       version: 3.6.1
+    playwright:
+      specifier: ^1.63.0
+      version: 1.65.1
     tsdown:
       specifier: ^0.23.0
       version: 0.23.7
@@ -96,6 +99,9 @@ catalogs:
     typescript:
       specifier: ^7.0.2
       version: 7.0.2
+    vite:
+      specifier: ^8.3.2
+      version: 8.3.2
     vitest:
       specifier: ^5.0.3
       version: 5.0.3
@@ -162,6 +168,9 @@ importers:
       '@statewalker/ai-environment':
         specifier: workspace:^
         version: link:../ai-environment
+      '@statewalker/ai-host-do':
+        specifier: workspace:^
+        version: link:../ai-host-do
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
@@ -186,9 +195,15 @@ importers:
       esbuild:
         specifier: 'catalog:'
         version: 0.28.2
+      playwright:
+        specifier: 'catalog:'
+        version: 1.65.1
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
+      vite:
+        specifier: 'catalog:'
+        version: 8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1)
       vitest:
         specifier: 'catalog:'
         version: 5.0.3(@types/node@26.6.4)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
@@ -2202,6 +2217,16 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.65.1:
+    resolution: {integrity: sha512-vJ1FuoOrNwOKHUIVEvSt3jT1L+wjjDpwhwIstKtfvTh8XIG4FG4bIFuvNdMxi81LGfAhUgUZleVFaOLY4RIUUw==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   possible-typed-array-names@1.1.0:
     resolution: {integrity: sha512-/+5VFTchJDoVj3bhoqi6UeymcD00DAwb1nJwamzPvHEszJ4FpF6SNNbUbOS8yI56qHzdV8eK0qEfOSiodkTdxg==}
@@ -4405,6 +4430,12 @@ snapshots:
   picomatch@4.0.7: {}
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.65.1: {}
+
+  playwright@1.65.1:
+    dependencies:
+      playwright-core: 1.65.1
 
   possible-typed-array-names@1.1.0: {}
 

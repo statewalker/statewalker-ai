@@ -1,4 +1,4 @@
-// A deployment on CellB Node, in this process: a Worker project (wrangler config + main) loaded by
+// A deployment on CellB Node, in this process (or in Chromium: browser-deployment.ts): a Worker project (wrangler config + main) loaded by
 // @statewalker/cellb, with its vars overridden for the run and its cells in a fresh directory.
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,7 +32,24 @@ function stripJsonc(source: string): string {
   return out.replace(/,(\s*[}\]])/g, "$1");
 }
 
+/** The runtime deployments start on: `CONFORMANCE_RUNTIME`, "node" (default) or "browser". */
+export const RUNTIME: "node" | "browser" =
+  process.env.CONFORMANCE_RUNTIME === "browser" ? "browser" : "node";
+
+/** Starts the Worker project on the run's runtime (`RUNTIME`), with `vars` over its configuration. */
 export async function startDeployment(
+  projectDir: URL,
+  vars: Record<string, string> = {},
+): Promise<Deployment> {
+  if (RUNTIME === "browser") {
+    const { startBrowserDeployment } = await import("./browser-deployment.js");
+    return startBrowserDeployment(projectDir, vars);
+  }
+  return startNodeDeployment(projectDir, vars);
+}
+
+/** Starts the Worker project on CellB Node, in this process. */
+export async function startNodeDeployment(
   projectDir: URL,
   vars: Record<string, string> = {},
 ): Promise<Deployment> {

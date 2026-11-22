@@ -116,6 +116,7 @@ import type {
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
 import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
+import { isBrowserHosting, localSecretsKey } from "./browser.js";
 import { type DatabaseCall, DatabaseGate, type DatabaseView } from "./database-gate.js";
 import { agentRun, DefinitionsStore } from "./definitions-store.js";
 import {
@@ -158,6 +159,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #modes: Record<string, ModeDefinition>;
   readonly #deploymentRules: PermissionRules;
   readonly #secrets: SecretStore;
+  /** Whether this deployment runs in a browser page (HOSTING "browser"). */
+  readonly #browser: boolean;
   readonly #definitions: DefinitionsStore;
   readonly #models: ModelStore;
   readonly #databases: DatabaseGate;
@@ -221,7 +224,14 @@ export class Workspace extends DurableObject<Env> {
     this.#modes = deploymentModes(env);
     this.#deploymentRules = deploymentRules(env);
     // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
-    this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
+    // In a browser page the deployment holds no key: its users' secrets are sealed with one the
+    // page made for itself, and SECRETS_KEY is ignored even when given.
+    this.#browser = isBrowserHosting(env);
+    this.#secrets = new SecretStore({
+      sql,
+      secretsKey: this.#browser ? localSecretsKey(sql) : env.SECRETS_KEY,
+      workspace: this.#name,
+    });
     this.#definitions = new DefinitionsStore(sql);
     this.#models = new ModelStore(sql);
     this.#databases = new DatabaseGate({
@@ -1181,6 +1191,8 @@ export class Workspace extends DurableObject<Env> {
   }
 
   #deploymentSecrets() {
+    // A browser deployment has none, whatever it was given.
+    if (this.#browser) return deploymentSecrets(undefined, {});
     return deploymentSecrets(
       this.env.DEPLOYMENT_SECRETS,
       this.env as unknown as Record<string, unknown>,
@@ -1203,6 +1215,9 @@ export class Workspace extends DurableObject<Env> {
     const refuse = () => codedError("EACCES", `${user} may not manage ${scope.level} secrets here`);
     const holds = (grants: readonly RoleGrant[], target: string) =>
       decide(grants, { area: "secrets", action: "write", target });
+    // A browser page holds only its users' own secrets: nothing above user level is ever written.
+    if (this.#browser && write && scope.level !== "user")
+      throw codedError("EACCES", `a browser deployment keeps no ${scope.level} secrets`);
     switch (scope.level) {
       case "user":
         return { level: "user", scope: user };
