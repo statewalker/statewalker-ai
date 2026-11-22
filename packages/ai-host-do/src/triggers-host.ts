@@ -543,7 +543,8 @@ export class TriggersHost {
       throw codedError("EACCES", "only its owner changes this trigger; you may disable it");
     const now = this.#o.now();
     const base = this.#def(row);
-    let def = this.#checkDef(patch, base);
+    // Disabling never fails on a definition the deployment no longer accepts (a mode it dropped).
+    let def = onlyDisable ? base : this.#checkDef(patch, base);
     let next = row.next_fire === null ? undefined : Number(row.next_fire);
     if (patch.schedule !== undefined) {
       if (row.kind !== "schedule")
