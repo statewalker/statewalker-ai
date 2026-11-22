@@ -488,6 +488,12 @@ export interface SendMessageRequest {
    * The projections' `previous_response_id` (OpenAI) and UHP's chaining without `branch`.
    */
   after_turn?: string;
+  /**
+   * Passes over the approvals the active path still waits on (statewalker/statewalker-root#139):
+   * they are cancelled (an answer is refused, they expire no more) before the message is queued,
+   * and listed in `voided_approvals`. UHP's rule for new input chained on a pending question.
+   */
+  void_approvals?: boolean;
 }
 
 /** A message the session accepted (REST: `202`). For `steer`, accepted is not yet applied. */
@@ -501,6 +507,8 @@ export interface MessageAccepted {
   offset: number;
   /** Fields of the request the API did not use. */
   ignored?: string[];
+  /** The approvals `void_approvals` passed over. */
+  voided_approvals?: string[];
 }
 
 /** Items, paged: `after` / `before` are item ids. */
@@ -739,6 +747,26 @@ export interface ModelView {
   discovered?: true;
 }
 
+/**
+ * An agent the caller may start a session on, in one of their projects (statewalker/statewalker-root#139):
+ * the UHP projection lists each as a harness.
+ */
+export interface AgentView {
+  project: string;
+  /** `<plugin>/<agent>`. */
+  id: string;
+  description?: string;
+  /** The model a session of it would start on now, when one fits. */
+  model?: string;
+  /** The project's default agent (its `.system/settings`). */
+  default?: true;
+}
+
+/** The projects to list agents of: one, or (without it) every project the caller is a member of. */
+export interface AgentsQuery {
+  project?: string;
+}
+
 export interface ModelsQuery {
   project: string;
   /** Asks each provider's `/models` endpoint too. */
@@ -946,6 +974,11 @@ export interface SessionApi {
   deleteServiceAccount(name: string): Promise<{ deleted: true }>;
   /** A project's models as the caller sees them; `discover` asks each provider's `/models`. */
   listModels(query: ModelsQuery): Promise<{ models: ModelView[] }>;
+  /**
+   * The agents the caller may start a session on: in `project` (EACCES for a non-member), or in
+   * every project they are a member of (statewalker/statewalker-root#139).
+   */
+  listAgents(query?: AgentsQuery): Promise<{ agents: AgentView[] }>;
   /** The caller's own model configuration (user level) in the token's workspace. */
   getModelConfig(): Promise<ModelsConfig>;
   /** Replaces the caller's own model configuration: their providers (keys are user secrets). */
@@ -1187,6 +1220,7 @@ export interface UserPort {
   createServiceAccount(token: string, name: string): Promise<CreatedServiceAccount>;
   deleteServiceAccount(token: string, name: string): Promise<{ deleted: true }>;
   listModels(token: string, query: ModelsQuery): Promise<{ models: ModelView[] }>;
+  listAgents(token: string, query: AgentsQuery): Promise<{ agents: AgentView[] }>;
   getModelConfig(token: string): Promise<ModelsConfig>;
   /** The configuration is checked by the workspace (EINVAL). */
   setModelConfig(token: string, config: unknown): Promise<ModelsConfig>;
@@ -1214,6 +1248,8 @@ export interface AgentMessage {
   ignored: string[];
   /** The turn to chain the message on (`SendMessageRequest.after_turn`). */
   after_turn?: string;
+  /** Passes over the approvals the active path waits on (`SendMessageRequest.void_approvals`). */
+  void_approvals?: true;
   /**
    * "agent": written by another agent (a sub-agent's task from its parent), not by the user; auto
    * mode's risk classifier never takes it as the user's words.
@@ -1429,6 +1465,14 @@ function modelsQuery(query: unknown): ModelsQuery {
   return { project, ...(discover === true || discover === "true" ? { discover: true } : {}) };
 }
 
+function agentsQuery(query: unknown): AgentsQuery {
+  const { project } = (query ?? {}) as Record<string, unknown>;
+  if (project === undefined || project === null || project === "") return {};
+  if (typeof project !== "string" || !NAME.test(project))
+    throw codedError("EINVAL", "project must be a project's name");
+  return { project };
+}
+
 function accountName(name: unknown): string {
   if (typeof name !== "string" || !name) throw codedError("EINVAL", "name is required");
   return name;
@@ -1445,13 +1489,13 @@ function approvalAnswer(answer: unknown): ApprovalAnswer {
   return { decision, scope: scope ?? "once", ...(message ? { message } : {}) };
 }
 
-const MESSAGE_FIELDS = ["content", "delivery", "model", "after_turn"];
+const MESSAGE_FIELDS = ["content", "delivery", "model", "after_turn", "void_approvals"];
 const DELIVERIES: readonly string[] = ["next", "steer", "interrupt"];
 
 /** A message request, checked; the fields it holds that the API does not use are reported. */
 function messageOf(req: unknown): AgentMessage {
   const body = (req ?? {}) as Record<string, unknown>;
-  const { content, delivery = "next", model, after_turn } = body;
+  const { content, delivery = "next", model, after_turn, void_approvals } = body;
   if (typeof content !== "string" || !content)
     throw codedError("EINVAL", "content must be a non-empty string");
   if (typeof delivery !== "string" || !DELIVERIES.includes(delivery))
@@ -1460,11 +1504,13 @@ function messageOf(req: unknown): AgentMessage {
     throw codedError("EINVAL", "model must be a model's name");
   if (after_turn !== undefined && (typeof after_turn !== "string" || !after_turn))
     throw codedError("EINVAL", "after_turn must be a turn's id");
+  const voids = optionalBoolean(void_approvals, "void_approvals");
   return {
     content,
     delivery: delivery as Delivery,
     ...(model ? { model: model as string } : {}),
     ...(after_turn ? { after_turn: after_turn as string } : {}),
+    ...(voids ? { void_approvals: true as const } : {}),
     ignored: Object.keys(body)
       .filter((k) => !MESSAGE_FIELDS.includes(k))
       .sort(),
@@ -1834,6 +1880,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       ports.user.createServiceAccount(token, accountName(req?.name)),
     deleteServiceAccount: async (name) => ports.user.deleteServiceAccount(token, accountName(name)),
     listModels: async (query) => ports.user.listModels(token, modelsQuery(query)),
+    listAgents: async (query) => ports.user.listAgents(token, agentsQuery(query)),
     getModelConfig: () => ports.user.getModelConfig(token),
     setModelConfig: async (config) => ports.user.setModelConfig(token, config),
     listMemory: async (target) =>

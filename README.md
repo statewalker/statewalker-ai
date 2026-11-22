@@ -35,7 +35,8 @@ packages/
 published (the first usable release, statewalker/statewalker-root#132), and `ai-memory`
 (statewalker/statewalker-root#173), which `ai-sessions` and `ai-host-do` depend on, and
 `ai-uhp-client` (statewalker/statewalker-root#144), which `ai-host-do` depends on, and
-`ai-openai-compat` (statewalker/statewalker-root#138), which `ai-host-do` routes; the others are private
+`ai-openai-compat` (statewalker/statewalker-root#138) and `ai-uhp` (statewalker/statewalker-root#139),
+which `ai-host-do` routes; the others are private
 skeletons until their tickets give them content. A package's first version is published once, by a
 human, and later releases go through CI (statewalker-root's release rules). In the workspace the
 packages export their TypeScript sources; `publishConfig.exports` points the published ones at

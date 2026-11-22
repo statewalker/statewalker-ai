@@ -1,22 +1,52 @@
 {
   "name": "@statewalker/ai-uhp",
   "version": "0.0.0",
-  "private": true,
   "license": "MIT",
-  "description": "The UHP projection of the session API, at UHP class Core.",
+  "description": "The UHP projection of the session API: UHP class Core plus input_requests, pinned to UHP 2026-10-19.",
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-uhp#readme",
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-uhp"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    }
   },
   "scripts": {
     "build": "tsdown",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@statewalker/ai-access": "workspace:^",
+    "@statewalker/ai-openai-compat": "workspace:^",
+    "@statewalker/ai-sessions": "workspace:^"
+  },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

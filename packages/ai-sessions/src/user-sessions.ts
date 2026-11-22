@@ -48,6 +48,8 @@ import type {
   AgentRun,
   AgentSessionConfig,
   AgentSessionView,
+  AgentsQuery,
+  AgentView,
   ApiRequestKind,
   ApprovalAnswer,
   ApprovalView,
@@ -105,6 +107,8 @@ export interface WorkspaceGrants {
   ): Promise<PinnedDefinitions>;
   /** A project's models as the user sees them; `discover` asks each provider's `/models`. */
   listModels(userCapability: string, query: ModelsQuery): Promise<ModelView[]>;
+  /** The agents the user may start sessions on, in one project or every project they are in. */
+  listAgents(userCapability: string, query: AgentsQuery): Promise<AgentView[]>;
   /** The user's own model configuration (user level) there. */
   getModelConfig(userCapability: string): Promise<ModelsConfig>;
   /** Replaces it; EINVAL for a malformed configuration. */
@@ -1322,6 +1326,11 @@ export class UserSessions implements UserPort {
   async listModels(token: string, query: ModelsQuery): Promise<{ models: ModelView[] }> {
     const us = await this.#userSession(token);
     return { models: await this.#o.workspace(us.workspace).listModels(us.capability, query) };
+  }
+
+  async listAgents(token: string, query: AgentsQuery): Promise<{ agents: AgentView[] }> {
+    const us = await this.#userSession(token);
+    return { agents: await this.#o.workspace(us.workspace).listAgents(us.capability, query) };
   }
 
   async getModelConfig(token: string): Promise<ModelsConfig> {

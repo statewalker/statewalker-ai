@@ -78,8 +78,12 @@ const neverDeleted = (what: string) =>
     405,
   );
 
-/** An SSE response of a stream of events (`data:` JSON, `event:` its type unless `plain`). */
-function sse(
+/**
+ * An SSE response of a stream of events (`data:` JSON, `event:` its type when `named`), an idle
+ * frame a keep-alive comment; `done` ends it with `data: [DONE]`. The UHP projection streams
+ * through it too (statewalker/statewalker-root#108).
+ */
+export function sseResponse(
   frames: AsyncGenerator<Record<string, unknown> | { idle: true }>,
   options: { done?: boolean; named?: boolean; onCancel?: () => Promise<unknown> } = {},
 ): Response {
@@ -196,7 +200,7 @@ export async function handleOpenAiRest(
       const body = await bodyOf(request);
       const started = await startChat(api(), route, body);
       if (body.stream === true)
-        return sse(
+        return sseResponse(
           chatChunks(api(), started, {
             keepAliveMs,
             includeUsage:
@@ -213,7 +217,7 @@ export async function handleOpenAiRest(
         const body = await bodyOf(request);
         const created = await createResponse(api(), route, body);
         if (body.stream === true)
-          return sse(responseEvents(api(), created, { keepAliveMs }), { named: true });
+          return sseResponse(responseEvents(api(), created, { keepAliveMs }), { named: true });
         return json(await createdResponse(api(), created, body.background !== true));
       }
       if (id && rest.length === 2) {
