@@ -62,6 +62,9 @@ const KNOWN_FIELDS = [
   "background",
 ];
 
+/** How a request field the projection did not act on is kept among the turn's ignored fields. */
+const IGNORED_MARK = "uhp:";
+
 export const responseId = (turn: string) => `${RESPONSE_PREFIX}${turn}`;
 export const inputRequestId = (approval: string) => `${INPUT_REQUEST_PREFIX}${approval}`;
 const seconds = (ms: number) => Math.floor(ms / 1000);
@@ -281,7 +284,9 @@ export async function responseOf(
     : view.parent_turn
       ? responseId(view.parent_turn)
       : (context.previous ?? null);
-  const ignored = (view.ignored ?? []).filter((f) => f !== "void_approvals" && f !== "after_turn");
+  const ignored = (view.ignored ?? [])
+    .filter((f) => f.startsWith(IGNORED_MARK))
+    .map((f) => f.slice(IGNORED_MARK.length));
   const usage = view.usage
     ? {
         input_tokens: view.usage.input_tokens + view.usage.cached_tokens,
@@ -461,7 +466,8 @@ export async function createTask(api: UhpApi, body: Record<string, unknown>): Pr
     .filter((k) => !(k === "store" && body.store === true));
   for (const k of Object.keys(metadata))
     if (k !== "harness_id" && present(metadata[k])) ignored.push(`metadata.${k}`);
-  const marks = Object.fromEntries(ignored.map((k) => [k, true]));
+  // Marked apart, so no request field can stand for one the session API reads.
+  const marks = Object.fromEntries(ignored.map((k) => [`${IGNORED_MARK}${k}`, true]));
   const harnessParam = "metadata.harness_id";
   const named =
     typeof metadata.harness_id === "string" && metadata.harness_id

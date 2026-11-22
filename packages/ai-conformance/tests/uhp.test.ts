@@ -120,6 +120,18 @@ async function sseOf(res: Response): Promise<{ events: Json[]; comments: string[
   return { events, comments };
 }
 
+/** Waits until a response's turn has ended, reading its session's log. */
+async function turnEnded(client: SessionClient, response: Json): Promise<void> {
+  const session = String(response.metadata.session_id);
+  const turn = String(response.id).slice("resp_".length);
+  await client.waitTurn({
+    turn_id: turn,
+    session_id: session,
+    offset: 0,
+    stream_url: `/v1/sessions/${session}/events`,
+  } as never);
+}
+
 describe.each(transports)("the UHP projection over %s", (name, connect) => {
   const t = name.toLowerCase();
   const project = `uhp-${t}`;
@@ -388,10 +400,15 @@ describe.each(transports)("the UHP projection over %s", (name, connect) => {
         include: ["reasoning.encrypted_content"],
         max_step: 3,
         store: true,
+        // Fields of the session API's own: still only ignored.
+        content: "not this",
+        delivery: "steer",
       })
     ).body;
     expect(r.status).toBe("completed");
     expect([...r.metadata.ignored_fields].sort()).toEqual([
+      "content",
+      "delivery",
       "include",
       "max_step",
       "metadata.memory",
@@ -400,7 +417,7 @@ describe.each(transports)("the UHP projection over %s", (name, connect) => {
     // Kept with the turn: read back, the response says the same.
     expect(
       [...(await json("GET", `/v1/responses/${r.id}`)).body.metadata.ignored_fields].sort(),
-    ).toEqual(["include", "max_step", "metadata.memory", "tools"]);
+    ).toEqual(["content", "delivery", "include", "max_step", "metadata.memory", "tools"]);
   });
 
   it("continues the session with previous_response_id, and refuses another harness, a busy session and an unknown response", async () => {
@@ -459,6 +476,7 @@ describe.each(transports)("the UHP projection over %s", (name, connect) => {
       });
     }
     model.release(h);
+    await turnEnded(client, running);
     const done = (
       await json("POST", "/v1/responses", { input: "after", previous_response_id: running.id })
     ).body;
