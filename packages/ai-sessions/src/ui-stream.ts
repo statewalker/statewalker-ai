@@ -77,6 +77,25 @@ export type UiStreamApi = Pick<
 > &
   Pick<SessionApi, "answerApproval">;
 
+/**
+ * Whether a session still waits on a sub-agent's approval (statewalker/statewalker-ai#88): it is
+ * waiting, and its latest turns hold the approval. Checked before answering, so an answer that would
+ * continue only the sub-agent is refused before it is given.
+ */
+export async function waitsOnSubAgent(
+  api: Pick<SessionApi, "getSession" | "listItems">,
+  session: string,
+  approval: string,
+): Promise<boolean> {
+  if ((await api.getSession(session)).status !== "waiting") return false;
+  const { items } = await api.listItems(session, {
+    types: ["approval", "question"],
+    order: "desc",
+    limit: 100,
+  });
+  return items.some((i) => i.approval === approval && i.stored?.method === "agent");
+}
+
 export const UI_MESSAGE_STREAM_HEADERS = {
   "content-type": "text/event-stream",
   "cache-control": "no-cache",
@@ -151,19 +170,30 @@ export async function chatPlan(
     const { approvals } = await api.listApprovals();
     const pending = answers.filter((a) => {
       const approval = approvals.find((v) => v.id === a.id);
-      if (!approval || approval.session !== session)
+      // A sub-agent's approval is answered as its root session's (statewalker/statewalker-ai#88).
+      if (!approval || (approval.session !== session && approval.root !== session))
         throw codedError("EINVAL", `no approval ${a.id} in this session`);
       return approval.status === "pending";
     });
     if (!pending.length) throw codedError("EINVAL", "the message answers no pending approval");
+    for (const a of pending) {
+      const approval = approvals.find((v) => v.id === a.id);
+      if (approval?.session !== session && !(await waitsOnSubAgent(api, session, a.id)))
+        throw codedError("EINVAL", `approval ${a.id} no longer continues this session`);
+    }
     const turns: string[] = [];
     let since = Number.POSITIVE_INFINITY;
     for (const a of pending) {
-      const { accepted } = await api.answerApproval(a.id, {
+      const answered = await api.answerApproval(a.id, {
         decision: a.allow ? "allow" : "deny",
         scope: "once",
         ...(a.reason ? { message: a.reason } : {}),
       });
+      // This session's own turn: a sub-agent's approval continues its root's last.
+      const accepted = [answered.accepted, ...(answered.continued ?? [])].find(
+        (x) => x?.session_id === session,
+      );
+      if (!accepted) throw codedError("EINVAL", `approval ${a.id} continues no turn here`);
       turns.push(accepted.turn_id);
       since = Math.min(since, accepted.offset);
     }

@@ -26,7 +26,10 @@ import {
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
 const TRANSPORTS = ["rest", "rpc"];
-const USERS = ["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kim", "lou"];
+const USERS = [
+  ...["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kim", "lou"],
+  ...["mia", "ned"],
+];
 const VERSION = "2026-10-19";
 
 const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -35,6 +38,9 @@ const CATALOG: Record<string, string> = {
   "/team/dev.cellb.harness/agents/lead.md":
     "---\nname: lead\ndescription: Leads the team.\n---\nYou are lead.\n",
   "/team/dev.cellb.harness/agents/helper.md": "---\nname: helper\n---\nYou are helper.\n",
+  // Starts sub-agents (statewalker/statewalker-ai#88).
+  "/team/dev.cellb.harness/agents/boss.md":
+    "---\nname: boss\nagents: [team/helper]\n---\nYou are boss.\n",
 };
 
 function fixtures(): Record<string, string> {
@@ -90,6 +96,7 @@ afterAll(async () => {
 
 const call = (tool: string, args: unknown) => `CALL ${tool} ${JSON.stringify(args)}`;
 const write = (path: string, content = "x\n") => call("write", { path, content });
+const start = (agent: string, message: string) => call("agent_start", { agent, message });
 
 /** A file's text as the user's own file view reads it; undefined when there is none. */
 async function fileText(token: string, path: string): Promise<string | undefined> {
@@ -852,6 +859,110 @@ describe.each(transports)("the UHP projection over %s", (name, connect) => {
     expect(await read(`/${project}/notes/j.md`)).toBeUndefined();
     // Read back, the passed-over response no longer asks.
     expect((await json("GET", `/v1/responses/${r1.id}`)).body.status).toBe("completed");
+  });
+
+  it("asks a sub-agent's approval as the root response's input_request; allowing it runs the write once and the next root response reports it", async () => {
+    const { json, harness, client, read } = await as("mia");
+    await client.setMode({ mode: "default" });
+    const r1 = (
+      await json("POST", "/v1/responses", {
+        input: start("team/helper", write("notes/sub.md", "sub\n")),
+        metadata: { harness_id: await harness("team/boss") },
+      })
+    ).body;
+    expect(r1).toMatchObject({
+      status: "incomplete",
+      incomplete_details: { reason: "input_required" },
+    });
+    const root = String(r1.metadata.session_id);
+    const child = (await client.listSessions()).sessions.find((s) => s.parent === root);
+    expect(child).toMatchObject({ agent: "team/helper", root });
+    // The question is the sub-agent's own approval, asked once.
+    const [approval] = (await client.listApprovals()).approvals.filter(
+      (a) => a.session === child?.id && a.status === "pending",
+    );
+    const asked = r1.output.filter((o: Json) => o.type === "input_request");
+    expect(asked).toEqual([
+      expect.objectContaining({
+        id: `inreq_${approval?.id}`,
+        kind: "confirm",
+        prompt: expect.stringContaining("notes/sub.md"),
+      }),
+    ]);
+    // Read back, it asks the same.
+    expect((await json("GET", `/v1/responses/${r1.id}`)).body.output.at(-1).id).toBe(asked[0].id);
+    expect(await read(`/${project}/notes/sub.md`)).toBeUndefined();
+    const r2 = (
+      await json("POST", "/v1/responses", {
+        previous_response_id: r1.id,
+        input: answer(asked[0].id, "allow"),
+      })
+    ).body;
+    // A response of the root session, continued with the sub-agent's outcome.
+    expect(r2).toMatchObject({
+      status: "completed",
+      previous_response_id: r1.id,
+      metadata: { session_id: root },
+    });
+    const reported = r2.output.find((o: Json) => o.type === "function_call_output");
+    expect(reported.output).toMatch(/sub-agent session .*, turn completed/);
+    expect(reported.output).toContain("notes/sub.md: done");
+    // Paired with the root's own agent_start call.
+    const call1 = r1.output.find((o: Json) => o.type === "function_call");
+    expect(call1).toMatchObject({ name: "agent_start" });
+    expect(reported.call_id).toBe(call1.call_id);
+    expect(r2.output.at(-1)).toMatchObject({ type: "message" });
+    expect(await read(`/${project}/notes/sub.md`)).toBe("sub\n");
+    // Once: the sub-agent wrote it once, and the approval is spent.
+    const writes = (await client.listItems(String(child?.id))).items.filter(
+      (i) => i.kind === "tool_result" && !i.isError && /notes\/sub\.md/.test(String(i.output)),
+    );
+    expect(writes).toHaveLength(1);
+    expect(
+      (await client.listApprovals()).approvals.find((a) => a.id === approval?.id)?.status,
+    ).toBe("allowed");
+    expect((await json("GET", `/v1/responses/${r2.id}/input_items`)).body.data).toEqual([
+      expect.objectContaining({
+        type: "input_response",
+        input_request_id: asked[0].id,
+        answer: "allow",
+      }),
+    ]);
+    const again = await json("POST", "/v1/responses", {
+      previous_response_id: r2.id,
+      input: answer(asked[0].id, "allow"),
+    });
+    expect(again.body.error.code).toBe("input_not_pending");
+  });
+
+  it("a sub-agent's approval denied through the root: the sub-agent is told, nothing is written, and the root reports it", async () => {
+    const { json, harness, client, read } = await as("ned");
+    await client.setMode({ mode: "default" });
+    const r1 = (
+      await json("POST", "/v1/responses", {
+        input: start("team/helper", write("notes/no.md")),
+        metadata: { harness_id: await harness("team/boss") },
+      })
+    ).body;
+    const asked = r1.output.at(-1);
+    expect(asked.type).toBe("input_request");
+    const r2 = (
+      await json("POST", "/v1/responses", {
+        previous_response_id: r1.id,
+        input: answer(asked.id, "deny"),
+      })
+    ).body;
+    expect(r2).toMatchObject({
+      status: "completed",
+      metadata: { session_id: r1.metadata.session_id },
+    });
+    expect(r2.output.find((o: Json) => o.type === "function_call_output").output).toContain(
+      "denied by the user",
+    );
+    expect(await read(`/${project}/notes/no.md`)).toBeUndefined();
+    expect((await json("GET", `/v1/responses/${r2.id}/input_items`)).body.data).toEqual([
+      expect.objectContaining({ type: "input_response", answer: "deny" }),
+    ]);
   });
 
   it("refuses a malformed input_response: without a previous response, more than one, or beside branch (400 invalid_input)", async () => {

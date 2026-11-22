@@ -19,6 +19,9 @@ class **Core** plus `input_requests`, pinned to UHP `2026-10-19` at spec commit
   a remote harness's question keeps its kind), asked **one at a time**: the response ends
   `incomplete` with reason `input_required`. An `input_response` answers it with scope "once"
   (scope "session" stays native); any other input passes it over (`metadata.voided_input_requests`).
+  A sub-agent's approval is asked as the root response's `input_request`: the turn that started it
+  waits on it, and the answer's response is the root's turn continuing with the sub-agent's outcome
+  (statewalker/statewalker-ai#88).
 - `previous_response_id` naming an earlier response moves the session's head there and continues
   in the same session (an implicit rewind that reverts no file). `branch: true` is a fork carrying
   the task as its first message, reporting `metadata.branched_from`; `GET /v1/sessions/{id}` names

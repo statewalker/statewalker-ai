@@ -106,6 +106,7 @@ function sessionApi(env: Env, token: string) {
         archive: () => agent.archive(),
         purge: () => agent.purge(),
         answer: (approval, answer) => agent.answer(approval, answer),
+        answerRevert: (approval, answer) => agent.answerRevert(approval, answer),
         mcp: (message) => agent.mcp(message),
         limits: () => agent.limits(),
         usage: () => agent.usage(),

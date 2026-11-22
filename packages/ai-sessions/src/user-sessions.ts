@@ -57,6 +57,7 @@ import type {
   DatabaseCall,
   DatabaseView,
   DeleteSecretRequest,
+  ForkOrigin,
   LimitsCall,
   LimitsView,
   Metadata,
@@ -70,7 +71,6 @@ import type {
   SetSecretRequest,
   StartSessionRequest,
   SubAgentRequest,
-  TurnRef,
   UsageQuery,
   UsageRecordsPage,
   UsageRecordsQuery,
@@ -106,6 +106,11 @@ export interface WorkspaceGrants {
     userCapability: string,
     req: { from: string; session: string; model?: string },
   ): Promise<PinnedDefinitions>;
+  /**
+   * The checkpoint of the gate's file pre-images of one of the user's sessions now
+   * (statewalker/statewalker-root#191): null when it keeps none.
+   */
+  preImageCheckpoint?(userCapability: string, session: string): Promise<string | null>;
   /** A project's models as the user sees them; `discover` asks each provider's `/models`. */
   listModels(userCapability: string, query: ModelsQuery): Promise<ModelView[]>;
   /** The agents the user may start sessions on, in one project or every project they are in. */
@@ -300,7 +305,7 @@ const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   metadata: row.metadata ? (JSON.parse(row.metadata) as Metadata) : {},
   ...(row.archived ? { archived: Number(row.archived) } : {}),
   ...(row.parent ? { parent: row.parent, root: String(row.root) } : {}),
-  ...(row.forked_from ? { forked_from: JSON.parse(row.forked_from) as TurnRef } : {}),
+  ...(row.forked_from ? { forked_from: JSON.parse(row.forked_from) as ForkOrigin } : {}),
   ...(titlesOf(row).length ? { topics: titlesOf(row) } : {}),
 });
 
@@ -383,9 +388,15 @@ export class UserSessions implements UserPort {
   #approvalView(row: ApprovalRow): ApprovalView {
     const expired =
       (row.status === "pending" || row.status === "blocked") && Number(row.expires) <= this.#now();
+    // A sub-agent's approval names its tree's root (statewalker/statewalker-ai#88).
+    const root = this.#one<{ root: string | null }>(
+      "SELECT root FROM agent_sessions WHERE id = ?",
+      row.session,
+    )?.root;
     return {
       ...(JSON.parse(row.request) as ApprovalRequest),
       workspace: row.workspace,
+      ...(root && root !== row.session ? { root } : {}),
       status: expired ? "expired" : (row.status as ApprovalView["status"]),
       created: Number(row.created),
       expires: Number(row.expires),
@@ -748,7 +759,15 @@ export class UserSessions implements UserPort {
       agent: pinned.agent,
       unattended: source.unattended,
     });
-    const forkedFrom: TurnRef = { session: source.id, turn: String(req.at_turn) };
+    // The files' checkpoint then: the source's pre-images serve as its turns' checkpoints (#191).
+    const checkpoint = await this.#o
+      .workspace(us.workspace)
+      .preImageCheckpoint?.(us.capability, source.id);
+    const forkedFrom: ForkOrigin = {
+      session: source.id,
+      turn: String(req.at_turn),
+      ...(checkpoint ? { checkpoint } : {}),
+    };
     const row: AgentRow = {
       id,
       workspace: us.workspace,
