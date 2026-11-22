@@ -46,7 +46,7 @@ export function checkThreatTable(markdown: string, titlesOf: (pkg: string) => st
  * Not `describe` (a group title proves nothing), nor `.skip` / `.todo` (they don't run).
  */
 const TEST_CALL =
-  /\b(?:it|test)(?:\.(?:only|concurrent|sequential))*(?:\.each\([^)]*\))?\(\s*(["'`])((?:(?!\1).)+)\1/g;
+  /\b(?:it|test)(?:\.(?:only|concurrent|sequential))*(?:\.(?:skipIf|runIf)\([^)]*\))?(?:\.each\([^)]*\))?\(\s*(["'`])((?:(?!\1).)+)\1/g;
 
 /** The source with `//` and block comments blanked, leaving strings alone. */
 function withoutComments(source: string): string {

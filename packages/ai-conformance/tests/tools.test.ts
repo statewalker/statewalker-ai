@@ -16,6 +16,7 @@ import {
   fakeRest,
   login,
   type McpResponse,
+  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -23,6 +24,8 @@ import {
   startDeployment,
   type Turn,
 } from "../src/index.js";
+
+// A browser page holds no deployment-held key (SECRETS_KEY, DEPLOYMENT_SECRETS): tests/browser.test.ts.
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
@@ -276,80 +279,90 @@ describe.each(transports)("tools over %s", (name, connect) => {
     expect(JSON.stringify(doc)).not.toContain(KEY);
   });
 
-  it("rebuilds a REST call from its route and adds the deployment's key, which the model never sees", async () => {
-    const ann = await as("ann");
-    const s = await ann.startSession({ project: alpha });
-    const from = rest.requests.length;
-    const turn = await ann.sendMessage(s.id, {
-      content: call("weather__get_forecast", { city: "Saint Malo", days: 2, "X-Units": "metric" }),
-    });
-    expect(rest.requests.slice(from)).toEqual([
-      expect.objectContaining({
-        method: "GET",
-        url: "/v2/cities/Saint%20Malo/forecast?days=2",
-        headers: expect.objectContaining({ "x-api-key": KEY, "x-units": "metric" }),
-      }),
-    ]);
-    expect(toolResults(turn)).toEqual([
-      expect.objectContaining({ isError: false, secrets: ["WEATHER_KEY"] }),
-    ]);
-    // The same call through MCP.
-    const viaMcp = await mcp(ann, s.id, "tools/call", {
-      name: "weather__get_forecast",
-      arguments: { city: "Brest" },
-    });
-    expect(viaMcp.result).toMatchObject({ isError: false });
-    expect(rest.requests.at(-1)).toMatchObject({
-      url: "/v2/cities/Brest/forecast",
-      headers: expect.objectContaining({ "x-api-key": KEY }),
-    });
-    // An error response is an error result.
-    const missing = await ann.sendMessage(s.id, {
-      content: call("weather__get_forecast", { city: "nowhere" }),
-    });
-    expect(toolResults(missing)).toEqual([expect.objectContaining({ isError: true })]);
-    const { items } = await ann.listItems(s.id);
-    expect(JSON.stringify([items, model.requests, await listed(ann, s.id)])).not.toContain(KEY);
-  });
-
-  it("an asking tool asks per call, and approving runs exactly that call", async () => {
-    const mo = await as("mo");
-    const s = await mo.startSession({ project: alpha });
-    const from = rest.requests.length;
-    const turn = await mo.sendMessage(s.id, {
-      content: call("weather__add_report", { city: "Paris", text: "sunny" }),
-    });
-    expect(turn.status).toBe("waiting");
-    expect(rest.requests.length).toBe(from);
-    const id = String(turn.stop_reason?.approval_ids?.[0]);
-    const { approvals } = await mo.listApprovals();
-    expect(approvals.find((a) => a.id === id)).toMatchObject({
-      permission: "tools.use:weather/add_report",
-    });
-    const { accepted } = await mo.answerApproval(id, { decision: "allow", scope: "once" });
-    const answered = await mo.waitTurn(accepted);
-    expect(toolResults(answered).at(-1)).toMatchObject({ isError: false, approval: id });
-    // The agent continues the turn with the tool's answer (statewalker/statewalker-root#214).
-    expect(answered.status).toBe("completed");
-    expect(answered.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
-    expect(rest.requests.slice(from)).toEqual([
-      expect.objectContaining({
-        method: "POST",
-        url: "/v2/reports",
-        body: JSON.stringify({ city: "Paris", text: "sunny" }),
+  it.skipIf(RUNTIME === "browser")(
+    "rebuilds a REST call from its route and adds the deployment's key, which the model never sees",
+    async () => {
+      const ann = await as("ann");
+      const s = await ann.startSession({ project: alpha });
+      const from = rest.requests.length;
+      const turn = await ann.sendMessage(s.id, {
+        content: call("weather__get_forecast", {
+          city: "Saint Malo",
+          days: 2,
+          "X-Units": "metric",
+        }),
+      });
+      expect(rest.requests.slice(from)).toEqual([
+        expect.objectContaining({
+          method: "GET",
+          url: "/v2/cities/Saint%20Malo/forecast?days=2",
+          headers: expect.objectContaining({ "x-api-key": KEY, "x-units": "metric" }),
+        }),
+      ]);
+      expect(toolResults(turn)).toEqual([
+        expect.objectContaining({ isError: false, secrets: ["WEATHER_KEY"] }),
+      ]);
+      // The same call through MCP.
+      const viaMcp = await mcp(ann, s.id, "tools/call", {
+        name: "weather__get_forecast",
+        arguments: { city: "Brest" },
+      });
+      expect(viaMcp.result).toMatchObject({ isError: false });
+      expect(rest.requests.at(-1)).toMatchObject({
+        url: "/v2/cities/Brest/forecast",
         headers: expect.objectContaining({ "x-api-key": KEY }),
-      }),
-    ]);
-    // Over MCP, the call asks too: nothing leaves until the user allows it.
-    const before = rest.requests.length;
-    const viaMcp = await mcp(mo, s.id, "tools/call", {
-      name: "weather__add_report",
-      arguments: { city: "Lyon", text: "rain" },
-    });
-    expect(viaMcp.result).toMatchObject({ isError: true });
-    expect(JSON.stringify(viaMcp.result)).toMatch(/approval/);
-    expect(rest.requests.length).toBe(before);
-  });
+      });
+      // An error response is an error result.
+      const missing = await ann.sendMessage(s.id, {
+        content: call("weather__get_forecast", { city: "nowhere" }),
+      });
+      expect(toolResults(missing)).toEqual([expect.objectContaining({ isError: true })]);
+      const { items } = await ann.listItems(s.id);
+      expect(JSON.stringify([items, model.requests, await listed(ann, s.id)])).not.toContain(KEY);
+    },
+  );
+
+  it.skipIf(RUNTIME === "browser")(
+    "an asking tool asks per call, and approving runs exactly that call",
+    async () => {
+      const mo = await as("mo");
+      const s = await mo.startSession({ project: alpha });
+      const from = rest.requests.length;
+      const turn = await mo.sendMessage(s.id, {
+        content: call("weather__add_report", { city: "Paris", text: "sunny" }),
+      });
+      expect(turn.status).toBe("waiting");
+      expect(rest.requests.length).toBe(from);
+      const id = String(turn.stop_reason?.approval_ids?.[0]);
+      const { approvals } = await mo.listApprovals();
+      expect(approvals.find((a) => a.id === id)).toMatchObject({
+        permission: "tools.use:weather/add_report",
+      });
+      const { accepted } = await mo.answerApproval(id, { decision: "allow", scope: "once" });
+      const answered = await mo.waitTurn(accepted);
+      expect(toolResults(answered).at(-1)).toMatchObject({ isError: false, approval: id });
+      // The agent continues the turn with the tool's answer (statewalker/statewalker-root#214).
+      expect(answered.status).toBe("completed");
+      expect(answered.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
+      expect(rest.requests.slice(from)).toEqual([
+        expect.objectContaining({
+          method: "POST",
+          url: "/v2/reports",
+          body: JSON.stringify({ city: "Paris", text: "sunny" }),
+          headers: expect.objectContaining({ "x-api-key": KEY }),
+        }),
+      ]);
+      // Over MCP, the call asks too: nothing leaves until the user allows it.
+      const before = rest.requests.length;
+      const viaMcp = await mcp(mo, s.id, "tools/call", {
+        name: "weather__add_report",
+        arguments: { city: "Lyon", text: "rain" },
+      });
+      expect(viaMcp.result).toMatchObject({ isError: true });
+      expect(JSON.stringify(viaMcp.result)).toMatch(/approval/);
+      expect(rest.requests.length).toBe(before);
+    },
+  );
 
   it("refuses a forged call to a tool the session was not offered, in the loop and over MCP", async () => {
     const rita = await as("rita");
@@ -367,31 +380,34 @@ describe.each(transports)("tools over %s", (name, connect) => {
     expect(rest.requests.length).toBe(from);
   });
 
-  it("runs read tools in parallel and other tools one at a time", async () => {
-    const pat = await as("pat");
-    await pat.setMode({ mode: "bypassPermissions" });
-    try {
-      const s = await pat.startSession({ project: alpha });
-      rest.delayMs = 150;
-      rest.maxInFlight = 0;
-      await pat.sendMessage(s.id, {
-        content: [
-          call("weather__get_forecast", { city: "slow-a" }),
-          call("weather__get_forecast", { city: "slow-b" }),
-        ].join("\n"),
-      });
-      expect(rest.maxInFlight).toBe(2);
-      rest.maxInFlight = 0;
-      await pat.sendMessage(s.id, {
-        content: [
-          call("weather__add_report", { city: "a", text: "1" }),
-          call("weather__add_report", { city: "b", text: "2" }),
-        ].join("\n"),
-      });
-      expect(rest.maxInFlight).toBe(1);
-    } finally {
-      rest.delayMs = 0;
-      await pat.setMode({ mode: "default" });
-    }
-  });
+  it.skipIf(RUNTIME === "browser")(
+    "runs read tools in parallel and other tools one at a time",
+    async () => {
+      const pat = await as("pat");
+      await pat.setMode({ mode: "bypassPermissions" });
+      try {
+        const s = await pat.startSession({ project: alpha });
+        rest.delayMs = 150;
+        rest.maxInFlight = 0;
+        await pat.sendMessage(s.id, {
+          content: [
+            call("weather__get_forecast", { city: "slow-a" }),
+            call("weather__get_forecast", { city: "slow-b" }),
+          ].join("\n"),
+        });
+        expect(rest.maxInFlight).toBe(2);
+        rest.maxInFlight = 0;
+        await pat.sendMessage(s.id, {
+          content: [
+            call("weather__add_report", { city: "a", text: "1" }),
+            call("weather__add_report", { city: "b", text: "2" }),
+          ].join("\n"),
+        });
+        expect(rest.maxInFlight).toBe(1);
+      } finally {
+        rest.delayMs = 0;
+        await pat.setMode({ mode: "default" });
+      }
+    },
+  );
 });
