@@ -8,7 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Deployment,
   type FakeModel,
+  type FakeRest,
   fakeModel,
+  fakeRest,
   login,
   restClient,
   rpcClient,
@@ -56,6 +58,13 @@ function projectFiles(t: string): Record<string, string> {
       warn_at: 0.5,
     }),
     [`/free-${t}/.system/access`]: owner("ann", "kim"),
+    [`/net-${t}/.system/access`]: owner("ann"),
+    [`/net-${t}/.system/limits`]: limits({
+      meter: "outbound_requests",
+      level: "project",
+      value: 1,
+      period: "day",
+    }),
     [`/spend-${t}/.system/access`]: owner("ann"),
     [`/spend-${t}/.system/limits`]: limits({
       meter: "model_spend",
@@ -104,11 +113,14 @@ async function usageRecords(workspace: string): Promise<Record<string, unknown>[
 }
 
 let model: FakeModel;
+let rest: FakeRest;
 let deployment: Deployment;
 
 beforeAll(async () => {
   model = await fakeModel();
+  rest = await fakeRest();
   deployment = await startDeployment(HOST, {
+    REST_TOOLS: JSON.stringify([{ plugin: "fixture", name: "call", url: `${rest.url}/call` }]),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     SECRETS_KEY: "conformance-secrets-key",
@@ -138,6 +150,7 @@ afterAll(async () => {
   for (const s of sockets) s.close();
   await deployment?.close();
   await model?.close();
+  await rest?.close();
 });
 
 describe.each(transports)("limits over %s", (name, connect) => {
@@ -357,5 +370,26 @@ describe.each(transports)("limits over %s", (name, connect) => {
       isError: true,
       output: expect.stringContaining("unattended"),
     });
+  });
+
+  it("refuses an outbound request over the project's limit, and the agent carries on", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `net-${t}` });
+    const first = await ann.sendMessage(s.id, { content: "CALL fixture__call {}" });
+    expect(first.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });
+    const calls = rest.requests.length;
+    const second = await ann.sendMessage(s.id, { content: "CALL fixture__call {}" });
+    expect(second.status).toBe("completed");
+    expect(second.items.find((i) => i.kind === "tool_result")).toMatchObject({
+      isError: true,
+      output: expect.stringContaining("outbound_requests"),
+    });
+    expect(rest.requests.length).toBe(calls);
+    // Requests and bytes are recorded, naming the session and the turn.
+    const records = await usageRecords("default");
+    expect(records.filter((r) => r.session === s.id && r.meter === "outbound_requests")).toEqual([
+      expect.objectContaining({ amount: 1, turn: first.id, project: `net-${t}`, user: `ann-${t}` }),
+    ]);
+    expect(records.some((r) => r.session === s.id && r.meter === "outbound_bytes")).toBe(true);
   });
 });

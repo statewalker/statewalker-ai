@@ -1252,13 +1252,46 @@ export class Workspace extends DurableObject<Env> {
    */
   async gatewayFetch(
     capability: string,
-    call: { plugin: string; request: OutgoingRequest },
-  ): Promise<GatewayResult> {
+    call: { plugin: string; request: OutgoingRequest; turn?: string },
+  ): Promise<GatewayResult & { warnings?: WarningView[] }> {
     const facts = await this.#authority.agentSessionOf(capability);
     if (!(await this.#access(facts.project, facts.user)).member)
       throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
     const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
-    return gatewayFetch(call.request, String(call.plugin), lookup);
+    // Outbound requests and bytes are metered (#179): a request over a limit is refused before
+    // it is sent; the answer's bytes are counted after.
+    const meta = this.#limits.meta(
+      facts.project,
+      facts.user,
+      facts.session,
+      this.#turnOf(facts.session, call.turn),
+    );
+    let host = "";
+    try {
+      host = new URL(String(call.request?.url)).host;
+    } catch {
+      // gatewayFetch refuses it.
+    }
+    const sent = new TextEncoder().encode(String(call.request?.body ?? "")).length;
+    const detail = { plugin: String(call.plugin), host };
+    const warnings = await this.#limits.charge(
+      facts.project,
+      facts.user,
+      { outbound_requests: 1, outbound_bytes: sent },
+      meta,
+      detail,
+    );
+    const result = await gatewayFetch(call.request, String(call.plugin), lookup);
+    const received = "body" in result ? new TextEncoder().encode(String(result.body ?? "")).length : 0;
+    warnings.push(
+      ...this.#limits.ledger.add(
+        await this.#limits.scopes(facts.project, facts.user),
+        { outbound_bytes: received },
+        meta,
+        detail,
+      ),
+    );
+    return { ...result, ...(warnings.length ? { warnings: warnings.map(warningView) } : {}) };
   }
 
   /**

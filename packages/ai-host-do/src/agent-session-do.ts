@@ -160,9 +160,14 @@ export class AgentSession extends DurableObject<Env> {
         emit,
       ) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
-        const rest = restTools(env.REST_TOOLS, (call) =>
-          workspace.gatewayFetch(config.capability, call),
-        );
+        const rest = restTools(env.REST_TOOLS, async (call) => {
+          const { warnings, ...result } = await workspace.gatewayFetch(config.capability, {
+            ...call,
+            turn,
+          });
+          for (const warning of warnings ?? []) emit({ kind: "limit_warning", warning });
+          return result;
+        });
         // The tools this session is offered: a sub-agent's are within its parent's.
         // `agent.start` only for an agent whose definition lists sub-agents the user may use.
         const delegates = (config.run?.agents ?? []).length > 0;

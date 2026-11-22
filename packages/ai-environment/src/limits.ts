@@ -546,6 +546,16 @@ export class LimitLedger {
     return this.#add(scopes, amounts, meta, detail);
   }
 
+  /** Adds usage already spent (a response's bytes): recorded and counted, never refused. */
+  add(
+    scopes: readonly LimitScope[],
+    amounts: Record<string, number>,
+    meta: UsageMeta,
+    detail?: Record<string, unknown>,
+  ): LimitWarning[] {
+    return this.#add(scopes, amounts, meta, detail);
+  }
+
   /** Changes a gauge by `delta`: adding is refused over a limit, taking away always works. */
   adjust(
     scopes: readonly LimitScope[],
