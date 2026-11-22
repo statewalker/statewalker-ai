@@ -172,7 +172,12 @@ export async function* chatChunks(
         if (logged.type.startsWith("turn.") && isTerminal(logged.type.slice(5))) ended = true;
       }
       upToDate = page.up_to_date;
-      if (!ended && upToDate) ended = isTerminal((await api.getTurn(started.turn)).status);
+      // A turn that ended before the cursor has nothing more to show; one that ended after the
+      // read above has logged events the cursor has not reached yet: read on (statewalker-ai#95).
+      if (!ended && upToDate && isTerminal((await api.getTurn(started.turn)).status)) {
+        const rest = await api.readEvents(started.session, { since, limit: 1000 });
+        if (!rest.events.some((e) => e.turn === started.turn)) ended = true;
+      }
       if (ended) break;
     }
     view = await api.getTurn(started.turn);
