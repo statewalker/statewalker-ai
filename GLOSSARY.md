@@ -104,7 +104,7 @@ One agent's conversation, on an attenuated capability with its own tool set; tur
 _Avoid_: thread, conversation, chat
 
 **Sub-agent**:
-An agent started by another agent's session, as a child agent session on a narrower capability.
+An agent started by another agent's session, as a child agent session on a narrower capability. A turn whose sub-agent asks an approval waits on it too; the answer continues the sub-agent, then that turn.
 
 **Remote agent session**:
 An agent session whose core is an external harness reached over UHP: it works on copies of files, and its changes return through the capability.

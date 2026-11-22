@@ -27,6 +27,7 @@ import type {
   AgentMessage,
   AgentPort,
   AgentSessionConfig,
+  AnswerAccepted,
   ApprovalAnswer,
   BranchesView,
   BranchTurn,
@@ -131,6 +132,30 @@ export type RecordApprovals = (
   config: AgentSessionConfig,
   requests: ApprovalRequest[],
 ) => Promise<unknown>;
+
+/**
+ * Tells the session's parent that an approval was answered here, or expired: a turn of the parent
+ * that waits on it through `agent.start` (a stored `agent` action) continues too, and tells its own
+ * parent. Answers the turns that continue, parent first (statewalker/statewalker-ai#88).
+ */
+export type SubAgentAnswered = (
+  config: AgentSessionConfig,
+  approval: string,
+  decision: AnswerDecision,
+) => Promise<Omit<MessageAccepted, "stream_url">[]>;
+
+/** How an approval was answered: by the user, or by no one in its time. */
+export type AnswerDecision = "allow" | "deny" | "expired";
+
+/**
+ * What a stored `agent` action runs to: the outcome of the sub-agent's turn that continued it with
+ * the answer, as `agent.start` reports it, or the approvals that turn still waits on.
+ */
+export interface SubAgentOutcome {
+  output: string;
+  isError?: boolean;
+  waiting?: ApprovalRequest[];
+}
 
 const toBase64 = (bytes: Uint8Array) => {
   let bin = "";
@@ -308,6 +333,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   readonly #resumable: ((turn: string) => boolean) | undefined;
   readonly #compacts: ((config: AgentSessionConfig) => boolean) | undefined;
   readonly #cancelApprovals: CancelApprovals | undefined;
+  readonly #subAgentAnswered: SubAgentAnswered | undefined;
   readonly #effectOf: EffectOf | undefined;
   readonly #shaper: ContextShaper;
   readonly #summarizer: Summarizer | undefined;
@@ -328,6 +354,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     wake?: (at: number) => void;
     /** Told the pending approvals of rewound turns, cancelled (statewalker/statewalker-root#190). */
     cancelApprovals?: CancelApprovals;
+    /** Tells the session's parent an approval was answered here (statewalker/statewalker-ai#88). */
+    subAgentAnswered?: SubAgentAnswered;
     /** Picks out the tool calls whose effects a rewind lists (memory, database, outside). */
     effectOf?: EffectOf;
     /**
@@ -352,6 +380,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     this.#resumable = options.resumable;
     this.#compacts = options.compacts;
     this.#cancelApprovals = options.cancelApprovals;
+    this.#subAgentAnswered = options.subAgentAnswered;
     this.#effectOf = options.effectOf;
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS agent_config (key TEXT PRIMARY KEY, value TEXT);
@@ -828,11 +857,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
           request,
           stored,
         });
+      // A sub-agent's approvals are the sub-agent's: its User DO already holds them.
+      const own = [...pending.values()]
+        .filter((p) => p.stored.method !== "agent")
+        .map((p) => p.request);
       try {
-        const recorded = await this.#recordApprovals(
-          config,
-          [...pending.values()].map((p) => p.request),
-        );
+        const recorded = own.length ? await this.#recordApprovals(config, own) : [];
         // When each expires: unanswered by then, it continues this turn as a denial.
         for (const { id, expires } of (Array.isArray(recorded) ? recorded : []) as {
           id: string;
@@ -945,6 +975,20 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         isError,
         ...(denied ? { denied: true as const } : {}),
       });
+    if (method === "agent") {
+      // A sub-agent's approval: the answer continued the sub-agent; its outcome is the result.
+      try {
+        const done = (await this.#runAction(config, callOf(item.stored))) as SubAgentOutcome;
+        const more = (done.waiting ?? []).filter((r) => !unanswered.includes(r.id));
+        for (const request of more)
+          pending.set(request.id, { request, stored: { method, path, target: request.id } });
+        if (!more.length && !(done.waiting?.length && unanswered.length))
+          result(String(done.output), !!done.isError, answer.decision !== "allow");
+      } catch (e) {
+        result(String((e as Error)?.message ?? e), true);
+      }
+      return { continues: asked, unanswered };
+    }
     if (answer.decision === "expired") {
       result(`${label}: denied: ${EXPIRED}`, true, true);
       return { continues: asked, unanswered };
@@ -1055,6 +1099,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       );
       if (answered || !since || this.#archived()) continue;
       this.#queueAnswer(config, due.approval, { decision: "expired", message: null });
+      void this.#tellParent(config, due.approval, "expired");
     }
     this.#pump();
     return this.nextExpiry();
@@ -1173,10 +1218,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   }
 
   /** Queues the turn that continues the session with the user's answer to an approval. */
-  async answer(
-    approval: string,
-    answer: ApprovalAnswer,
-  ): Promise<Omit<MessageAccepted, "stream_url">> {
+  async answer(approval: string, answer: ApprovalAnswer): Promise<AnswerAccepted> {
     const config = this.#started();
     if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
     const offset = this.#offset();
@@ -1222,7 +1264,80 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       message: answer.message ?? null,
     });
     this.#pump();
-    return { turn_id: id, session_id: config.id, delivery: "next", offset };
+    const continued = await this.#tellParent(config, approval, answer.decision);
+    return {
+      turn_id: id,
+      session_id: config.id,
+      delivery: "next",
+      offset,
+      ...(continued.length ? { continued } : {}),
+    };
+  }
+
+  /** Tells the parent an approval was answered here; the turns that continue up the tree. */
+  async #tellParent(
+    config: AgentSessionConfig,
+    approval: string,
+    decision: AnswerDecision,
+  ): Promise<Omit<MessageAccepted, "stream_url">[]> {
+    if (!config.parent || config.parent === config.id || !this.#subAgentAnswered) return [];
+    try {
+      return await this.#subAgentAnswered(config, approval, decision);
+    } catch {
+      // The parent is gone or archived: the sub-agent's answer still continued the sub-agent.
+      return [];
+    }
+  }
+
+  /**
+   * A sub-agent's approval was answered (or expired) in the sub-agent: when a turn of this session
+   * on the active path waits on it through `agent.start`, an answer turn continues this session
+   * with the sub-agent's outcome, and the parent is told in turn (statewalker/statewalker-ai#88).
+   * Answers the turns that continue, this session's first; none when nothing here waits on it.
+   */
+  async subAgentAnswered(
+    approval: string,
+    decision: AnswerDecision,
+  ): Promise<Omit<MessageAccepted, "stream_url">[]> {
+    const config = this.config();
+    if (!config || this.#archived()) return [];
+    const asked = this.#one<{ turn: string }>(
+      `SELECT i.turn FROM items i JOIN agent_turns t ON t.id = i.turn
+        WHERE i.kind IN ('approval', 'question') AND json_extract(i.body, '$.approval') = ?
+          AND json_extract(i.body, '$.stored.method') = 'agent' AND COALESCE(t.origin, 'run') = 'run'
+        ORDER BY i.seq DESC LIMIT 1`,
+      approval,
+    );
+    if (!asked || !this.#pendingOnPath(approval, this.#pathTo(this.#head()))) return [];
+    const answered = this.#one(
+      `SELECT 1 FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+        WHERE a.approval = ? AND t.created >= ? AND t.status != 'cancelled'`,
+      approval,
+      Number(this.#turnRow(asked.turn).created),
+    );
+    if (answered) return [];
+    const offset = this.#offset();
+    const id = this.#queueAnswer(config, approval, { decision, message: null });
+    this.#pump();
+    return [
+      { turn_id: id, session_id: config.id, delivery: "next", offset },
+      ...(await this.#tellParent(config, approval, decision)),
+    ];
+  }
+
+  /**
+   * The turn that continued this session with the answer to an approval, once it has ended: what
+   * a parent waiting on it through `agent.start` reports (statewalker/statewalker-ai#88).
+   */
+  async answerTurn(approval: string): Promise<TurnView> {
+    this.#started();
+    const row = this.#one<{ turn: string }>(
+      `SELECT a.turn FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+        WHERE a.approval = ? ORDER BY t.created DESC, t.rowid DESC LIMIT 1`,
+      approval,
+    );
+    if (!row) throw codedError("ENOENT", "no answer to that approval");
+    return this.waitTurn(row.turn);
   }
 
   /** Queues the turn that continues the session with an answer (`expired`: no one answered). */
@@ -1617,6 +1732,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   async #cancelPending(config: AgentSessionConfig, turns: string[]): Promise<string[]> {
     if (!turns.length) return [];
     const ids: string[] = [];
+    const delegated = new Map<string, string[]>();
     for (const item of this.#rows<ItemRow>(
       `SELECT * FROM items WHERE kind IN ('approval', 'question') AND turn IN (SELECT value FROM json_each(?))
         ORDER BY seq`,
@@ -1636,6 +1752,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         item.approval,
       );
       if (!ids.includes(item.approval)) ids.push(item.approval);
+      // A sub-agent's approval is cancelled at the sub-agent's User DO entry too.
+      if (item.stored?.method === "agent") {
+        const of = delegated.get(item.stored.path) ?? [];
+        if (!of.includes(item.approval)) of.push(item.approval);
+        delegated.set(item.stored.path, of);
+      }
     }
     this.#sql.exec(
       "DELETE FROM approval_expiry WHERE turn IN (SELECT value FROM json_each(?))",
@@ -1644,6 +1766,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     if (ids.length)
       try {
         await this.#cancelApprovals?.(config, ids);
+        for (const [session, of] of delegated)
+          await this.#cancelApprovals?.({ ...config, id: session }, of);
       } catch {
         // The User DO is told what it can be: an answer to these is refused here anyway.
       }

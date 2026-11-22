@@ -151,7 +151,8 @@ export async function chatPlan(
     const { approvals } = await api.listApprovals();
     const pending = answers.filter((a) => {
       const approval = approvals.find((v) => v.id === a.id);
-      if (!approval || approval.session !== session)
+      // A sub-agent's approval is answered as its root session's (statewalker/statewalker-ai#88).
+      if (!approval || (approval.session !== session && approval.root !== session))
         throw codedError("EINVAL", `no approval ${a.id} in this session`);
       return approval.status === "pending";
     });
@@ -159,11 +160,16 @@ export async function chatPlan(
     const turns: string[] = [];
     let since = Number.POSITIVE_INFINITY;
     for (const a of pending) {
-      const { accepted } = await api.answerApproval(a.id, {
+      const answered = await api.answerApproval(a.id, {
         decision: a.allow ? "allow" : "deny",
         scope: "once",
         ...(a.reason ? { message: a.reason } : {}),
       });
+      // This session's own turn: a sub-agent's approval continues its root's last.
+      const accepted = [answered.accepted, ...(answered.continued ?? [])].find(
+        (x) => x.session_id === session,
+      );
+      if (!accepted) throw codedError("EINVAL", `approval ${a.id} continues no turn here`);
       turns.push(accepted.turn_id);
       since = Math.min(since, accepted.offset);
     }

@@ -27,7 +27,15 @@ import {
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
 const TRANSPORTS = ["rest", "rpc"];
-const USERS = ["ann", "bob", "cy", "dee", "eli", "fay"];
+const USERS = ["ann", "bob", "cy", "dee", "eli", "fay", "gus"];
+const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+/** An agent that starts sub-agents (statewalker/statewalker-ai#88), and the one it starts. */
+const CATALOG: Record<string, string> = {
+  "/team/plugin.json": JSON.stringify({ $schema: AP, name: "team" }),
+  "/team/dev.cellb.harness/agents/helper.md": "---\nname: helper\n---\nYou are helper.\n",
+  "/team/dev.cellb.harness/agents/boss.md":
+    "---\nname: boss\nagents: [team/helper]\n---\nYou are boss.\n",
+};
 
 const FILES = {
   "/proj/readme.md": "# proj\n",
@@ -59,6 +67,7 @@ beforeAll(async () => {
     MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
+    CATALOG: JSON.stringify(CATALOG),
     SSE_KEEPALIVE_MS: "200",
   });
   await seed(deployment, ADMIN_KEY, FILES);
@@ -229,6 +238,36 @@ describe.each(transports)("the AI SDK UI message stream over %s", (name, connect
     });
     // Answered: sending the same answer again is refused.
     await expect(send(chat, s.id, [answered])).rejects.toThrow();
+  });
+
+  it("asks a sub-agent's approval on the root session's agent_start call; approving it continues the root with the sub-agent's outcome", async () => {
+    const gus = await as("gus");
+    await gus.setMode({ mode: "default" });
+    const s = await gus.startSession({ project: "proj", agent: "team/boss" });
+    const chat = gus.chat(s.id);
+    const message = call("write", { path: "notes/g.md", content: "g\n" });
+    const first = await collect(
+      await send(chat, s.id, [user(call("agent_start", { agent: "team/helper", message }))]),
+    );
+    const child = (await gus.listSessions()).sessions.find((x) => x.parent === s.id);
+    const [approval] = (await gus.listApprovals()).approvals.filter((a) => a.session === child?.id);
+    expect(approval).toMatchObject({ root: s.id, status: "pending" });
+    const tool = first.message?.parts.find((p) => p.type === "dynamic-tool");
+    expect(tool).toMatchObject({
+      toolName: "agent_start",
+      state: "approval-requested",
+      approval: { id: approval?.id },
+    });
+    const answered = structuredClone(first.message) as UIMessage;
+    const part = answered.parts.find((p) => p.type === "dynamic-tool") as Record<string, unknown>;
+    part.state = "approval-responded";
+    part.approval = { id: approval?.id, approved: true };
+    const second = await collect(await send(chat, s.id, [answered]), answered);
+    expect(second.message?.parts.find((p) => p.type === "dynamic-tool")).toMatchObject({
+      state: "output-available",
+      output: expect.stringContaining("write /proj/notes/g.md: done"),
+    });
+    expect(second.chunks.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" });
   });
 
   it("replays a running turn from the log after a disconnect", async () => {

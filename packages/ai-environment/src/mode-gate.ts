@@ -98,7 +98,10 @@ export type ApprovalMethod =
   // answering its harness's question, writing its artifacts back.
   | "remote"
   | "input"
-  | "changeset";
+  | "changeset"
+  // A sub-agent's approval a turn waits on through `agent.start` (statewalker/statewalker-ai#88):
+  // the path is the sub-agent session, the target the approval.
+  | "agent";
 
 const PREFIX = "EAPPROVAL: ";
 

@@ -188,6 +188,8 @@ export interface Approval {
   /** Why the mode or a rule asks. */
   reason: string;
   status: "pending" | "allowed" | "denied" | "expired" | "blocked" | "cancelled";
+  /** A sub-agent's approval: its tree's root session (statewalker/statewalker-ai#88). */
+  root?: string;
   created: number;
   expires: number;
 }
@@ -508,7 +510,7 @@ export interface SessionClient {
   answerApproval(
     id: string,
     answer: ApprovalAnswer,
-  ): Promise<{ approval: Approval; accepted: MessageAccepted }>;
+  ): Promise<{ approval: Approval; accepted: MessageAccepted; continued?: MessageAccepted[] }>;
   /** The secrets of one level (and project) the caller manages: names, bindings, update times. */
   listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   /** Sets or replaces a secret; the answer never holds its value. */
