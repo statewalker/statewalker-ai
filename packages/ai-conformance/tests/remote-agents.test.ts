@@ -338,6 +338,13 @@ describe.skipIf(RUNTIME === "browser").each(transports)(
         message: "right",
       });
       expect(texts(external(turn))).toContain("ANSWER: right");
+      // A confirmation denied is its "no".
+      const confirm = await ivy.sendMessage(session.id, { content: "ASK confirm Proceed?" });
+      const no = await answer(ivy, confirm.stop_reason?.approval_ids?.[0] as string, {
+        decision: "deny",
+        scope: "once",
+      });
+      expect(texts(external(no.turn))).toContain("ANSWER: no");
       // free_text is a question.
       const free = await ivy.sendMessage(session.id, { content: "ASK free_text Your name?" });
       const question = free.items.find((i) => i.kind === "question");

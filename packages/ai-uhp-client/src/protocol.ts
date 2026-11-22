@@ -190,12 +190,20 @@ export function inputRequestOf(response: UhpResponse): UhpInputRequest | undefin
 /**
  * The input that answers a question: an `input_response` for an allow (`answer` an option's id for
  * `choice` and `confirm`, any text for `free_text` and `secret`); a denial voids the question
- * with a message saying so. EINVAL when the answer does not fit.
+ * with a message saying so, as does an answer that fits no option (passed on as the user's words).
  */
 export function answerInput(
   request: UhpInputRequest,
   answer: { decision: "allow" | "deny"; message?: string },
 ): unknown[] {
+  if (answer.decision !== "allow" && request.kind === "confirm") {
+    // A confirmation denied is its "no".
+    const options = request.options ?? [];
+    const no = options.length
+      ? ((options.find((o) => o.id === "no") ?? options.at(-1))?.id ?? "no")
+      : "no";
+    return [{ type: "input_response", input_request_id: request.id, answer: no }];
+  }
   if (answer.decision !== "allow")
     return [
       {
@@ -210,19 +218,19 @@ export function answerInput(
       },
     ];
   const options = request.options ?? [];
+  const said = (text: string) => [
+    { type: "message", role: "user", content: [{ type: "input_text", text }] },
+  ];
   let value = answer.message ?? "";
   if (request.kind === "confirm") {
     if (!options.length) value = "yes";
     else value = (options.find((o) => o.id === "yes") ?? options[0])?.id ?? "yes";
   } else if (request.kind === "choice") {
+    // An answer that names no option is passed on as the user's words (voiding the question).
     const picked = options.find((o) => o.id === value || o.label === value);
-    if (!picked)
-      throw codedError(
-        "EINVAL",
-        `answer with one of the options as the message: ${options.map((o) => o.id).join(", ")}`,
-      );
+    if (!picked) return said(value ? `The user answered: ${value}` : "The user gave no answer.");
     value = picked.id;
-  } else if (!value) throw codedError("EINVAL", "answer with the text as the message");
+  } else if (!value) return said("The user gave no answer.");
   return [{ type: "input_response", input_request_id: request.id, answer: value }];
 }
 
