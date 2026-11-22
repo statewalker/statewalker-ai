@@ -28,7 +28,14 @@ export interface Item {
   seq: number;
   id: string;
   turn: string;
-  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback" | "mode_decision";
+  kind:
+    | "message"
+    | "tool_call"
+    | "tool_result"
+    | "approval"
+    | "model_fallback"
+    | "mode_decision"
+    | "limit_warning";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -63,6 +70,17 @@ export interface Item {
   latency_ms?: number;
   /** Set on the denial after which the session fell back to this mode. */
   fallback?: string;
+  /** A `limit_warning` item: the limit whose warning share usage crossed. */
+  warning?: {
+    meter: string;
+    level: string;
+    target: string;
+    limit_level: string;
+    period: string;
+    used: number;
+    value: number;
+    warn_at: number;
+  };
 }
 
 /** One request to a model, metered. */

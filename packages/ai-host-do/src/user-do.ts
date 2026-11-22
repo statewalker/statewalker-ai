@@ -66,6 +66,8 @@ export class User extends DurableObject<Env> {
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
+          holdStream: (capability, id) => ws.holdStream(capability, id),
+          releaseStream: (capability, id) => ws.releaseStream(capability, id),
           files: (capability, method, args) => ws.files(capability, method, args),
           listDatabases: (capability, project) => ws.listDatabases(capability, project),
           databaseCall: (capability, call) => ws.databaseCall(capability, call),
@@ -86,6 +88,16 @@ export class User extends DurableObject<Env> {
       modes: deploymentModes(env),
       approvalTtlMs: approvalTtlMs(env),
     });
+  }
+
+  async holdStream(token: string) {
+    await this.#reachable();
+    return this.#sessions.holdStream(token);
+  }
+
+  async releaseStream(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.releaseStream(token, id);
   }
 
   /**

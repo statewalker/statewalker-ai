@@ -43,7 +43,7 @@ function projectFiles(t: string): Record<string, string> {
       value: 2,
       period: "day",
     }),
-    [`/sessions-${t}/.system/access`]: owner("ann", "bob"),
+    [`/sessions-${t}/.system/access`]: owner("ann", "bob", "sam"),
     [`/tools-${t}/.system/access`]: owner("ann"),
     [`/tools-${t}/readme.md`]: "README",
     [`/parallel-${t}/.system/access`]: owner("ann"),
@@ -98,6 +98,8 @@ const FILES: Record<string, string> = {
       target: `bob-${t}`,
       value: 1,
     })),
+    // sam may hold one stream at a time.
+    ...TRANSPORTS.map((t) => ({ meter: "streams", level: "member", target: `sam-${t}`, value: 1 })),
   ),
   ...Object.fromEntries(TRANSPORTS.flatMap((t) => Object.entries(projectFiles(t)))),
 };
@@ -437,5 +439,23 @@ describe.each(transports)("limits over %s", (name, connect) => {
     await expect(db.exec(`dbfull-${t}`, "notes", "CREATE TABLE t (x)")).rejects.toMatchObject({
       message: expect.stringContaining("ENOSPC"),
     });
+  });
+
+  it("answers 429 to a stream over the member's limit on concurrent streams, until one ends", async () => {
+    const sam = await as("sam");
+    const s = await sam.startSession({ project: `sessions-${t}` });
+    const held = await sam.postMessage(s.id, { content: `HOLD streams-${t}` });
+    const queued = await sam.postMessage(s.id, { content: "hello" });
+    await model.held(`streams-${t}`);
+    // Following both turns at once takes two streams (SSE streams, or long polls over RPC): the
+    // one that comes second is refused while the other waits on the held turn.
+    const following = [sam.waitTurn(held), sam.waitTurn(queued)];
+    const refused = await Promise.race(following.map((p) => p.catch((e: unknown) => e)));
+    expect(refused).toMatchObject({ status: 429, message: expect.stringContaining("streams") });
+    model.release(`streams-${t}`);
+    const outcomes = await Promise.allSettled(following);
+    expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
+    // That stream ended, so another may open.
+    expect(await sam.waitTurn(queued)).toMatchObject({ status: "completed" });
   });
 });

@@ -24,6 +24,9 @@ import { type Env, ledgerOptions } from "./env.js";
 /** The limits file in the workspace's and each project's system folder, and a user's profile. */
 export const LIMITS_FILE = "limits";
 
+/** How long a stream counts when its holder never releases it. */
+const STREAM_TTL_MS = 60 * 60 * 1000;
+
 /** A warning as the agent session keeps it: an item, and an event. */
 export interface WarningView {
   meter: string;
@@ -265,6 +268,35 @@ export class WorkspaceLimits {
       { storage_bytes: delta },
       this.meta(project, user),
     );
+  }
+
+  /**
+   * Holds a user's stream against the workspace's and member's limits on streams. A stream its
+   * holder never released (a host that went away) stops counting after an hour.
+   */
+  async holdStream(user: string, id: string): Promise<void> {
+    const now = Date.now();
+    for (const row of this.#sql
+      .exec("SELECT id, user FROM limit_streams WHERE expires <= ?", now)
+      .toArray())
+      await this.releaseStream(String(row.user), String(row.id));
+    const scopes = (await this.scopes("", user)).filter((s) => s.level !== "project");
+    try {
+      this.ledger.adjust(scopes, "streams", 1, this.meta("", user));
+    } catch (e) {
+      throw refusal(e);
+    }
+    this.#sql.exec("INSERT INTO limit_streams VALUES (?, ?, ?)", id, user, now + STREAM_TTL_MS);
+  }
+
+  async releaseStream(user: string, id: string): Promise<void> {
+    const found = this.#sql
+      .exec("SELECT 1 FROM limit_streams WHERE id = ? AND user = ?", id, user)
+      .toArray().length;
+    if (!found) return;
+    this.#sql.exec("DELETE FROM limit_streams WHERE id = ?", id);
+    const scopes = (await this.scopes("", user)).filter((s) => s.level !== "project");
+    this.ledger.adjust(scopes, "streams", -1, this.meta("", user));
   }
 
   /** Counts a new active agent session; ELIMIT (429) over a limit on sessions. */

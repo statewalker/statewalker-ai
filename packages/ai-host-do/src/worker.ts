@@ -74,6 +74,8 @@ function sessionApi(env: Env, token: string) {
       listModels: async (t, query) => (await user()).listModels(t, query),
       getModelConfig: async (t) => (await user()).getModelConfig(t),
       setModelConfig: async (t, config) => (await user()).setModelConfig(t, config),
+      holdStream: async (t) => (await user()).holdStream(t),
+      releaseStream: async (t, id) => (await user()).releaseStream(t, id),
     },
     agent: (id) => {
       const agent = agentOf(env, id);

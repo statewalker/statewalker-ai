@@ -107,6 +107,9 @@ export interface WorkspaceGrants {
     limits?: Limit[];
     ownKeys?: boolean;
   }>;
+  /** Holds and releases one of the user's streams against the limits on streams (#179). */
+  holdStream(userCapability: string, id: string): Promise<void>;
+  releaseStream(userCapability: string, id: string): Promise<void>;
   /** Agent sessions of this user that ended: they no longer count as active (#179). */
   sessionsEnded(userCapability: string, sessions: string[]): Promise<void>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
@@ -435,6 +438,19 @@ export class UserSessions implements UserPort {
    * Answers one of the caller's pending approvals. An allow is granted at the gate (with the
    * user capability), which re-checks it against the mode and roles when the action runs.
    */
+  /** Holds one stream of the user in the token's workspace (ELIMIT over a limit on streams). */
+  async holdStream(token: string): Promise<string> {
+    const us = await this.#userSession(token);
+    const id = `st-${crypto.randomUUID()}`;
+    await this.#o.workspace(us.workspace).holdStream(us.capability, id);
+    return id;
+  }
+
+  async releaseStream(token: string, id: string): Promise<void> {
+    const us = await this.#userSession(token);
+    await this.#o.workspace(us.workspace).releaseStream(us.capability, String(id));
+  }
+
   /** Whether the user allowed this approval of this agent session (statewalker/statewalker-root#179). */
   approvalAllowed(session: string, id: string): boolean {
     const row = this.#one<{ status: string }>(

@@ -508,6 +508,16 @@ export interface DeleteSecretRequest extends SecretScope {
 
 /** The session API, as one caller (one access token) sees it. */
 export interface SessionApi {
+  /**
+   * Holds one concurrent stream of the caller (an SSE stream, a long poll) against the limits on
+   * streams: its id, or ELIMIT (429) over one (statewalker/statewalker-root#179). Not served over
+   * RPC: the API's own streams hold and release.
+   */
+  holdStream(): Promise<string>;
+  /** Releases a held stream. */
+  releaseStream(id: string): Promise<void>;
+  /** `readEvents` for a stream that holds its own slot (an SSE stream): its long polls hold none. */
+  readHeldEvents(sessionId: string, query?: EventsQuery): Promise<EventsPage>;
   /** Opens the caller's user session in the workspace, or resumes it. */
   me(): Promise<UserSessionView>;
   /** Starts an agent session in a project the caller is a member of. */
@@ -678,6 +688,8 @@ export interface UserPort {
   getModelConfig(token: string): Promise<ModelsConfig>;
   /** The configuration is checked by the workspace (EINVAL). */
   setModelConfig(token: string, config: unknown): Promise<ModelsConfig>;
+  holdStream(token: string): Promise<string>;
+  releaseStream(token: string, id: string): Promise<void>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -957,8 +969,22 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async readEvents(sessionId, query) {
       const session = await own(sessionId);
+      const q = (query ?? {}) as EventsQuery;
+      // A long poll is a stream while it waits (#179).
+      if (!(Number(q.wait) > 0)) return ports.agent(session.id).events(q);
+      const held = await ports.user.holdStream(token);
+      try {
+        return await ports.agent(session.id).events(q);
+      } finally {
+        await ports.user.releaseStream(token, held).catch(() => {});
+      }
+    },
+    async readHeldEvents(sessionId, query) {
+      const session = await own(sessionId);
       return ports.agent(session.id).events((query ?? {}) as EventsQuery);
     },
+    holdStream: () => ports.user.holdStream(token),
+    releaseStream: async (id) => ports.user.releaseStream(token, String(id)),
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
     setMode(req) {

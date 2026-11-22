@@ -1104,6 +1104,18 @@ export class Workspace extends DurableObject<Env> {
     return typeof turn === "string" && turn.startsWith(`${session}.tu-`) ? turn : undefined;
   }
 
+  /** Holds one of a user's streams (an SSE stream, a long poll): ELIMIT (429) over a limit. */
+  async holdStream(userCapability: string, id: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    await this.#limits.holdStream(user, String(id));
+  }
+
+  /** Releases one of the user's streams. */
+  async releaseStream(userCapability: string, id: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    await this.#limits.releaseStream(user, String(id));
+  }
+
   /**
    * An agent session of this user ended (archived, revoked or deleted), told by their User DO
    * with the user capability: it stops counting against the limits on sessions.
