@@ -60,6 +60,8 @@ jobs:
   # packages/ai-conformance/src/process-deployment.ts), on the host network.
   celld:
     runs-on: ubuntu-latest
+    # A scenario that hangs ends the job, not GitHub's 6-hour limit.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -85,6 +87,8 @@ jobs:
   # `wrangler dev` (local workerd), as Cloudflare would run it.
   workerd:
     runs-on: ubuntu-latest
+    # A scenario that hangs ends the job, not GitHub's 6-hour limit.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

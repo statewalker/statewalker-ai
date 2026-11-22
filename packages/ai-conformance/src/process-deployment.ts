@@ -117,6 +117,8 @@ interface Started {
 
 function startCelld(folder: string, port: number): Started {
   const args = ["dev", ".", "--host", "127.0.0.1", "--port", String(port), "--no-watch", "--clean"];
+  // CONFORMANCE_LOGS shows the runtime's output, celld's warnings and information included.
+  if (process.env.CONFORMANCE_LOGS) args.push("--logs");
   const bin = process.env.CELLD_BIN;
   if (bin)
     return {
