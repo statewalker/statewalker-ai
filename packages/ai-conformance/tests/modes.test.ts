@@ -29,7 +29,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 // Each test uses its own users, suffixed by transport, so modes switched in one never reach another.
 const USERS = [
   ...["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kit", "lee"],
-  ...["mo", "ned", "oz", "pat"],
+  ...["mo", "ned", "oz", "pat", "quin"],
 ];
 const TRANSPORTS = ["rest", "rpc"];
 
@@ -44,7 +44,11 @@ function fixtures(): Record<string, string> {
     // The project's rules (in its system folder, invisible to agents).
     "/proj/.system/permission-rules": JSON.stringify({
       allow: ["files.write:/scratch/**", "files.delete:/tidy-*/**"],
-      ask: ["files.write:/scratch/keep/**", "files.delete:/tidy-*/keep/**"],
+      ask: [
+        "files.write:/scratch/keep/**",
+        "files.delete:/tidy-*/keep/**",
+        "files.read:/asked-*/**",
+      ],
       deny: ["files.delete:/guarded-*/keep.md"],
     }),
   };
@@ -54,6 +58,7 @@ function fixtures(): Record<string, string> {
     files[`/proj/guarded-${t}/other.md`] = "other\n";
     files[`/proj/tidy-${t}/a.md`] = "a\n";
     files[`/proj/tidy-${t}/keep/b.md`] = "b\n";
+    files[`/proj/asked-${t}/secret.md`] = "asked secret\n";
     files[`/demote-${t}/notes/a.md`] = "a\n";
     files[`/bare-${t}/readme.md`] = "# bare\n";
     files[`/bare-${t}/.system/access`] = JSON.stringify({ [`mo-${t}`]: "editor" });
@@ -392,6 +397,29 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(turn.status).toBe("completed");
     expect(toolResult(turn)?.output).toMatch(/EACCES/);
     expect(await contentOf(mo, s.id, "readme.md")).toBe("# bare\n");
+    // Nor replace it with a file: nothing but the gate's guard refuses a write on the folder itself.
+    const replaced = await mo.sendMessage(s.id, { content: write(`/bare-${t}`, "x") });
+    expect(toolResult(replaced)?.output).toMatch(/EACCES/);
+    const kind = await mo.sendMessage(s.id, {
+      content: bash(`test -d /bare-${t} && echo directory || echo replaced`),
+    });
+    expect(toolResult(kind)?.output).toMatch(/^directory/);
+    expect(await contentOf(mo, s.id, "readme.md")).toBe("# bare\n");
+  });
+
+  it("refuses a read the rules ask about: a read cannot wait on an approval", async () => {
+    const quin = await as("quin");
+    const s = await quin.startSession({ project: "proj" });
+    for (const content of [read(`asked-${t}/secret.md`), bash(`cat /proj/asked-${t}/secret.md`)]) {
+      const turn = await quin.sendMessage(s.id, { content });
+      expect(turn.status).toBe("completed");
+      // The shell reports a refused read as a missing file.
+      expect(toolResult(turn)?.output).toMatch(/EACCES|No such file/);
+      expect(toolResult(turn)?.output).not.toContain("asked secret");
+    }
+    expect((await quin.listApprovals()).approvals).toHaveLength(0);
+    // The rest of the project reads as before.
+    expect(await contentOf(quin, s.id, "readme.md")).toBe("# proj\n");
   });
 
   it("decides a folder's removal by every entry inside it: a denied or asking file inside denies or asks", async () => {

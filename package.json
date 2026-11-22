@@ -26,7 +26,8 @@
     "format": "biome format --write .",
     "format:check": "biome format .",
     "changeset": "changeset",
-    "test:nightly": "pnpm --filter @statewalker/ai-conformance run test:nightly"
+    "test:nightly": "pnpm --filter @statewalker/ai-conformance run test:nightly",
+    "test:mutation": "node packages/ai-conformance/src/nightly/mutate.ts packages/ai-conformance/mutations.json"
   },
   "devDependencies": {
     "@biomejs/biome": "catalog:",

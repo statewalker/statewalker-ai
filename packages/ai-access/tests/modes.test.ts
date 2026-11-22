@@ -152,4 +152,26 @@ describe("the approval registry", () => {
     expect(registry.consume("ap-1", "as-1", "ann")).toBe(false);
     expect(registry.consume("ap-2", "as-2", "ann")).toBe(false);
   });
+
+  it("an expired grant of an approval is never used, however recently it expired", () => {
+    const registry = new ApprovalRegistry(sqlOf());
+    const now = Date.now();
+    const grant = (id: string, expires: number) =>
+      registry.grant("ann", {
+        id,
+        session: "as-1",
+        scope: "once",
+        permission: "files.write:/a",
+        expires,
+      });
+    grant("ap-1", now - 1);
+    grant("ap-2", now);
+    grant("ap-3", now + 60_000);
+    expect(registry.consume("ap-1", "as-1", "ann", now)).toBe(false);
+    expect(registry.consume("ap-2", "as-1", "ann", now)).toBe(false);
+    // An unexpired grant stops working the moment it expires.
+    expect(registry.consume("ap-3", "as-1", "ann", now + 60_000)).toBe(false);
+    grant("ap-3", now + 60_000);
+    expect(registry.consume("ap-3", "as-1", "ann", now + 59_999)).toBe(true);
+  });
 });
