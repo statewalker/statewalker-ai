@@ -127,7 +127,7 @@ An agent session's durable, numbered record of what happened in it (turns queued
 _Avoid_: event stream (a stream is one read of the log)
 
 **Projection**:
-Another API's view of the session API, read from the same event log and methods: the OpenAI projection, the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it).
+Another API's view of the session API, read from the same event log and methods: the OpenAI projection (a Conversation is an agent session, a Response a turn, served at an agent's base URL), the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it).
 
 **Summary**:
 A compacted stand-in for a range of a session's items or lower summaries; the items themselves are kept.

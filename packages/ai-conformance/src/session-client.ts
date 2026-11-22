@@ -544,6 +544,13 @@ export interface SessionClient {
     from?: { turn?: string; since?: number },
   ): Promise<ReadableStream<UIMessageChunk> | null>;
   /**
+   * What an OpenAI client takes to drive an agent through the OpenAI projection
+   * (statewalker/statewalker-root#138): the agent's base URL (`/v1/projects/<p>/agents/<a>/`), the
+   * key (the access token) and a fetch: over REST the deployment's, over RPC the projection run
+   * here over the session API's methods.
+   */
+  openai(project: string, agent?: string): OpenAiClientOptions;
+  /**
    * One message to an agent session's own MCP endpoint (`POST /v1/sessions/{id}/mcp`, JSON
    * responses): its answer, or null for a notification.
    */
@@ -783,6 +790,20 @@ const memoryCollection = (target: MemoryTarget): string =>
     ? "/v1/me/preferences/entries"
     : memoryPath(target);
 
+/** An OpenAI SDK client's options for one agent's base URL. */
+export interface OpenAiClientOptions {
+  baseURL: string;
+  apiKey: string;
+  fetch: typeof fetch;
+}
+
+/** An agent's base URL in the OpenAI projection; a `<plugin>/<agent>` id spans two segments. */
+export const openAiBaseUrl = (project: string, agent = "default") =>
+  `http://localhost/v1/projects/${encodeURIComponent(project)}/agents/${agent
+    .split("/")
+    .map(encodeURIComponent)
+    .join("/")}/`;
+
 export function restClient(deployment: Deployment, token: string): SessionClient {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const call = <T>(method: string, path: string, body?: unknown) =>
@@ -800,6 +821,14 @@ export function restClient(deployment: Deployment, token: string): SessionClient
   };
   const s = (id: string) => `/v1/sessions/${encodeURIComponent(id)}`;
   const client: SessionClient = {
+    openai: (project, agent) => ({
+      baseURL: openAiBaseUrl(project, agent),
+      apiKey: token,
+      fetch: ((input: string | URL | Request, init?: RequestInit) =>
+        input instanceof Request
+          ? deployment.fetch(input.url, input)
+          : deployment.fetch(String(input), init)) as typeof fetch,
+    }),
     chat: (id) =>
       new DefaultChatTransport({
         api: `${s(id)}/chat`,
