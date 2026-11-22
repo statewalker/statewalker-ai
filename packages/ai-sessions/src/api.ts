@@ -106,13 +106,21 @@ export interface AgentSessionView {
   /** The session's model usage, totalled over its turns (single-session reads, #181). */
   usage?: UsageTotals;
   /** A fork: the session and turn its history was copied from (statewalker/statewalker-root#190). */
-  forked_from?: TurnRef;
+  forked_from?: ForkOrigin;
 }
 
 /** A turn of a session, by both ids. */
 export interface TurnRef {
   session: string;
   turn: string;
+}
+
+/**
+ * Where a fork started: the source's session and turn, and the checkpoint of the gate's file
+ * pre-images then (statewalker/statewalker-root#191), when it kept any of the source.
+ */
+export interface ForkOrigin extends TurnRef {
+  checkpoint?: string;
 }
 
 /** A project's database, as the session API lists it to a member who may use it. */
@@ -1117,7 +1125,7 @@ export interface AgentSessionConfig {
   /** A sub-agent's root session (statewalker/statewalker-root#126). */
   root?: string;
   /** A fork's source: the session and turn its history was copied from. */
-  forked_from?: TurnRef;
+  forked_from?: ForkOrigin;
   /**
    * The names of the tools the session may be offered (none: every tool). A sub-agent's are
    * always among its parent's.

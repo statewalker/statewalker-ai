@@ -1622,8 +1622,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
 
   /** A revert of files needs the gate's revert (#191). */
   #canRevert(revert: boolean): void {
-    if (revert && !this.#revertFiles)
-      throw codedError("ENOSYS", "this host cannot revert files");
+    if (revert && !this.#revertFiles) throw codedError("ENOSYS", "this host cannot revert files");
   }
 
   /**

@@ -134,6 +134,22 @@ export {
 } from "./models.js";
 export { nameOf, normalise, parentOf } from "./paths.js";
 export {
+  type Capture,
+  ContentDigest,
+  DEFAULT_PRE_IMAGE_RETENTION,
+  digestOf,
+  type FilesRevert,
+  type PreImageActor,
+  PreImageLog,
+  type PreImageRetention,
+  parsePreImageRetention,
+  preImaged,
+  type RevertPlan,
+  type RevertScope,
+  type RevertStep,
+  type StorageDelta,
+} from "./pre-images.js";
+export {
   mountProfiles,
   PROFILES_ROOT,
   type ProfilesBackend,
@@ -162,19 +178,3 @@ export {
   sessionSecrets,
 } from "./secrets.js";
 export type { SqlLike } from "./sql.js";
-export {
-  type Capture,
-  ContentDigest,
-  DEFAULT_PRE_IMAGE_RETENTION,
-  digestOf,
-  type FilesRevert,
-  type PreImageActor,
-  PreImageLog,
-  type PreImageRetention,
-  parsePreImageRetention,
-  preImaged,
-  type RevertPlan,
-  type RevertScope,
-  type RevertStep,
-  type StorageDelta,
-} from "./pre-images.js";

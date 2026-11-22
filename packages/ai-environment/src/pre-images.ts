@@ -161,7 +161,7 @@ export class ContentDigest {
 /** The digest of a file as it is now; "" when there is no file. */
 export async function digestOf(store: FilesApi, path: string): Promise<string> {
   const st = await store.stats(path);
-  if (!st || st.kind !== "file") return "";
+  if (st?.kind !== "file") return "";
   const d = new ContentDigest();
   for await (const chunk of store.read(path)) d.push(chunk);
   return d.done();
@@ -363,8 +363,14 @@ export class PreImageLog {
       "SELECT project, bytes FROM pre_image_blobs WHERE id IN (SELECT value FROM json_each(?))",
       list,
     );
-    this.#sql.exec("DELETE FROM pre_image_chunks WHERE blob IN (SELECT value FROM json_each(?))", list);
-    this.#sql.exec("DELETE FROM pre_image_blobs WHERE id IN (SELECT value FROM json_each(?))", list);
+    this.#sql.exec(
+      "DELETE FROM pre_image_chunks WHERE blob IN (SELECT value FROM json_each(?))",
+      list,
+    );
+    this.#sql.exec(
+      "DELETE FROM pre_image_blobs WHERE id IN (SELECT value FROM json_each(?))",
+      list,
+    );
     this.#sql.exec(
       "UPDATE pre_image_records SET image = NULL, kept = 0 WHERE image IN (SELECT value FROM json_each(?))",
       list,
@@ -446,7 +452,11 @@ export class PreImageLog {
    * or removed. A step whose pre-image went meanwhile is unavailable instead.
    */
   async apply(files: FilesApi, plan: RevertPlan): Promise<FilesRevert> {
-    const out: FilesRevert = { reverted: [], conflicts: [...plan.conflicts], unavailable: [...plan.unavailable] };
+    const out: FilesRevert = {
+      reverted: [],
+      conflicts: [...plan.conflicts],
+      unavailable: [...plan.unavailable],
+    };
     for (const step of plan.steps) {
       if (step.absent) {
         if (await files.exists(step.path)) await files.remove(step.path);

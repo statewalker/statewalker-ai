@@ -80,19 +80,15 @@ import {
 import {
   approvalError,
   approvalOf,
-  DEFAULT_PRE_IMAGE_RETENTION,
-  type FilesRevert,
-  PreImageLog,
-  type PreImageRetention,
-  parsePreImageRetention,
-  preImaged,
   type CatalogModel,
   type ClassifiedVerdict,
   checkModelsConfig,
   checkUserProvider,
+  DEFAULT_PRE_IMAGE_RETENTION,
   deploymentSecrets,
   discoverModels,
   estimateRequest,
+  type FilesRevert,
   FilesRpcHost,
   type FilesRpcMethod,
   filesOverRpc,
@@ -123,8 +119,12 @@ import {
   normalise,
   type OutgoingRequest,
   type Period,
+  PreImageLog,
+  type PreImageRetention,
   parseModelsConfig,
+  parsePreImageRetention,
   pickSessionModel,
+  preImaged,
   redactSecrets,
   resolveModels,
   resolveSecrets,
@@ -975,7 +975,9 @@ export class Workspace extends DurableObject<Env> {
     const metered = this.#meteredStore(await this.#store);
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
     // An agent session's every change is recorded first, with the file's pre-image (#191).
-    const raw = agent ? this.#preImaged(metered, agent, this.#turnOf(agent.session, turn)) : metered;
+    const raw = agent
+      ? this.#preImaged(metered, agent, this.#turnOf(agent.session, turn))
+      : metered;
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
     const store = agent ? await this.#withDefinitions(raw, agent) : raw;
     // Many actions at once (a folder's entries): the roles read once per project, the capability
@@ -1097,7 +1099,9 @@ export class Workspace extends DurableObject<Env> {
     const children = (Array.isArray(req?.children) ? req.children : []).map(String);
     const store = await this.#store;
     const retention = await this.#retention(store);
-    await this.#adjustPreImages(this.#preImages.prune(facts.lineage?.[0] ?? facts.session, retention));
+    await this.#adjustPreImages(
+      this.#preImages.prune(facts.lineage?.[0] ?? facts.session, retention),
+    );
     const plan = await this.#preImages.plan(store, { session: facts.session, turns, children });
     const outcome = { conflicts: plan.conflicts, unavailable: plan.unavailable };
     if (!plan.steps.length) return { reverted: [], ...outcome };
@@ -1105,9 +1109,13 @@ export class Workspace extends DurableObject<Env> {
     const paths = plan.steps.map((s) => s.path);
     const gate = this.#modeGate(facts, store);
     const verdicts = await gate.decide(paths.map((p) => ["write", p] as [FileAction, string]));
-    const denied = verdicts.flatMap((v, i) => (v.verdict === "deny" ? [`${paths[i]}: ${v.reason}`] : []));
+    const denied = verdicts.flatMap((v, i) =>
+      v.verdict === "deny" ? [`${paths[i]}: ${v.reason}`] : [],
+    );
     if (denied.length) return { reverted: [], ...outcome, refused: denied.join("; ") };
-    const worst = verdicts.reduce((a, b) => (STRICTNESS[b.verdict] > STRICTNESS[a.verdict] ? b : a));
+    const worst = verdicts.reduce((a, b) =>
+      STRICTNESS[b.verdict] > STRICTNESS[a.verdict] ? b : a,
+    );
     if (worst.verdict !== "allow") {
       const id = await approvalId(
         facts.session,
@@ -1129,9 +1137,18 @@ export class Workspace extends DurableObject<Env> {
         if (worst.verdict === "classify") {
           const c = await this.#classify(facts, store, request);
           if (c.verdict === "deny")
-            return { reverted: [], ...outcome, refused: `the risk classifier denied it: ${c.reason}` };
+            return {
+              reverted: [],
+              ...outcome,
+              refused: `the risk classifier denied it: ${c.reason}`,
+            };
           if (c.verdict === "ask")
-            return { reverted: [], ...outcome, approval: { ...request, reason: c.reason }, pending: paths };
+            return {
+              reverted: [],
+              ...outcome,
+              approval: { ...request, reason: c.reason },
+              pending: paths,
+            };
         } else return { reverted: [], ...outcome, approval: request, pending: paths };
       }
     }

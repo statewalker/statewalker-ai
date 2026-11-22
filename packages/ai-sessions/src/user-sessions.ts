@@ -54,6 +54,7 @@ import type {
   DatabaseCall,
   DatabaseView,
   DeleteSecretRequest,
+  ForkOrigin,
   LimitsCall,
   LimitsView,
   Metadata,
@@ -67,7 +68,6 @@ import type {
   SetSecretRequest,
   StartSessionRequest,
   SubAgentRequest,
-  TurnRef,
   UsageQuery,
   UsageRecordsPage,
   UsageRecordsQuery,
@@ -102,6 +102,11 @@ export interface WorkspaceGrants {
     userCapability: string,
     req: { from: string; session: string; model?: string },
   ): Promise<PinnedDefinitions>;
+  /**
+   * The checkpoint of the gate's file pre-images of one of the user's sessions now
+   * (statewalker/statewalker-root#191): null when it keeps none.
+   */
+  preImageCheckpoint?(userCapability: string, session: string): Promise<string | null>;
   /** A project's models as the user sees them; `discover` asks each provider's `/models`. */
   listModels(userCapability: string, query: ModelsQuery): Promise<ModelView[]>;
   /** The user's own model configuration (user level) there. */
@@ -286,7 +291,7 @@ const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   metadata: row.metadata ? (JSON.parse(row.metadata) as Metadata) : {},
   ...(row.archived ? { archived: Number(row.archived) } : {}),
   ...(row.parent ? { parent: row.parent, root: String(row.root) } : {}),
-  ...(row.forked_from ? { forked_from: JSON.parse(row.forked_from) as TurnRef } : {}),
+  ...(row.forked_from ? { forked_from: JSON.parse(row.forked_from) as ForkOrigin } : {}),
 });
 
 /** The session index with each session's metadata and archive time (a table of its own). */
@@ -711,7 +716,15 @@ export class UserSessions implements UserPort {
       agent: pinned.agent,
       unattended: source.unattended,
     });
-    const forkedFrom: TurnRef = { session: source.id, turn: String(req.at_turn) };
+    // The files' checkpoint then: the source's pre-images serve as its turns' checkpoints (#191).
+    const checkpoint = await this.#o
+      .workspace(us.workspace)
+      .preImageCheckpoint?.(us.capability, source.id);
+    const forkedFrom: ForkOrigin = {
+      session: source.id,
+      turn: String(req.at_turn),
+      ...(checkpoint ? { checkpoint } : {}),
+    };
     const row: AgentRow = {
       id,
       workspace: us.workspace,
