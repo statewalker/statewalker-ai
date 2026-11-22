@@ -77,6 +77,25 @@ export type UiStreamApi = Pick<
 > &
   Pick<SessionApi, "answerApproval">;
 
+/**
+ * Whether a session still waits on a sub-agent's approval (statewalker/statewalker-ai#88): it is
+ * waiting, and its latest turns hold the approval. Checked before answering, so an answer that would
+ * continue only the sub-agent is refused before it is given.
+ */
+export async function waitsOnSubAgent(
+  api: Pick<SessionApi, "getSession" | "listItems">,
+  session: string,
+  approval: string,
+): Promise<boolean> {
+  if ((await api.getSession(session)).status !== "waiting") return false;
+  const { items } = await api.listItems(session, {
+    types: ["approval", "question"],
+    order: "desc",
+    limit: 100,
+  });
+  return items.some((i) => i.approval === approval && i.stored?.method === "agent");
+}
+
 export const UI_MESSAGE_STREAM_HEADERS = {
   "content-type": "text/event-stream",
   "cache-control": "no-cache",
@@ -157,6 +176,11 @@ export async function chatPlan(
       return approval.status === "pending";
     });
     if (!pending.length) throw codedError("EINVAL", "the message answers no pending approval");
+    for (const a of pending) {
+      const approval = approvals.find((v) => v.id === a.id);
+      if (approval?.session !== session && !(await waitsOnSubAgent(api, session, a.id)))
+        throw codedError("EINVAL", `approval ${a.id} no longer continues this session`);
+    }
     const turns: string[] = [];
     let since = Number.POSITIVE_INFINITY;
     for (const a of pending) {

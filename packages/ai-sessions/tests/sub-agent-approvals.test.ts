@@ -53,7 +53,7 @@ const outcomeOf = (turn: TurnView): SubAgentOutcome => ({
 });
 
 /** A parent whose first turn starts a child that asks one approval. */
-async function tree() {
+async function tree(options: { early?: "allow" | "deny" } = {}) {
   const recorded: { session: string; ids: string[] }[] = [];
   const cancelled: { session: string; ids: string[] }[] = [];
   let parent: AgentSessionCore | undefined;
@@ -83,6 +83,8 @@ async function tree() {
       emit({ kind: "tool_call", callId: "c-start", name: "agent_start", args: {} });
       const accepted = await child.send({ content: "write", delivery: "next", ignored: [] });
       const ran = await child.waitTurn(accepted.turn_id);
+      // The user answers as soon as the child asks, while this turn still runs.
+      if (options.early) await child.answer("ap-1", { decision: options.early, scope: "once" });
       for (const id of ran.stop_reason?.approval_ids ?? [])
         turn.onApproval(ASKED, { method: "agent", path: "c1", target: id });
       emit({
@@ -104,11 +106,18 @@ async function tree() {
     cancelApprovals: async (config, ids) => {
       cancelled.push({ session: config.id, ids });
     },
+    subAgentDecision: (_config, stored) => child.answerDecision(String(stored.target)),
   });
   await parent.start({ ...BASE, id: "p1", agent: "boss" });
   const first = await parent.send({ content: "delegate", delivery: "next", ignored: [] });
   const waiting = await parent.waitTurn(first.turn_id);
   return { parent, child, waiting, recorded, cancelled };
+}
+
+/** The turn a core queued last. */
+async function lastQueued(core: AgentSessionCore): Promise<string> {
+  const { events } = await core.events();
+  return String(events.filter((e) => e.type === "turn.queued").at(-1)?.turn);
 }
 
 describe("a sub-agent's approval waits in its parent's turn", () => {
@@ -141,6 +150,19 @@ describe("a sub-agent's approval waits in its parent's turn", () => {
     expect(await t.parent.subAgentAnswered("ap-1", "allow")).toEqual([]);
   });
 
+  it("an answer given while the parent's turn still runs continues the parent once that turn ends", async () => {
+    const t = await tree({ early: "allow" });
+    expect(t.waiting.status).toBe("waiting");
+    const turn = await t.parent.waitTurn(await lastQueued(t.parent));
+    expect(turn).toMatchObject({ status: "completed", answers: "ap-1" });
+    expect(turn.items[0]).toMatchObject({
+      kind: "tool_result",
+      output: expect.stringContaining(`write ${PATH}: done`),
+    });
+    // Once: a later notice from the child continues nothing more.
+    expect(await t.parent.subAgentAnswered("ap-1", "allow")).toEqual([]);
+  });
+
   it("a denial continues the parent with the child's outcome, marked denied", async () => {
     const t = await tree();
     const accepted = await t.child.answer("ap-1", { decision: "deny", scope: "once" });
@@ -155,15 +177,8 @@ describe("a sub-agent's approval waits in its parent's turn", () => {
 
   it("its expiry in the child continues the parent too", async () => {
     const t = await tree();
-    t.child.expire(5_000);
-    // The parent's answer turn is queued by the child's expiry: wait for it to show up.
-    let queued: string | undefined;
-    for (let i = 0; i < 200 && !queued; i++) {
-      await new Promise((r) => setTimeout(r, 10));
-      const { turns } = await t.parent.branches();
-      queued = turns.find((x) => x.id !== t.waiting.id)?.id;
-    }
-    const turn = await t.parent.waitTurn(String(queued));
+    await t.child.expire(5_000);
+    const turn = await t.parent.waitTurn(await lastQueued(t.parent));
     expect(turn).toMatchObject({ status: "completed", answers: "ap-1" });
     expect(turn?.items[0]).toMatchObject({
       denied: true,

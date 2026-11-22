@@ -15,6 +15,7 @@ export {
   type RunTurn,
   type Steer,
   type SubAgentAnswered,
+  type SubAgentDecision,
   type SubAgentOutcome,
   type TurnOutcome,
   type TurnRun,
@@ -214,6 +215,7 @@ export {
   uiMessageChunks,
   uiMessageFrames,
   uiMessageStreamResponse,
+  waitsOnSubAgent,
 } from "./ui-stream.js";
 export {
   DEFAULT_MODE,

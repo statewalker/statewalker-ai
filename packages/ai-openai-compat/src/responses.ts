@@ -18,6 +18,7 @@ import {
   sessionOfTurn,
   TERMINAL_TURN_STATUSES,
   type TurnView,
+  waitsOnSubAgent,
 } from "@statewalker/ai-sessions";
 import {
   approvalRequest,
@@ -332,6 +333,9 @@ export async function createResponse(
         throw codedError("EINVAL", `approval request ${answer.id} is not of this conversation`);
       if (approval.status !== "pending")
         throw codedError("EINVAL", `approval request ${answer.id} is ${approval.status}`);
+      // A sub-agent's: refused before answering when the Conversation no longer waits on it.
+      if (approval.session !== session.id && !(await waitsOnSubAgent(api, session.id, answer.id)))
+        throw codedError("EINVAL", `approval request ${answer.id} continues no turn here`);
     }
     for (const answer of answers) {
       const answered = await api.answerApproval(answer.id, {

@@ -549,6 +549,9 @@ export class AgentSession extends DurableObject<Env> {
       // An answer here continues the parent's turn waiting on it through agent.start (#88).
       subAgentAnswered: (config, approval, decision) =>
         agentOf(env, String(config.parent)).subAgentAnswered(approval, decision),
+      // An answer the child took while the turn waiting on it still ran (#88).
+      subAgentDecision: (_config, stored) =>
+        agentOf(env, stored.path).answerDecision(String(stored.target)),
       effectOf,
       // The topic titles on the active path, kept in the user's session index (#174).
       onTopics: (config, titles) =>
@@ -965,7 +968,7 @@ export class AgentSession extends DurableObject<Env> {
   async alarm() {
     const config = this.#core.config();
     if (!config) return;
-    const next = this.#core.expire();
+    const next = await this.#core.expire();
     // A remote session's polls run on the alarm (#144).
     for (const wake of [...this.#ticks]) wake();
     if (config.run?.remote) {
@@ -991,6 +994,11 @@ export class AgentSession extends DurableObject<Env> {
    */
   subAgentAnswered(approval: string, decision: AnswerDecision) {
     return this.#core.subAgentAnswered(approval, decision);
+  }
+
+  /** Asked by a parent's DO: how this session answered an approval, if it did. */
+  answerDecision(approval: string) {
+    return this.#core.answerDecision(approval);
   }
 
   /** Told by a parent's DO: the turn that continued this session with an approval's answer. */
