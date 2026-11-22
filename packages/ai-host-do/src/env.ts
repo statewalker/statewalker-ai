@@ -74,6 +74,13 @@ export interface Env {
    */
   REST_TOOLS?: string;
   /**
+   * Compaction of long sessions (statewalker/statewalker-root#131), JSON `{budget_tokens?,
+   * tail_messages? | tail_tokens?, group_size?, promote_threshold?, max_passes?, pin_tools?,
+   * trim_min_chars?}`; unset settings keep their defaults (100 000 tokens, the last 8 messages, 6
+   * messages per summary, 4 summaries before promotion).
+   */
+  COMPACTION?: string;
+  /**
    * The deployment's plugin catalog: JSON `{"<path>": "<text>"}` of plugin sources, one folder per
    * plugin, in the Agent Plugins 1.0 or Claude Code layout (statewalker/statewalker-root#82).
    */
