@@ -1,6 +1,7 @@
 // A fake REST server for scenarios where tools call out: it records every request it receives
 // (method, URL, headers, body) and answers `/echo` with the request's headers, a path holding
-// `nowhere` with 404, anything else with `{"ok":true}`. `delayMs` holds each answer back, and
+// `nowhere` with 404, `/redirect?to=<url>[&status=<3xx>]` with a redirect, `/big?n=<bytes>` with that
+// many bytes, anything else with `{"ok":true}`. `delayMs` holds each answer back, and
 // `maxInFlight` records the most requests it held at once (reset it to measure).
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -51,6 +52,17 @@ export async function fakeRest(): Promise<FakeRest> {
         ...(body ? { body } : {}),
       });
       if (state.delayMs) await new Promise((ok) => setTimeout(ok, state.delayMs));
+      const query = new URL(String(req.url), "http://x").searchParams;
+      if (req.url?.startsWith("/redirect")) {
+        res.writeHead(Number(query.get("status")) || 302, { location: String(query.get("to")) });
+        res.end();
+        return;
+      }
+      if (req.url?.includes("/big?")) {
+        res.writeHead(200, { "content-type": "text/plain" });
+        res.end("x".repeat(Number(query.get("n")) || 0));
+        return;
+      }
       const missing = req.url?.includes("nowhere");
       res.writeHead(missing ? 404 : 200, { "content-type": "application/json" });
       res.end(

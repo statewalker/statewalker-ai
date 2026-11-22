@@ -78,6 +78,7 @@ export {
   type ModelView,
   mcpMessage,
   metadataOf,
+  type NetworkRequestView,
   type PinnedDefinitions,
   type ProfileView,
   type RegenerateRequest,

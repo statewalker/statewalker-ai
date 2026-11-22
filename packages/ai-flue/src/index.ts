@@ -16,5 +16,7 @@ export {
   type HostTool,
   type ModelPort,
   purgeFlue,
+  type ShellFetchRequest,
+  type ShellFetchResponse,
   TRACER_TOOLS,
 } from "./runtime.js";

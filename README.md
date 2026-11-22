@@ -102,7 +102,7 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
 - **Code runs on executors, never in the agent's realm** (statewalker/statewalker-root#94, #142).
   The agent's one `bash` tool routes `node`, `python` and the WASIX programs the deployment lists
   (`EXECUTORS`) to the executor the deployment picked: `node` scripts are bundled from the session's
-  files, held to the acceptance check and run in a Worker Loader isolate with no network; `python`
+  files, held to the acceptance check and run in a Worker Loader isolate with no network of its own; `python`
   and POSIX programs run on a code engine (Pyodide, Wasmer) the runtime's host installs
   (`installCodeEngines` from `@statewalker/ai-environment/code-engines`, CellB only), and answer
   ENOSYS elsewhere. `@statewalker/ai-environment/pyodide` is the Pyodide engine: a host installs
@@ -118,6 +118,19 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   `executor_cpu_ms:<kind>` and killed when a limit refuses more or `EXEC_TIMEOUT_MS` passes. An
   agent's `requires` is checked when its session starts. The external executor pool is an
   interface only (`ExecutorPool`).
+- **Executed code's network is the egress gateway** (statewalker/statewalker-root#161, #208), one
+  host-side point in the Workspace DO: a node script's `fetch`, Pyodide's `pyfetch` (scripts may
+  use top-level `await`) and the shell's `curl` and `wget` go through it; isolates keep
+  `globalOutbound: null`, Pyodide's raw sockets stay closed, Wasmer keeps its network off. A request
+  goes out only where the deployment allowlist (`EGRESS_ALLOW`, empty by default), the user's roles
+  (`net.read:<host>[/<path>]`, `net.write:…`, `net.fetch:<host>`: held by no built-in role), the
+  agent's `requires: {network: [{host, path?, write?}]}` and the mode all allow it (`default` asks
+  on first use per host, per host and path prefix for writes; `acceptEdits` allows reads; `plan`
+  denies; `auto` classifies a summary). HTTPS on the default port only; internal and metadata
+  addresses refused, the name resolved by the gateway, every redirect re-checked; bound secrets put
+  in only for their hosts; caps `EGRESS_MAX_RESPONSE_BYTES`, `EGRESS_MAX_BODY_BYTES`,
+  `EGRESS_MAX_QUERY_BYTES`; each request counted toward `outbound_requests` and recorded as a
+  `network_request` item. REST tools and remote MCP servers get the same address rule.
 - **Limits live where their counters do** (statewalker-root#158, #179). A limit
   `{meter, level, target?, value, period, on_exceed, warn_at?, increment?}` is set in the
   deployment's `LIMITS` var (a `deployment` limit is a ceiling each workspace and each user is held

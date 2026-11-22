@@ -237,3 +237,29 @@ describe("the approval registry", () => {
     expect(registry.consume("ap-3", "as-1", "ann", now + 59_999)).toBe(true);
   });
 });
+
+describe("network requests under the modes (statewalker/statewalker-root#208)", () => {
+  const net = (action: string, target: string) => ({ area: "net", action, target });
+  it("plan denies, default asks reads and writes, acceptEdits allows reads and asks writes", () => {
+    expect(verdict("plan", net("read", "api.example.com"))).toBe("deny");
+    expect(verdict("plan", net("write", "api.example.com/v1"))).toBe("deny");
+    expect(verdict("default", net("read", "api.example.com"))).toBe("ask");
+    expect(verdict("default", net("write", "api.example.com/v1"))).toBe("ask");
+    expect(verdict("acceptEdits", net("read", "api.example.com"))).toBe("allow");
+    expect(verdict("acceptEdits", net("write", "api.example.com/v1"))).toBe("ask");
+    expect(verdict("bypassPermissions", net("write", "api.example.com/v1"))).toBe("allow");
+    expect(verdict("dontAsk", net("read", "api.example.com"))).toBe("deny");
+  });
+
+  it("a session rule from 'allow for this session' covers the same host (reads) or host and prefix (writes)", () => {
+    const session = {
+      source: "session",
+      rules: { allow: ["net.read:api.example.com"] },
+      exact: true,
+    };
+    const d = (target: string) =>
+      decideMode(net("read", target), { mode: modeOf("default"), layers: [session] }).verdict;
+    expect(d("api.example.com")).toBe("allow");
+    expect(d("other.example.com")).toBe("ask");
+  });
+});

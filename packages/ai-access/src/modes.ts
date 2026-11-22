@@ -90,6 +90,13 @@ const READS = ["files.read", "files.list", "comments.read", "db.read", "tools.re
 // user's approval in every mode; `plan` denies every memory write.
 const MEMORY = ["memory.write"];
 
+// The network for executed code (statewalker/statewalker-root#161, #208): `acceptEdits` allows
+// reads and asks writes, `plan` denies both, `default` asks both (its `otherwise`), `auto` hands
+// both to the risk classifier. The mode decides on the host (reads) or the host and the path prefix
+// (writes), so "allow for this session" covers that host, or that host and prefix.
+const NET_READ = "net.read";
+const NET = ["net.read", "net.write"];
+
 /** The built-in modes, with Claude Code's identifiers (#79). */
 export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
   default: {
@@ -99,7 +106,9 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
   },
   acceptEdits: {
     // Database writes are edits too (statewalker/statewalker-root#81).
-    rules: { allow: [...READS, ...MEMORY, "files.write", "comments.write", "db.write"] },
+    rules: {
+      allow: [...READS, ...MEMORY, "files.write", "comments.write", "db.write", NET_READ],
+    },
     otherwise: "ask",
     askReason: "acceptEdits mode allows file and database edits; deletes and other actions ask",
   },
@@ -107,7 +116,7 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
     rules: {
       allow: [...READS, "files.write:{folders}", "files.delete:{folders}"],
       // Publishing a task hands work to others (statewalker/statewalker-root#160): plan denies it.
-      deny: [...MEMORY, "tasks.publish"],
+      deny: [...MEMORY, "tasks.publish", ...NET],
     },
     folders: ["/plans"],
     otherwise: "ask",

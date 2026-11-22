@@ -89,7 +89,10 @@ import {
   DEFAULT_PRE_IMAGE_RETENTION,
   deploymentSecrets,
   discoverModels,
+  type EgressConfig,
+  type EgressRequest,
   type ExecutorPlan,
+  egressFetch,
   estimateRequest,
   type FilesRevert,
   FilesRpcHost,
@@ -102,8 +105,10 @@ import {
   gatedFilesRpc,
   gatewayFetch,
   groupUsage,
+  hostPatternCovers,
   IGNORE_FILE,
   ignoreRules,
+  isWriteMethod,
   type Limit,
   type LimitState,
   localEngine,
@@ -120,11 +125,15 @@ import {
   type ModelsConfig,
   type ModeVerdict,
   mayUse,
+  type NetworkNeed,
+  needsCover,
+  networkNeeds,
   normalise,
   type OutgoingRequest,
   type Period,
   PreImageLog,
   type PreImageRetention,
+  parseEgress,
   parseExecutors,
   parseModelsConfig,
   parsePreImageRetention,
@@ -170,6 +179,7 @@ import type {
   LimitsView,
   ModelsQuery,
   ModelView,
+  NetworkRequestView,
   PinnedDefinitions,
   SecretScope,
   SecretView,
@@ -204,6 +214,7 @@ import { isBrowserHosting, localSecretsKey } from "./browser.js";
 import { type DatabaseCall, DatabaseGate, type DatabaseView } from "./database-gate.js";
 import { databaseOf } from "./db-tools.js";
 import { agentRun, DefinitionsStore, type PluginLevel } from "./definitions-store.js";
+import { egressTransport } from "./egress-host.js";
 import {
   agentOf,
   blockSizeOf,
@@ -263,6 +274,21 @@ const DEFAULT_WRITEBACK_MAX = 16 * 1024 * 1024;
 const MEMORY_FOLDER = "memory";
 /** The workspace's retention of file pre-images, in its system folder (#191). */
 const PRE_IMAGES_FILE = "pre-images";
+/** What the egress gateway answers one request: the item to record, and the answer or why not. */
+export interface EgressAnswer {
+  record: NetworkRequestView;
+  response?: {
+    status: number;
+    url: string;
+    headers: Record<string, string>;
+    body: Uint8Array;
+    secrets: string[];
+  };
+  error?: string;
+  /** The mode asks: nothing was sent. */
+  approval?: ApprovalRequest;
+}
+
 /** Separates a file view's capability from the turn its holder acts in. */
 const HOLDER_TURN = "\n";
 
@@ -2832,6 +2858,8 @@ export class Workspace extends DurableObject<Env> {
     secrets?: string[];
     warnings?: WarningView[];
     executor_cpu_ms?: number;
+    /** The requests a native tool sent through the egress gateway (#208): items to record. */
+    network?: NetworkRequestView[];
   }> {
     const facts = await this.#authority.agentSessionOf(agentCapability);
     const name = String(call?.name);
@@ -3059,7 +3087,12 @@ export class Workspace extends DurableObject<Env> {
     x: ToolExtension,
     args: Record<string, unknown>,
     turn: string | undefined,
-  ): Promise<{ output: string; isError: boolean; executor_cpu_ms?: number }> {
+  ): Promise<{
+    output: string;
+    isError: boolean;
+    executor_cpu_ms?: number;
+    network?: NetworkRequestView[];
+  }> {
     const route = x.route;
     if (route.kind !== "native") throw codedError("EINVAL", `${x.name} is not a native tool`);
     if (route.language === "python")
@@ -3092,6 +3125,8 @@ export class Workspace extends DurableObject<Env> {
         }),
       { blockSize: blockSizeOf(this.env) },
     );
+    // The tool's requests through the egress gateway, recorded as items of the calling turn.
+    const network: NetworkRequestView[] = [];
     const db = (name: string) =>
       databaseOf(
         {
@@ -3155,6 +3190,33 @@ export class Workspace extends DurableObject<Env> {
           await d.close();
         }
       },
+      // The tool's network: the egress gateway, with the tool's own declaration and plugin. A
+      // request the mode asks about is refused: a running tool cannot wait for an approval.
+      fetch: async (request) => {
+        const answer = await this.#egressCore(
+          facts,
+          {
+            url: String(request?.url ?? ""),
+            ...(request?.method ? { method: String(request.method) } : {}),
+            ...(request?.headers ? { headers: request.headers } : {}),
+            ...(request?.body ? { body: new Uint8Array(request.body) } : {}),
+          },
+          {
+            needs: networkNeeds(route.requires).needs,
+            plugin: x.plugin,
+            ...(turn ? { turn } : {}),
+          },
+        );
+        network.push({ ...answer.record, executor: "isolate" });
+        if (answer.approval)
+          throw codedError(
+            "EACCES",
+            `the mode asks before this request (${answer.approval.reason}), and a tool cannot wait for an approval`,
+          );
+        if (!answer.response) throw new Error(answer.error ?? "EIO: the request failed");
+        const { status, url, headers, body } = answer.response;
+        return { status, url, headers, body };
+      },
     });
     const meter = "executor_cpu_ms:isolate";
     const meta = this.#limits.meta(
@@ -3196,7 +3258,12 @@ export class Workspace extends DurableObject<Env> {
       },
       turn ? { parent: turnTrace(turn) } : {},
     );
-    return { output: result.output, isError: result.isError, executor_cpu_ms: result.ms };
+    return {
+      output: result.output,
+      isError: result.isError,
+      executor_cpu_ms: result.ms,
+      ...(network.length ? { network } : {}),
+    };
   }
 
   /** Test-only, and the storage meter's input (#179): every database and the bytes it takes. */
@@ -3337,6 +3404,234 @@ export class Workspace extends DurableObject<Env> {
     return this.#meteredFetch(facts, call.request, String(call.plugin), call.turn);
   }
 
+  // --- the egress gateway (statewalker/statewalker-root#161, #208) ----------------------------
+
+  #egressConfig?: EgressConfig;
+  get #egress(): EgressConfig {
+    if (!this.#egressConfig) {
+      const { config, problems } = parseEgress(this.env);
+      if (problems.length) console.warn(`egress: ${problems.join("; ")}`);
+      this.#egressConfig = config;
+    }
+    return this.#egressConfig;
+  }
+
+  /** The address rule for host-side requests (REST tools, remote MCP servers). */
+  async #guard() {
+    return { config: this.#egress, transport: await egressTransport() };
+  }
+
+  /**
+   * One request of an agent session's executed code (its `bash` runs: node, python, curl),
+   * through the egress gateway. It goes out only if all four conditions allow it, at every hop:
+   * the deployment allowlist (EGRESS_ALLOW), the user's roles now (`net.read`/`net.write`, held by
+   * no built-in role), the agent's `requires.network` declaration, and the mode (an "ask" is
+   * answered as `approval`, never sent; an unattended session's asks are denies; `auto` classifies a
+   * summary of method, host, path and body size, never the body). Then the address rule, the caps
+   * and the outbound meter apply (./egress-host.ts, ai-environment egress.ts), and bound secrets
+   * (bound to the agent's plugin and the host) are put in. The answer always carries the item to
+   * record (no headers, no bodies, no query); a refusal carries its reason instead of a response.
+   */
+  async egress(
+    capability: string,
+    call: { request: EgressRequest; turn?: string },
+  ): Promise<EgressAnswer> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    const run = this.#definitions.pins(facts.session)?.run;
+    return this.#egressCore(facts, call?.request, {
+      needs: run && !run.remote ? networkNeeds(run.requires).needs : [],
+      plugin: run?.id?.split("/")[0] ?? "",
+      ...(call?.turn ? { turn: String(call.turn) } : {}),
+    });
+  }
+
+  /** One egress request, for an agent's run or a tool's isolate: see `egress`. */
+  async #egressCore(
+    facts: AgentSessionFacts,
+    given: EgressRequest | undefined,
+    o: { needs: readonly NetworkNeed[]; plugin: string; turn?: string },
+  ): Promise<EgressAnswer> {
+    const request = given ?? ({ url: "" } as EgressRequest);
+    const bodySize =
+      request.body === undefined
+        ? 0
+        : typeof request.body === "string"
+          ? new TextEncoder().encode(request.body).length
+          : request.body.byteLength;
+    const method = String(request.method ?? "GET").toUpperCase();
+    let first: URL | undefined;
+    try {
+      first = new URL(String(request.url));
+    } catch {
+      // refused below
+    }
+    const started = Date.now();
+    const record: NetworkRequestView = {
+      method,
+      host: first?.hostname.toLowerCase() ?? "",
+      path: first?.pathname ?? "",
+      size: 0,
+      sent: 0,
+      duration_ms: 0,
+    };
+    const { needs, plugin } = o;
+    const store = await this.#store;
+    const transport = await egressTransport();
+    let approval: ApprovalRequest | undefined;
+    const meta = this.#limits.meta(
+      facts.project,
+      facts.user,
+      facts.session,
+      this.#turnOf(facts.session, o.turn),
+    );
+    try {
+      if (!first) throw codedError("EINVAL", "the request's URL is not absolute");
+      const response = await telemetryOf(this.env, "workspace").span(
+        "egress.request",
+        { "session.id": facts.session, ...(o.turn ? { "turn.id": o.turn } : {}) },
+        () =>
+          egressFetch(request, {
+            config: this.#egress,
+            transport,
+            admitHop: async (url, m) => {
+              const asked = await this.#admitEgress(facts, store, needs, url, m, bodySize);
+              if (asked) {
+                approval = asked;
+                throw approvalError(asked);
+              }
+            },
+            beforeHop: async (sent, url) => {
+              const detail = { plugin: "egress", host: url.host };
+              await this.#limits.charge(
+                facts.project,
+                facts.user,
+                { outbound_requests: 1, outbound_bytes: sent },
+                meta,
+                detail,
+              );
+            },
+            ...(plugin
+              ? {
+                  secrets: {
+                    plugin,
+                    lookup: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
+                  },
+                }
+              : {}),
+          }),
+      );
+      const scopes = await this.#limits.scopes(facts.project, facts.user);
+      this.#limits.ledger.add(scopes, { outbound_bytes: response.body.length }, meta, {
+        plugin: "egress",
+        host: record.host,
+      });
+      const final = new URL(response.url);
+      Object.assign(record, {
+        status: response.status,
+        size: response.body.length,
+        sent: response.sent,
+        ...(response.hops > 1
+          ? { redirects: response.hops - 1, host: final.hostname, path: final.pathname }
+          : {}),
+        duration_ms: Date.now() - started,
+      });
+      return {
+        record,
+        response: {
+          status: response.status,
+          url: response.url,
+          headers: response.headers,
+          body: response.body,
+          secrets: response.secrets,
+        },
+      };
+    } catch (e) {
+      const error = String((e as Error)?.message ?? e);
+      Object.assign(record, { duration_ms: Date.now() - started });
+      if (approval)
+        return { record: { ...record, error: "waiting on the user's approval" }, approval };
+      return { record: { ...record, error }, error };
+    }
+  }
+
+  /**
+   * Whether one hop of an egress request may go: the allowlist, the declaration and the roles
+   * refuse (throwing EACCES); the mode allows (undefined), denies (EACCES) or asks (the approval
+   * request answered). The mode decides on the host for reads and on the host and the path's
+   * prefix (its folder) for writes, so "allow for this session" covers that host or that prefix.
+   */
+  async #admitEgress(
+    facts: AgentSessionFacts,
+    store: FilesApi,
+    needs: readonly NetworkNeed[],
+    url: URL,
+    method: string,
+    bodySize: number,
+  ): Promise<ApprovalRequest | undefined> {
+    const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    const path = url.pathname || "/";
+    const write = isWriteMethod(method);
+    const action = write ? "write" : "read";
+    const shown = `${method} ${host}${path}`;
+    if (!this.#egress.allow.some((p) => hostPatternCovers(p, host, path)))
+      throw codedError("EACCES", `the deployment allows no network to ${host} (EGRESS_ALLOW)`);
+    if (!needsCover(needs, host, path, write))
+      throw codedError(
+        "EACCES",
+        `its requires.network does not declare ${write ? "writes to " : ""}${host}${path}`,
+      );
+    const access = await this.#access(facts.project, facts.user);
+    if (!access.member || !decide(access.grants, { area: "net", action, target: `${host}${path}` }))
+      throw codedError("EACCES", `may not reach ${shown} (net.${action}:${host})`);
+    const prefix = write ? path.slice(0, path.lastIndexOf("/")) : "";
+    const target = `${host}${prefix}`;
+    const verdict = this.#settled(
+      (await this.#decider(facts, store))("net", action, target),
+      facts,
+    );
+    if (verdict.verdict === "allow") return undefined;
+    const id = await approvalId(facts.session, "net", `${action} ${target}`);
+    const request: ApprovalRequest = {
+      id,
+      session: facts.session,
+      project: facts.project,
+      action: { method: "fetch", path: shown, size: bodySize },
+      permission: `net.${action}:${target}`,
+      reason: verdict.reason,
+    };
+    const record = async (d: Omit<GateDecision, "action">) => {
+      if (verdict.step) await this.#record(facts, { action: request.action, ...d });
+    };
+    if (verdict.verdict === "deny")
+      throw codedError("EACCES", `may not reach ${shown}: ${verdict.reason}`);
+    if (await this.#registry.consume(id, facts.session, facts.user)) {
+      await record({ step: "approval", verdict: "allow", reason: "the user approved this action" });
+      return undefined;
+    }
+    if (verdict.verdict === "classify") {
+      // The classifier sees the summary only: method, host, path and the body's size.
+      const c = await this.#classify(facts, store, request);
+      await record({
+        step: "classifier",
+        verdict: c.verdict,
+        reason: c.reason,
+        ...(c.model ? { model: c.model } : {}),
+        latency_ms: c.latency_ms,
+        ...(c.fallback ? { fallback: c.fallback } : {}),
+        ...(c.stop ? { stop: c.stop } : {}),
+      });
+      if (c.verdict === "allow") return undefined;
+      if (c.verdict === "deny")
+        throw codedError(
+          "EACCES",
+          `may not reach ${shown}: the risk classifier denied it: ${c.reason}`,
+        );
+      return { ...request, reason: c.reason };
+    }
+    await record({ step: verdict.step ?? "mode", verdict: "ask", reason: verdict.reason });
+    return request;
+  }
+
   /**
    * One outgoing request of a plugin, metered (#179): outbound requests and bytes are charged to
    * the workspace, project and member, and a request over a limit is refused before it is sent;
@@ -3370,7 +3665,10 @@ export class Workspace extends DurableObject<Env> {
       meta,
       detail,
     );
-    const result = await gatewayFetch(request, plugin, lookup);
+    // The egress gateway's address rule holds here too (statewalker/statewalker-root#208): https
+    // on the default port, no internal or metadata address, through DNS rebinding; no redirect
+    // is followed.
+    const result = await gatewayFetch(request, plugin, lookup, fetch, await this.#guard());
     const received =
       "body" in result ? new TextEncoder().encode(String(result.body ?? "")).length : 0;
     warnings.push(

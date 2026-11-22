@@ -12,7 +12,12 @@
 // ENOSYS, never a weaker engine. An agent declares what it needs (`requires: [python, node]`), and
 // its session refuses to start when a requirement isn't met.
 import { codedError } from "@statewalker/ai-access";
-import type { CodeEngine, CodeEngines } from "./code-engines.js";
+import type {
+  CodeEngine,
+  CodeEngines,
+  EngineFetchRequest,
+  EngineFetchResponse,
+} from "./code-engines.js";
 
 /** The kinds of code the `bash` tool routes to an executor. */
 export type CodeKind = "node" | "python" | "posix";
@@ -326,4 +331,10 @@ export interface PoolLease {
  */
 export interface PoolMount {
   call(token: string, method: string, args: unknown[]): Promise<unknown>;
+  /**
+   * The runner's only network (statewalker/statewalker-root#208): a pool executor has no internet
+   * of its own and sends each request back over its lease channel, with the lease's token, to the
+   * egress gateway, which decides and sends it as for any executor.
+   */
+  egress(token: string, request: EngineFetchRequest): Promise<EngineFetchResponse>;
 }

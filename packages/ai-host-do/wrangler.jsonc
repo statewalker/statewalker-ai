@@ -97,7 +97,17 @@
     // "endpoint": "https://<collector>", "headers_secret"?: "<runtime secret holding the
     // collector's headers as JSON>", "gate_sample"?: 0.01, "flush_ms"?: 1000}. Ids, sizes,
     // timings and outcomes only, never content.
-    "TELEMETRY": "off"
+    "TELEMETRY": "off",
+    // The egress gateway (statewalker/statewalker-root#208): the deployment allowlist for executed
+    // code's network, host patterns "<host>[/<path-prefix>]" (exact, or "*.<domain>"), comma-separated
+    // or a JSON list. Empty: no network. Code reaches a host only where the user's roles grant
+    // net.read/net.write on it (no built-in role does), the agent declares it in requires.network,
+    // and the mode allows it.
+    "EGRESS_ALLOW": "",
+    // Its caps, in bytes: answers, request bodies and query strings.
+    "EGRESS_MAX_RESPONSE_BYTES": "10485760",
+    "EGRESS_MAX_BODY_BYTES": "1048576",
+    "EGRESS_MAX_QUERY_BYTES": "8192"
     // The S3 workspace backend's keys, set as runtime secrets, never vars:
     //   WORKSPACE_S3_ACCESS_KEY_ID, WORKSPACE_S3_SECRET_ACCESS_KEY
     // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:
@@ -111,6 +121,9 @@
     //   SSE_KEEPALIVE_MS     the event streams' keep-alive interval (30000 otherwise)
     //   USER_PROVIDER_HOSTS  hosts a user's own provider may use over http or at a private address
     //                        (comma-separated; a local scripted model)
+    //   EGRESS_INTERNAL_HOSTS hosts the egress gateway, REST tools and MCP servers reach over http,
+    //                        on any port, at internal addresses (comma-separated; local fake servers)
+    //   EGRESS_TEST_HOSTS    {"<name>": ["<address>"]}: names the egress gateway resolves to these
     //   DEV_LOGIN = "true"   POST /v1/login {user, workspace?, ttlMs?} signs a token (stands in for an identity provider)
     //   ADMIN_KEY = "<key>"  the /admin/* routes, with "Authorization: Bearer <key>":
     //                        POST /admin/seed {files, workspace?} writes fixtures into a workspace

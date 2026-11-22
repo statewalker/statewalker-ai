@@ -15,6 +15,7 @@ import { sha256, TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-def
 import {
   ApprovalPending,
   approvalAware,
+  approvalError,
   approvalOf,
   type CodeKind,
   capOutput,
@@ -65,6 +66,7 @@ import {
   type ItemInput,
   type ItemsQuery,
   type McpMessage,
+  type NetworkRequestView,
   parseCompaction,
   type RegenerateRequest,
   type RewindRequest,
@@ -92,6 +94,7 @@ import { AGENT_START, agentStartTool, outcomeOf, type SubAgentHost } from "./sub
 import { runStoredTasksCall, TASKS_TOOLS, tasksPort, tasksTools } from "./tasks-tool.js";
 import { telemetryOf } from "./telemetry-host.js";
 import { toolEsbuild } from "./tool-bundler.js";
+import type { HostFetchRequest, HostFetchResponse } from "./tool-executor.js";
 
 type OnApproval = TurnRun["onApproval"];
 
@@ -227,6 +230,44 @@ function isolatesApprovedOnly(): boolean {
 const ENGINE_IDLE_MS = 5 * 60_000;
 
 /** A run's answer as the `bash` tool shows it, for an approved run's result. */
+/** A shell request as an approval stores it: its body in base64. */
+function storedRequest(r: HostFetchRequest & { redirect?: string }) {
+  let body: string | undefined;
+  if (r.body?.length) {
+    let text = "";
+    for (const b of r.body) text += String.fromCharCode(b);
+    body = btoa(text);
+  }
+  return {
+    url: r.url,
+    ...(r.method ? { method: r.method } : {}),
+    ...(r.headers ? { headers: r.headers } : {}),
+    ...(body ? { body } : {}),
+    ...(r.redirect ? { redirect: r.redirect } : {}),
+  };
+}
+
+/** A stored shell request, ready to send again. */
+function fetchedRequest(r: {
+  url?: unknown;
+  method?: unknown;
+  headers?: unknown;
+  body?: unknown;
+  redirect?: unknown;
+}): HostFetchRequest & { redirect?: "follow" | "manual" } {
+  return {
+    url: String(r.url ?? ""),
+    ...(typeof r.method === "string" ? { method: r.method } : {}),
+    ...(r.headers && typeof r.headers === "object"
+      ? { headers: r.headers as Record<string, string> }
+      : {}),
+    ...(typeof r.body === "string"
+      ? { body: Uint8Array.from(atob(r.body), (c) => c.charCodeAt(0)) }
+      : {}),
+    ...(r.redirect === "manual" ? { redirect: "manual" as const } : {}),
+  };
+}
+
 function runOutput(r: { stdout: string; stderr: string; exitCode: number }) {
   const text = [r.stdout, r.stderr].filter(Boolean).join("\n");
   return {
@@ -381,6 +422,7 @@ export class AgentSession extends DurableObject<Env> {
       secrets?: string[];
       warnings?: WarningView[];
       executor_cpu_ms?: number;
+      network?: NetworkRequestView[];
     }>,
   ) {
     // A REST tool, or a remote MCP server's (#135), sends one request per call.
@@ -399,8 +441,9 @@ export class AgentSession extends DurableObject<Env> {
       } catch (e) {
         return { output: String((refusal(e) as Error).message), isError: true };
       }
-    const { warnings, executor_cpu_ms, ...result } = await call();
+    const { warnings, executor_cpu_ms, network, ...result } = await call();
     for (const warning of warnings ?? []) emit?.({ kind: "limit_warning", warning });
+    for (const n of network ?? []) emit?.({ kind: "network_request", network: n });
     if (native && executor_cpu_ms && executor_cpu_ms > 0)
       for (const warning of this.#limits.ledger.add(
         scopes,
@@ -635,15 +678,41 @@ export class AgentSession extends DurableObject<Env> {
         if (call.method === "memory") return runStoredMemoryCall(memoryHost(env, config), call);
         if (call.method === "tasks") return runStoredTasksCall(tasksPort(env, config), call);
         // An approved run of code: run now, decided again (the user's grant is used up).
-        if (call.method === "run")
+        if (call.method === "run") {
+          // What the run adds to the answer turn (its network requests, limit warnings).
+          const items: ItemInput[] = [];
           try {
             const run = JSON.parse(new TextDecoder().decode(call.content ?? new Uint8Array()));
-            return runOutput(await this.#runCode(config, turn, run as CodeRun));
+            // An approved request of the shell's curl or wget: sent again, decided again.
+            if (run?.request && typeof run.request === "object") {
+              const net = this.#egressPort(config, turn, "shell", (item) => items.push(item));
+              try {
+                const r = await net.fetch(fetchedRequest(run.request));
+                const text = new TextDecoder().decode(r.body);
+                return {
+                  output: `HTTP ${r.status}\n${text.slice(0, 64 * 1024)}`,
+                  isError: r.status >= 400,
+                  ...(items.length ? { items } : {}),
+                };
+              } catch (e) {
+                if (net.asked) return { $approval: net.asked, ...(items.length ? { items } : {}) };
+                throw e;
+              }
+            }
+            const out = runOutput(
+              await this.#runCode(config, turn, run as CodeRun, (item) => items.push(item)),
+            );
+            return { ...out, ...(items.length ? { items } : {}) };
           } catch (e) {
             const request = approvalOf(e);
-            if (request) return { $approval: request };
-            return { output: String((e as Error)?.message ?? e), isError: true };
+            if (request) return { $approval: request, ...(items.length ? { items } : {}) };
+            return {
+              output: String((e as Error)?.message ?? e),
+              isError: true,
+              ...(items.length ? { items } : {}),
+            };
           }
+        }
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -663,7 +732,7 @@ export class AgentSession extends DurableObject<Env> {
             );
             if (definition)
               return await this.#outbound(config, definition, undefined, undefined, run);
-            const { executor_cpu_ms: _ms, warnings: _w, ...result } = await run();
+            const { executor_cpu_ms: _ms, warnings: _w, network: _n, ...result } = await run();
             return result;
           } catch (e) {
             const request = approvalOf(e);
@@ -990,6 +1059,26 @@ export class AgentSession extends DurableObject<Env> {
     let held: ApprovalRequest | undefined;
     const port: CodePort = {
       commands: routedCommands(this.#executors()),
+      // The shell's curl and wget, through the egress gateway: a request the mode asks about is
+      // stored as itself and sent again once approved.
+      fetch: async (request) => {
+        if (held) throw new ApprovalPending(held);
+        const net = this.#egressPort(config, turn, "shell", emit);
+        try {
+          return await net.fetch(request);
+        } catch (e) {
+          if (!net.asked) throw e;
+          held = net.asked;
+          onApproval(held, {
+            method: "run",
+            path: held.action.path,
+            content: new TextEncoder().encode(
+              JSON.stringify({ command: "curl", request: storedRequest(request) }),
+            ),
+          });
+          throw new ApprovalPending(held);
+        }
+      },
       run: async (run) => {
         if (held) throw new ApprovalPending(held);
         try {
@@ -1073,7 +1162,11 @@ export class AgentSession extends DurableObject<Env> {
     });
     const meter = `executor_cpu_ms:${executor.kind}`;
     const detail = { command };
+    // The run's network: the egress gateway. A request the mode asks about ends the run (at its
+    // next charge) and the run waits on the user's approval, re-run once answered.
+    const net = this.#egressPort(config, turn, executor.kind, emit);
     const charge = async (ms: number) => {
+      if (net.asked) throw approvalError(net.asked);
       for (const warning of await this.#charge(config, meter, ms, turn, detail))
         emit?.({ kind: "limit_warning", warning });
     };
@@ -1103,19 +1196,91 @@ export class AgentSession extends DurableObject<Env> {
         "code.kind": kind,
       },
       async (span) => {
-        const result = await this.#onExecutor(config, kind, executor, exact, {
-          files,
-          ...(bundled ? { bundled } : {}),
-          timeout,
-          maxOutput,
-          charge,
-          record,
-        });
+        let result: { stdout: string; stderr: string; exitCode: number };
+        try {
+          result = await this.#onExecutor(config, kind, executor, exact, {
+            files,
+            ...(bundled ? { bundled } : {}),
+            timeout,
+            maxOutput,
+            charge,
+            record,
+            fetch: net.fetch,
+          });
+        } catch (e) {
+          if (net.asked) throw approvalError(net.asked);
+          throw e;
+        }
+        if (net.asked) throw approvalError(net.asked);
         span.set({ exit_code: result.exitCode });
         return result;
       },
       turn ? { parent: turnTrace(turn) } : {},
     );
+  }
+
+  /**
+   * The egress gateway as one run reaches it (statewalker/statewalker-root#208): each request is
+   * held to the session's own limit on outbound requests, sent through the Workspace DO (which
+   * decides it and counts it for the workspace, project and member), and recorded as a
+   * `network_request` item, sent or refused. A request the mode asks about is refused to the code
+   * and kept as `asked`: the run is ended and waits on the user's approval.
+   */
+  #egressPort(
+    config: AgentSessionConfig,
+    turn: string | undefined,
+    executor: string,
+    emit?: (item: ItemInput) => void,
+  ): {
+    fetch(request: HostFetchRequest): Promise<HostFetchResponse>;
+    readonly asked?: ApprovalRequest;
+  } {
+    let asked: ApprovalRequest | undefined;
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    const scopes = this.#limits.scopes(config);
+    return {
+      get asked() {
+        return asked;
+      },
+      fetch: async (request) => {
+        if (asked) throw codedError("EACCES", "the run waits on the user's approval");
+        try {
+          this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+        } catch (e) {
+          throw refusal(e);
+        }
+        const answer = await workspace.egress(config.capability, {
+          request: {
+            url: String(request?.url ?? ""),
+            ...(request?.method ? { method: String(request.method) } : {}),
+            ...(request?.headers ? { headers: request.headers } : {}),
+            ...(request?.body ? { body: new Uint8Array(request.body) } : {}),
+            ...((request as { redirect?: string })?.redirect === "manual"
+              ? { redirect: "manual" as const }
+              : {}),
+          },
+          ...(turn ? { turn } : {}),
+        });
+        emit?.({ kind: "network_request", network: { ...answer.record, executor } });
+        if (answer.response)
+          for (const warning of this.#limits.ledger.add(
+            scopes,
+            { outbound_requests: 1 },
+            this.#limits.meta(config, turn),
+          ))
+            emit?.({ kind: "limit_warning", warning: warningView(warning) });
+        if (answer.approval) {
+          asked = answer.approval;
+          throw codedError(
+            "EACCES",
+            `the mode asks before this request (${answer.approval.reason}); the run waits on the user's approval`,
+          );
+        }
+        if (!answer.response) throw new Error(answer.error ?? "EIO: the request failed");
+        const { status, url, headers, body } = answer.response;
+        return { status, url, headers, body };
+      },
+    };
   }
 
   /**
@@ -1155,6 +1320,7 @@ export class AgentSession extends DurableObject<Env> {
       maxOutput: number;
       charge(ms: number): Promise<void>;
       record(ms: number): Promise<void>;
+      fetch?: (request: HostFetchRequest) => Promise<HostFetchResponse>;
     },
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
     if (executor.kind === "isolate") {
@@ -1169,6 +1335,7 @@ export class AgentSession extends DurableObject<Env> {
         ...(run.stdin ? { stdin: run.stdin } : {}),
         ...(run.env ? { env: run.env } : {}),
         files: o.files,
+        ...(o.fetch ? { fetch: o.fetch } : {}),
         timeoutMs: o.timeout,
         maxOutput: o.maxOutput,
         charge: o.charge,
@@ -1191,6 +1358,7 @@ export class AgentSession extends DurableObject<Env> {
             ...(run.stdin ? { stdin: run.stdin } : {}),
             ...(run.env ? { env: run.env } : {}),
             maxOutput: o.maxOutput,
+            ...(o.fetch ? { fetch: o.fetch } : {}),
           },
           signal,
         ),

@@ -160,6 +160,36 @@ export function pyodideEngine(
       });
       let dead: string | undefined;
       const answers = new Map<number, (m: Record<string, unknown>) => void>();
+      // The running program's network (one run at a time): its requests go to the run's gateway.
+      let fetcher: EngineRun["fetch"];
+      let post: (m: unknown) => void = () => {};
+      const onFetch = async (m: Record<string, unknown>) => {
+        const id = m.id;
+        try {
+          if (!fetcher) throw new Error("EACCES: this run has no network");
+          const r = (m.request ?? {}) as Record<string, unknown>;
+          const answer = await fetcher({
+            url: String(r.url ?? ""),
+            ...(typeof r.method === "string" ? { method: r.method } : {}),
+            ...(r.headers && typeof r.headers === "object"
+              ? { headers: r.headers as Record<string, string> }
+              : {}),
+            ...(typeof r.body === "string" ? { body: fromBase64(r.body) } : {}),
+          });
+          post({
+            type: "fetched",
+            id,
+            response: {
+              status: answer.status,
+              url: answer.url,
+              headers: answer.headers,
+              body: toBase64(answer.body),
+            },
+          });
+        } catch (e) {
+          post({ type: "fetched", id, error: String((e as Error)?.message ?? e) });
+        }
+      };
       const proc = await host.start(
         (raw) => {
           const m = raw as Record<string, unknown>;
@@ -167,6 +197,7 @@ export function pyodideEngine(
           else if (m?.type === "failed")
             failed(new Error(`EIO: Pyodide failed to start: ${m.error}`));
           else if (m?.type === "result") answers.get(Number(m.id))?.(m);
+          else if (m?.type === "fetch") void onFetch(m);
         },
         (why) => {
           dead = why;
@@ -175,6 +206,7 @@ export function pyodideEngine(
         },
         memoryMb ? { memoryMb } : {},
       );
+      post = (m) => proc.post(m);
       proc.post({ type: "init", indexURL: host.indexURL });
       const timer = setTimeout(
         () => failed(new Error("ETIMEDOUT: Pyodide did not start")),
@@ -208,6 +240,7 @@ export function pyodideEngine(
           answers.get(id)?.({ dead: dead });
         };
         signal.addEventListener("abort", onAbort, { once: true });
+        fetcher = run.fetch;
         try {
           proc.post({
             type: "run",
@@ -232,6 +265,7 @@ export function pyodideEngine(
             exitCode: refused.length && !exitCode ? 1 : exitCode,
           };
         } finally {
+          fetcher = undefined;
           answers.delete(id);
           signal.removeEventListener("abort", onAbort);
         }
@@ -349,4 +383,15 @@ export function pyodideWorkerHost(options: {
       };
     },
   };
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function fromBase64(text: string): Uint8Array {
+  return Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
 }
