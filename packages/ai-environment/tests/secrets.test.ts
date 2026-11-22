@@ -46,6 +46,19 @@ describe("secret store", () => {
     await expect(store.open("user", "bob", "TOKEN")).rejects.toThrow(/EIO/);
   });
 
+  it("opens the values of one scope for the memory scan, and only that scope's", async () => {
+    const sql = sqlite();
+    const store = new SecretStore({ sql, secretsKey: "deployment-key", workspace: "default" });
+    await store.set("user", "ann", "A", "ann-value-1", binding);
+    await store.set("user", "ann", "B", "ann-value-2", binding);
+    await store.set("user", "bob", "A", "bob-value", binding);
+    expect((await store.values("user", "ann")).sort()).toEqual(["ann-value-1", "ann-value-2"]);
+    expect(await store.values("project", "alpha")).toEqual([]);
+    // Without SECRETS_KEY nothing is stored, so there is nothing to match.
+    const none = new SecretStore({ sql: sqlite(), secretsKey: undefined, workspace: "default" });
+    expect(await none.values("user", "ann")).toEqual([]);
+  });
+
   it("keeps no secrets without SECRETS_KEY", async () => {
     const store = new SecretStore({ sql: sqlite(), secretsKey: undefined, workspace: "default" });
     await expect(store.set("user", "ann", "TOKEN", "v", binding)).rejects.toThrow(/ENOSYS/);

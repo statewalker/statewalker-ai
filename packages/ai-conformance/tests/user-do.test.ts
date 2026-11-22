@@ -150,20 +150,32 @@ describe.each(transports)("user DO over %s", (name, connect) => {
   });
 
   it("serves each user only their own folder of the profiles file system", async () => {
-    expect(await (await as(u("ann"))).profile()).toEqual({
+    // Where each project is, without the user's state there (memory.test.ts checks that).
+    const where = async (client: SessionClient) => {
+      const profile = await client.profile();
+      return {
+        user: profile.user,
+        projects: profile.projects.map(({ workspace, project }) => ({ workspace, project })),
+      };
+    };
+    expect(await where(await as(u("ann")))).toEqual({
       user: u("ann"),
       projects: [
         { workspace: "default", project: "alpha" },
         { workspace: "other", project: "gamma" },
       ],
     });
-    expect(await (await as(u("bob"))).profile()).toEqual({
+    expect(await where(await as(u("bob")))).toEqual({
       user: u("bob"),
       projects: [{ workspace: "default", project: "alpha" }],
     });
     // The profile belongs to the user, not the workspace: the same from a token for another one.
     expect((await (await as(u("ann"), "other")).profile()).projects).toHaveLength(2);
-    expect(await (await as(u("dan"))).profile()).toEqual({ user: u("dan"), projects: [] });
+    expect(await (await as(u("dan"))).profile()).toEqual({
+      user: u("dan"),
+      preferences: [],
+      projects: [],
+    });
   });
 
   it("refuses a user whose name would reach outside their own profile folder", async () => {
@@ -180,7 +192,7 @@ describe.each(transports)("user DO over %s", (name, connect) => {
     const session = await eve.startSession({ project: "alpha" });
     expect((await eve.profile()).projects).toHaveLength(1);
     expect(await eve.eraseUser()).toEqual({ erased: true });
-    expect(await eve.profile()).toEqual({ user: u("eve"), projects: [] });
+    expect(await eve.profile()).toEqual({ user: u("eve"), preferences: [], projects: [] });
     expect(await eve.listSessions()).toEqual({ sessions: [] });
     await expect(eve.listItems(session.id)).rejects.toMatchObject({ status: 404 });
     // The next token opens a new user session; other users keep theirs.

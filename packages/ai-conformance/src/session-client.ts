@@ -40,7 +40,8 @@ export interface Item {
     | "approval"
     | "model_fallback"
     | "mode_decision"
-    | "limit_warning";
+    | "limit_warning"
+    | "memory_primed";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -86,6 +87,63 @@ export interface Item {
     value: number;
     warn_at: number;
   };
+  /** A `memory_primed` item: what the session was primed with (statewalker/statewalker-root#157). */
+  memory?: {
+    entries: { kind: string; id: string; version: number; tokens: number }[];
+    flagged: { kind: string; id: string; reason: string }[];
+    skipped: { kind: string; path: string; reason: string }[];
+  };
+}
+
+/** Who wrote a memory entry: stamped by the server. */
+export interface MemoryWriter {
+  user: string;
+  agent?: string;
+  session?: string;
+}
+
+/** One memory entry, as the memory API shows it. */
+export interface MemoryEntry {
+  id: string;
+  version: number;
+  supersedes?: number | null;
+  written_by: MemoryWriter;
+  created: string;
+  modified: string;
+  type: string;
+  title?: string;
+  status: string;
+  body: string;
+  forgotten_at?: string;
+  forgotten_by?: MemoryWriter;
+  blocked?: string;
+}
+
+export interface MemoryUsage {
+  entries: { used: number; cap: number; count: number };
+  files: { used: number; cap: number; file_cap: number; count: number };
+}
+
+/** One kind of memory, as the memory API lists it. */
+export interface MemoryKindView {
+  kind: string;
+  entries: MemoryEntry[];
+  forgotten: MemoryEntry[];
+  files: { id: string; name: string; description?: string; body?: string }[];
+  usage: MemoryUsage;
+  skipped: { path: string; reason: string }[];
+}
+
+export interface MemoryBatchResult {
+  kind: string;
+  results: { op: string; id?: string; version?: number; name?: string; body?: string }[];
+  usage: MemoryUsage;
+}
+
+/** Which memory a call names: `preferences`, or a project's `user`, `project`, `agent:<p>/<a>`. */
+export interface MemoryTarget {
+  kind: string;
+  project?: string;
 }
 
 /** One request to a model, metered. */
@@ -192,8 +250,10 @@ export interface ServiceAccount {
 /** The caller's profile, as the session API shows it. */
 export interface Profile {
   user: string;
-  /** The projects the profile holds user memory of. */
-  projects: { workspace: string; project: string }[];
+  /** The user's preferences. */
+  preferences: MemoryEntry[];
+  /** The projects the profile holds user memory of, with the user's state there. */
+  projects: { workspace: string; project: string; state?: "member" | "left" | "gone" }[];
 }
 
 /** A model as the session API lists it for a project (statewalker/statewalker-root#134). */
@@ -381,6 +441,21 @@ export interface SessionClient {
    * responses): its answer, or null for a notification.
    */
   mcp(sessionId: string, message: McpMessage): Promise<McpResponse | null>;
+  /** One kind of memory (`/v1/me/preferences`, `/v1/projects/{p}/memory/{kind}`). */
+  listMemory(target: MemoryTarget): Promise<MemoryKindView>;
+  memoryEntry(target: MemoryTarget, id: string): Promise<MemoryEntry & { history: MemoryEntry[] }>;
+  memoryFile(target: MemoryTarget, name: string): Promise<{ name: string; body?: string }>;
+  /** The memory tool's atomic batch, through the memory API. */
+  memoryBatch(target: MemoryTarget, actions: Record<string, unknown>[]): Promise<MemoryBatchResult>;
+  eraseMemory(
+    target: MemoryTarget,
+    which: { id?: string; name?: string },
+  ): Promise<{ erased: true }>;
+  listAgentMemories(project: string): Promise<{ agents: { agent: string; usage: MemoryUsage }[] }>;
+  /** `GET /v1/me/profile/export`: a ZIP of the profile's Markdown files. */
+  exportProfile(): Promise<Uint8Array>;
+  /** `DELETE /v1/me/profile`. */
+  eraseProfile(): Promise<{ erased: true }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -503,6 +578,20 @@ const sessionsSearch = (q: SessionsQuery = {}) => {
   return s ? `?${s}` : "";
 };
 
+/**
+ * Where a memory target is over REST: `/v1/me/preferences/entries`, or
+ * `/v1/projects/{p}/memory/{kind}` (an agent's kind `agent:<plugin>/<agent>` as two segments).
+ */
+function memoryPath(target: MemoryTarget): string {
+  if (target.kind === "preferences" && target.project === undefined)
+    return "/v1/me/preferences/entries";
+  const kind = target.kind
+    .split("/")
+    .map((part) => encodeURIComponent(part))
+    .join("/");
+  return `/v1/projects/${encodeURIComponent(target.project ?? "")}/memory/${kind}`;
+}
+
 export function restClient(deployment: Deployment, token: string): SessionClient {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
   const call = <T>(method: string, path: string, body?: unknown) =>
@@ -600,6 +689,29 @@ export function restClient(deployment: Deployment, token: string): SessionClient
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
+    listMemory: (target) => call("GET", memoryPath(target)),
+    memoryEntry: (target, id) =>
+      call("GET", `${memoryPath(target)}/entries/${encodeURIComponent(id)}`),
+    memoryFile: (target, name) =>
+      call("GET", `${memoryPath(target)}/files/${encodeURIComponent(name)}`),
+    memoryBatch: (target, actions) => call("POST", memoryPath(target), { actions }),
+    eraseMemory: (target, which) =>
+      call(
+        "DELETE",
+        which.id !== undefined
+          ? `${memoryPath(target)}/entries/${encodeURIComponent(which.id)}`
+          : `${memoryPath(target)}/files/${encodeURIComponent(String(which.name))}`,
+      ),
+    listAgentMemories: (project) =>
+      call("GET", `/v1/projects/${encodeURIComponent(project)}/memory/agents`),
+    async exportProfile() {
+      const res = await deployment.fetch("/v1/me/profile/export", { headers });
+      if (!res.ok) await answer(res);
+      if (res.headers.get("content-type") !== "application/zip")
+        throw new ApiError(500, "the export is not a ZIP");
+      return new Uint8Array(await res.arrayBuffer());
+    },
+    eraseProfile: () => call("DELETE", "/v1/me/profile"),
     async mcp(id, message) {
       const res = await deployment.fetch(`${s(id)}/mcp`, {
         method: "POST",
@@ -688,6 +800,27 @@ export async function seed(
   workspace?: string,
 ): Promise<void> {
   await admin(deployment, adminKey, "/admin/seed", { files, workspace });
+}
+
+/**
+ * Deletes a project from one of the deployment's workspaces, its system folder included
+ * (test-only, behind `ADMIN_KEY`): the operator's action until projects are managed through the
+ * session API.
+ */
+export async function deleteProject(
+  deployment: Deployment,
+  adminKey: string,
+  project: string,
+  workspace = "default",
+): Promise<void> {
+  await admin(
+    deployment,
+    adminKey,
+    `/admin/workspaces/${encodeURIComponent(workspace)}/delete-project`,
+    {
+      project,
+    },
+  );
 }
 
 /**

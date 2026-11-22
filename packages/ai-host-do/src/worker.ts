@@ -77,6 +77,9 @@ function sessionApi(env: Env, token: string) {
       setModelConfig: async (t, config) => (await user()).setModelConfig(t, config),
       holdStream: async (t) => (await user()).holdStream(t),
       releaseStream: async (t, id) => (await user()).releaseStream(t, id),
+      memory: async (t, call) => (await user()).memory(t, call),
+      exportProfile: async (t) => (await user()).exportProfile(t),
+      eraseProfile: async (t) => (await user()).eraseProfile(t),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -166,6 +169,12 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     await workspaceOf(env, id).userCapability(String(body.token ?? ""));
     return json({ opened: true });
+  }
+  if (collection === "workspaces" && id && sub === "delete-project") {
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    await workspaceOf(env, id).deleteProject(String(body.project ?? ""));
+    return json({ deleted: true });
   }
   if (collection === "workspaces" && id && sub === "model-usage") {
     // The workspace's model budget, every request recorded (usage reports are #179's).
