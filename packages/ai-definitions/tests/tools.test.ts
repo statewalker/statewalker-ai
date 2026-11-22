@@ -305,6 +305,17 @@ describe("an imported REST spec", () => {
     expect(() => restRequest(forecast, {})).toThrow(/EINVAL.*city/);
   });
 
+  it("refuses a path argument that would leave the route's path (., .., empty)", async () => {
+    const defs = await catalogToolDefinitions(await catalogOf(files));
+    const forecast = byId(defs, "weather/get_forecast");
+    for (const city of ["..", ".", ""])
+      expect(() => restRequest(forecast, { city })).toThrow(/EINVAL/);
+    // Dots inside a value stay one segment.
+    expect(restRequest(forecast, { city: "a..b" }).url).toBe(
+      "https://api.weather.test/v2/cities/a..b/forecast",
+    );
+  });
+
   it("names a key's secret after the plugin when the scheme does not", async () => {
     const plain = structuredClone(spec);
     // biome-ignore lint/suspicious/noExplicitAny: a fixture edit

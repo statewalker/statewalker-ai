@@ -501,8 +501,12 @@ export function restRequest(
       continue;
     }
     const text = textOf(v);
-    if (p.in === "path") url = url.split(`{${p.name}}`).join(encodeURIComponent(text));
-    else if (p.in === "query") query.append(p.name, text);
+    if (p.in === "path") {
+      // `.`, `..` or nothing would make URL normalization leave the route's path.
+      if (text === "" || text === "." || text === "..")
+        throw codedError("EINVAL", `the path argument '${p.name}' cannot be '${text}'`);
+      url = url.split(`{${p.name}}`).join(encodeURIComponent(text));
+    } else if (p.in === "query") query.append(p.name, text);
     else {
       if (PLACEHOLDER.test(text) || /[\r\n]/.test(text))
         throw codedError(
@@ -530,6 +534,10 @@ export function restRequest(
     else qs = [qs, `${encodeURIComponent(route.auth.name)}=${value}`].filter(Boolean).join("&");
   }
   if (qs) url += `${url.includes("?") ? "&" : "?"}${qs}`;
+  // The rebuilt request stays on the route's path: as many segments as its template.
+  const segments = (u: string) => new URL(u).pathname.split("/").length;
+  if (segments(url) !== segments(route.url.replace(/\{[^}]*\}/g, "x")))
+    throw codedError("EINVAL", `the call would leave the route of ${d[TOOL_EXTENSION].name}`);
   return { method: route.method, url, headers, ...(body !== undefined ? { body } : {}) };
 }
 
