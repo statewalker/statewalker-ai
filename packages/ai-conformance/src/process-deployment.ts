@@ -301,7 +301,12 @@ async function startIn(runtime: "celld" | "workerd", folder: string): Promise<De
     throw e;
   }
   return {
-    fetch: (path, init) => httpFetch(new URL(path, origin), init),
+    // A URL a client built against another origin (http://localhost/... as CellB in-process
+    // takes it) goes to this deployment, with its path and query.
+    fetch: (path, init) => {
+      const url = new URL(path, origin);
+      return httpFetch(new URL(`${url.pathname}${url.search}`, origin), init);
+    },
     close: async () => {
       await stop();
       rmSync(folder, { recursive: true, force: true });
