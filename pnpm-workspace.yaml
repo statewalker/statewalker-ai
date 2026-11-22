@@ -9,7 +9,8 @@ catalog:
   # ~1.4: pi-ai 1.5.0 dropped the `Type` export that @flue/runtime 2.3 imports.
   "@earendil-works/pi-agent-core": ~1.4.0
   "@earendil-works/pi-ai": ~1.4.0
-  "@flue/runtime": ~2.3.0
+  # Exact: the harness hosts Flue through its internal runtime APIs (statewalker/statewalker-root#128).
+  "@flue/runtime": 2.3.0
   # The in-process CellB host the conformance suite runs deployments on; esbuild is its peer.
   "@statewalker/cellb": 0.8.8
   "@statewalker/webrun-biscuit": ^0.2.3

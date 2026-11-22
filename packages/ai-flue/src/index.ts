@@ -8,9 +8,10 @@ export {
 export { FilesFs } from "./files-fs.js";
 export {
   completeWith,
+  type FlueHostState,
+  FlueSession,
   type FlueTurn,
   type HostTool,
   type ModelPort,
-  runFlueTurn,
   TRACER_TOOLS,
-} from "./turn.js";
+} from "./runtime.js";
