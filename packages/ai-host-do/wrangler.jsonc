@@ -11,12 +11,15 @@
       { "name": "WORKSPACE", "class_name": "Workspace" },
       { "name": "USER", "class_name": "User" },
       { "name": "PROFILES", "class_name": "Profiles" },
-      { "name": "AGENT", "class_name": "AgentSession" }
+      { "name": "AGENT", "class_name": "AgentSession" },
+      // One per database, `<workspace>/<project>/<database>`: reached only from its Workspace DO.
+      { "name": "DATABASE", "class_name": "Database" }
     ]
   },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace", "AgentSession"] },
-    { "tag": "v2", "new_sqlite_classes": ["User", "Profiles"] }
+    { "tag": "v2", "new_sqlite_classes": ["User", "Profiles"] },
+    { "tag": "v3", "new_sqlite_classes": ["Database"] }
   ],
   "vars": {
     // The workspaces this deployment serves, comma-separated; the first is the default. A token
@@ -93,6 +96,10 @@
     //                          workspace's DO, past the routing by the token's workspace
     //                        POST /admin/workspaces/<ws>/model-usage answers every model request the
     //                          workspace's budget recorded
+    //                        POST /admin/workspaces/<ws>/database-storage answers every database of the
+    //                          workspace and the bytes it takes (the storage meter's input)
+    //                        POST /admin/sessions/<id>/tool-db {plugin, tool, database, op, sql, params?}
+    //                          runs one database call as that plugin tool of the session would
     // Always on, the token issuer's routes: POST /v1/token {key} (a service account's API key for an
     // access token) and POST /v1/token/renew (a valid access token, as bearer, for a fresh one).
   }

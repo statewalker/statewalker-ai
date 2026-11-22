@@ -27,9 +27,12 @@ catalogs:
     '@statewalker/db-api':
       specifier: ^0.1.7
       version: 0.1.7
+    '@statewalker/db-rpc':
+      specifier: ^0.1.0
+      version: 0.1.0
     '@statewalker/db-sqlite-do':
-      specifier: ^0.1.3
-      version: 0.1.3
+      specifier: ^0.1.4
+      version: 0.1.4
     '@statewalker/webrun-biscuit':
       specifier: ^0.2.3
       version: 0.2.3
@@ -250,7 +253,7 @@ importers:
     devDependencies:
       '@statewalker/db-sqlite-do':
         specifier: 'catalog:'
-        version: 0.1.3
+        version: 0.1.4
       '@types/node':
         specifier: 'catalog:'
         version: 26.6.4
@@ -321,9 +324,15 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
+      '@statewalker/db-api':
+        specifier: 'catalog:'
+        version: 0.1.7
+      '@statewalker/db-rpc':
+        specifier: 'catalog:'
+        version: 0.1.0
       '@statewalker/db-sqlite-do':
         specifier: 'catalog:'
-        version: 0.1.3
+        version: 0.1.4
       '@statewalker/webrun-files':
         specifier: 'catalog:'
         version: 0.12.0
@@ -388,6 +397,12 @@ importers:
       '@statewalker/ai-environment':
         specifier: workspace:^
         version: link:../ai-environment
+      '@statewalker/db-api':
+        specifier: 'catalog:'
+        version: 0.1.7
+      '@statewalker/db-rpc':
+        specifier: 'catalog:'
+        version: 0.1.0
       '@statewalker/webrun-files':
         specifier: 'catalog:'
         version: 0.12.0
@@ -1231,12 +1246,19 @@ packages:
   '@statewalker/db-api@0.1.7':
     resolution: {integrity: sha512-pOrHF9vIseL4QgjK2voyHHJmKTV1MPaGo2MwWemVYTOZ0aQ8E3NP/IKCBh0gu+IjFY8FnPJ00FxafS0YxjwxVw==}
 
-  '@statewalker/db-sqlite-do@0.1.3':
-    resolution: {integrity: sha512-ZiFkGejE/PZyn9ExZlfQ5wxm9W54LpySp+GNx9pt2O5N3WQ5PvSHX6zaBN3+uAujTgVPJuaQctW0LQaSCkImaA==}
+  '@statewalker/db-rpc@0.1.0':
+    resolution: {integrity: sha512-H9aB94Y18r2T0Owmnv4EpTWlXnnk1PKMHMg0d/sDFQ7hrfiyy08Rzr4O8otkg/HoCmsgtklD+fXOXxFJ71fJ3w==}
+    engines: {node: '>=22.13'}
+
+  '@statewalker/db-sqlite-do@0.1.4':
+    resolution: {integrity: sha512-mYc6O3TRhziSfiJB/lW33Ei/5HiYnCHZ5XVZgZhPZH9AMpZB7ohQJSUAJRy60xIoxjNCTzLtlC/43VceQ4mU+Q==}
     engines: {node: '>=22.13'}
 
   '@statewalker/db-sqlite@0.1.3':
     resolution: {integrity: sha512-5W31+6itaUGNO7x2bTClYf/BrK0kmuyPqJ1Z6Uoe4MhSgCGNbrjuTyC6UjVY0oC78+cFl9tqmSwv1wNhsfC7UA==}
+
+  '@statewalker/db-sqlite@0.1.4':
+    resolution: {integrity: sha512-Dao18BELfACyjXwlzHLzBSB7mJPGWwYb8xM2rFfTeYR5aVsn4nqie9zchKNhvSrVWspc3fWo9kbnY+MSt27n+A==}
 
   '@statewalker/webrun-biscuit@0.2.3':
     resolution: {integrity: sha512-OgdQqAzzmDI2OQd8Mt1pWlEkAbshIbql0lbRitBqCVAZG0zuGtAS+K2qSoTEczdDGWUrAH+hm/cD9UdoDOXfJA==}
@@ -3497,12 +3519,21 @@ snapshots:
 
   '@statewalker/db-api@0.1.7': {}
 
-  '@statewalker/db-sqlite-do@0.1.3':
+  '@statewalker/db-rpc@0.1.0':
     dependencies:
       '@statewalker/db-api': 0.1.7
-      '@statewalker/db-sqlite': 0.1.3
+      '@statewalker/db-sqlite': 0.1.4
+
+  '@statewalker/db-sqlite-do@0.1.4':
+    dependencies:
+      '@statewalker/db-api': 0.1.7
+      '@statewalker/db-sqlite': 0.1.4
 
   '@statewalker/db-sqlite@0.1.3':
+    dependencies:
+      '@statewalker/db-api': 0.1.7
+
+  '@statewalker/db-sqlite@0.1.4':
     dependencies:
       '@statewalker/db-api': 0.1.7
 

@@ -1,6 +1,7 @@
 // The harness's Worker: the session API over REST, and over RPC on a WebSocket at /v1/rpc
 // (msgpack frames through webrun-wire, webrun-rpc methods; the access token in the first call); the user's own file view over REST
-// (/v1/files/<path>) and over files-RPC on a WebSocket at /v1/files; and the test-only routes a conformance
+// (/v1/files/<path>) and over files-RPC on a WebSocket at /v1/files; a project's databases over REST
+// (/v1/projects/<p>/databases) and over db-rpc on a WebSocket at /v1/databases; and the test-only routes a conformance
 // run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
 // user the caller's access token names, which checks the token each time.
 import { codedError, statusOf } from "@statewalker/ai-access";
@@ -8,8 +9,10 @@ import {
   bearerOf,
   bodyOf,
   createSessionApi,
+  handleDatabasesRest,
   handleFilesRest,
   handleSessionRest,
+  serveDatabasesRpc,
   serveFilesRpc,
   serveSessionRpc,
 } from "@statewalker/ai-sessions";
@@ -27,6 +30,7 @@ import {
 } from "./env.js";
 
 export { AgentSession } from "./agent-session-do.js";
+export { Database } from "./database-do.js";
 export { Issuer } from "./issuer-do.js";
 export { Profiles } from "./profiles-do.js";
 export { User } from "./user-do.js";
@@ -57,6 +61,8 @@ function sessionApi(env: Env, token: string) {
       listApprovals: async (t) => (await user()).listApprovals(t),
       answerApproval: async (t, id, answer) => (await user()).answerApproval(t, id, answer),
       files: async (t, method, args) => (await user()).files(t, method, args),
+      listDatabases: async (t, project) => (await user()).listDatabases(t, project),
+      databaseCall: async (t, call) => (await user()).databaseCall(t, call),
       listSecrets: async (t, scope) => (await user()).listSecrets(t, scope),
       setSecret: async (t, req) => (await user()).setSecret(t, req),
       deleteSecret: async (t, req) => (await user()).deleteSecret(t, req),
@@ -164,6 +170,16 @@ async function devRoutes(request: Request, env: Env, path: string) {
     // session, as a fresh DO instance has none.
     return json({ tables: await agentOf(env, id).flueStorage(body.forget === true) });
   }
+  if (collection === "workspaces" && id && sub === "database-storage") {
+    // Every database of the workspace and its size: the storage meter's input (#179).
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    return json({ databases: await workspaceOf(env, id).databaseStorage() });
+  }
+  if (collection === "sessions" && id && sub === "tool-db") {
+    // One database call as a plugin tool of the session makes it (until tool scripts run).
+    return json(await agentOf(env, id).toolDatabase(body as never));
+  }
   if (collection === "sessions" && id && sub === "messages") {
     // Past the User DO, straight to the agent session: its turn's file calls go to the gate.
     if (typeof body.content !== "string") throw codedError("EINVAL", "content is required");
@@ -185,6 +201,15 @@ function rpcChannel(request: Request, env: Env): Response {
   return new Response(null, { status: 101, webSocket: client });
 }
 
+/** A project's databases over db-rpc: a WebSocket this Worker serves until it closes. */
+function databasesChannel(env: Env): Response {
+  const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
+  server.accept();
+  const stop = serveDatabasesRpc(server as never, (token) => sessionApi(env, token));
+  server.addEventListener("close", () => stop());
+  return new Response(null, { status: 101, webSocket: client });
+}
+
 /** The user's own file view over files-RPC: a WebSocket this Worker serves until it closes. */
 function filesChannel(env: Env): Response {
   const [client, server] = Object.values(new WebSocketPair()) as [WebSocket, WebSocket];
@@ -201,6 +226,10 @@ export default {
       if (path === "/v1/rpc") return rpcChannel(request, env);
       if (path === "/v1/files" && request.headers.get("upgrade")?.toLowerCase() === "websocket")
         return filesChannel(env);
+      if (path === "/v1/databases" && request.headers.get("upgrade")?.toLowerCase() === "websocket")
+        return databasesChannel(env);
+      const databases = await handleDatabasesRest(request, (token) => sessionApi(env, token));
+      if (databases) return databases;
       const files = await handleFilesRest(request, (token) => sessionApi(env, token), {
         blockSize: blockSizeOf(env),
       });

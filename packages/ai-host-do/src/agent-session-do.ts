@@ -30,6 +30,13 @@ import {
   type ItemsQuery,
   parseCompaction,
 } from "@statewalker/ai-sessions";
+import {
+  type DatabaseHost,
+  DB_TOOLS,
+  databaseTools,
+  runDatabaseAction,
+  runStoredDatabaseCall,
+} from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { restTools } from "./rest-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
@@ -74,6 +81,16 @@ async function runChild(
   } finally {
     signal.removeEventListener("abort", onAbort);
   }
+}
+
+/** The database gate as a holder of `capability` reaches it, in its own project. */
+function databaseHost(env: Env, config: AgentSessionConfig, capability: string): DatabaseHost {
+  const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+  return {
+    call: (req) => workspace.databaseCall(capability, req),
+    manage: (req) => workspace.manageDatabase(capability, req),
+    list: () => workspace.listDatabases(capability),
+  };
 }
 
 export class AgentSession extends DurableObject<Env> {
@@ -124,8 +141,11 @@ export class AgentSession extends DurableObject<Env> {
         // The tools this session is offered: a sub-agent's are within its parent's.
         // `agent.start` only for an agent whose definition lists sub-agents the user may use.
         const delegates = (config.run?.agents ?? []).length > 0;
+        // The project's databases, at the gate with the session's capability (#136).
+        const databases = databaseTools(databaseHost(env, config, config.capability), onApproval);
         const offered = [
           ...TRACER_TOOLS,
+          ...DB_TOOLS,
           ...rest.map((t) => t.name),
           ...(delegates ? [AGENT_START] : []),
         ].filter((name) => !config.tools || config.tools.includes(name));
@@ -155,13 +175,15 @@ export class AgentSession extends DurableObject<Env> {
             waiting,
             signal,
             onSteer,
-            tools: [...rest, agentStart],
+            tools: [...databases, ...rest, agentStart],
             allowTools: offered,
           },
           emit,
         );
       },
       runAction: (config, call) => {
+        if (call.method === "db")
+          return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         const files = filesOverRpc(
           (method, args) => workspace.files(config.capability, method, args),
@@ -276,5 +298,38 @@ export class AgentSession extends DurableObject<Env> {
 
   answer(approval: string, answer: ApprovalAnswer) {
     return this.#core.answer(approval, answer);
+  }
+
+  /**
+   * Test-only (the Worker admits it only with the ADMIN_KEY), until tool scripts run
+   * (statewalker/statewalker-root#130): one database call as a plugin tool of this session makes
+   * it, with the capability the workspace narrows for that tool.
+   */
+  async toolDatabase(call: {
+    plugin: string;
+    tool: string;
+    database: string;
+    op: "query" | "exec";
+    sql: string;
+    params?: unknown[];
+  }) {
+    const config = this.#core.config();
+    if (!config) throw new Error("ENOENT: no such agent session");
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    const capability = await workspace.forTool(config.capability, {
+      plugin: String(call.plugin),
+      tool: String(call.tool),
+    });
+    const op = call.op === "exec" ? "exec" : "query";
+    const rows = await runDatabaseAction(
+      databaseHost(this.env, config, capability),
+      call.database,
+      {
+        op,
+        sql: String(call.sql),
+        ...(Array.isArray(call.params) ? { params: call.params } : {}),
+      },
+    );
+    return op === "query" ? { rows } : {};
   }
 }

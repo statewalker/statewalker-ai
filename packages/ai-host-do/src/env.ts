@@ -8,6 +8,7 @@ import {
   verifyAccessToken,
 } from "@statewalker/ai-access";
 import type { AgentSession } from "./agent-session-do.js";
+import type { Database } from "./database-do.js";
 import type { Issuer } from "./issuer-do.js";
 import type { Profiles } from "./profiles-do.js";
 import type { User } from "./user-do.js";
@@ -20,6 +21,8 @@ export interface Env {
   USER: DurableObjectNamespace<User>;
   PROFILES: DurableObjectNamespace<Profiles>;
   AGENT: DurableObjectNamespace<AgentSession>;
+  /** One DO per database, `<workspace>/<project>/<database>`, reached only from its Workspace DO. */
+  DATABASE: DurableObjectNamespace<Database>;
   /** The workspaces this deployment serves, comma-separated; the first is the default. */
   WORKSPACES?: string;
   /**

@@ -2,6 +2,17 @@
 // model, clients of the session API, and the threat-table check.
 
 export { type WorkspaceBackend, workspaceBackend } from "./backends.js";
+export {
+  type DatabaseView,
+  type DbClient,
+  type DbRpcCalls,
+  databaseStorage,
+  type RpcDbClient,
+  restDb,
+  rpcDb,
+  type ToolDbCall,
+  toolDb,
+} from "./db-client.js";
 export { type Deployment, startDeployment } from "./deployment.js";
 export { type FakeS3, fakeS3 } from "./fake-s3.js";
 export { type FilesClient, restFiles, rpcFiles } from "./files-client.js";
