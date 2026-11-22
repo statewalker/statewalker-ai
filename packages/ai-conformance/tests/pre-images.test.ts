@@ -301,6 +301,24 @@ describe.each(transports)("pre-images over %s", (name, connect, connectFiles) =>
     expect(await tryReadText(files, `${dir}/box/two.md`)).toBe("2\n");
   });
 
+  it("keeps pre-images out of every file view: neither the agent nor the user sees them", async () => {
+    const { api, files } = await as("ivy");
+    await api.setMode({ mode: "bypassPermissions" });
+    const dir = `/${project}/ivy`;
+    const s = await api.startSession({ project });
+    await api.sendMessage(s.id, { content: write(`${dir}/readme.md`, "kept\n") });
+    const seen: string[] = [];
+    for await (const e of files.list("/", { recursive: true }))
+      if (e.kind === "file" && !e.path.startsWith(`/${project}/`)) seen.push(e.path);
+    expect(seen.filter((p) => /pre|image/i.test(p))).toEqual([]);
+    const own: string[] = [];
+    for await (const e of files.list(dir, { recursive: true })) own.push(e.path);
+    expect(own).toEqual([`${dir}/readme.md`]);
+    const listed = await api.sendMessage(s.id, { content: bash("ls -aR /") });
+    const output = String(listed.items.find((i) => i.kind === "tool_result")?.output ?? "");
+    expect(output).not.toMatch(/pre.?image/i);
+  });
+
   it("leaves the files someone changed since alone and lists them as conflicts", async () => {
     const { api, files } = await as("bob");
     await api.setMode({ mode: "bypassPermissions" });
