@@ -31,6 +31,7 @@ import {
   purgeFlue,
   TRACER_TOOLS,
 } from "@statewalker/ai-flue";
+import { primingOf } from "@statewalker/ai-memory";
 import {
   type AgentMessage,
   type AgentSessionConfig,
@@ -55,6 +56,7 @@ import {
 } from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
+import { MEMORY_TOOL, memoryHost, memoryTool, runStoredMemoryCall } from "./memory-tool.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
 
@@ -143,7 +145,7 @@ export class AgentSession extends DurableObject<Env> {
     const within = (name: string) => !config.tools || config.tools.includes(name);
     // `agent.start` only for an agent whose definition lists sub-agents the user may use.
     const delegates = (config.run?.agents ?? []).length > 0;
-    const named = [...DB_TOOLS, ...(delegates ? [AGENT_START] : [])].filter(within);
+    const named = [...DB_TOOLS, MEMORY_TOOL, ...(delegates ? [AGENT_START] : [])].filter(within);
     const set = (await workspace.sessionTools(config.capability, named)) as unknown as {
       harness: string[];
       tools: ToolDefinition[];
@@ -157,6 +159,8 @@ export class AgentSession extends DurableObject<Env> {
     // The project's databases, at the gate with the session's capability (#136).
     const harness: HostTool[] = [
       ...databaseTools(databaseHost(env, config, config.capability), onApproval),
+      // Memory across sessions, the agent's only way to it (#157).
+      memoryTool(memoryHost(env, config), onApproval),
       agentStartTool(offered, {
         startSubAgent: (req) =>
           userOf(env, config.user).startSubAgent(config.id, config.capability, req),
@@ -332,12 +336,17 @@ export class AgentSession extends DurableObject<Env> {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
         const set = await this.#tools(config, onApproval, turn, emit);
+        // Memory, primed at the session's start and after each compaction (#157).
+        const memory = await this.#priming(config, context, emit);
+        const instructions = [config.run?.instructions, memory.instructions, memory.data]
+          .filter((x) => x?.trim())
+          .join("\n\n");
         return this.#flueOf(config.id).run(
           {
             id: config.id,
             turn,
             agent: config.agent,
-            ...(config.run ? { instructions: config.run.instructions } : {}),
+            ...(instructions ? { instructions } : {}),
             project: config.project,
             files: approvalAware(
               filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
@@ -374,6 +383,7 @@ export class AgentSession extends DurableObject<Env> {
       },
       runAction: async (config, call) => {
         if (call.method === "limit") return this.#raise(config, call);
+        if (call.method === "memory") return runStoredMemoryCall(memoryHost(env, config), call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -423,6 +433,55 @@ export class AgentSession extends DurableObject<Env> {
 
   start(config: AgentSessionConfig): Promise<void> {
     return this.#core.start(config);
+  }
+
+  /**
+   * The memory the session is primed with (statewalker/statewalker-root#157): every kind whole, as
+   * a frozen snapshot taken at the session's first turn and again after each compaction (the top
+   * level of the context changed), never every turn. Each new snapshot is recorded as a
+   * `memory_primed` item: each entry's kind, id, version and tokens, and the entries the scans
+   * blocked or that were changed outside the memory service, for the user. A kind its DO cannot
+   * answer now is left out of the snapshot; the turn still runs.
+   */
+  async #priming(
+    config: AgentSessionConfig,
+    context: TurnRun["context"],
+    emit: (item: ItemInput) => void,
+  ): Promise<{ instructions: string; data: string }> {
+    const sql = this.ctx.storage.sql;
+    sql.exec(`CREATE TABLE IF NOT EXISTS memory_primes (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      generation TEXT NOT NULL, instructions TEXT NOT NULL, data TEXT NOT NULL,
+      created INTEGER NOT NULL)`);
+    const generation = (context ?? [])
+      .flatMap((e) => (e.type === "summary" ? [e.summary.id] : []))
+      .join(",");
+    const last = sql.exec("SELECT * FROM memory_primes ORDER BY id DESC LIMIT 1").toArray()[0] as
+      | { generation: string; instructions: string; data: string }
+      | undefined;
+    if (last && last.generation === generation)
+      return { instructions: last.instructions, data: last.data };
+    let snapshot: Awaited<ReturnType<ReturnType<typeof memoryHost>["prime"]>>;
+    try {
+      snapshot = await memoryHost(this.env, config).prime();
+    } catch (e) {
+      console.warn(`memory of ${config.id}: ${String((e as Error)?.message ?? e)}`);
+      return { instructions: last?.instructions ?? "", data: last?.data ?? "" };
+    }
+    const priming = primingOf(snapshot);
+    sql.exec(
+      "INSERT INTO memory_primes (generation, instructions, data, created) VALUES (?, ?, ?, ?)",
+      generation,
+      priming.instructions,
+      priming.data,
+      Date.now(),
+    );
+    // Nothing primed, nothing flagged: no item.
+    if (priming.entries.length || priming.flagged.length || priming.skipped.length)
+      emit({
+        kind: "memory_primed",
+        memory: { entries: priming.entries, flagged: priming.flagged, skipped: priming.skipped },
+      });
+    return { instructions: priming.instructions, data: priming.data };
   }
 
   /**
@@ -633,6 +692,7 @@ export class AgentSession extends DurableObject<Env> {
 
   async purge() {
     await this.#core.purge();
+    this.ctx.storage.sql.exec("DROP TABLE IF EXISTS memory_primes");
     // Flue's tables go too, whether or not this instance built its Flue session.
     purgeFlue(this.ctx.storage.sql);
   }

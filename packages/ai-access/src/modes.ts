@@ -85,21 +85,29 @@ export function parseRules(value: unknown): PermissionRules {
 // `tools.read`: a tool whose action is read (statewalker/statewalker-root#129).
 const READS = ["files.read", "files.list", "comments.read", "db.read", "tools.read"];
 
+// Memory is written in every mode but `plan` (statewalker/statewalker-root#157): what an agent
+// may write is decided by the roles (`memory.write:project|agent`) and, for preferences, by the
+// user's approval in every mode; `plan` denies every memory write.
+const MEMORY = ["memory.write"];
+
 /** The built-in modes, with Claude Code's identifiers (#79). */
 export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
   default: {
-    rules: { allow: READS },
+    rules: { allow: [...READS, ...MEMORY] },
     otherwise: "ask",
     askReason: "default mode asks before changing anything",
   },
   acceptEdits: {
     // Database writes are edits too (statewalker/statewalker-root#81).
-    rules: { allow: [...READS, "files.write", "comments.write", "db.write"] },
+    rules: { allow: [...READS, ...MEMORY, "files.write", "comments.write", "db.write"] },
     otherwise: "ask",
     askReason: "acceptEdits mode allows file and database edits; deletes and other actions ask",
   },
   plan: {
-    rules: { allow: [...READS, "files.write:{folders}", "files.delete:{folders}"] },
+    rules: {
+      allow: [...READS, "files.write:{folders}", "files.delete:{folders}"],
+      deny: MEMORY,
+    },
     folders: ["/plans"],
     otherwise: "ask",
     askReason:
@@ -107,14 +115,16 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
   },
   // The risk classifier decides in `auto` what no rule and no safe class settles (#96, #137); where
   // no classifier runs (a sub-agent's own modes), `auto` asks as `default` does.
+  // Not `default`'s rules: memory writes, which `default` allows, go to the classifier here (#157).
   auto: {
-    extends: "default",
+    rules: { allow: READS },
+    otherwise: "ask",
     classifier: true,
     askReason: "auto mode's risk classifier asks before this action",
   },
   bypassPermissions: { otherwise: "allow", asks: "allow" },
   dontAsk: {
-    rules: { allow: READS },
+    rules: { allow: [...READS, ...MEMORY] },
     otherwise: "deny",
     asks: "deny",
     askReason: "dontAsk mode denies what no allow rule allows",

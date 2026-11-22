@@ -128,7 +128,10 @@ function callOf(stored: StoredAction): ActionCall {
     method: stored.method,
     path: stored.path,
     ...(stored.target !== undefined ? { target: stored.target } : {}),
-    ...(stored.method === "write" || stored.method === "db" || stored.method === "tool"
+    ...(stored.method === "write" ||
+    stored.method === "db" ||
+    stored.method === "tool" ||
+    stored.method === "memory"
       ? { content: fromBase64(stored.content ?? "") }
       : {}),
   };
@@ -236,6 +239,7 @@ const KINDS: readonly string[] = [
   "model_fallback",
   "mode_decision",
   "limit_warning",
+  "memory_primed",
 ];
 const MAX_PAGE = 1000;
 /** Why an approval no one answered in its time counts as denied. */
@@ -711,7 +715,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       if (done && typeof done === "object" && "$approval" in done) {
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });
-      } else if (method === "tool" && done && typeof done === "object" && "output" in done) {
+      } else if (
+        (method === "tool" || method === "memory") &&
+        done &&
+        typeof done === "object" &&
+        "output" in done
+      ) {
         // A tool's answer, as the tool would have answered it (the secrets it used by name).
         const r = done as { output: unknown; isError?: boolean; secrets?: string[] };
         this.#append(turn, {

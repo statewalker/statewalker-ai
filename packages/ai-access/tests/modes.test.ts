@@ -35,6 +35,20 @@ describe("modes", () => {
     expect(verdict("default", { area: "db", action: "write", target: "main" })).toBe("ask");
   });
 
+  it("lets memory be written in every mode but plan, which denies it; a rule still decides", () => {
+    const memory = (target: string) => ({ area: "memory", action: "write", target });
+    // `auto` sends memory writes to its classifier (auto.test.ts); without one it asks.
+    expect(verdict("auto", memory("project") as never)).toBe("ask");
+    for (const mode of ["default", "acceptEdits", "bypassPermissions", "dontAsk"])
+      for (const kind of ["project", "agent", "user", "preferences"])
+        expect(verdict(mode, memory(kind) as never)).toBe("allow");
+    for (const kind of ["project", "agent", "user", "preferences"])
+      expect(verdict("plan", memory(kind) as never)).toBe("deny");
+    const layers = [{ source: "project", rules: { deny: ["memory.write:project"] } }];
+    expect(verdict("default", memory("project") as never, layers as never)).toBe("deny");
+    expect(verdict("default", memory("agent") as never, layers as never)).toBe("allow");
+  });
+
   it("acceptEdits allows file edits but still asks about deletes", () => {
     expect(verdict("acceptEdits", files("write", "/src/a.ts"))).toBe("allow");
     expect(verdict("acceptEdits", files("delete", "/src/a.ts"))).toBe("ask");

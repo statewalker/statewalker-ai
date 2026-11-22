@@ -1,0 +1,54 @@
+{
+  "name": "@statewalker/ai-memory",
+  "version": "0.0.0",
+  "license": "MIT",
+  "description": "Memory across agent sessions: user preferences, user memory, project memory and agent memory as Markdown entries with front matter, the memory tool and the memory API's one implementation.",
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-memory#readme",
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-memory"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@statewalker/ai-access": "workspace:^",
+    "@statewalker/webrun-files": "catalog:",
+    "@statewalker/webrun-files-composite": "catalog:",
+    "yaml": "catalog:",
+    "@statewalker/webrun-files-mem": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
+  }
+}

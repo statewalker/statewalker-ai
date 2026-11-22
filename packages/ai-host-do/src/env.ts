@@ -112,6 +112,13 @@ export interface Env {
    */
   COMPACTION?: string;
   /**
+   * The deployment's memory caps (statewalker/statewalker-root#157), JSON `{entries?: {preferences?,
+   * user?, project?, agent?}, file?, files?}`: characters of each kind's entries (1375, 1375, 2200,
+   * 2200), bytes of one attachment (8192) and of all a kind's attachments (65536). A project
+   * overrides them in its `.system/memory-caps`.
+   */
+  MEMORY_CAPS?: string;
+  /**
    * The deployment's plugin catalog: JSON `{"<path>": "<text>"}` of plugin sources, one folder per
    * plugin, in the Agent Plugins 1.0 or Claude Code layout (statewalker/statewalker-root#82).
    */
