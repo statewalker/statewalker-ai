@@ -7,11 +7,12 @@ import {
   parseRules,
   verifyAccessToken,
 } from "@statewalker/ai-access";
-import type { SqlLike } from "@statewalker/ai-environment";
+import type { SqlLike, Telemetry } from "@statewalker/ai-environment";
 import type { AgentSession } from "./agent-session-do.js";
 import type { Database } from "./database-do.js";
 import type { Issuer } from "./issuer-do.js";
 import type { Profiles } from "./profiles-do.js";
+import { telemetryOf } from "./telemetry-host.js";
 import type { User } from "./user-do.js";
 import type { Workspace } from "./workspace-do.js";
 
@@ -183,6 +184,15 @@ export interface Env {
    * usage records of every workspace (statewalker/statewalker-root#181). Unset: no operator export.
    */
   OPERATOR_KEY?: string;
+  /**
+   * Telemetry for the operator (statewalker/statewalker-root#182): unset or `off`; `console`
+   * (stdout on Node, Workers Observability on Workers, the page's console in a browser); or JSON
+   * `{exporter: "otlp", endpoint, headers_secret?, gate_sample?, flush_ms?}` (OTLP/HTTP JSON over
+   * `fetch`; `headers_secret` names the runtime secret holding the collector's headers as JSON).
+   * Gate operations are sampled at `gate_sample` (1%). Telemetry carries ids, sizes, timings and
+   * outcomes only; nothing turns on more.
+   */
+  TELEMETRY?: string;
   /** Test-only: the SSE keep-alive interval in ms (30 s otherwise). */
   SSE_KEEPALIVE_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
@@ -263,12 +273,20 @@ export function approvalTtlMs(env: Env): number {
   return Number.isFinite(ms) && ms > 0 ? ms : DAY_MS;
 }
 
-/** The ledger options every owning DO keeps its limits with. */
-export function ledgerOptions(env: Env): { timeZone: string; retentionMonths: number } {
+/**
+ * The ledger options every owning DO keeps its limits with; `ledger` (session, workspace, user)
+ * names it in the telemetry of its meters (statewalker/statewalker-root#182).
+ */
+export function ledgerOptions(
+  env: Env,
+  ledger = "session",
+): { timeZone: string; retentionMonths: number; telemetry: Telemetry; ledger: string } {
   const months = Number(env.USAGE_RETENTION_MONTHS);
   return {
     timeZone: env.TIME_ZONE || "UTC",
     retentionMonths: Number.isFinite(months) && months > 0 ? months : 13,
+    telemetry: telemetryOf(env, ledger),
+    ledger,
   };
 }
 
@@ -317,9 +335,15 @@ export function clockOf(env: Env, sql: SqlLike): LimitClock {
 export function delayOptions(
   env: Env,
   clock: LimitClock,
-): { maxDelayMs: number; now: () => number; sleep: (ms: number) => Promise<void> } {
+): {
+  maxDelayMs: number;
+  now: () => number;
+  sleep: (ms: number) => Promise<void>;
+  telemetry: Telemetry;
+} {
   const ms = Number(env.LIMITS_MAX_DELAY_MS);
   return {
+    telemetry: telemetryOf(env, "limits"),
     maxDelayMs:
       env.LIMITS_MAX_DELAY_MS !== undefined && Number.isFinite(ms) && ms >= 0 ? ms : 30_000,
     now: clock.now,

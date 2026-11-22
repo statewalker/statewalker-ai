@@ -24,6 +24,7 @@ import {
   type ModelResponse,
   runStoredCall,
   type StoredCall,
+  turnTrace,
 } from "@statewalker/ai-environment";
 import {
   completeWith,
@@ -71,6 +72,7 @@ import { MEMORY_TOOL, memoryHost, memoryTool, runStoredMemoryCall } from "./memo
 import { SESSION_SEARCH_TOOL, sessionSearchOf, sessionSearchTool } from "./session-search-tool.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
 import { AGENT_START, agentStartTool, outcomeOf, type SubAgentHost } from "./sub-agents.js";
+import { telemetryOf } from "./telemetry-host.js";
 
 type OnApproval = TurnRun["onApproval"];
 
@@ -140,6 +142,56 @@ function databaseHost(env: Env, config: AgentSessionConfig, capability: string):
     manage: (req) => workspace.manageDatabase(capability, req),
     list: () => workspace.listDatabases(capability),
   };
+}
+
+/**
+ * One model request as a span of its turn's trace (statewalker/statewalker-root#182): the model
+ * asked and the one that answered, its provider, token counts, attempts and stop reason, never the
+ * context or the answer.
+ */
+async function modelSpan(
+  env: Env,
+  config: AgentSessionConfig,
+  turn: string | undefined,
+  call: ModelCall,
+  request: () => Promise<ModelResponse>,
+): Promise<ModelResponse> {
+  const telemetry = telemetryOf(env, "agent");
+  return telemetry.span(
+    "model.request",
+    {
+      "session.id": config.id,
+      "turn.id": turn,
+      "workspace.id": config.workspace,
+      "project.id": config.project,
+      "model.requested": call.model ?? config.model,
+    },
+    async (span) => {
+      const response = await request();
+      const last = response.attempts.at(-1)?.usage;
+      let input = 0;
+      let output = 0;
+      let cached = 0;
+      for (const { usage } of response.attempts) {
+        input += usage.input_tokens;
+        output += usage.output_tokens;
+        cached += usage.cached_tokens;
+      }
+      span.set({
+        "model.id": last?.model,
+        "provider.id": last?.provider,
+        "tokens.input": input,
+        "tokens.output": output,
+        "tokens.cached": cached,
+        attempts: response.attempts.length,
+        fallback: response.attempts.length > 1,
+        stop_reason: response.message.stopReason,
+      });
+      if (response.message.stopReason === "error") span.fail(response.message.errorMessage ?? "");
+      return response;
+    },
+    turn ? { parent: turnTrace(turn) } : {},
+  );
 }
 
 /** The meter of native tool scripts' isolate time (statewalker/statewalker-root#130). */
@@ -242,9 +294,22 @@ export class AgentSession extends DurableObject<Env> {
       ),
     );
     const hostTools = [...harness, ...pluginTools];
+    // What a tool call's span says of its tool (statewalker/statewalker-root#182): its kind, and
+    // for a plugin tool the permission that grants it.
+    const kinds = new Map<string, Record<string, string>>([
+      ...harness.map((t) => [t.name, { "tool.kind": "harness" }] as const),
+      ...plugins.map(
+        (d) =>
+          [
+            d[TOOL_EXTENSION].name,
+            { "tool.kind": d[TOOL_EXTENSION].route.kind, permission: d[TOOL_EXTENSION].permission },
+          ] as const,
+      ),
+    ]);
     return {
       offered,
       hostTools,
+      toolAttributes: (name: string) => kinds.get(name) ?? { "tool.kind": "files" },
       definitions: [...harness.map(harnessDefinition), ...plugins],
     };
   }
@@ -354,8 +419,10 @@ export class AgentSession extends DurableObject<Env> {
       return {
         request: async (call) => {
           try {
-            return await this.#metered(config, turn, call, emit, (c) =>
-              workspace.modelRequest(config.capability, { ...c, ...(turn ? { turn } : {}) }),
+            return await modelSpan(env, config, turn, call, () =>
+              this.#metered(config, turn, call, emit, (c) =>
+                workspace.modelRequest(config.capability, { ...c, ...(turn ? { turn } : {}) }),
+              ),
             );
           } catch (e) {
             // A limit that asks (session or user level, attended): the turn ends waiting on the
@@ -378,6 +445,7 @@ export class AgentSession extends DurableObject<Env> {
     for (const problem of compaction.problems) console.warn(`COMPACTION: ${problem}`);
     this.#core = new AgentSessionCore({
       sql: ctx.storage.sql,
+      telemetry: telemetryOf(env, "agent"),
       // A remote session's task runs on through a restart: its turn picks it up again.
       resumable: (turn) => this.#remote.resumable(turn),
       // A remote session's items never go to our model, a summarizer's either.
@@ -465,6 +533,8 @@ export class AgentSession extends DurableObject<Env> {
             allowTools: set.offered,
             // Every tool call counts against the limits on tool calls (#179): a refused call is
             // not run, and the agent carries on with the refusal.
+            telemetry: telemetryOf(env, "agent"),
+            toolAttributes: set.toolAttributes,
             admitTool: async (name) => {
               try {
                 const crossed = await this.#charge(config, "tool_calls", 1, turn, { tool: name });

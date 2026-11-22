@@ -22,7 +22,14 @@
 //   next turn starts with an item telling the model. Edit and regenerate are a rewind plus a turn;
 //   a fork copies a turn and its ancestors into another session (`exportPath` / `importHistory`).
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
-import { limitOfMessage } from "@statewalker/ai-environment";
+import {
+  codeOfError,
+  limitOfMessage,
+  type Severity,
+  type Span,
+  type Telemetry,
+  turnTrace,
+} from "@statewalker/ai-environment";
 import type {
   AgentMessage,
   AgentPort,
@@ -380,6 +387,9 @@ function searchableText(item: Item): string {
 /** The note the next turn starts with after a rewind, in `agent_config`. */
 const REWIND_NOTE = "rewind_note";
 
+/** The event families logged to telemetry (by name and ids only). */
+const LOGGED = new Set(["turn", "approval", "session", "compaction", "summary"]);
+
 /** Why an approval no one answered in its time counts as denied. */
 const EXPIRED = "expired";
 const MAX_WAIT_MS = 60_000;
@@ -410,6 +420,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   readonly #summarizer: Summarizer | undefined;
   readonly #onTopics: OnTopics | undefined;
   #running: Running | undefined;
+  readonly #telemetry: Telemetry | undefined;
+  /** The root spans of the turns running now (statewalker/statewalker-root#182). */
+  readonly #spans = new Map<string, Span>();
   /** Set while the head moves: no queued turn starts meanwhile. */
   #moving = false;
   readonly #waiters = new Set<() => void>();
@@ -452,8 +465,15 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
      * the host keeps them in the User DO's session index.
      */
     onTopics?: OnTopics;
+    /**
+     * Telemetry (statewalker/statewalker-root#182): one trace per turn (its root span derived from
+     * the turn's id, `turnTrace`), approval waits, queue waits and lifecycle logs; ids and outcomes
+     * only.
+     */
+    telemetry?: Telemetry;
   }) {
     this.#sql = options.sql;
+    this.#telemetry = options.telemetry;
     this.#runTurn = options.runTurn;
     this.#runAction = options.runAction;
     this.#recordApprovals = options.recordApprovals;
@@ -574,6 +594,40 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       Date.now(),
     );
     for (const wake of [...this.#waiters]) wake();
+    this.#logTelemetry(type, turn, data);
+  }
+
+  /** The session's attributes in telemetry: its ids only. */
+  #ids(): Record<string, string | undefined> {
+    const config = this.config();
+    return {
+      "session.id": config?.id,
+      "workspace.id": config?.workspace,
+      "project.id": config?.project,
+      "user.id": config?.user,
+      "agent.id": config?.agent,
+    };
+  }
+
+  /** A lifecycle event as a structured log: its name and ids, never its data. */
+  #logTelemetry(type: string, turn: string | undefined, data: unknown): void {
+    const telemetry = this.#telemetry;
+    if (!telemetry || !LOGGED.has(type.split(".")[0] ?? "") || type === "item.created") return;
+    let severity: Severity = "info";
+    const attributes: Record<string, string | number | undefined> = {
+      ...this.#ids(),
+      "turn.id": turn,
+    };
+    if (type === "turn.failed" || type === "compaction.failed") {
+      severity = type === "turn.failed" ? "error" : "warn";
+      const error =
+        (data as { error?: unknown; message?: unknown })?.error ??
+        (data as { message?: unknown })?.message;
+      attributes["error.code"] = codeOfError(error);
+    }
+    if (type === "approval.requested")
+      attributes.items = ((data as { approvals?: unknown[] })?.approvals ?? []).length;
+    telemetry.log(severity, type, attributes, turn ? turnTrace(turn) : undefined);
   }
 
   #append(turn: string, item: ItemInput): Item {
@@ -751,6 +805,16 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       Date.now(),
       id,
     );
+    const span = this.#spans.get(id);
+    if (span) {
+      this.#spans.delete(id);
+      if (status === "failed") span.fail(extra.error ?? "");
+      span.end({
+        "turn.status": status,
+        stop_reason: stop.type,
+        "model.id": extra.model ?? this.#turnRow(id).model ?? undefined,
+      });
+    }
     this.#log(`turn.${status}`, id, this.#view(this.#turnRow(id)));
   }
 
@@ -839,11 +903,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       row.id,
     );
     this.#setHead(row.id);
-    this.#log("turn.started", row.id, { id: row.id });
     const answer = this.#one<{ approval: string; decision: string; message: string | null }>(
       "SELECT * FROM approval_answers WHERE turn = ?",
       row.id,
     );
+    this.#traceTurn(row, answer);
+    this.#log("turn.started", row.id, { id: row.id });
     const pending: Pending = new Map();
     /** Approvals asked earlier that the turn this one continues still waits on. */
     let unanswered: string[] = [];
@@ -954,6 +1019,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         .map((p) => p.request);
       try {
         const recorded = own.length ? await this.#recordApprovals(config, own) : [];
+        this.#logTelemetry("approval.requested", row.id, { approvals: [...pending.keys()] });
         // When each expires: unanswered by then, it continues this turn as a denial.
         for (const { id, expires } of (Array.isArray(recorded) ? recorded : []) as {
           id: string;
@@ -1051,6 +1117,59 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     );
     if (!row) return undefined;
     return row.decision === "allow" ? "allow" : row.decision === "expired" ? "expired" : "deny";
+  }
+
+  /**
+   * Opens a turn's trace: its root span (derived from the turn's id), its wait in the queue, and,
+   * for a turn answering an approval, the wait on that approval since the turn that asked it
+   * ended.
+   */
+  #traceTurn(row: TurnRow, answer: { approval: string; decision: string } | undefined): void {
+    const telemetry = this.#telemetry;
+    if (!telemetry) return;
+    const trace = turnTrace(row.id);
+    const started = Date.now();
+    this.#spans.get(row.id)?.end();
+    this.#spans.set(
+      row.id,
+      telemetry.startSpan(
+        "turn",
+        { ...this.#ids(), "turn.id": row.id, ...(answer ? { continues: true } : {}) },
+        { root: trace },
+      ),
+    );
+    telemetry.record("harness.turn.queue_wait", Math.max(0, started - Number(row.created)));
+    if (!answer) return;
+    const origin = this.#one<{ turn: string; ended: number | null }>(
+      `SELECT i.turn AS turn, t.ended AS ended FROM items i JOIN agent_turns t ON t.id = i.turn
+        WHERE i.kind IN ('approval', 'question') AND json_extract(i.body, '$.approval') = ?
+        ORDER BY i.seq DESC LIMIT 1`,
+      answer.approval,
+    );
+    telemetry
+      .startSpan(
+        "approval.wait",
+        {
+          ...this.#ids(),
+          "turn.id": row.id,
+          "approval.id": answer.approval,
+          "approval.decision": answer.decision,
+          "turn.origin": origin?.turn,
+        },
+        { parent: trace, start: Number(origin?.ended ?? row.created) },
+      )
+      .end({ duration_ms: started - Number(origin?.ended ?? row.created) });
+    telemetry.log(
+      "info",
+      "approval.answered",
+      {
+        ...this.#ids(),
+        "turn.id": row.id,
+        "approval.id": answer.approval,
+        "approval.decision": answer.decision,
+      },
+      trace,
+    );
   }
 
   /** The model context of a turn whose user message is item `before`. */
@@ -1267,6 +1386,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   async start(config: AgentSessionConfig): Promise<void> {
     if (this.config()) throw codedError("EINVAL", `agent session ${config.id} already started`);
     this.#sql.exec("INSERT INTO agent_config VALUES ('config', ?)", JSON.stringify(config));
+    this.#logTelemetry("session.started", undefined, {});
   }
 
   async send(message: AgentMessage): Promise<Omit<MessageAccepted, "stream_url">> {
