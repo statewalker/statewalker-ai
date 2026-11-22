@@ -1743,9 +1743,6 @@ packages:
     resolution: {integrity: sha512-mYc6O3TRhziSfiJB/lW33Ei/5HiYnCHZ5XVZgZhPZH9AMpZB7ohQJSUAJRy60xIoxjNCTzLtlC/43VceQ4mU+Q==}
     engines: {node: '>=22.13'}
 
-  '@statewalker/db-sqlite@0.1.3':
-    resolution: {integrity: sha512-5W31+6itaUGNO7x2bTClYf/BrK0kmuyPqJ1Z6Uoe4MhSgCGNbrjuTyC6UjVY0oC78+cFl9tqmSwv1wNhsfC7UA==}
-
   '@statewalker/db-sqlite@0.1.4':
     resolution: {integrity: sha512-Dao18BELfACyjXwlzHLzBSB7mJPGWwYb8xM2rFfTeYR5aVsn4nqie9zchKNhvSrVWspc3fWo9kbnY+MSt27n+A==}
 
@@ -4462,10 +4459,6 @@ snapshots:
       '@statewalker/db-api': 0.1.7
       '@statewalker/db-sqlite': 0.1.4
 
-  '@statewalker/db-sqlite@0.1.3':
-    dependencies:
-      '@statewalker/db-api': 0.1.7
-
   '@statewalker/db-sqlite@0.1.4':
     dependencies:
       '@statewalker/db-api': 0.1.7
@@ -4518,7 +4511,7 @@ snapshots:
   '@statewalker/webrun-files-sqlite@0.13.1':
     dependencies:
       '@statewalker/db-api': 0.1.7
-      '@statewalker/db-sqlite': 0.1.3
+      '@statewalker/db-sqlite': 0.1.4
       '@statewalker/webrun-files': 0.12.0
 
   '@statewalker/webrun-files@0.10.5': {}
