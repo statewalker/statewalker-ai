@@ -31,6 +31,7 @@ import type {
 } from "@statewalker/ai-memory";
 import type { TasksApi } from "@statewalker/ai-tasks";
 import type { Topic } from "./context/topics.js";
+import { TRIGGERS_METHODS, type TriggersApi, type TriggersCall } from "./triggers.js";
 import { sessionOfTurn } from "./turns.js";
 
 export type {
@@ -990,7 +991,7 @@ export const TASKS_METHODS = [
  * The session API, as one caller (one access token) sees it; the task API (statewalker/statewalker-root#206)
  * is part of it, for the token's workspace's projects.
  */
-export interface SessionApi extends TasksApi {
+export interface SessionApi extends TasksApi, TriggersApi {
   /**
    * Holds one concurrent stream of the caller (an SSE stream, a long poll) against the limits on
    * streams: its id, or ELIMIT (429) over one (statewalker/statewalker-root#179). Not served over
@@ -1370,6 +1371,10 @@ export interface UserPort {
   memory(token: string, call: MemoryCall): Promise<unknown>;
   /** One task API call of the caller, in the token's workspace (statewalker/statewalker-root#206). */
   tasks(token: string, call: TasksCall): Promise<unknown>;
+  /** One trigger API call of the caller, in the token's workspace (statewalker/statewalker-root#207). */
+  triggers(token: string, call: TriggersCall): Promise<unknown>;
+  /** The triggers the caller owns, from their index. */
+  listOwnTriggers(token: string): Promise<unknown>;
   exportProfile(token: string): Promise<Uint8Array>;
   eraseProfile(token: string): Promise<{ erased: true }>;
   /** The limits on the caller's usage in the token's workspace (and a project), and their own. */
@@ -1828,8 +1833,20 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       },
     ]),
   ) as unknown as TasksApi;
+  const triggerApi = Object.fromEntries(
+    TRIGGERS_METHODS.map((op) => [
+      op,
+      async (...args: unknown[]) => {
+        // A manual fire is a message sent, for the session API's rate limits.
+        if (op === "fireTrigger") await ports.user.admitRequest(token, "message");
+        return ports.user.triggers(token, { op, args });
+      },
+    ]),
+  ) as unknown as Omit<TriggersApi, "listOwnTriggers">;
   return {
     ...taskApi,
+    ...triggerApi,
+    listOwnTriggers: () => ports.user.listOwnTriggers(token) as never,
     me: () => ports.user.openUserSession(token),
     async startSession(req) {
       const request = startRequest(req);

@@ -292,6 +292,12 @@ export type CancelApprovals = (config: AgentSessionConfig, ids: string[]) => Pro
 /** Told a session's topic titles on its active path (statewalker/statewalker-root#174). */
 export type OnTopics = (config: AgentSessionConfig, titles: string[]) => Promise<unknown>;
 
+/**
+ * Told a turn ended (statewalker/statewalker-root#207): its view, usage included. Errors are the
+ * host's to keep; a turn's end never waits on it.
+ */
+export type OnTurnEnded = (config: AgentSessionConfig, turn: TurnView) => Promise<unknown>;
+
 /** Which effect a tool call has that a rewind lists and does not revert, if any. */
 export type EffectOf = (item: Item) => "memory" | "database" | "outside" | undefined;
 
@@ -421,6 +427,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   readonly #topics: TopicStore;
   readonly #summarizer: Summarizer | undefined;
   readonly #onTopics: OnTopics | undefined;
+  readonly #onTurnEnded: OnTurnEnded | undefined;
   #running: Running | undefined;
   readonly #telemetry: Telemetry | undefined;
   /** The root spans of the turns running now (statewalker/statewalker-root#182). */
@@ -467,6 +474,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
      * the host keeps them in the User DO's session index.
      */
     onTopics?: OnTopics;
+    /** Told each turn's end (a trigger's fire acks its task then, statewalker/statewalker-root#207). */
+    onTurnEnded?: OnTurnEnded;
     /**
      * Telemetry (statewalker/statewalker-root#182): one trace per turn (its root span derived from
      * the turn's id, `turnTrace`), approval waits, queue waits and lifecycle logs; ids and outcomes
@@ -488,6 +497,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     this.#effectOf = options.effectOf;
     this.#revertFiles = options.revertFiles;
     this.#onTopics = options.onTopics;
+    this.#onTurnEnded = options.onTurnEnded;
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS agent_config (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS agent_turns (id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -817,7 +827,10 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         "model.id": extra.model ?? this.#turnRow(id).model ?? undefined,
       });
     }
-    this.#log(`turn.${status}`, id, this.#view(this.#turnRow(id)));
+    const ended = this.#view(this.#turnRow(id));
+    this.#log(`turn.${status}`, id, ended);
+    const config = this.#onTurnEnded ? this.config() : undefined;
+    if (config) void this.#onTurnEnded?.(config, ended)?.catch(() => {});
   }
 
   /** Turns a host restart left running end as failed, with the reason. */

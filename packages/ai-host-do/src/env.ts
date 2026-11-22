@@ -132,6 +132,12 @@ export interface Env {
    */
   TASKS?: string;
   /**
+   * Triggers' settings (statewalker/statewalker-root#207), JSON `{min_interval_minutes?,
+   * allow_bypass_permissions?, webhooks?}`: 15 minutes between a schedule's fires, no
+   * `bypassPermissions`, webhooks offered (never on CellB in a browser, which has no public address).
+   */
+  TRIGGERS?: string;
+  /**
    * The deployment's UHP servers (statewalker/statewalker-root#144), JSON `[{id, baseUrl, secret,
    * harnesses}]`: `secret` names the secret holding its bearer token (bound to plugin `uhp` and the
    * server's host), `harnesses` the ones it may serve here (`{"<name>": "<UHP harness id>"}`), each

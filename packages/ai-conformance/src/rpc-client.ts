@@ -138,6 +138,15 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     release: (l, o) => api.release(l, o).catch(refusal) as never,
     renew: (l, o) => api.renew(l, o).catch(refusal) as never,
     job: (p, id) => api.job(p, id).catch(refusal) as never,
+    // The trigger API (statewalker/statewalker-root#207).
+    listTriggers: (p) => api.listTriggers(p).catch(refusal) as never,
+    createTrigger: (p, t) => api.createTrigger(p, t).catch(refusal) as never,
+    getTrigger: (p, id) => api.getTrigger(p, id).catch(refusal) as never,
+    updateTrigger: (p, id, patch) => api.updateTrigger(p, id, patch).catch(refusal) as never,
+    deleteTrigger: (p, id) => api.deleteTrigger(p, id).catch(refusal) as never,
+    triggerFires: (p, id, q) => api.triggerFires(p, id, q).catch(refusal) as never,
+    fireTrigger: (id, req) => api.fireTrigger(id, req).catch(refusal) as never,
+    listOwnTriggers: () => api.listOwnTriggers().catch(refusal) as never,
     async taskEvents(p, n, count, waitMs = 30_000) {
       const seqs: number[] = [];
       let seq = (await api.changes(p, n, { wait_ms: 0 }).catch(refusal)).seq;

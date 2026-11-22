@@ -12,6 +12,7 @@ import type {
   StopReason,
   UIMessageChunk,
 } from "@statewalker/ai-sessions";
+import { hookSignature, type TriggersApi } from "@statewalker/ai-sessions";
 import type { TasksApi } from "@statewalker/ai-tasks";
 import { DefaultChatTransport } from "ai";
 import type { Deployment } from "./deployment.js";
@@ -495,7 +496,7 @@ export interface McpResponse {
  * The session API as a client sees it; the task API (statewalker/statewalker-root#206) is part of
  * it: REST `/v1/projects/{p}/tasks`, `/v1/projects/{p}/subscriptions`, `/v1/leases/{id}`, or RPC.
  */
-export interface SessionClient extends TasksApi {
+export interface SessionClient extends TasksApi, TriggersApi {
   /**
    * The first `count` change counters of a subscription's notifications: REST reads its SSE
    * `events` (`changed` events), RPC waits on `changes`. Each wait ends after `waitMs`.
@@ -1023,6 +1024,21 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     release: (lease, o = {}) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/release`, o),
     renew: (lease, o = {}) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/renew`, o),
     job: (project, id) => call("GET", `${pp(project)}/jobs/${encodeURIComponent(id)}`),
+    // The trigger API (statewalker/statewalker-root#207).
+    listTriggers: (project) => call("GET", `${pp(project)}/triggers`),
+    createTrigger: (project, t) => call("POST", `${pp(project)}/triggers`, t),
+    getTrigger: (project, id) => call("GET", `${pp(project)}/triggers/${encodeURIComponent(id)}`),
+    updateTrigger: (project, id, patch) =>
+      call("PATCH", `${pp(project)}/triggers/${encodeURIComponent(id)}`, patch),
+    deleteTrigger: (project, id) =>
+      call("DELETE", `${pp(project)}/triggers/${encodeURIComponent(id)}`),
+    triggerFires: (project, id, q = {}) =>
+      call(
+        "GET",
+        `${pp(project)}/triggers/${encodeURIComponent(id)}/fires${search(q as Record<string, unknown>)}`,
+      ),
+    fireTrigger: (id, req = {}) => call("POST", `/v1/triggers/${encodeURIComponent(id)}/fire`, req),
+    listOwnTriggers: () => call("GET", "/v1/triggers"),
     async taskEvents(project, name, count) {
       const seqs: number[] = [];
       const res = await deployment.fetch(`${sub(project, name)}/events`, { headers });
@@ -1230,6 +1246,52 @@ export async function advanceUserClock(
     { advance_ms: ms },
   );
   return offset;
+}
+
+/** What a webhook request answered: its status and body. */
+export interface HookAnswer {
+  status: number;
+  body: Record<string, unknown>;
+}
+
+/**
+ * Posts to a trigger's webhook (statewalker/statewalker-root#207), signed with `secret` at
+ * `timestamp` (seconds; now by default) unless `signature` is given, or with a bearer token.
+ */
+export async function postHook(
+  deployment: Deployment,
+  id: string,
+  body: string,
+  o: {
+    secret?: string;
+    timestamp?: number;
+    signature?: string;
+    bearer?: string;
+    idempotencyKey?: string;
+  } = {},
+): Promise<HookAnswer> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  const ts = String(o.timestamp ?? Math.floor(Date.now() / 1000));
+  if (o.secret !== undefined || o.signature !== undefined) {
+    headers["x-trigger-timestamp"] = ts;
+    headers["x-trigger-signature"] =
+      o.signature ?? (await hookSignature(String(o.secret), ts, body));
+  }
+  if (o.bearer) headers.authorization = `Bearer ${o.bearer}`;
+  if (o.idempotencyKey !== undefined) headers["idempotency-key"] = o.idempotencyKey;
+  const res = await deployment.fetch(`/v1/hooks/${encodeURIComponent(id)}`, {
+    method: "POST",
+    headers,
+    body,
+  });
+  const text = await res.text();
+  let parsed: Record<string, unknown> = {};
+  try {
+    parsed = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    parsed = { text };
+  }
+  return { status: res.status, body: parsed };
 }
 
 /**

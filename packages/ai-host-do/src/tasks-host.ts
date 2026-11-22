@@ -315,6 +315,15 @@ export class TasksHost {
     return out;
   }
 
+  /**
+   * A queue call of the server's own (a trigger's, statewalker/statewalker-root#207), its bytes
+   * counted like any caller's; `admit` bytes are refused (ENOSPC) before it runs.
+   */
+  async server<T>(project: string, f: (queue: TaskQueue) => T, admit = 0): Promise<T> {
+    if (admit > 0) await this.#o.admitBytes(project, admit);
+    return this.#counted(project, "", () => f(this.queue));
+  }
+
   /** The alarm's work: what is due in every project (expired tasks, lapsed leases, dead letters). */
   async sweepDue(): Promise<void> {
     for (const project of this.queue.dueProjects())

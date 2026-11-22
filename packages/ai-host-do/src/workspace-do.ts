@@ -176,6 +176,7 @@ import type {
   ServiceAccountView,
   SetSecretRequest,
   TasksCall,
+  TriggersCall,
   UsageQuery,
   UsageRecordsPage,
   UsageRecordsQuery,
@@ -229,6 +230,7 @@ import { TasksHost, tasksOptions } from "./tasks-host.js";
 import { telemetryConfigOf, telemetryOf } from "./telemetry-host.js";
 import { toolEsbuild } from "./tool-bundler.js";
 import { describeBundle, runBundle, ToolHost } from "./tool-executor.js";
+import { TriggersHost, triggerSettings } from "./triggers-host.js";
 import { mountWorkspace } from "./workspace-store.js";
 
 /** How strict a verdict is: of two, the stricter one wins ("classify" may still deny). */
@@ -290,6 +292,7 @@ export class Workspace extends DurableObject<Env> {
   readonly #limits: WorkspaceLimits;
   /** The projects' task queues (statewalker/statewalker-root#206). */
   readonly #tasks: TasksHost;
+  readonly #triggers: TriggersHost;
   /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
   readonly #memoryLock = new KeyedLock();
   /** Edits of a limits file are serialized (#181). */
@@ -370,6 +373,7 @@ export class Workspace extends DurableObject<Env> {
         this.#limits.adjustStorage(project, user, delta, await this.#store, "queue"),
       arm: (at) => this.#armTasks(at),
     });
+    this.#triggers = this.#triggersHost(sql);
     const files = fileRoleSource(
       async (path) => tryReadText(await this.#store, path),
       DEFAULT_SYSTEM_FOLDER,
@@ -1403,7 +1407,16 @@ export class Workspace extends DurableObject<Env> {
     const fallen = this.#denials.fallenBack(facts.session);
     const effective = (m: ResolvedMode) =>
       m.classifier && fallen ? modeOf(DEFAULT_MODE, this.#modes) : m;
-    const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
+    // A triggered session runs in its trigger's mode, fixed in its capability (#207); one the
+    // deployment no longer knows asks nothing and denies what it would have asked.
+    const name =
+      facts.mode !== undefined
+        ? isMode(facts.mode, this.#modes)
+          ? facts.mode
+          : "dontAsk"
+        : state && isMode(state.mode, this.#modes)
+          ? state.mode
+          : DEFAULT_MODE;
     const mode = effective(modeOf(name, this.#modes));
     const projectRules = parseRules(
       await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
@@ -1699,9 +1712,135 @@ export class Workspace extends DurableObject<Env> {
     if (current === null || current > wall) await this.ctx.storage.setAlarm(wall);
   }
 
-  /** The DO's alarm: the queues' due work, so subscriptions hear of lapsed leases. */
+  /**
+   * The DO's alarm: the queues' due work, so subscriptions hear of lapsed leases; then the
+   * triggers' (statewalker/statewalker-root#207): schedules due, running fires, archiving.
+   */
   async alarm(): Promise<void> {
     await this.#tasks.sweepDue();
+    await this.#triggers.alarm();
+  }
+
+  // --- triggers (statewalker/statewalker-root#207) ----------------------------------------------
+
+  #triggersHost(sql: SqlStorage): TriggersHost {
+    const env = this.env;
+    // A trigger's webhook secret: sealed in the secret store, in a scope no secrets API lists and
+    // no binding reaches, so it is never injected into a request or shown again.
+    const scope = (project: string) => `${project}/triggers`;
+    return new TriggersHost({
+      sql,
+      workspace: this.#name,
+      now: () => this.#limits.clock.now(),
+      tasks: this.#tasks,
+      settings: triggerSettings(env.TRIGGERS, {
+        webhooks: !isBrowserHosting(env),
+        maxPayloadBytes: tasksOptions(env.TASKS).maxPayloadBytes ?? 64 * 1024,
+      }),
+      access: (project, user) => this.#access(project, user),
+      workspaceGrants: (user) => this.#workspaceGrants(user),
+      isMode: (name) => isMode(name, this.#modes),
+      mayUseAgent: async (project, owner, agent) => {
+        const agents = await this.listAgents(this.#authority.mintUser(owner), { project }).catch(
+          () => [] as AgentView[],
+        );
+        return agents.some((a) => a.id === agent);
+      },
+      standing: (owner) => issuerOf(env).standing(owner),
+      tokenUser: async (token) => {
+        const claims = await verifyToken(env, token);
+        if (claims.workspace !== this.#name)
+          throw codedError("EAUTH", "the access token is for another workspace");
+        return claims.user;
+      },
+      secrets: {
+        set: async (project, name, value) => {
+          // Bound to no real plugin or host (`.invalid` never resolves): never injected anywhere.
+          await this.#secrets.set("project", scope(project), name, value, {
+            plugins: ["triggers"],
+            hosts: ["webhook.invalid"],
+          });
+        },
+        open: async (project, name) =>
+          (await this.#secrets.open("project", scope(project), name))?.value,
+        delete: (project, name) => {
+          this.#secrets.delete("project", scope(project), name);
+        },
+      },
+      // A fire's new session: started through its own DO, which asks the owner's User DO to put it
+      // in their index (a Workspace DO never calls a User DO), as the owner.
+      start: async (req) => {
+        const id = `as-${crypto.randomUUID()}`;
+        const { message, owner, ...request } = req;
+        const { turn_id } = await agentOf(env, id).fireTrigger({
+          id,
+          workspace: this.#name,
+          owner,
+          userCapability: this.#authority.mintUser(owner),
+          request,
+          message,
+        });
+        return { session: id, turn: turn_id };
+      },
+      send: async ({ owner, project, session, message }) => {
+        const { turn_id } = await agentOf(env, session).sendTriggered({
+          workspace: this.#name,
+          owner,
+          project,
+          message,
+        });
+        return { turn: turn_id };
+      },
+      turnState: async (session, turn) => {
+        const t = (await agentOf(env, session).turn(turn)) as unknown as {
+          status: string;
+          usage?: { cost: number };
+        };
+        return { status: t.status, ...(t.usage ? { cost: t.usage.cost } : {}) };
+      },
+      archive: async (owner, session) => {
+        await agentOf(env, session).archiveTriggered({
+          workspace: this.#name,
+          owner,
+          userCapability: this.#authority.mintUser(owner),
+        });
+      },
+      arm: (at) => this.#armTasks(at),
+    });
+  }
+
+  /** One trigger API call with a user capability, through the caller's User DO. */
+  async triggers(userCapability: string, call: TriggersCall): Promise<unknown> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    return this.#triggers.call(user, call);
+  }
+
+  /**
+   * A webhook request for one of this workspace's triggers, from the entry worker: its signature
+   * (or service account token) checked before anything else.
+   */
+  async hook(
+    id: string,
+    req: {
+      body: string;
+      headers: Record<string, string>;
+      bearer?: string;
+      idempotencyKey?: string;
+    },
+  ) {
+    return this.#triggers.hook(id, req);
+  }
+
+  /**
+   * A turn of one of this workspace's unattended sessions ended, told by the session's DO with its
+   * capability: the trigger fire it ran for acks its tasks.
+   */
+  async triggerTurnEnded(
+    agentCapability: string,
+    turn: { id: string; status: string; cost?: number },
+  ): Promise<void> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    await this.#triggers.turnEnded(facts.session, String(turn.id), String(turn.status), turn.cost);
   }
 
   // --- remote agent sessions (statewalker/statewalker-root#109, #144) --------------------------
@@ -2313,7 +2452,10 @@ export class Workspace extends DurableObject<Env> {
    */
   async advanceClock(ms: number): Promise<number> {
     if (!Number.isFinite(ms) || ms < 0) throw codedError("EINVAL", "ms must be a number >= 0");
-    return this.#limits.clock.advance(ms);
+    const offset = this.#limits.clock.advance(ms);
+    // Time passed: what the alarm would have done by now runs (schedules, leases, archiving).
+    await this.alarm();
+    return offset;
   }
 
   /**
@@ -3629,6 +3771,7 @@ export class Workspace extends DurableObject<Env> {
     // The pre-images of its files go with it (#191).
     this.#preImages.drop({ project: name });
     await this.#tasks.dropProject(name);
+    await this.#triggers.dropProject(name);
   }
 
   /**

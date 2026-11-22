@@ -171,6 +171,10 @@ _Avoid_: recall, memory search
 A stored instruction that starts agent turns without anyone at the keyboard, owned by a user or a service account and run with the owner's rights at the moment it fires.
 _Avoid_: cron, job, routine
 
+**Fire**:
+One time a trigger starts work: a schedule coming due, a signed webhook request, or a manual fire. It publishes one task under the trigger's own subject, and the trigger runs a turn for it (or for every waiting task at once, into one session) while fewer than its `max_concurrent` turns run; its history records each fire's outcome (`started`, `failed`, `suspended`, `missed`).
+_Avoid_: run, execution, invocation
+
 **Task**:
 A durable request for work, published to a project's queue under a subject, waiting there until every matching subscription has taken it or it expires. It may ask for a reply.
 _Avoid_: job, message (and note that in UHP a "task" is a turn)
