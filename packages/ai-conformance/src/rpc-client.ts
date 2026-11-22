@@ -58,7 +58,14 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
         since = page.offset;
       }
     },
-    getTurn: (id) => api.getTurn(id).catch(refusal),
+    getTurn: (id) => api.getTurn(id).catch(refusal) as never,
+    rewind: (id, req) => api.rewind(id, req).catch(refusal),
+    setHead: (id, req) => api.setHead(id, req).catch(refusal),
+    editTurn: (id, req) => api.editTurn(id, req).catch(refusal),
+    regenerateTurn: (id, req) => api.regenerateTurn(id, req).catch(refusal),
+    listBranches: (id) => api.listBranches(id).catch(refusal),
+    eraseBranch: (id, turn) => api.eraseBranch(id, turn).catch(refusal),
+    forkSession: (id, req) => api.forkSession(id, req).catch(refusal) as never,
     cancelTurn: (id) => api.cancelTurn(id).catch(refusal),
     listItems: (id, q) => api.listItems(id, q).catch(refusal),
     getItem: (id, itemId) => api.getItem(id, itemId).catch(refusal),
@@ -80,6 +87,15 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     getModelConfig: () => api.getModelConfig().catch(refusal) as never,
     setModelConfig: (config) => api.setModelConfig(config as never).catch(refusal) as never,
     mcp: (id, message) => api.mcp(id, message as never).catch(refusal) as never,
+    listMemory: (target) => api.listMemory(target).catch(refusal) as never,
+    memoryEntry: (target, id) => api.memoryEntry(target, id).catch(refusal) as never,
+    memoryFile: (target, name) => api.memoryFile(target, name).catch(refusal) as never,
+    memoryBatch: (target, actions) =>
+      api.memoryBatch(target, actions as never).catch(refusal) as never,
+    eraseMemory: (target, which) => api.eraseMemory(target, which).catch(refusal) as never,
+    listAgentMemories: (project) => api.listAgentMemories(project).catch(refusal) as never,
+    exportProfile: async () => new Uint8Array(await api.exportProfile().catch(refusal)),
+    eraseProfile: () => api.eraseProfile().catch(refusal) as never,
     close: () => connection.close(),
   };
   return client;

@@ -92,7 +92,8 @@ export type ApprovalMethod =
   | "move"
   | "db"
   | "tool"
-  | "limit";
+  | "limit"
+  | "memory";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -404,6 +405,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a tool call runs through the workspace's tools");
       case "limit":
         throw codedError("EINVAL", "a limit is raised by the DO that counts it");
+      case "memory":
+        throw codedError("EINVAL", "a memory batch runs through the memory service");
     }
   } catch (e) {
     const request = approvalOf(e);

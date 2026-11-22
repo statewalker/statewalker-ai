@@ -88,4 +88,25 @@ describe("context messages", () => {
       },
     ]);
   });
+
+  it("tells a rewind as a user message before the next one (statewalker/statewalker-root#190)", () => {
+    const messages = contextMessages(
+      [
+        item(1, {
+          kind: "rewind",
+          text: "The conversation was rewound: 1 later turn of it were set aside.",
+          rewind: { previous: "s.tu-2", head: "s.tu-1", turns: ["s.tu-2"] },
+        }),
+        item(2, { role: "user", text: "again" }),
+      ],
+      MODEL,
+    );
+    expect(messages).toMatchObject([
+      {
+        role: "user",
+        content: "[Rewind] The conversation was rewound: 1 later turn of it were set aside.",
+      },
+      { role: "user", content: "again" },
+    ]);
+  });
 });

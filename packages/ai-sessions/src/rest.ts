@@ -1,7 +1,7 @@
 // REST onto the session API's methods: a thin router. Errors keep their code; the status is
 // derived from it (EAUTH 401, EACCES 403, ENOENT 404, EINVAL 400).
 import { codedError, retryAfterOf, statusOf } from "@statewalker/ai-access";
-import type { SessionApi, SessionsQuery } from "./api.js";
+import type { MemoryTarget, SessionApi, SessionsQuery } from "./api.js";
 import { eventStream } from "./sse.js";
 import { chatPlan, resumePlan, uiMessageStreamResponse } from "./ui-stream.js";
 
@@ -73,6 +73,39 @@ export async function handleSessionRest(
         level: url.searchParams.get("level") ?? "",
         project: url.searchParams.get("project") ?? undefined,
       } as never);
+    if (route === "GET /me/profile/export")
+      return new Response((await api().exportProfile()) as Uint8Array<ArrayBuffer>, {
+        headers: {
+          "content-type": "application/zip",
+          "content-disposition": 'attachment; filename="profile.zip"',
+        },
+      });
+    if (route === "DELETE /me/profile") return api().eraseProfile();
+    const memory = memoryRoute(parts);
+    if (memory) {
+      const { target, rest } = memory;
+      const [what, name] = rest;
+      if (rest.length === 1 && what === "agents" && target === "agents" && request.method === "GET")
+        return api().listAgentMemories(memory.project as string);
+      if (
+        typeof target !== "string" &&
+        (rest.length === 0 || (rest.length === 1 && what === "entries"))
+      ) {
+        if (request.method === "GET") return api().listMemory(target);
+        if (request.method === "POST") {
+          const body = await bodyOf(request);
+          return api().memoryBatch(target, body.actions as never);
+        }
+      }
+      if (typeof target !== "string" && rest.length === 2 && name) {
+        if (what === "entries" && request.method === "GET") return api().memoryEntry(target, name);
+        if (what === "entries" && request.method === "DELETE")
+          return api().eraseMemory(target, { id: name });
+        if (what === "files" && request.method === "GET") return api().memoryFile(target, name);
+        if (what === "files" && request.method === "DELETE")
+          return api().eraseMemory(target, { name });
+      }
+    }
     const [, collection, id, sub] = parts;
     if (collection === "secrets" && id && sub && parts.length === 4) {
       const project = url.searchParams.get("project") ?? undefined;
@@ -112,6 +145,22 @@ export async function handleSessionRest(
         return answered === null ? new Response(null, { status: 202 }) : json(answered);
       }
       if (request.method === "POST" && sub === "revoke") return api().revokeSession(id);
+      // The turn tree (statewalker/statewalker-root#190).
+      if (request.method === "POST" && sub === "rewind")
+        return api().rewind(id, (await bodyOf(request)) as never);
+      if (request.method === "PUT" && sub === "head")
+        return api().setHead(id, (await bodyOf(request)) as never);
+      if (request.method === "GET" && sub === "branches") return api().listBranches(id);
+      if (request.method === "POST" && sub === "fork") {
+        const forked = await api().forkSession(id, (await bodyOf(request)) as never);
+        return new Response(JSON.stringify(forked), {
+          status: 201,
+          headers: {
+            "content-type": "application/json",
+            location: `/v1/sessions/${encodeURIComponent(forked.session.id)}`,
+          },
+        });
+      }
       if (request.method === "POST" && sub === "archive") return api().archiveSession(id);
       if (request.method === "GET" && sub === "items") return api().listItems(id, itemsQuery(url));
       if (request.method === "GET" && sub === "events") {
@@ -148,10 +197,29 @@ export async function handleSessionRest(
     }
     if (collection === "sessions" && id && sub === "items" && parts.length === 5)
       if (request.method === "GET") return api().getItem(id, String(parts[4]));
+    if (collection === "sessions" && id && sub === "branches" && parts.length === 5)
+      if (request.method === "DELETE") return api().eraseBranch(id, String(parts[4]));
     if (collection === "turns" && id) {
       if (request.method === "GET" && parts.length === 3) return api().getTurn(id);
       if (request.method === "POST" && sub === "cancel" && parts.length === 4)
         return api().cancelTurn(id);
+      if (
+        request.method === "POST" &&
+        (sub === "edit" || sub === "regenerate") &&
+        parts.length === 4
+      ) {
+        const body = (await bodyOf(request)) as never;
+        const accepted =
+          sub === "edit" ? await api().editTurn(id, body) : await api().regenerateTurn(id, body);
+        return new Response(JSON.stringify(accepted), {
+          status: 202,
+          headers: {
+            "content-type": "application/json",
+            location: `/v1/turns/${encodeURIComponent(accepted.turn_id)}`,
+            "stream-next-offset": String(accepted.offset),
+          },
+        });
+      }
     }
     return NOT_A_ROUTE;
   };
@@ -163,6 +231,28 @@ export async function handleSessionRest(
   } catch (e) {
     return errorResponse(e);
   }
+}
+
+/**
+ * A memory route (statewalker/statewalker-root#157): `/v1/me/preferences[/…]`,
+ * `/v1/projects/{p}/memory/agents` and `/v1/projects/{p}/memory/{kind}[/…]`, where an agent's
+ * kind `agent:<plugin>/<agent>` may span two segments or be one with its slash encoded.
+ */
+function memoryRoute(
+  parts: string[],
+): { target: MemoryTarget | "agents"; project?: string; rest: string[] } | undefined {
+  if (parts[1] === "me" && parts[2] === "preferences")
+    return { target: { kind: "preferences" }, rest: parts.slice(3) };
+  if (parts[1] !== "projects" || !parts[2] || parts[3] !== "memory" || !parts[4]) return undefined;
+  const project = parts[2];
+  if (parts[4] === "agents" && parts.length === 5)
+    return { target: "agents", project, rest: ["agents"] };
+  if (parts[4].startsWith("agent:") && !parts[4].includes("/"))
+    return {
+      target: { project, kind: `${parts[4]}/${parts[5] ?? ""}` },
+      rest: parts.slice(6),
+    };
+  return { target: { project, kind: parts[4] }, rest: parts.slice(5) };
 }
 
 /** The body of a request as an object; EINVAL when it is not JSON. */
@@ -178,7 +268,7 @@ export async function bodyOf(request: Request): Promise<Record<string, unknown>>
   throw codedError("EINVAL", "the request body is not a JSON object");
 }
 
-/** `?after=&before=&limit=&order=&types[]=` (or `types=a,b`). */
+/** `?after=&before=&limit=&order=&types[]=` (or `types=a,b`), `&branch=<turn>` or `&all=true`. */
 function itemsQuery(url: URL) {
   const p = url.searchParams;
   const types = [...p.getAll("types[]"), ...p.getAll("types").flatMap((t) => t.split(","))].filter(
@@ -190,6 +280,8 @@ function itemsQuery(url: URL) {
     ...(p.get("limit") ? { limit: Number(p.get("limit")) } : {}),
     ...(p.get("order") ? { order: p.get("order") as "asc" } : {}),
     ...(types.length ? { types: types as never } : {}),
+    ...(p.get("branch") ? { branch: p.get("branch") as string } : {}),
+    ...(p.get("all") === "true" ? { all: true } : {}),
   };
 }
 

@@ -31,6 +31,7 @@ import {
   purgeFlue,
   TRACER_TOOLS,
 } from "@statewalker/ai-flue";
+import { primingOf } from "@statewalker/ai-memory";
 import {
   type AgentMessage,
   type AgentSessionConfig,
@@ -38,12 +39,17 @@ import {
   type ApprovalAnswer,
   type ApprovalRequest,
   createModelSummarizer,
+  type EditRequest,
+  type EffectOf,
   type EventsQuery,
   type GateDecisionInput,
   type ItemInput,
   type ItemsQuery,
   type McpMessage,
   parseCompaction,
+  type RegenerateRequest,
+  type RewindRequest,
+  type SessionHistory,
   type TurnRun,
 } from "@statewalker/ai-sessions";
 import {
@@ -55,10 +61,27 @@ import {
 } from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
+import { MEMORY_TOOL, memoryHost, memoryTool, runStoredMemoryCall } from "./memory-tool.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
-import { AGENT_START, agentStartTool } from "./sub-agents.js";
+import { AGENT_START, agentStartTool, type SubAgentHost } from "./sub-agents.js";
 
 type OnApproval = TurnRun["onApproval"];
+
+/** The harness tool calls that change a project's databases. */
+const DB_CHANGES = new Set(["db_exec", "db_create", "db_drop"]);
+/** Tools whose effects stay inside the session (files: reverted by #191, sub-agents: stopped). */
+const LOCAL_TOOLS = new Set<string>([...TRACER_TOOLS, ...DB_TOOLS, AGENT_START]);
+
+/**
+ * What a rewind lists of a rewound turn's tool call (statewalker/statewalker-root#190): memory
+ * writes, database changes, and the effects of plugin tools, which reach outside the harness.
+ */
+const effectOf: EffectOf = (item) => {
+  const name = String(item.name ?? "");
+  if (name === MEMORY_TOOL) return "memory";
+  if (DB_CHANGES.has(name)) return "database";
+  return name && !LOCAL_TOOLS.has(name) ? "outside" : undefined;
+};
 
 /**
  * Runs a sub-agent's first turn: starts its DO, sends it the message, and waits for the turn to
@@ -143,7 +166,7 @@ export class AgentSession extends DurableObject<Env> {
     const within = (name: string) => !config.tools || config.tools.includes(name);
     // `agent.start` only for an agent whose definition lists sub-agents the user may use.
     const delegates = (config.run?.agents ?? []).length > 0;
-    const named = [...DB_TOOLS, ...(delegates ? [AGENT_START] : [])].filter(within);
+    const named = [...DB_TOOLS, MEMORY_TOOL, ...(delegates ? [AGENT_START] : [])].filter(within);
     const set = (await workspace.sessionTools(config.capability, named)) as unknown as {
       harness: string[];
       tools: ToolDefinition[];
@@ -157,9 +180,19 @@ export class AgentSession extends DurableObject<Env> {
     // The project's databases, at the gate with the session's capability (#136).
     const harness: HostTool[] = [
       ...databaseTools(databaseHost(env, config, config.capability), onApproval),
+      // Memory across sessions, the agent's only way to it (#157).
+      memoryTool(memoryHost(env, config), onApproval),
       agentStartTool(offered, {
-        startSubAgent: (req) =>
-          userOf(env, config.user).startSubAgent(config.id, config.capability, req),
+        startSubAgent: async (req) => {
+          const started = (await userOf(env, config.user).startSubAgent(
+            config.id,
+            config.capability,
+            req,
+          )) as Awaited<ReturnType<SubAgentHost["startSubAgent"]>>;
+          // A rewind of this turn stops the child (statewalker/statewalker-root#190).
+          if (turn) await this.#core.childStarted(turn, started.session.id);
+          return started;
+        },
         run: (child, message, signal) => runChild(env, child, message, signal),
       }),
     ]
@@ -212,7 +245,9 @@ export class AgentSession extends DurableObject<Env> {
       executor_cpu_ms?: number;
     }>,
   ) {
-    const outbound = definition[TOOL_EXTENSION].route.kind === "rest";
+    // A REST tool, or a remote MCP server's (#135), sends one request per call.
+    const kind = definition[TOOL_EXTENSION].route.kind;
+    const outbound = kind === "rest" || kind === "mcp";
     // A native tool's isolate time counts against the session's limits too (#130): refused before
     // it runs once the session's limit is spent, counted here after.
     const native = definition[TOOL_EXTENSION].route.kind === "native";
@@ -330,12 +365,17 @@ export class AgentSession extends DurableObject<Env> {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
         const set = await this.#tools(config, onApproval, turn, emit);
+        // Memory, primed at the session's start and after each compaction (#157).
+        const memory = await this.#priming(config, context, emit);
+        const instructions = [config.run?.instructions, memory.instructions, memory.data]
+          .filter((x) => x?.trim())
+          .join("\n\n");
         return this.#flueOf(config.id).run(
           {
             id: config.id,
             turn,
             agent: config.agent,
-            ...(config.run ? { instructions: config.run.instructions } : {}),
+            ...(instructions ? { instructions } : {}),
             project: config.project,
             files: approvalAware(
               filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
@@ -372,6 +412,7 @@ export class AgentSession extends DurableObject<Env> {
       },
       runAction: async (config, call) => {
         if (call.method === "limit") return this.#raise(config, call);
+        if (call.method === "memory") return runStoredMemoryCall(memoryHost(env, config), call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -416,11 +457,63 @@ export class AgentSession extends DurableObject<Env> {
       wake: (at) => {
         void this.#arm(at);
       },
+      // A rewind cancels the approvals of the turns it rewound, at the user's User DO.
+      cancelApprovals: (config, ids) => userOf(env, config.user).cancelApprovals(config.id, ids),
+      effectOf,
     });
   }
 
   start(config: AgentSessionConfig): Promise<void> {
     return this.#core.start(config);
+  }
+
+  /**
+   * The memory the session is primed with (statewalker/statewalker-root#157): every kind whole, as
+   * a frozen snapshot taken at the session's first turn and again after each compaction (the top
+   * level of the context changed), never every turn. Each new snapshot is recorded as a
+   * `memory_primed` item: each entry's kind, id, version and tokens, and the entries the scans
+   * blocked or that were changed outside the memory service, for the user. A kind its DO cannot
+   * answer now is left out of the snapshot; the turn still runs.
+   */
+  async #priming(
+    config: AgentSessionConfig,
+    context: TurnRun["context"],
+    emit: (item: ItemInput) => void,
+  ): Promise<{ instructions: string; data: string }> {
+    const sql = this.ctx.storage.sql;
+    sql.exec(`CREATE TABLE IF NOT EXISTS memory_primes (id INTEGER PRIMARY KEY AUTOINCREMENT,
+      generation TEXT NOT NULL, instructions TEXT NOT NULL, data TEXT NOT NULL,
+      created INTEGER NOT NULL)`);
+    const generation = (context ?? [])
+      .flatMap((e) => (e.type === "summary" ? [e.summary.id] : []))
+      .join(",");
+    const last = sql.exec("SELECT * FROM memory_primes ORDER BY id DESC LIMIT 1").toArray()[0] as
+      | { generation: string; instructions: string; data: string }
+      | undefined;
+    if (last && last.generation === generation)
+      return { instructions: last.instructions, data: last.data };
+    let snapshot: Awaited<ReturnType<ReturnType<typeof memoryHost>["prime"]>>;
+    try {
+      snapshot = await memoryHost(this.env, config).prime();
+    } catch (e) {
+      console.warn(`memory of ${config.id}: ${String((e as Error)?.message ?? e)}`);
+      return { instructions: last?.instructions ?? "", data: last?.data ?? "" };
+    }
+    const priming = primingOf(snapshot);
+    sql.exec(
+      "INSERT INTO memory_primes (generation, instructions, data, created) VALUES (?, ?, ?, ?)",
+      generation,
+      priming.instructions,
+      priming.data,
+      Date.now(),
+    );
+    // Nothing primed, nothing flagged: no item.
+    if (priming.entries.length || priming.flagged.length || priming.skipped.length)
+      emit({
+        kind: "memory_primed",
+        memory: { entries: priming.entries, flagged: priming.flagged, skipped: priming.skipped },
+      });
+    return { instructions: priming.instructions, data: priming.data };
   }
 
   /**
@@ -581,23 +674,79 @@ export class AgentSession extends DurableObject<Env> {
    * the session, its member, project and workspace, at once; ELIMIT (429) over one.
    */
   async send(message: AgentMessage) {
-    const config = this.#core.config();
-    let crossed: WarningView[] = [];
-    if (config && message.delivery !== "steer")
-      try {
-        crossed = await this.#charge(config, "turns", 1);
-      } catch (e) {
-        // Only a limit refuses a message here: a capability the gate refuses (revoked, removed)
-        // fails the turn at its first action, as before.
-        if (codeOf(e) === "ELIMIT") throw e;
-      }
+    const crossed = message.delivery !== "steer" ? await this.#chargeTurn() : [];
     const accepted = await this.#core.send(message);
     if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
     return accepted;
   }
 
+  /** A new turn, charged to the limits on turns; ELIMIT (429) over one. */
+  async #chargeTurn(): Promise<WarningView[]> {
+    const config = this.#core.config();
+    if (!config) return [];
+    try {
+      return await this.#charge(config, "turns", 1);
+    } catch (e) {
+      // Only a limit refuses a message here: a capability the gate refuses (revoked, removed)
+      // fails the turn at its first action, as before.
+      if (codeOf(e) === "ELIMIT") throw e;
+      return [];
+    }
+  }
+
   turn(turnId: string) {
     return this.#core.turn(turnId);
+  }
+
+  // --- the turn tree (statewalker/statewalker-root#190) -----------------------------------------
+
+  rewind(req: RewindRequest) {
+    return this.#core.rewind(req);
+  }
+
+  setHead(turn: string | null) {
+    return this.#core.setHead(turn);
+  }
+
+  /** Refuses an edit of an unknown turn, or while a turn runs, before the new turn is charged. */
+  async #idle(turnId: string): Promise<void> {
+    await this.#core.turn(turnId);
+    if ((await this.#core.status()) === "running")
+      throw new Error("EBUSY: a turn is running or queued: cancel it first");
+  }
+
+  /** An edit's new turn counts against the limits on turns, as a message does. */
+  async edit(turnId: string, req: EditRequest) {
+    await this.#idle(turnId);
+    const crossed = await this.#chargeTurn();
+    const accepted = await this.#core.edit(turnId, req);
+    if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
+    return accepted;
+  }
+
+  async regenerate(turnId: string, req?: RegenerateRequest) {
+    await this.#idle(turnId);
+    const crossed = await this.#chargeTurn();
+    const accepted = await this.#core.regenerate(turnId, req);
+    if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
+    return accepted;
+  }
+
+  branches() {
+    return this.#core.branches();
+  }
+
+  eraseBranch(turnId: string) {
+    return this.#core.eraseBranch(turnId);
+  }
+
+  exportPath(atTurn: string) {
+    return this.#core.exportPath(atTurn);
+  }
+
+  /** A fork's copied history: nothing is charged for it (statewalker/statewalker-root#190). */
+  importHistory(history: SessionHistory) {
+    return this.#core.importHistory(history);
   }
 
   /** Waits for a turn to end (test-only admin route). */
@@ -631,6 +780,7 @@ export class AgentSession extends DurableObject<Env> {
 
   async purge() {
     await this.#core.purge();
+    this.ctx.storage.sql.exec("DROP TABLE IF EXISTS memory_primes");
     // Flue's tables go too, whether or not this instance built its Flue session.
     purgeFlue(this.ctx.storage.sql);
   }

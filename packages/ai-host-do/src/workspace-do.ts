@@ -54,10 +54,17 @@ import {
 import {
   type Allow,
   buildPlugin,
+  catalogMcpServers,
   catalogToolDefinitions,
   catalogTools,
   definitionsView,
   findAgent,
+  type McpServer,
+  matches,
+  mcpAnswer,
+  mcpCallOutput,
+  mcpRequest,
+  mcpTools,
   type NarrowedAgent,
   narrowAgent,
   type Plugin,
@@ -106,12 +113,29 @@ import {
   parseModelsConfig,
   pickSessionModel,
   resolveModels,
+  rootedFiles,
   type SecretInfo,
   SecretStore,
   type StoredLevel,
   sessionSecrets,
   withDelay,
 } from "@statewalker/ai-environment";
+import {
+  DELETED_USER,
+  KeyedLock,
+  type MemoryCall,
+  type MemoryKind,
+  MemoryService,
+  memoryCall,
+  memoryFiles,
+  memoryRef,
+  parseMemoryCaps,
+  projectName,
+  runMemoryCall,
+  scanText,
+  type Writer,
+  writes,
+} from "@statewalker/ai-memory";
 import type {
   AgentRun,
   CreatedServiceAccount,
@@ -158,6 +182,11 @@ const STRICTNESS = { allow: 0, classify: 1, ask: 2, deny: 3 } as const;
 
 /** The project's instructions for agents, which auto mode's risk classifier is shown. */
 const AGENTS_FILE = "AGENTS.md";
+/** How long a remote MCP server's tool list is kept at most, and after a failure (#135). */
+const MCP_LIST_TTL_MS = 5 * 60_000;
+const MCP_LIST_FAILURE_MS = 10_000;
+/** The most `tools/list` pages read from one server. */
+const MCP_LIST_PAGES = 16;
 
 /** The definitions mount's folder in each project of an agent session's file view. */
 const DEFINITIONS_FOLDER = ".agents";
@@ -168,6 +197,10 @@ const MAX_TOOL_LIST = 10_000;
 
 /** The workspace's and each project's model configuration, in their system folders. */
 const MODELS_FILE = "models";
+/** A project's memory caps, beside its system folder's other settings (#157). */
+const MEMORY_CAPS_FILE = "memory-caps";
+/** Where a project's memory lives in its system folder (#157). */
+const MEMORY_FOLDER = "memory";
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
@@ -191,12 +224,19 @@ export class Workspace extends DurableObject<Env> {
   readonly #databases: DatabaseGate;
   /** The workspace's, its projects' and its members' limits and counters (#179). */
   readonly #limits: WorkspaceLimits;
+  /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
+  readonly #memoryLock = new KeyedLock();
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
   #deploymentPlugins?: Promise<{ plugins: Plugin[]; problems: string[] }>;
   /** Plugin builds by level and source hash (statewalker/statewalker-root#130). */
   readonly #builds = new Map<string, Promise<{ plugin?: Plugin; problems: string[] }>>();
+  /**
+   * The tools remote MCP servers listed, by session and server, while their answer's time to live
+   * lasts (statewalker/statewalker-root#135): listing is a request through the gateway.
+   */
+  readonly #mcpLists = new Map<string, { until: number; tools: Promise<ToolDefinition[]> }>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -469,6 +509,51 @@ export class Workspace extends DurableObject<Env> {
       ...(run ? { agent: run.id, run: agentRun(run) } : { agent: "default" }),
       model: models.model,
       plugins: plugins.map((p) => p.name),
+      ...(limits.length ? { limits } : {}),
+      ...(ownKeys ? { ownKeys: true } : {}),
+    };
+  }
+
+  /**
+   * Pins a fork's definitions (statewalker/statewalker-root#190): the agent and plugin bundles the
+   * source session pinned, unchanged, and its models, or `model` picked afresh within the user's
+   * rights now. The user must still be a member of the project; the source must be theirs (ENOENT
+   * otherwise). The fork counts as an active session. Only a User DO calls this, with a user
+   * capability.
+   */
+  async forkDefinitions(
+    capability: string,
+    req: { from: string; session: string; model?: string },
+  ): Promise<PinnedDefinitions> {
+    const user = await this.#authority.userOfUserCapability(capability);
+    const source = this.#definitions.pins(String(req.from));
+    const models = this.#models.pinned(String(req.from));
+    if (!source || !models || source.user !== user || models.user !== user)
+      throw codedError("ENOENT", "no such agent session");
+    const project = source.project;
+    const access = await this.#access(project, user);
+    if (!access.member) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    const run = source.run;
+    const pinned =
+      req.model !== undefined
+        ? await pickSessionModel(await this.#modelCatalog(project, user), {
+            override: String(req.model),
+            agentModels: run?.models ?? [],
+            right: this.#modelRight(access.grants),
+          })
+        : models.pinned;
+    await this.#limits.startSession(project, user, String(req.session));
+    this.#models.pin(String(req.session), user, project, pinned);
+    this.#definitions.pin(String(req.session), user, project, source.pins, run);
+    const limits = await this.#limits.sessionLimits(project);
+    const ownKeys = [pinned.model, ...pinned.fallbacks].some((id) => {
+      const m = lookupModel(pinned.catalog, id);
+      return m && pinned.catalog.providers[m.provider]?.level === "user";
+    });
+    return {
+      ...(run ? { agent: run.id, run: agentRun(run) } : { agent: "default" }),
+      model: pinned.model,
+      plugins: source.pins.map((p) => p.name),
       ...(limits.length ? { limits } : {}),
       ...(ownKeys ? { ownKeys: true } : {}),
     };
@@ -1277,10 +1362,17 @@ export class Workspace extends DurableObject<Env> {
     const found = await this.#definitions.session(facts.session);
     if (!found || found.user !== facts.user || found.project !== facts.project) return out;
     const requested = new Set(found.run?.tools ?? []);
+    // A remote MCP server's tools are listed now, so its agent's patterns decide (#135).
+    const mcpRequested = (id: string) => found.run?.mcpTools?.some((p) => matches(p, id)) ?? false;
     const allow = this.#allow(access.grants);
-    for (const definition of await catalogToolDefinitions(found.catalog)) {
+    const local = await catalogToolDefinitions(found.catalog);
+    const remote = found.run?.mcpTools?.length
+      ? await this.#mcpTools(facts, found.catalog, new Set(local.map((d) => d[TOOL_EXTENSION].id)))
+      : [];
+    for (const definition of [...local, ...remote]) {
       const x = definition[TOOL_EXTENSION];
-      if (!requested.has(x.id) || !(await allow("tools", x.id, x.action))) continue;
+      const asked = x.source === "mcp" ? mcpRequested(x.id) : requested.has(x.id);
+      if (!asked || !(await allow("tools", x.id, x.action))) continue;
       const req = toolRequest(x);
       const decideIn = (m: ResolvedMode | undefined): ModeVerdict => {
         if (!m) return { verdict: "deny", reason: "an unknown sub-agent mode", step: "mode" };
@@ -1405,10 +1497,13 @@ export class Workspace extends DurableObject<Env> {
       }
     }
     const route = x.route;
-    if (route.kind === "rest") {
+    if (route.kind === "rest" || route.kind === "mcp") {
       let request: OutgoingRequest;
       try {
-        request = restRequest(found.definition, args);
+        request =
+          route.kind === "rest"
+            ? restRequest(found.definition, args)
+            : mcpRequest(route, "tools/call", { name: route.name, arguments: args }, 1);
       } catch (e) {
         return { output: String((e as Error)?.message ?? e), isError: true };
       }
@@ -1423,6 +1518,15 @@ export class Workspace extends DurableObject<Env> {
       const secrets = result.secrets.length ? { secrets: result.secrets } : {};
       const warnings = result.warnings?.length ? { warnings: result.warnings } : {};
       if (result.error) return { output: result.error, isError: true, ...secrets, ...warnings };
+      if (route.kind === "mcp") {
+        // The remote server's answer: its own auth applies (a refusal is an error result).
+        const answer = mcpAnswer(result, 1);
+        const out =
+          answer.result === undefined
+            ? { output: answer.error, isError: true }
+            : mcpCallOutput(answer.result);
+        return { ...out, ...secrets, ...warnings };
+      }
       return {
         output: `${result.status} ${result.body ?? ""}`,
         isError: !result.ok,
@@ -1431,11 +1535,101 @@ export class Workspace extends DurableObject<Env> {
       };
     }
     if (route.kind === "native") return this.#runNative(agentCapability, facts, x, args, call.turn);
-    // Remote MCP servers' tools run with statewalker/statewalker-root#135.
     return {
-      output: `ENOSYS: ${route.kind} tools do not run in this deployment yet`,
+      output: `ENOSYS: ${route.kind} tools do not run in this deployment`,
       isError: true,
     };
+  }
+
+  /**
+   * The tools of the remote MCP servers of a session's pinned plugins, listed by the host-side
+   * gateway (statewalker/statewalker-root#135): each Streamable HTTP server is asked `tools/list`
+   * (every page) through the secrets gateway, metered as outbound requests of the session's
+   * member, project and workspace, and its tools become tool definitions of its plugin. A listing
+   * is kept for the session while its time to live lasts (at most five minutes); a server that
+   * fails gives no tools for a short while. stdio servers and servers whose files hold
+   * credentials give none: they answer ENOSYS or EINVAL, logged.
+   */
+  async #mcpTools(
+    facts: AgentSessionFacts,
+    catalog: FilesApi,
+    taken: ReadonlySet<string>,
+  ): Promise<ToolDefinition[]> {
+    const out: ToolDefinition[] = [];
+    const names = new Set(taken);
+    for (const server of await catalogMcpServers(catalog)) {
+      if (server.problem) {
+        console.warn(`MCP server ${server.plugin}/${server.server}: ${server.problem}`);
+        continue;
+      }
+      const key = JSON.stringify([facts.session, server.plugin, server.server]);
+      const now = Date.now();
+      let entry = this.#mcpLists.get(key);
+      if (!entry || entry.until <= now) {
+        const listing = this.#listMcp(facts, server);
+        entry = { until: now + MCP_LIST_TTL_MS, tools: listing.then((l) => l.tools) };
+        const kept = entry;
+        listing.then(
+          (l) => {
+            kept.until = Date.now() + l.ttl;
+          },
+          () => {},
+        );
+        this.#mcpLists.set(key, entry);
+        if (this.#mcpLists.size > 512)
+          this.#mcpLists.delete(this.#mcpLists.keys().next().value as string);
+      }
+      const ids = new Set<string>();
+      for (const d of await entry.tools) {
+        const id = d[TOOL_EXTENSION].id;
+        if (names.has(id)) continue;
+        ids.add(id);
+        out.push(d);
+      }
+      for (const id of ids) names.add(id);
+    }
+    return out;
+  }
+
+  /** One server's tools, every page; none (and a short time to live) when listing fails. */
+  async #listMcp(
+    facts: AgentSessionFacts,
+    server: McpServer,
+  ): Promise<{ tools: ToolDefinition[]; ttl: number }> {
+    const where = `MCP server ${server.plugin}/${server.server}`;
+    const listed: unknown[] = [];
+    let ttl = MCP_LIST_TTL_MS;
+    let cursor: string | undefined;
+    try {
+      for (let page = 0; page < MCP_LIST_PAGES; page++) {
+        const request = mcpRequest(
+          { url: String(server.url), headers: server.headers },
+          "tools/list",
+          cursor !== undefined ? { cursor } : {},
+          page + 1,
+        );
+        const answer = mcpAnswer(await this.#meteredFetch(facts, request, server.plugin), page + 1);
+        if (answer.error) {
+          console.warn(`${where}: tools/list: ${answer.error}`);
+          return { tools: [], ttl: MCP_LIST_FAILURE_MS };
+        }
+        const { tools, nextCursor, ttlMs } = answer.result as {
+          tools?: unknown;
+          nextCursor?: unknown;
+          ttlMs?: unknown;
+        };
+        if (Array.isArray(tools)) listed.push(...tools);
+        if (typeof ttlMs === "number" && ttlMs >= 0) ttl = Math.min(ttl, ttlMs);
+        if (typeof nextCursor !== "string" || !nextCursor) break;
+        cursor = nextCursor;
+      }
+    } catch (e) {
+      console.warn(`${where}: tools/list: ${String((e as Error)?.message ?? e)}`);
+      return { tools: [], ttl: MCP_LIST_FAILURE_MS };
+    }
+    const { tools, problems } = mcpTools(server, listed);
+    if (problems.length) console.warn(`${where}: ${problems.join("; ")}`);
+    return { tools, ttl };
   }
 
   /** The deployment catalog's plugin bundles approved to run native tools, by hash. */
@@ -1864,6 +2058,293 @@ export class Workspace extends DurableObject<Env> {
   async deleteServiceAccount(userCapability: string, name: string): Promise<void> {
     await this.#admin(userCapability);
     await issuerOf(this.env).deleteServiceAccount(this.#name, String(name));
+  }
+
+  // ---- memory (statewalker/statewalker-root#157) ----------------------------------------------
+
+  /**
+   * Who holds a capability for memory: an agent session (its facts) or a user session. A
+   * capability narrowed for a plugin's tool never reaches memory: only the agent, through the
+   * memory tool, does.
+   */
+  async #memoryHolder(capability: string) {
+    const facts = await this.#authority.agentSessionOf(capability).catch(() => undefined);
+    if (facts?.tool) throw codedError("EACCES", "a tool's capability does not reach memory");
+    const user = facts?.user ?? (await this.#authority.userOfUserCapability(capability));
+    return { facts, user };
+  }
+
+  /** A project's memory caps: the deployment's, overridden by the project's `.system/memory-caps`. */
+  async #memoryCaps(project: string, store: FilesApi) {
+    return parseMemoryCaps(
+      this.env.MEMORY_CAPS,
+      await tryReadText(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_CAPS_FILE}`),
+    );
+  }
+
+  /**
+   * The values of every secret stored for a user in a project: theirs, the project's, the
+   * workspace's and the deployment's. Only the memory scans read them, here.
+   */
+  async #secretValues(project: string | undefined, user: string): Promise<string[]> {
+    const values = [
+      ...(await this.#secrets.values("user", user)),
+      ...(project ? await this.#secrets.values("project", project) : []),
+      ...(await this.#secrets.values("workspace", "")),
+    ];
+    const deployment = this.#deploymentSecrets();
+    for (const info of deployment.info) {
+      const value = deployment.open(info.name)?.value;
+      if (value) values.push(value);
+    }
+    return values;
+  }
+
+  /**
+   * The memory service on a project's own memory and one agent's, in the project's system folder
+   * (never in any file view). Writes count against the project's storage limits and are refused
+   * over one before anything lands (#179).
+   */
+  async #memoryService(project: string, user: string, agent?: string): Promise<MemoryService> {
+    const store = await this.#store;
+    const metered = this.#meteredStore(store);
+    const base = `/${project}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_FOLDER}`;
+    const stores: Partial<Record<MemoryKind, FilesApi>> = {
+      project: rootedFiles(metered, `${base}/project`),
+    };
+    if (agent) stores.agent = rootedFiles(metered, `${base}/agents/${agent}`);
+    return new MemoryService({
+      files: memoryFiles(stores),
+      kinds: Object.keys(stores) as MemoryKind[],
+      caps: await this.#memoryCaps(project, store),
+      secretValues: () => this.#secretValues(project, user),
+      admit: (_kind, delta) =>
+        this.#limits.admitStorage(project, delta, store, () => this.#databases.storage()),
+      lock: this.#memoryLock,
+      lockKey: (kind) => `${project}/${kind === "agent" ? `agent:${agent}` : kind}`,
+    });
+  }
+
+  /**
+   * How the mode and the rules decide an agent session's memory write of a kind: plan denies it,
+   * a deny rule denies it, an ask waits on an approval of exactly that batch (unless `mayAsk` is
+   * false: preferences ask the user themselves, in every mode), and unattended asks deny.
+   */
+  async #memoryMode(
+    facts: AgentSessionFacts,
+    kind: MemoryKind,
+    content: string,
+    mayAsk: boolean,
+  ): Promise<void> {
+    const store = await this.#store;
+    const { mode } = await this.#modeState(facts, store);
+    const decideOne = await this.#decider(facts, store);
+    const decision = this.#settled(decideOne("memory", "write", kind), facts);
+    if (decision.verdict === "deny")
+      throw codedError(
+        "EACCES",
+        `may not write ${kind} memory in ${mode.name} mode: ${decision.reason}`,
+      );
+    if (decision.verdict === "allow" || !mayAsk) return;
+    const bytes = new TextEncoder().encode(content);
+    const id = await approvalId(facts.session, "memory", kind, bytes);
+    const request: ApprovalRequest = {
+      id,
+      session: facts.session,
+      project: facts.project,
+      action: { method: "memory", path: kind, size: bytes.length },
+      permission: `memory.write:${kind}`,
+      reason: decision.reason,
+    };
+    // A granted approval is used up before the classifier is asked: a block's retry passes.
+    if (this.#registry.consume(id, facts.session, facts.user)) return;
+    if (decision.verdict === "classify") {
+      // `auto`: the risk classifier judges the batch, as it judges file and database changes.
+      const c = await this.#classify(facts, store, request);
+      await this.#record(facts, {
+        action: request.action,
+        step: "classifier",
+        verdict: c.verdict,
+        reason: c.reason,
+        ...(c.model ? { model: c.model } : {}),
+        latency_ms: c.latency_ms,
+        ...(c.fallback ? { fallback: c.fallback } : {}),
+        ...(c.stop ? { stop: c.stop } : {}),
+        ...(c.verdict === "deny"
+          ? {
+              approval: id,
+              request: { ...request, reason: c.reason },
+              stored: { method: "memory", path: kind, content: bytes },
+            }
+          : {}),
+      });
+      if (c.verdict === "allow") return;
+      if (c.verdict === "deny")
+        throw codedError(
+          "EACCES",
+          `may not write ${kind} memory: the risk classifier denied it: ${c.reason} (blocked: the user may approve a retry, ${id})`,
+        );
+      throw approvalError({ ...request, reason: c.reason });
+    }
+    throw approvalError(request);
+  }
+
+  /**
+   * One memory call on project or agent memory (the memory tool's, with an agent session's
+   * capability; the memory API's, with a user session's). Every member reads both; writing takes
+   * `memory.write:project` or `memory.write:agent` (owners and editors), and an agent session's
+   * write also its mode. An agent session reaches its own project and its own agent's memory only;
+   * only a person erases. A project or kind the caller cannot reach answers ENOENT.
+   */
+  async memory(capability: string, raw: MemoryCall): Promise<unknown> {
+    const call = memoryCall(raw);
+    const { facts, user } = await this.#memoryHolder(capability);
+    const project = facts ? facts.project : projectName(call.project);
+    const access = await this.#access(project, user).catch(() => undefined);
+    if (!access?.member) throw codedError("ENOENT", "no such memory");
+    if (call.op === "agents") return { agents: await this.#agentMemories(project, user) };
+    if ((call.op as string) === "prime") {
+      if (!facts) throw codedError("EINVAL", "only agent sessions are primed");
+      return (await this.#memoryService(project, user, facts.agent)).prime(["project", "agent"]);
+    }
+    const ref = memoryRef(call.kind);
+    if (ref.kind !== "project" && ref.kind !== "agent")
+      throw codedError("ENOENT", "no such memory");
+    let agent = ref.agent;
+    if (ref.kind === "agent" && facts) {
+      if (agent && agent !== facts.agent) throw codedError("ENOENT", "no such memory");
+      agent = facts.agent;
+    }
+    if (ref.kind === "agent" && !agent) throw codedError("ENOENT", "no such memory");
+    if (writes(call)) {
+      if (facts && call.op === "erase") throw codedError("EACCES", "only a person erases memory");
+      // Only project roles: a workspace role never writes a project's memory.
+      const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+      if (!decide(grants, { area: "memory", action: "write", target: ref.kind }))
+        throw codedError("EACCES", `${user} may not write ${ref.kind} memory in ${project}`);
+      if (facts) await this.#memoryMode(facts, ref.kind, JSON.stringify(call.actions ?? []), true);
+    }
+    const writer: Writer = facts ? { user, agent: facts.agent, session: facts.session } : { user };
+    return runMemoryCall(await this.#memoryService(project, user, agent), ref.kind, call, writer);
+  }
+
+  /** A project's agent memories: one folder per agent, `<plugin>/<agent>`. */
+  async #agentMemories(project: string, user: string) {
+    const store = await this.#store;
+    const base = `/${project}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_FOLDER}/agents`;
+    const agents: { agent: string; usage: unknown }[] = [];
+    if (!(await store.exists(base))) return agents;
+    for await (const plugin of store.list(base)) {
+      if (plugin.kind !== "directory") continue;
+      for await (const a of store.list(plugin.path)) {
+        if (a.kind !== "directory") continue;
+        const agent = `${plugin.name}/${a.name}`;
+        const view = await (await this.#memoryService(project, user, agent)).list("agent");
+        agents.push({ agent, usage: view.usage });
+      }
+    }
+    return agents.sort((a, b) => a.agent.localeCompare(b.agent));
+  }
+
+  /**
+   * What a User DO asks before it reaches a profile kind (user memory, preferences): the
+   * capability verified, the membership (ENOENT for an agent session outside it), a sub-agent's
+   * limits (it writes neither), and the mode for a write (plan denies it; a rule's ask on user
+   * memory waits on an approval). It answers who writes and the project's caps.
+   */
+  async memoryAccess(
+    capability: string,
+    req: { kind: "user" | "preferences"; project?: string; write: boolean; content?: string },
+  ) {
+    const { facts, user } = await this.#memoryHolder(capability);
+    const kind: MemoryKind = req.kind === "preferences" ? "preferences" : "user";
+    const store = await this.#store;
+    if (facts) {
+      const access = await this.#access(facts.project, user).catch(() => undefined);
+      if (!access?.member) throw codedError("ENOENT", "no such memory");
+      if (req.write) {
+        if (facts.parent)
+          throw codedError(
+            "EACCES",
+            "a sub-agent writes only its own agent memory and the project memory",
+          );
+        await this.#memoryMode(facts, kind, String(req.content ?? ""), kind === "user");
+      }
+      return {
+        user,
+        project: facts.project,
+        member: true,
+        exists: true,
+        caps: await this.#memoryCaps(facts.project, store),
+        writer: { user, agent: facts.agent, session: facts.session },
+      };
+    }
+    if (kind === "preferences")
+      return {
+        user,
+        member: true,
+        exists: true,
+        caps: parseMemoryCaps(this.env.MEMORY_CAPS),
+        writer: { user },
+      };
+    const project = projectName(req.project);
+    const member = !!(await this.#access(project, user).catch(() => undefined))?.member;
+    return {
+      user,
+      project,
+      member,
+      exists: await store.exists(`/${project}`),
+      caps: member ? await this.#memoryCaps(project, store) : parseMemoryCaps(this.env.MEMORY_CAPS),
+      writer: { user },
+    };
+  }
+
+  /**
+   * The memory scans for a User DO's profile kinds, run here, where the secrets are: their values
+   * never leave this DO.
+   */
+  async scanMemory(
+    capability: string,
+    req: { project?: string; texts: string[] },
+  ): Promise<(string | undefined)[]> {
+    const { facts, user } = await this.#memoryHolder(capability);
+    const project = facts?.project ?? (req.project ? projectName(req.project) : undefined);
+    const values = await this.#secretValues(project, user);
+    return (Array.isArray(req.texts) ? req.texts : []).map((t) => scanText(String(t), values));
+  }
+
+  /**
+   * A user is being erased: their entries in every project's and agent's memory here stay, with
+   * `written_by` (and `forgotten_by`) set to the fixed "deleted user" id.
+   */
+  async replaceMemoryAuthor(userCapability: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const store = await this.#store;
+    for await (const p of store.list("/")) {
+      if (p.kind !== "directory") continue;
+      const base = `/${p.name}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_FOLDER}`;
+      if (!(await store.exists(base))) continue;
+      await (await this.#memoryService(p.name, user)).replaceAuthor("project", user, DELETED_USER);
+      const agents = `${base}/agents`;
+      if (!(await store.exists(agents))) continue;
+      for await (const plugin of store.list(agents))
+        if (plugin.kind === "directory")
+          for await (const a of store.list(plugin.path))
+            if (a.kind === "directory")
+              await (
+                await this.#memoryService(p.name, user, `${plugin.name}/${a.name}`)
+              ).replaceAuthor("agent", user, DELETED_USER);
+    }
+  }
+
+  /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): deletes a project, its system
+   * folder (so its project and agent memory) included. Its users' memory of it stays in their
+   * profiles, which then show it as gone.
+   */
+  async deleteProject(project: string): Promise<void> {
+    const name = projectName(project);
+    await (await this.#store).remove(`/${name}`);
   }
 
   /**

@@ -90,6 +90,22 @@ export class DefinitionsStore {
     );
   }
 
+  /** What a session pinned, as pinned: its user, project, plugin pins and agent. */
+  pins(
+    session: string,
+  ): { user: string; project: string; pins: Pin[]; run?: NarrowedAgent } | undefined {
+    const row = this.#sql
+      .exec("SELECT * FROM session_definitions WHERE session = ?", session)
+      .toArray()[0];
+    if (!row) return undefined;
+    return {
+      user: String(row.user),
+      project: String(row.project),
+      pins: JSON.parse(String(row.pins)) as Pin[],
+      ...(row.run ? { run: JSON.parse(String(row.run)) as NarrowedAgent } : {}),
+    };
+  }
+
   /** A catalog of plugins (in memory), each at `/<plugin>/`. */
   async catalogOf(plugins: readonly Plugin[]): Promise<MemFilesApi> {
     const catalog = new MemFilesApi();

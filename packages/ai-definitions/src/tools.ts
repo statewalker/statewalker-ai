@@ -60,7 +60,17 @@ export type ToolRoute =
       /** The bundle's sha-256. */
       hash?: string;
     }
-  | { kind: "mcp"; url: string; name: string }
+  | {
+      kind: "mcp";
+      /** The server's Streamable HTTP endpoint (#135). */
+      url: string;
+      /** The tool's name on the server. */
+      name: string;
+      /** The server's key in the plugin's `mcp.json`. */
+      server?: string;
+      /** Sent with every request: secret references as `{{secret:NAME}}` placeholders. */
+      headers?: Record<string, string>;
+    }
   | {
       kind: "rest";
       method: string;

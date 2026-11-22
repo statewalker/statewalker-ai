@@ -13,7 +13,14 @@
 //   (or the approval's expiry, as a denial) queues an answer turn that runs the stored call again
 //   (re-checked at the gate) or records the refusal, and then the agent continues the work with
 //   the result, with no new user message (statewalker/statewalker-root#214); while other approvals
-//   of the waiting turn are unanswered, the answer turn waits on them and the last answer continues.
+//   of the waiting turn are unanswered, the answer turn waits on them and the last answer continues;
+// - turns form a tree with a movable head (statewalker/statewalker-root#190, decided in #159): a
+//   turn follows the head when it starts and becomes the head; the context is the path from the
+//   first turn to the head. A rewind moves the head (the turns left off the path stay, as an
+//   inactive branch; their pending approvals are cancelled, the sub-agents they started are listed
+//   to be stopped, and their memory, database and outside effects are listed, not reverted); the
+//   next turn starts with an item telling the model. Edit and regenerate are a rewind plus a turn;
+//   a fork copies a turn and its ancestors into another session (`exportPath` / `importHistory`).
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 import { limitOfMessage } from "@statewalker/ai-environment";
 import type {
@@ -21,7 +28,10 @@ import type {
   AgentPort,
   AgentSessionConfig,
   ApprovalAnswer,
+  BranchesView,
+  BranchTurn,
   Delivery,
+  EditRequest,
   EventsPage,
   EventsQuery,
   GateDecisionInput,
@@ -32,11 +42,18 @@ import type {
   LimitWarningView,
   MessageAccepted,
   ModelSubstitution,
+  RegenerateRequest,
+  RewindRequest,
+  RewindResult,
   SessionEvent,
+  SessionHistory,
   SessionStatus,
   StopLimit,
   StopReason,
   StoredAction,
+  TurnEffect,
+  TurnOrigin,
+  TurnRef,
   TurnStatus,
   TurnView,
 } from "./api.js";
@@ -128,7 +145,10 @@ function callOf(stored: StoredAction): ActionCall {
     method: stored.method,
     path: stored.path,
     ...(stored.target !== undefined ? { target: stored.target } : {}),
-    ...(stored.method === "write" || stored.method === "db" || stored.method === "tool"
+    ...(stored.method === "write" ||
+    stored.method === "db" ||
+    stored.method === "tool" ||
+    stored.method === "memory"
       ? { content: fromBase64(stored.content ?? "") }
       : {}),
   };
@@ -169,6 +189,15 @@ export interface TurnOutcome {
   substitution?: ModelSubstitution;
 }
 
+/**
+ * Tells the session's User DO that approvals of rewound turns are cancelled
+ * (statewalker/statewalker-root#190): answering them is refused.
+ */
+export type CancelApprovals = (config: AgentSessionConfig, ids: string[]) => Promise<unknown>;
+
+/** Which effect a tool call has that a rewind lists and does not revert, if any. */
+export type EffectOf = (item: Item) => "memory" | "database" | "outside" | undefined;
+
 /** Runs one turn of the session's core (Flue), reporting each item as it happens. */
 export type RunTurn = (
   turn: TurnRun,
@@ -189,6 +218,9 @@ interface TurnRow {
   created: number;
   started: number | null;
   ended: number | null;
+  parent_turn: string | null;
+  origin: string | null;
+  copied_from: string | null;
 }
 
 interface EventRow {
@@ -236,8 +268,15 @@ const KINDS: readonly string[] = [
   "model_fallback",
   "mode_decision",
   "limit_warning",
+  "rewind",
+  "memory_primed",
 ];
 const MAX_PAGE = 1000;
+/** Where the head is kept in `agent_config` ("" before the first turn). */
+const HEAD = "head";
+/** The note the next turn starts with after a rewind, in `agent_config`. */
+const REWIND_NOTE = "rewind_note";
+
 /** Why an approval no one answered in its time counts as denied. */
 const EXPIRED = "expired";
 const MAX_WAIT_MS = 60_000;
@@ -256,9 +295,13 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   readonly #runAction: RunAction;
   readonly #recordApprovals: RecordApprovals;
   readonly #wake: ((at: number) => void) | undefined;
+  readonly #cancelApprovals: CancelApprovals | undefined;
+  readonly #effectOf: EffectOf | undefined;
   readonly #shaper: ContextShaper;
   readonly #summarizer: Summarizer | undefined;
   #running: Running | undefined;
+  /** Set while the head moves: no queued turn starts meanwhile. */
+  #moving = false;
   readonly #waiters = new Set<() => void>();
 
   constructor(options: {
@@ -271,6 +314,10 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
      * (statewalker/statewalker-root#214).
      */
     wake?: (at: number) => void;
+    /** Told the pending approvals of rewound turns, cancelled (statewalker/statewalker-root#190). */
+    cancelApprovals?: CancelApprovals;
+    /** Picks out the tool calls whose effects a rewind lists (memory, database, outside). */
+    effectOf?: EffectOf;
     /**
      * Compaction: without a summarizer, nothing is compacted (the context is every earlier item,
      * long tool results outside the tail trimmed).
@@ -282,6 +329,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     this.#runAction = options.runAction;
     this.#recordApprovals = options.recordApprovals;
     this.#wake = options.wake;
+    this.#cancelApprovals = options.cancelApprovals;
+    this.#effectOf = options.effectOf;
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS agent_config (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS agent_turns (id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -298,10 +347,50 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       CREATE TABLE IF NOT EXISTS approval_expiry (turn TEXT NOT NULL, approval TEXT NOT NULL,
         expires INTEGER NOT NULL, PRIMARY KEY (turn, approval));
       CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
-        used TEXT NOT NULL, reason TEXT NOT NULL);`);
+        used TEXT NOT NULL, reason TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS turn_children (turn TEXT NOT NULL, session TEXT NOT NULL,
+        PRIMARY KEY (turn, session));
+      CREATE TABLE IF NOT EXISTS cancelled_approvals (turn TEXT NOT NULL, approval TEXT NOT NULL,
+        PRIMARY KEY (turn, approval));`);
     this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
     this.#summarizer = options.compaction?.summarizer;
+    this.#migrate();
     this.#recover();
+  }
+
+  /**
+   * The turn tree's columns (statewalker/statewalker-root#190), added to a store made before it.
+   * Every turn that ran with no origin (stored before the tree, or run by an earlier version after
+   * a rollback) follows the head, in the order they came, `origin: run`, and the last becomes the
+   * head; summaries with no `through_turn` run through their last item's turn. Rolling back
+   * ignores the extra columns; deploying again chains what ran meanwhile.
+   */
+  #migrate(): void {
+    const columns = new Set(
+      this.#rows<{ name: string }>("SELECT name FROM pragma_table_info('agent_turns')").map((r) =>
+        String(r.name),
+      ),
+    );
+    for (const name of ["parent_turn", "origin", "copied_from"])
+      if (!columns.has(name)) this.#sql.exec(`ALTER TABLE agent_turns ADD COLUMN ${name} TEXT`);
+    let previous = this.#head();
+    let moved = false;
+    for (const row of this.#rows<{ id: string }>(
+      "SELECT id FROM agent_turns WHERE started IS NOT NULL AND origin IS NULL ORDER BY created, rowid",
+    )) {
+      this.#sql.exec(
+        "UPDATE agent_turns SET parent_turn = ?, origin = 'run' WHERE id = ?",
+        previous,
+        row.id,
+      );
+      previous = String(row.id);
+      moved = true;
+    }
+    if (moved) this.#setHead(previous);
+    this.#sql.exec(
+      `UPDATE summaries SET through_turn = COALESCE((SELECT turn FROM items
+        WHERE items.seq = summaries.to_seq), '') WHERE through_turn = '' OR through_turn IS NULL`,
+    );
   }
 
   // --- storage --------------------------------------------------------------------------------
@@ -368,6 +457,61 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     return row;
   }
 
+  /** The head: the turn the next one follows (null before the first turn). */
+  #head(): string | null {
+    const row = this.#one<{ value: string }>("SELECT value FROM agent_config WHERE key = ?", HEAD);
+    return row?.value ? String(row.value) : null;
+  }
+
+  #setHead(turn: string | null): void {
+    this.#sql.exec("INSERT OR REPLACE INTO agent_config VALUES (?, ?)", HEAD, turn ?? "");
+  }
+
+  /** The path of turns from the first one to `turn`, first turn first ([] for null). */
+  #pathTo(turn: string | null): string[] {
+    if (!turn) return [];
+    return this.#rows<{ id: string }>(
+      `WITH RECURSIVE p(id, parent, d) AS (
+        SELECT id, parent_turn, 0 FROM agent_turns WHERE id = ?
+        UNION ALL SELECT t.id, t.parent_turn, p.d + 1 FROM agent_turns t JOIN p ON t.id = p.parent
+          WHERE p.d < 1000000)
+      SELECT id FROM p ORDER BY d DESC`,
+      turn,
+    ).map((r) => String(r.id));
+  }
+
+  /**
+   * Whether an approval waits on the active path: its latest asking on the path (`path`) was not
+   * cancelled by a rewind (the same action asked again later is an approval of its own).
+   */
+  #pendingOnPath(approval: string, path: string[]): boolean {
+    const asked = this.#one<{ turn: string }>(
+      `SELECT turn FROM items WHERE kind IN ('approval', 'mode_decision')
+        AND json_extract(body, '$.approval') = ? AND turn IN (SELECT value FROM json_each(?))
+        ORDER BY seq DESC LIMIT 1`,
+      approval,
+      JSON.stringify(path),
+    );
+    return (
+      !!asked &&
+      !this.#one(
+        "SELECT 1 FROM cancelled_approvals WHERE turn = ? AND approval = ?",
+        asked.turn,
+        approval,
+      )
+    );
+  }
+
+  /** A turn of the session's tree (one that ran or is running); ENOENT for any other. */
+  #treeTurn(id: string): TurnRow {
+    const row = this.#one<TurnRow>(
+      "SELECT * FROM agent_turns WHERE id = ? AND started IS NOT NULL",
+      String(id),
+    );
+    if (!row) throw codedError("ENOENT", "no such turn in the session's tree");
+    return row;
+  }
+
   #view(row: TurnRow, withItems = true): TurnView {
     const config = this.config();
     const ignored = JSON.parse(row.ignored) as string[];
@@ -400,6 +544,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         : {}),
       ...(ignored.length ? { ignored } : {}),
       ...(answers ? { answers: String(answers.approval) } : {}),
+      parent_turn: row.parent_turn ?? null,
+      origin: (row.origin ?? "run") as TurnOrigin,
+      ...(row.copied_from ? { copied_from: JSON.parse(row.copied_from) as TurnRef } : {}),
       created: Number(row.created),
       ...(row.started ? { started: Number(row.started) } : {}),
       ...(row.ended ? { ended: Number(row.ended) } : {}),
@@ -467,7 +614,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
 
   /** Starts the next queued turn when none runs. */
   #pump(): void {
-    if (this.#running || this.#archived()) return;
+    if (this.#running || this.#moving || this.#archived()) return;
     const config = this.config();
     if (!config) return;
     const next = this.#one<TurnRow>(
@@ -492,11 +639,14 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   }
 
   async #run(config: AgentSessionConfig, row: TurnRow, running: Running): Promise<void> {
+    // The turn follows the head, and becomes it.
     this.#sql.exec(
-      "UPDATE agent_turns SET status = 'running', started = ? WHERE id = ?",
+      "UPDATE agent_turns SET status = 'running', started = ?, parent_turn = ?, origin = 'run' WHERE id = ?",
       Date.now(),
+      this.#head(),
       row.id,
     );
+    this.#setHead(row.id);
     this.#log("turn.started", row.id, { id: row.id });
     const answer = this.#one<{ approval: string; decision: string; message: string | null }>(
       "SELECT * FROM approval_answers WHERE turn = ?",
@@ -546,6 +696,15 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         error = String((e as Error)?.message ?? e);
       }
     } else {
+      // After a rewind, the turn starts by telling the model so.
+      const note = this.#one<{ value: string }>(
+        "SELECT value FROM agent_config WHERE key = ?",
+        REWIND_NOTE,
+      );
+      if (note) {
+        this.#sql.exec("DELETE FROM agent_config WHERE key = ?", REWIND_NOTE);
+        this.#append(row.id, JSON.parse(String(note.value)) as ItemInput);
+      }
       // A message another agent wrote (a sub-agent's task) is marked so: never the user's words.
       const byAgent = !!this.#one("SELECT 1 FROM agent_origin_turns WHERE turn = ?", row.id);
       const prompt = this.#append(row.id, {
@@ -647,6 +806,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     if (this.#summarizer) {
       try {
         await this.#shaper.compact(before, this.#summarizer, {
+          path: this.#pathTo(turn),
           signal,
           onSummary: (summary) => this.#log("summary.created", turn, summary),
           onThrash: (info) => this.#log("context.over_budget", turn, info),
@@ -657,7 +817,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         this.#log("compaction.failed", turn, { message: String((e as Error)?.message ?? e) });
       }
     }
-    return this.#shaper.context(before);
+    return this.#shaper.context(before, this.#pathTo(turn));
   }
 
   /**
@@ -711,7 +871,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       if (done && typeof done === "object" && "$approval" in done) {
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });
-      } else if (method === "tool" && done && typeof done === "object" && "output" in done) {
+      } else if (
+        (method === "tool" || method === "memory") &&
+        done &&
+        typeof done === "object" &&
+        "output" in done
+      ) {
         // A tool's answer, as the tool would have answered it (the secrets it used by name).
         const r = done as { output: unknown; isError?: boolean; secrets?: string[] };
         this.#append(turn, {
@@ -881,6 +1046,20 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       .map(itemOf)
       .some((i) => i.approval === approval && i.stored);
     if (!known) throw codedError("ENOENT", "no such approval");
+    // Only an approval of a turn on the active path, run here: a rewind cancelled the others, and
+    // a fork copies no pending approval (statewalker/statewalker-root#190).
+    const of = this.#one<{ turn: string; origin: string | null }>(
+      `SELECT i.turn, t.origin FROM items i JOIN agent_turns t ON t.id = i.turn
+        WHERE i.kind IN ('approval', 'mode_decision') AND json_extract(i.body, '$.approval') = ?
+        ORDER BY i.seq DESC LIMIT 1`,
+      approval,
+    );
+    if (
+      !of ||
+      (of.origin ?? "run") !== "run" ||
+      !this.#pendingOnPath(approval, this.#pathTo(this.#head()))
+    )
+      throw codedError("EINVAL", "the approval was cancelled: its turn is not on the active path");
     // Expired by the alarm while the User DO's answer was on its way: that expiry already
     // continued the turn, so the late answer continues nothing more.
     const asked = this.#one<{ turn: string }>(
@@ -968,7 +1147,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     this.#started();
     return (
       this.#rows<ItemRow>(
-        "SELECT * FROM items WHERE kind IN ('message', 'tool_call') ORDER BY seq DESC LIMIT 200",
+        `SELECT * FROM items WHERE kind IN ('message', 'tool_call')
+          AND turn IN (SELECT value FROM json_each(?)) ORDER BY seq DESC LIMIT 200`,
+        JSON.stringify(this.#pathTo(this.#head())),
       )
         .map(itemOf)
         .reverse()
@@ -1044,6 +1225,21 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       where.push(`kind IN (${types.map(() => "?").join(", ")})`);
       args.push(...types);
     }
+    // The active path by default; a branch's path (to one of its turns), or every item.
+    const all = query.all === true || (query.all as unknown) === "true";
+    if (!all) {
+      let path: string[];
+      if (query.branch !== undefined && query.branch !== null && query.branch !== "") {
+        const row = this.#one<{ id: string }>(
+          "SELECT id FROM agent_turns WHERE id = ? AND started IS NOT NULL",
+          String(query.branch),
+        );
+        if (!row) throw codedError("EINVAL", `no turn '${query.branch}' in this session's tree`);
+        path = this.#pathTo(String(row.id));
+      } else path = this.#pathTo(this.#head());
+      where.push("turn IN (SELECT value FROM json_each(?))");
+      args.push(JSON.stringify(path));
+    }
     const rows = this.#rows<ItemRow>(
       `SELECT * FROM items ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY seq ${order === "asc" ? "ASC" : "DESC"} LIMIT ?`,
       ...args,
@@ -1102,12 +1298,23 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     this.#started();
     if (this.#one("SELECT id FROM agent_turns WHERE status IN ('running', 'queued') LIMIT 1"))
       return "running";
-    const last = this.#one<{ status: string }>(
-      "SELECT status FROM agent_turns WHERE ended IS NOT NULL ORDER BY ended DESC, rowid DESC LIMIT 1",
-    );
-    // Waiting while its last turn waits on approvals: an answer continues it.
-    if (last?.status === "waiting") return "waiting";
-    return last?.status === "failed" ? "error" : "idle";
+    // As its head stands (statewalker/statewalker-root#190): waiting while the head waits on
+    // approvals (an answer continues it). A copied head is history: nothing to answer or fix here.
+    const head = this.#head();
+    const last = head
+      ? this.#one<{ status: string; origin: string | null; stop_reason: string | null }>(
+          "SELECT status, origin, stop_reason FROM agent_turns WHERE id = ?",
+          head,
+        )
+      : undefined;
+    if (!last || (last.origin ?? "run") !== "run") return "idle";
+    if (last.status === "waiting") {
+      // Unless a rewind cancelled what it waits on, and a branch switch came back to it.
+      const ids = (JSON.parse(last.stop_reason ?? "{}") as StopReason).approval_ids ?? [];
+      const path = this.#pathTo(head);
+      return !ids.length || ids.some((id) => this.#pendingOnPath(id, path)) ? "waiting" : "idle";
+    }
+    return last.status === "failed" ? "error" : "idle";
   }
 
   async archive(): Promise<void> {
@@ -1120,12 +1327,551 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     this.#log("session.archived", undefined, { id: this.config()?.id });
   }
 
+  // --- the turn tree (statewalker/statewalker-root#190) -----------------------------------------
+
+  /** Records a sub-agent session a turn started: a rewind of the turn stops it. */
+  async childStarted(turn: string, session: string): Promise<void> {
+    this.#turnRow(turn);
+    this.#sql.exec("INSERT OR IGNORE INTO turn_children VALUES (?, ?)", turn, String(session));
+  }
+
+  /**
+   * Moves the head to the end of `to_turn` (null: before the first turn), or before `before_turn`.
+   * A running or queued turn refuses it (EBUSY) unless `cancel_running`, which cancels them first.
+   */
+  async rewind(req: RewindRequest): Promise<RewindResult> {
+    const config = this.#started();
+    const r = (req ?? {}) as RewindRequest;
+    if (r.revert_files) throw codedError("EINVAL", "reverting files is not supported yet");
+    const to = r.to_turn !== undefined;
+    const before = r.before_turn !== undefined && r.before_turn !== null;
+    if (to === before) throw codedError("EINVAL", "a rewind names to_turn or before_turn");
+    const target = before
+      ? (this.#treeTurn(String(r.before_turn)).parent_turn ?? null)
+      : r.to_turn === null || r.to_turn === ""
+        ? null
+        : this.#treeTurn(String(r.to_turn)).id;
+    return this.#move(config, target, { cancelRunning: r.cancel_running === true, rewind: true });
+  }
+
+  /** Switches branch: the head moves to `turn` (null: before the first turn); nothing runs. */
+  async setHead(turn: string | null): Promise<RewindResult> {
+    const config = this.#started();
+    const target =
+      turn === null || turn === undefined || turn === "" ? null : this.#treeTurn(turn).id;
+    return this.#move(config, target, { cancelRunning: false, rewind: false });
+  }
+
+  /** Edits a turn's message: a rewind before it, then the edited message as a sibling turn. */
+  async edit(
+    turnId: string,
+    req: EditRequest,
+  ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }> {
+    const content = (req as { content?: unknown } | undefined)?.content;
+    if (typeof content !== "string" || !content)
+      throw codedError("EINVAL", "content must be a non-empty string");
+    return this.#again(turnId, content, req.model, !!req.revert_files);
+  }
+
+  /** Runs a turn's message again (on `model`, if given): a rewind before it, then a sibling turn. */
+  async regenerate(
+    turnId: string,
+    req: RegenerateRequest = {},
+  ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }> {
+    return this.#again(turnId, undefined, req.model, !!req.revert_files);
+  }
+
+  async #again(
+    turnId: string,
+    content: string | undefined,
+    model: string | undefined,
+    revertFiles: boolean,
+  ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }> {
+    const config = this.#started();
+    if (revertFiles) throw codedError("EINVAL", "reverting files is not supported yet");
+    const row = this.#treeTurn(turnId);
+    if (this.#one("SELECT 1 FROM approval_answers WHERE turn = ?", row.id))
+      throw codedError("EINVAL", "an answer turn has no message of its own");
+    const byAgent = !!this.#one("SELECT 1 FROM agent_origin_turns WHERE turn = ?", row.id);
+    const rewind = await this.#move(config, row.parent_turn ?? null, {
+      cancelRunning: false,
+      rewind: true,
+    });
+    const asked = model ?? row.model_requested ?? undefined;
+    const accepted = await this.send({
+      content: content ?? row.content,
+      delivery: "next",
+      ...(asked ? { model: asked } : {}),
+      ignored: [],
+      ...(byAgent ? { origin: "agent" as const } : {}),
+    });
+    return { ...accepted, rewind };
+  }
+
+  /**
+   * Moves the head to `target`: the turns of the old path left off the new one are rewound. Their
+   * pending approvals are cancelled; their sub-agents and their memory, database and outside
+   * effects are listed; the next turn starts with an item telling the model.
+   */
+  async #move(
+    config: AgentSessionConfig,
+    target: string | null,
+    options: { cancelRunning: boolean; rewind: boolean },
+  ): Promise<RewindResult> {
+    if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
+    if (this.#moving) throw codedError("EBUSY", "the session's head is already moving");
+    const busy = this.#rows<TurnRow>(
+      "SELECT * FROM agent_turns WHERE status IN ('running', 'queued') ORDER BY pos, created",
+    );
+    if (busy.length && !options.cancelRunning)
+      throw codedError("EBUSY", "a turn is running or queued: cancel it, or pass cancel_running");
+    this.#moving = true;
+    try {
+      const cancelled: string[] = [];
+      const known = new Set(busy.map((b) => b.id));
+      const cancelQueued = (only?: (row: TurnRow) => boolean) => {
+        for (const row of this.#rows<TurnRow>(
+          "SELECT * FROM agent_turns WHERE status = 'queued' ORDER BY pos, created",
+        ))
+          if (!only || only(row)) {
+            this.#finish(row.id, "cancelled", { type: "cancelled" });
+            cancelled.push(row.id);
+          }
+      };
+      cancelQueued((row) => known.has(row.id));
+      const running = this.#running;
+      if (running) {
+        cancelled.unshift(running.id);
+        await this.#cut(running, "cancelled");
+      }
+      // The steering the cut turn had not taken was queued as it ended: cancelled too. A message
+      // sent meanwhile runs after the move.
+      cancelQueued((row) => known.has(row.id) || row.delivery === "steer");
+      const previous = this.#head();
+      const path = new Set(this.#pathTo(target));
+      const rewound = this.#pathTo(previous).filter((id) => !path.has(id));
+      const result: RewindResult = {
+        head: target,
+        previous,
+        rewound,
+        cancelled_turns: cancelled,
+        cancelled_approvals: await this.#cancelPending(config, rewound),
+        stopped_children: this.#children(rewound),
+        ...this.#effects(rewound),
+      };
+      this.#setHead(target);
+      this.#note(previous, target, rewound, path);
+      if (options.rewind) this.#log("session.rewound", undefined, result);
+      this.#log("session.head_changed", undefined, { head: target, previous });
+      return result;
+    } finally {
+      this.#moving = false;
+      this.#pump();
+    }
+  }
+
+  /** Cancels the approvals rewound turns wait on: they expire no more, and their User DO is told. */
+  async #cancelPending(config: AgentSessionConfig, turns: string[]): Promise<string[]> {
+    if (!turns.length) return [];
+    const ids: string[] = [];
+    for (const item of this.#rows<ItemRow>(
+      `SELECT * FROM items WHERE kind = 'approval' AND turn IN (SELECT value FROM json_each(?))
+        ORDER BY seq`,
+      JSON.stringify(turns),
+    ).map(itemOf)) {
+      const since = Number(this.#turnRow(item.turn).created);
+      const answered = this.#one(
+        `SELECT 1 FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+          WHERE a.approval = ? AND t.created >= ? AND t.status NOT IN ('queued', 'cancelled')`,
+        String(item.approval),
+        since,
+      );
+      if (answered || !item.approval) continue;
+      this.#sql.exec(
+        "INSERT OR IGNORE INTO cancelled_approvals VALUES (?, ?)",
+        item.turn,
+        item.approval,
+      );
+      if (!ids.includes(item.approval)) ids.push(item.approval);
+    }
+    this.#sql.exec(
+      "DELETE FROM approval_expiry WHERE turn IN (SELECT value FROM json_each(?))",
+      JSON.stringify(turns),
+    );
+    if (ids.length)
+      try {
+        await this.#cancelApprovals?.(config, ids);
+      } catch {
+        // The User DO is told what it can be: an answer to these is refused here anyway.
+      }
+    return ids;
+  }
+
+  #children(turns: string[]): string[] {
+    return this.#rows<{ session: string }>(
+      "SELECT session FROM turn_children WHERE turn IN (SELECT value FROM json_each(?))",
+      JSON.stringify(turns),
+    ).map((r) => String(r.session));
+  }
+
+  /** The memory, database and outside effects of some turns' tool calls (those that did not fail). */
+  #effects(
+    turns: string[],
+  ): Pick<RewindResult, "memory_writes" | "database_changes" | "irreversible_effects"> {
+    const out: Pick<RewindResult, "memory_writes" | "database_changes" | "irreversible_effects"> = {
+      memory_writes: [],
+      database_changes: [],
+      irreversible_effects: [],
+    };
+    if (!turns.length || !this.#effectOf) return out;
+    for (const item of this.#rows<ItemRow>(
+      `SELECT * FROM items WHERE kind = 'tool_call' AND turn IN (SELECT value FROM json_each(?))
+        ORDER BY seq`,
+      JSON.stringify(turns),
+    ).map(itemOf)) {
+      const kind = this.#effectOf(item);
+      if (!kind) continue;
+      // A call that failed changed nothing.
+      const failed =
+        item.callId &&
+        this.#one(
+          `SELECT 1 FROM items WHERE turn = ? AND kind = 'tool_result'
+            AND json_extract(body, '$.callId') = ? AND json_extract(body, '$.isError') = 1`,
+          item.turn,
+          item.callId,
+        );
+      if (failed) continue;
+      const effect: TurnEffect = {
+        turn: item.turn,
+        item: item.id,
+        name: String(item.name ?? ""),
+        ...(item.args !== undefined ? { args: item.args } : {}),
+      };
+      if (kind === "memory") out.memory_writes.push(effect);
+      else if (kind === "database") out.database_changes.push(effect);
+      else out.irreversible_effects.push(effect);
+    }
+    return out;
+  }
+
+  /**
+   * Keeps (or updates) the item the next turn starts with: where the head was before the first
+   * move since the last turn, where it is, and the turns set aside meanwhile.
+   */
+  #note(previous: string | null, head: string | null, rewound: string[], path: Set<string>): void {
+    const kept = this.#one<{ value: string }>(
+      "SELECT value FROM agent_config WHERE key = ?",
+      REWIND_NOTE,
+    );
+    const before = kept ? (JSON.parse(String(kept.value)) as ItemInput).rewind : undefined;
+    const from = before ? before.previous : previous;
+    const turns = [...new Set([...(before?.turns ?? []), ...rewound])].filter((t) => !path.has(t));
+    if (from === head && !turns.length) {
+      this.#sql.exec("DELETE FROM agent_config WHERE key = ?", REWIND_NOTE);
+      return;
+    }
+    const effects = this.#effects(turns);
+    const named = (list: TurnEffect[]) => [...new Set(list.map((e) => e.name))].join(", ");
+    const kept_ = [
+      effects.memory_writes.length ? `memory writes (${named(effects.memory_writes)})` : "",
+      effects.database_changes.length
+        ? `database changes (${named(effects.database_changes)})`
+        : "",
+      effects.irreversible_effects.length
+        ? `outside effects (${named(effects.irreversible_effects)})`
+        : "",
+    ].filter(Boolean);
+    const text = [
+      `The conversation was rewound: ${turns.length} later turn${turns.length === 1 ? "" : "s"} ` +
+        "of it were set aside and are no longer part of it.",
+      kept_.length ? `Their effects stay as they are, not reverted: ${kept_.join("; ")}.` : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const note: ItemInput = { kind: "rewind", text, rewind: { previous: from, head, turns } };
+    this.#sql.exec(
+      "INSERT OR REPLACE INTO agent_config VALUES (?, ?)",
+      REWIND_NOTE,
+      JSON.stringify(note),
+    );
+  }
+
+  /** The session's tree: every turn that ran, the active path marked. */
+  async branches(): Promise<BranchesView> {
+    this.#started();
+    const head = this.#head();
+    const active = new Set(this.#pathTo(head));
+    const rows = this.#rows<TurnRow>(
+      "SELECT * FROM agent_turns WHERE started IS NOT NULL ORDER BY started, rowid",
+    );
+    const parents = new Set(rows.map((r) => r.parent_turn).filter(Boolean));
+    const turns = rows.map((row): BranchTurn => {
+      const message = this.#one<ItemRow>(
+        "SELECT * FROM items WHERE turn = ? AND kind = 'message' ORDER BY seq LIMIT 1",
+        row.id,
+      );
+      const text = message ? itemOf(message).text : undefined;
+      return {
+        id: row.id,
+        parent_turn: row.parent_turn ?? null,
+        origin: (row.origin ?? "run") as TurnOrigin,
+        status: row.status,
+        created: Number(row.created),
+        active: active.has(row.id),
+        ...(text ? { text: text.length > 200 ? `${text.slice(0, 200)}…` : text } : {}),
+      };
+    });
+    return { head, turns, leaves: rows.filter((r) => !parents.has(r.id)).map((r) => r.id) };
+  }
+
+  /**
+   * Erases an inactive branch: the turn and every turn after it, with their items, events and
+   * summaries. The active path is never erased (EINVAL): rewind first.
+   */
+  async eraseBranch(turn: string): Promise<{ erased: string[] }> {
+    this.#started();
+    const row = this.#treeTurn(turn);
+    if (this.#pathTo(this.#head()).includes(row.id))
+      throw codedError("EINVAL", "the turn is on the active path: rewind or switch branch first");
+    const erased = this.#rows<{ id: string }>(
+      `WITH RECURSIVE d(id) AS (SELECT ? UNION SELECT t.id FROM agent_turns t JOIN d
+        ON t.parent_turn = d.id) SELECT d.id FROM d JOIN agent_turns t ON t.id = d.id
+        ORDER BY t.started, t.rowid`,
+      row.id,
+    ).map((r) => String(r.id));
+    const set = JSON.stringify(erased);
+    const IN = "IN (SELECT value FROM json_each(?))";
+    // A summary under one that goes stands at the top again.
+    this.#sql.exec(
+      `UPDATE summaries SET parent_id = NULL WHERE parent_id IN (SELECT id FROM summaries
+        WHERE through_turn ${IN}) AND through_turn NOT ${IN}`,
+      set,
+      set,
+    );
+    this.#sql.exec(`DELETE FROM summaries WHERE through_turn ${IN}`, set);
+    for (const table of [
+      "items",
+      "events",
+      "approval_answers",
+      "approval_expiry",
+      "turn_substitutions",
+      "turn_children",
+      "agent_origin_turns",
+      "cancelled_approvals",
+    ])
+      this.#sql.exec(`DELETE FROM ${table} WHERE turn ${IN}`, set);
+    this.#sql.exec(`DELETE FROM agent_turns WHERE id ${IN}`, set);
+    this.#log("session.branch_erased", undefined, { turn: row.id, erased });
+    return { erased };
+  }
+
+  /**
+   * A turn and its ancestors, from any branch, with their items and the summaries on that path:
+   * what a fork copies. A running turn refuses it (EBUSY).
+   */
+  async exportPath(atTurn: string): Promise<SessionHistory> {
+    const config = this.#started();
+    const at = this.#turnRow(atTurn);
+    if (at.status === "running" || at.status === "queued")
+      throw codedError("EBUSY", "the turn is running: fork from it once it ended");
+    const path = this.#pathTo(this.#treeTurn(at.id).id);
+    const json = JSON.stringify(path);
+    const turns = path.map((id) => {
+      const row = this.#turnRow(id);
+      const answers = this.#one<{ approval: string; decision: string; message: string | null }>(
+        "SELECT approval, decision, message FROM approval_answers WHERE turn = ?",
+        id,
+      );
+      const substitution = this.#one<ModelSubstitution>(
+        "SELECT requested, used, reason FROM turn_substitutions WHERE turn = ?",
+        id,
+      );
+      return {
+        id: row.id,
+        parent_turn: row.parent_turn ?? null,
+        status: row.status,
+        delivery: row.delivery,
+        content: row.content,
+        model_requested: row.model_requested ?? null,
+        stop_reason: row.stop_reason ?? null,
+        error: row.error ?? null,
+        model: row.model ?? null,
+        ignored: row.ignored,
+        created: Number(row.created),
+        started: row.started === null ? null : Number(row.started),
+        ended: row.ended === null ? null : Number(row.ended),
+        ...(answers
+          ? {
+              answers: {
+                approval: String(answers.approval),
+                decision: String(answers.decision),
+                message: answers.message === null ? null : String(answers.message),
+              },
+            }
+          : {}),
+        ...(substitution
+          ? {
+              substitution: {
+                requested: String(substitution.requested),
+                used: String(substitution.used),
+                reason: String(substitution.reason),
+              },
+            }
+          : {}),
+      };
+    });
+    const items = this.#rows<ItemRow>(
+      "SELECT seq, id, turn, kind, body FROM items WHERE turn IN (SELECT value FROM json_each(?)) ORDER BY seq",
+      json,
+    ).map((r) => ({
+      seq: Number(r.seq),
+      id: String(r.id),
+      turn: String(r.turn),
+      kind: String(r.kind),
+      body: String(r.body),
+    }));
+    const summaries = this.#rows<SessionHistory["summaries"][number]>(
+      "SELECT * FROM summaries WHERE through_turn IN (SELECT value FROM json_each(?)) ORDER BY depth, from_seq",
+      json,
+    ).map((r) => ({
+      id: String(r.id),
+      depth: Number(r.depth),
+      from_seq: Number(r.from_seq),
+      to_seq: Number(r.to_seq),
+      parent_id: r.parent_id ? String(r.parent_id) : null,
+      content: String(r.content),
+      sections: r.sections ? String(r.sections) : null,
+      tokens: Number(r.tokens),
+      through_turn: String(r.through_turn),
+      created: Number(r.created),
+    }));
+    return {
+      session: config.id,
+      at_turn: at.id,
+      turns,
+      items,
+      summaries,
+      ...(config.limits?.length ? { limits: config.limits } : {}),
+    };
+  }
+
+  /**
+   * Copies another session's history into this new session (a fork): new ids, each turn
+   * `copied` with `copied_from`, the copy of `at_turn` the head. Nothing is charged, no approval
+   * is pending and no sub-agent runs here: what was pending or running stays the source's.
+   */
+  async importHistory(history: SessionHistory): Promise<{ head: string | null }> {
+    const config = this.#started();
+    if (this.#one("SELECT 1 FROM agent_turns LIMIT 1"))
+      throw codedError("EINVAL", "the session already has turns");
+    const h = history as Partial<SessionHistory>;
+    if (!Array.isArray(h.turns) || !Array.isArray(h.items) || typeof h.session !== "string")
+      throw codedError("EINVAL", "not a session's history");
+    const turnIds = new Map<string, string>();
+    for (const t of h.turns) turnIds.set(String(t.id), `${config.id}.tu-${crypto.randomUUID()}`);
+    for (const t of h.turns) {
+      const id = turnIds.get(String(t.id)) as string;
+      this.#sql.exec(
+        `INSERT INTO agent_turns (id, status, delivery, content, model_requested, pos, stop_reason,
+          error, model, ignored, created, started, ended, parent_turn, origin, copied_from)
+          VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, 'copied', ?)`,
+        id,
+        String(t.status),
+        String(t.delivery),
+        String(t.content),
+        t.model_requested ?? null,
+        t.stop_reason ?? null,
+        t.error ?? null,
+        t.model ?? null,
+        String(t.ignored ?? "[]"),
+        Number(t.created),
+        Number(t.started ?? t.created),
+        t.ended === null || t.ended === undefined ? null : Number(t.ended),
+        t.parent_turn ? (turnIds.get(String(t.parent_turn)) ?? null) : null,
+        JSON.stringify({ session: h.session, turn: String(t.id) }),
+      );
+      if (t.answers)
+        this.#sql.exec(
+          "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
+          id,
+          String(t.answers.approval),
+          String(t.answers.decision),
+          t.answers.message ?? null,
+        );
+      if (t.substitution)
+        this.#sql.exec(
+          "INSERT INTO turn_substitutions VALUES (?, ?, ?, ?)",
+          id,
+          String(t.substitution.requested),
+          String(t.substitution.used),
+          String(t.substitution.reason),
+        );
+    }
+    const seqs = new Map<number, number>();
+    const itemIds = new Map<string, string>();
+    for (const item of [...h.items].sort((a, b) => Number(a.seq) - Number(b.seq))) {
+      const turn = turnIds.get(String(item.turn));
+      if (!turn) continue;
+      const id = `it-${crypto.randomUUID()}`;
+      this.#sql.exec(
+        "INSERT INTO items (id, turn, kind, body) VALUES (?, ?, ?, ?)",
+        id,
+        turn,
+        String(item.kind),
+        String(item.body),
+      );
+      const row = this.#one<{ seq: number }>("SELECT seq FROM items WHERE id = ?", id);
+      seqs.set(Number(item.seq), Number(row?.seq));
+      itemIds.set(String(item.id), id);
+    }
+    // The summaries on the copied path, over the copied items (their refs too).
+    const summaryIds = new Map<string, string>();
+    for (const su of h.summaries ?? []) summaryIds.set(String(su.id), `su-${crypto.randomUUID()}`);
+    for (const su of h.summaries ?? []) {
+      const from = seqs.get(Number(su.from_seq));
+      const to = seqs.get(Number(su.to_seq));
+      const through = turnIds.get(String(su.through_turn));
+      if (from === undefined || to === undefined || !through) continue;
+      let sections = su.sections ?? null;
+      if (sections)
+        try {
+          sections = JSON.stringify(
+            (JSON.parse(sections) as { refs?: string[] }[]).map((section) => ({
+              ...section,
+              ...(Array.isArray(section.refs)
+                ? { refs: section.refs.map((ref) => itemIds.get(ref) ?? ref) }
+                : {}),
+            })),
+          );
+        } catch {
+          sections = null;
+        }
+      this.#sql.exec(
+        "INSERT INTO summaries (id, depth, from_seq, to_seq, parent_id, content, sections, tokens, through_turn, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        summaryIds.get(String(su.id)),
+        Number(su.depth),
+        from,
+        to,
+        su.parent_id ? (summaryIds.get(String(su.parent_id)) ?? null) : null,
+        String(su.content),
+        sections,
+        Number(su.tokens),
+        through,
+        Number(su.created),
+      );
+    }
+    const head = turnIds.get(String(h.at_turn)) ?? null;
+    this.#setHead(head);
+    this.#log("session.head_changed", undefined, { head, previous: null });
+    return { head };
+  }
+
   async purge(): Promise<void> {
     this.#started();
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries; DELETE FROM turn_children; DELETE FROM agent_origin_turns; DELETE FROM cancelled_approvals;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

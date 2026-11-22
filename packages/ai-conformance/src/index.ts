@@ -23,6 +23,7 @@ export {
 } from "./deployment.js";
 export { type FakeS3, fakeS3 } from "./fake-s3.js";
 export { type FilesClient, restFiles, rpcFiles } from "./files-client.js";
+export { type FakeMcp, fakeMcp, MCP_REVISION, type McpServerRequest } from "./mcp-server.js";
 export { type FakeModel, fakeModel, type ModelRequest } from "./model.js";
 export { CELLD_IMAGE } from "./process-deployment.js";
 export { type FakeRest, fakeRest, type RestRequest } from "./rest-server.js";
@@ -35,6 +36,7 @@ export {
   type ApprovalAnswer,
   advanceUserClock,
   type ChatTransportLike,
+  deleteProject,
   type EventsPage,
   type EventsQuery,
   eventOf,
@@ -46,6 +48,12 @@ export {
   login,
   type McpMessage,
   type McpResponse,
+  type MemoryBatchResult,
+  type MemoryEntry,
+  type MemoryKindView,
+  type MemoryTarget,
+  type MemoryUsage,
+  type MemoryWriter,
   type MessageAccepted,
   type MessageRequest,
   type Metadata,

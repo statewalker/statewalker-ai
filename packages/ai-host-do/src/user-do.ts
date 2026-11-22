@@ -5,13 +5,14 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
-import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import type { FilesRpcMethod, Limit } from "@statewalker/ai-environment";
 import { filesOverRpc, type UsageMeta } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
   type DatabaseCall,
   type DeleteSecretRequest,
+  type MemoryCall,
   type Metadata,
   type ModelsQuery,
   type SecretScope,
@@ -63,6 +64,7 @@ export class User extends DurableObject<Env> {
           userCapability: (token) => ws.userCapability(token),
           memberRoles: (capability, project) => ws.memberRoles(capability, project),
           pinDefinitions: (capability, req) => ws.pinDefinitions(capability, req),
+          forkDefinitions: (capability, req) => ws.forkDefinitions(capability, req),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
@@ -83,10 +85,15 @@ export class User extends DurableObject<Env> {
           listModels: (capability, query) => ws.listModels(capability, query),
           getModelConfig: (capability) => ws.getModelConfig(capability),
           setModelConfig: (capability, config) => ws.setModelConfig(capability, config),
+          memory: (capability, call) => ws.memory(capability, call),
+          memoryAccess: (capability, req) => ws.memoryAccess(capability, req) as never,
+          scanMemory: (capability, req) => ws.scanMemory(capability, req),
+          replaceMemoryAuthor: (capability) => ws.replaceMemoryAuthor(capability),
         };
       },
       modes: deploymentModes(env),
       approvalTtlMs: approvalTtlMs(env),
+      memoryCaps: env.MEMORY_CAPS,
       now: () => Date.now() + this.#clockOffset(),
     });
   }
@@ -182,6 +189,21 @@ export class User extends DurableObject<Env> {
     return this.#sessions.startAgentSession(token, req);
   }
 
+  async forkAgentSession(
+    token: string,
+    from: string,
+    req: { at_turn: string; model?: string; limits?: Limit[] },
+  ) {
+    await this.#reachable();
+    return this.#sessions.forkAgentSession(token, from, req);
+  }
+
+  /** Told by an agent session's DO: the pending approvals of turns it rewound are cancelled. */
+  async cancelApprovals(session: string, ids: string[]) {
+    await this.#reachable();
+    return this.#sessions.cancelApprovals(session, ids);
+  }
+
   async ownAgentSession(token: string, id: string) {
     await this.#reachable();
     return this.#sessions.ownAgentSession(token, id);
@@ -215,6 +237,27 @@ export class User extends DurableObject<Env> {
   async profile(token: string) {
     await this.#reachable();
     return this.#sessions.profile(token);
+  }
+
+  async memory(token: string, call: MemoryCall) {
+    await this.#reachable();
+    return this.#sessions.memory(token, call);
+  }
+
+  /** Told by an agent session's DO: a memory tool call on its user memory or preferences. */
+  async sessionMemory(session: string, capability: string, call: MemoryCall) {
+    await this.#reachable();
+    return this.#sessions.sessionMemory(session, capability, call);
+  }
+
+  async exportProfile(token: string) {
+    await this.#reachable();
+    return this.#sessions.exportProfile(token);
+  }
+
+  async eraseProfile(token: string) {
+    await this.#reachable();
+    return this.#sessions.eraseProfile(token);
   }
 
   async eraseUser(token: string) {
