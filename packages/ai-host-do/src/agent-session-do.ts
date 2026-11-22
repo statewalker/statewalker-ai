@@ -30,6 +30,7 @@ import {
   runStoredDatabaseCall,
 } from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
+import { refusal, SessionLimits } from "./limits-host.js";
 import { restTools } from "./rest-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
 
@@ -87,9 +88,12 @@ function databaseHost(env: Env, config: AgentSessionConfig, capability: string):
 
 export class AgentSession extends DurableObject<Env> {
   readonly #core: AgentSessionCore;
+  /** The session level's limits and counters (statewalker/statewalker-root#179). */
+  readonly #limits: SessionLimits;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.#limits = new SessionLimits(ctx.storage.sql, env);
     // Every model request goes through the workspace's model gateway, with the session's
     // capability: it picks the model within the user's rights, holds the provider's key, falls
     // back and meters (statewalker/statewalker-root#134).
@@ -189,7 +193,23 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.start(config);
   }
 
-  send(message: AgentMessage) {
+  /**
+   * A message: a new turn (a steer joins the running one) counts against the limits on turns of
+   * the session, its member, project and workspace, at once; ELIMIT (429) over one.
+   */
+  async send(message: AgentMessage) {
+    const config = this.#core.config();
+    if (config && message.delivery !== "steer") {
+      const scopes = this.#limits.scopes(config);
+      try {
+        this.#limits.ledger.check(scopes, { turns: 1 });
+      } catch (e) {
+        throw refusal(e);
+      }
+      const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+      await workspace.chargeUsage(config.capability, { meter: "turns", amount: 1 });
+      this.#limits.ledger.charge(scopes, { turns: 1 }, this.#limits.meta(config));
+    }
     return this.#core.send(message);
   }
 

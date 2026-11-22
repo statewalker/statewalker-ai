@@ -55,6 +55,7 @@ export class User extends DurableObject<Env> {
           pinDefinitions: (capability, req) => ws.pinDefinitions(capability, req),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
+          sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
           files: (capability, method, args) => ws.files(capability, method, args),
           listDatabases: (capability, project) => ws.listDatabases(capability, project),
           databaseCall: (capability, call) => ws.databaseCall(capability, call),

@@ -3,15 +3,17 @@
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 
-import type {
-  FilesRpcMethod,
-  ModelLevel,
-  ModelsConfig,
-  ModelUsage,
+import {
+  type FilesRpcMethod,
+  type Limit,
+  type ModelLevel,
+  type ModelsConfig,
+  type ModelUsage,
+  parseLimits,
 } from "@statewalker/ai-environment";
 import { sessionOfTurn } from "./turns.js";
 
-export type { ApprovalRequest, ModelsConfig, ModelUsage };
+export type { ApprovalRequest, Limit, ModelsConfig, ModelUsage };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
@@ -365,6 +367,12 @@ export interface StartSessionRequest {
    * the caller may use (statewalker/statewalker-root#105).
    */
   model?: string;
+  /**
+   * The session's own limits (statewalker/statewalker-root#179): `[{meter, value, period?,
+   * on_exceed?, warn_at?, increment?}]`, at session level. They only add to the limits of every
+   * broader level, so the tightest applies.
+   */
+  limits?: Limit[];
 }
 
 /** A model as the session API lists it for a project and a user. */
@@ -418,6 +426,10 @@ export interface PinnedDefinitions {
   run?: AgentRun;
   /** The session's model (an id), pinned with its fallbacks by the workspace. */
   model?: string;
+  /** The session limits of the deployment, the workspace and the project (#179). */
+  limits?: Limit[];
+  /** Whether the session's models include a user's own provider (their own key, #179). */
+  ownKeys?: boolean;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -566,6 +578,15 @@ export interface AgentSessionConfig {
   tools?: string[];
   /** A sub-agent's own mode, beside the user session's: the gate applies the stricter. */
   mode?: string;
+  /**
+   * The session's limits (statewalker/statewalker-root#179): the broader levels' session
+   * defaults and the start request's own, all counted in the agent session's DO.
+   */
+  limits?: Limit[];
+  /** Whether its models include the user's own provider: own-key spend is reserved with the user. */
+  ownKeys?: boolean;
+  /** No one answers approvals: a limit's ask denies. */
+  unattended?: boolean;
 }
 
 /** What the harness tool `agent.start` asks for: a child session of the calling session. */
@@ -690,7 +711,10 @@ function modelName(model: unknown): string {
 }
 
 function startRequest(req: unknown): StartSessionRequest {
-  const { project, agent, metadata, unattended, model } = (req ?? {}) as Record<string, unknown>;
+  const { project, agent, metadata, unattended, model, limits } = (req ?? {}) as Record<
+    string,
+    unknown
+  >;
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (agent !== undefined && (typeof agent !== "string" || !AGENT_ID.test(agent)))
@@ -703,7 +727,18 @@ function startRequest(req: unknown): StartSessionRequest {
     metadata: metadataOf(metadata),
     ...(unattended ? { unattended: true } : {}),
     ...(model !== undefined ? { model: modelName(model) } : {}),
+    ...(limits !== undefined ? { limits: sessionLimits(limits) } : {}),
   };
+}
+
+/** A start request's limits: session level, each checked (EINVAL names the first problem). */
+function sessionLimits(limits: unknown): Limit[] {
+  if (!Array.isArray(limits) || limits.length > 32)
+    throw codedError("EINVAL", "limits is a list of at most 32 limits");
+  const parsed = parseLimits(limits.map((l) => ({ ...(l ?? {}), level: "session" })));
+  const problem = parsed.problems.find((p) => !p.includes("its period is total"));
+  if (problem) throw codedError("EINVAL", problem);
+  return parsed.limits.map(({ target: _t, ...l }) => l);
 }
 
 function modelsQuery(query: unknown): ModelsQuery {

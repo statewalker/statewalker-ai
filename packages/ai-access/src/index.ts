@@ -44,7 +44,14 @@ export {
   type TranscriptEntry,
   type TranscriptItem,
 } from "./classifier.js";
-export { type CodedError, codedError, codeOf, type ErrorCode, statusOf } from "./errors.js";
+export {
+  type CodedError,
+  codedError,
+  codeOf,
+  type ErrorCode,
+  retryAfterOf,
+  statusOf,
+} from "./errors.js";
 export {
   BUILT_IN_MODES,
   DEFAULT_MODE,

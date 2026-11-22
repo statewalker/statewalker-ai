@@ -67,6 +67,8 @@ import {
   type FilesRpcMethod,
   type GatedFilesOptions,
   type GatewayResult,
+  type Limit,
+  lookupModel,
   gatedFilesRpc,
   gatewayFetch,
   IGNORE_FILE,
@@ -118,6 +120,7 @@ import {
   nameOf,
   verifyToken,
 } from "./env.js";
+import { type WarningView, WorkspaceLimits, warningView } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { mountWorkspace } from "./workspace-store.js";
 
@@ -151,6 +154,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #definitions: DefinitionsStore;
   readonly #models: ModelStore;
   readonly #databases: DatabaseGate;
+  /** The workspace's, its projects' and its members' limits and counters (#179). */
+  readonly #limits: WorkspaceLimits;
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -192,6 +197,9 @@ export class Workspace extends DurableObject<Env> {
           .toArray().length > 0,
     });
     this.#sqlRoles = new SqlRoleSource(sql);
+    this.#limits = new WorkspaceLimits(sql, env, this.#name, async (path) =>
+      tryReadText(await this.#store, path),
+    );
     const files = fileRoleSource(
       async (path) => tryReadText(await this.#store, path),
       DEFAULT_SYSTEM_FOLDER,
@@ -360,6 +368,8 @@ export class Workspace extends DurableObject<Env> {
       agentModels: agent?.models ?? [],
       right: this.#modelRight(access.grants),
     });
+    // An active session counts against the limits on sessions (429 over them, #179).
+    await this.#limits.startSession(project, user, String(req.session));
     this.#models.pin(String(req.session), user, project, models);
     for (const p of plugins) this.#definitions.keep(p);
     this.#definitions.pin(
@@ -369,9 +379,17 @@ export class Workspace extends DurableObject<Env> {
       plugins.map((p) => ({ name: p.name, hash: p.hash })),
       run,
     );
-    return run
-      ? { agent: run.id, run: agentRun(run), model: models.model }
-      : { agent: "default", model: models.model };
+    const limits = await this.#limits.sessionLimits(project);
+    const ownKeys = [models.model, ...models.fallbacks].some((id) => {
+      const m = lookupModel(models.catalog, id);
+      return m && models.catalog.providers[m.provider]?.level === "user";
+    });
+    return {
+      ...(run ? { agent: run.id, run: agentRun(run) } : { agent: "default" }),
+      model: models.model,
+      ...(limits.length ? { limits } : {}),
+      ...(ownKeys ? { ownKeys: true } : {}),
+    };
   }
 
   // --- the model gateway (statewalker/statewalker-root#105, #134) ------------------------------
@@ -938,6 +956,55 @@ export class Workspace extends DurableObject<Env> {
     return this.#authority.forTool(agentCapability, tool);
   }
 
+  // --- limits (statewalker/statewalker-root#179) -----------------------------------------------
+
+  /**
+   * Charges one of an agent session's flow meters (turns, tool calls, executor time) to its
+   * workspace, project and member, at once: ELIMIT when a limit refuses. The warnings crossed are
+   * answered, for the session's items and events.
+   */
+  async chargeUsage(
+    capability: string,
+    call: { meter: string; amount: number; turn?: string; detail?: Record<string, unknown> },
+  ): Promise<WarningView[]> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    const amount = Number(call.amount);
+    if (!["turns", "tool_calls"].includes(call.meter) && !/^executor_cpu_ms(:|$)/.test(call.meter))
+      throw codedError("EINVAL", `an agent session does not charge ${call.meter}`);
+    if (!(amount > 0)) return [];
+    const turn = this.#turnOf(facts.session, call.turn);
+    const warnings = await this.#limits.charge(
+      facts.project,
+      facts.user,
+      { [call.meter]: amount },
+      this.#limits.meta(facts.project, facts.user, facts.session, turn),
+      call.detail,
+    );
+    return warnings.map(warningView);
+  }
+
+  /** A turn id of the session's own, or none. */
+  #turnOf(session: string, turn: unknown): string | undefined {
+    return typeof turn === "string" && turn.startsWith(`${session}.tu-`) ? turn : undefined;
+  }
+
+  /**
+   * An agent session of this user ended (archived, revoked or deleted), told by their User DO
+   * with the user capability: it stops counting against the limits on sessions.
+   */
+  async sessionsEnded(userCapability: string, sessions: string[]): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    for (const session of Array.isArray(sessions) ? sessions.map(String) : []) {
+      const pinned = this.#models.pinned(session);
+      if (pinned && pinned.user === user) await this.#limits.endSession(session);
+    }
+  }
+
+  /** Test-only: the workspace's usage records after a seq. */
+  async usageRecords(since = 0) {
+    return this.#limits.ledger.records(Number(since) || 0);
+  }
+
   /** Test-only, and the storage meter's input (#179): every database and the bytes it takes. */
   async databaseStorage() {
     return this.#databases.storage();
@@ -1093,7 +1160,14 @@ export class Workspace extends DurableObject<Env> {
     userCapability: string,
     parentCapability: string,
     grant: { session: string; agent: string; mode?: string },
-  ): Promise<{ capability: string; agent: string; run?: AgentRun; model?: string }> {
+  ): Promise<{
+    capability: string;
+    agent: string;
+    run?: AgentRun;
+    model?: string;
+    limits?: Limit[];
+    ownKeys?: boolean;
+  }> {
     // The parent must be narrowed from this very user session (revocation ids name it).
     await this.#authority.revocationOf(userCapability, parentCapability);
     const parent = await this.#authority.agentSessionOf(parentCapability);
@@ -1123,6 +1197,8 @@ export class Workspace extends DurableObject<Env> {
       agent: child.agent,
       ...(child.run ? { run: child.run } : {}),
       ...(child.model ? { model: child.model } : {}),
+      ...(child.limits ? { limits: child.limits } : {}),
+      ...(child.ownKeys ? { ownKeys: true } : {}),
     };
   }
 
