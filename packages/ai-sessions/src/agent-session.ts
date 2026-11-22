@@ -87,6 +87,13 @@ export interface TurnRun {
    * no summary covers, with pins and tool-result trimming applied (statewalker/statewalker-root#131).
    */
   context: ContextEntry[];
+  /**
+   * The turn tree's active path at this turn (statewalker/statewalker-root#190): the turn ids from
+   * the root to this turn, this one last. A core that keeps state per turn (a remote session's
+   * continuation, statewalker/statewalker-ai#84) continues from the path, never from the turn
+   * that ran last.
+   */
+  path?: string[];
   /** The model the message asked for, if any. */
   model?: string;
   /** Aborts when the turn is cancelled or interrupted. */
@@ -711,11 +718,13 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   }
 
   async #run(config: AgentSessionConfig, row: TurnRow, running: Running): Promise<void> {
-    // The turn follows the head, and becomes it.
+    // The turn follows the head, and becomes it. A turn resumed after a restart is the head
+    // already: it keeps its parent (never its own, which would loop the path).
+    const head = this.#head();
     this.#sql.exec(
       "UPDATE agent_turns SET status = 'running', started = ?, parent_turn = ?, origin = 'run' WHERE id = ?",
       Date.now(),
-      this.#head(),
+      head === row.id ? (row.parent_turn ?? null) : head,
       row.id,
     );
     this.#setHead(row.id);
@@ -739,6 +748,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
           content: row.content,
           ...(continues ? { continues: true } : {}),
           context,
+          path: this.#pathTo(row.id),
           ...(row.model_requested ? { model: row.model_requested } : {}),
           signal: running.abort.signal,
           onSteer: (listener) => {
