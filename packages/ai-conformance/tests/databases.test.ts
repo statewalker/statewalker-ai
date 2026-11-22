@@ -40,12 +40,14 @@ const CATALOG = {
     info: { title: "search", version: "1.0.0" },
     paths: { "/tools/search/reindex": { post: { operationId: "reindex" } } },
   }),
+  "/search/dev.cellb.harness/tools/reindex.js": "export default async () => null;",
   "/other/plugin.json": JSON.stringify({ $schema: AP, name: "other", version: "1.0.0" }),
   "/other/dev.cellb.harness/tools/openapi.json": JSON.stringify({
     openapi: "3.1.0",
     info: { title: "other", version: "1.0.0" },
     paths: { "/tools/other/peek": { post: { operationId: "peek" } } },
   }),
+  "/other/dev.cellb.harness/tools/peek.js": "export default async () => null;",
 };
 
 const TRANSPORTS = ["rest", "rpc"];
