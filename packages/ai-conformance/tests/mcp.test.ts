@@ -9,6 +9,7 @@
 // fake MCP server, over REST and RPC.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CAN,
   type Deployment,
   type FakeMcp,
   type FakeModel,
@@ -16,7 +17,6 @@ import {
   fakeModel,
   login,
   type McpResponse,
-  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -122,7 +122,7 @@ afterAll(async () => {
 const call = (tool: string, args: unknown) => `CALL ${tool} ${JSON.stringify(args)}`;
 const toolResults = (turn: Turn) => turn.items.filter((i) => i.kind === "tool_result");
 
-describe.skipIf(RUNTIME === "browser").each(transports)(
+describe.runIf(CAN.deploymentSecrets).each(transports)(
   "remote MCP servers over %s",
   (name, connect) => {
     const t = name.toLowerCase();

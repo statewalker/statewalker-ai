@@ -1,10 +1,13 @@
-// A deployment on CellB Node, in this process (or in Chromium: browser-deployment.ts): a Worker project (wrangler config + main) loaded by
-// @statewalker/cellb, with its vars overridden for the run and its cells in a fresh directory.
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+// The deployments a run starts, on the runtime CONFORMANCE_RUNTIME names: CellB Node in this
+// process (here: a Worker project, wrangler config + main, loaded by @statewalker/cellb with its
+// vars overridden for the run and its cells in a fresh directory), CellB in Chromium
+// (browser-deployment.ts), CellD or workerd (process-deployment.ts).
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadProject } from "@statewalker/cellb/node";
+import { projectConfig } from "./project-config.js";
 
 export interface Deployment {
   /** A request to the deployment; `path` is resolved against its origin. */
@@ -18,29 +21,37 @@ export interface Deployment {
   localModels?: { download(model: string, scripted: string): Promise<void> };
 }
 
-/** JSONC → JSON: line and block comments outside strings, and trailing commas. */
-function stripJsonc(source: string): string {
-  let out = "";
-  for (let i = 0; i < source.length; i++) {
-    const c = source[i];
-    if (c === '"') {
-      const start = i;
-      for (i++; i < source.length && source[i] !== '"'; i++) if (source[i] === "\\") i++;
-      out += source.slice(start, i + 1);
-    } else if (c === "/" && source[i + 1] === "/") {
-      while (i < source.length && source[i] !== "\n") i++;
-      out += "\n";
-    } else if (c === "/" && source[i + 1] === "*") {
-      i = source.indexOf("*/", i + 2) + 1;
-      if (i === 0) break;
-    } else out += c;
-  }
-  return out.replace(/,(\s*[}\]])/g, "$1");
+/** The runtimes the conformance suite runs on (statewalker/statewalker-root#85). */
+export type Runtime = "node" | "browser" | "celld" | "workerd";
+
+const RUNTIMES: Runtime[] = ["node", "browser", "celld", "workerd"];
+
+function runtimeOf(name: string | undefined): Runtime {
+  if (!name) return "node";
+  if (!RUNTIMES.includes(name as Runtime))
+    throw new Error(`CONFORMANCE_RUNTIME=${name}: not one of ${RUNTIMES.join(", ")}`);
+  return name as Runtime;
 }
 
-/** The runtime deployments start on: `CONFORMANCE_RUNTIME`, "node" (default) or "browser". */
-export const RUNTIME: "node" | "browser" =
-  process.env.CONFORMANCE_RUNTIME === "browser" ? "browser" : "node";
+/** The runtime deployments start on: `CONFORMANCE_RUNTIME`, "node" (default), "browser", "celld" or "workerd". */
+export const RUNTIME: Runtime = runtimeOf(process.env.CONFORMANCE_RUNTIME);
+
+/**
+ * What the run's runtime offers that not every runtime does, as the spec declares it; a scenario
+ * that needs one runs only where it is offered (`it.runIf(CAN.localFiles)`).
+ */
+export const CAN = {
+  /**
+   * A local file system for the Worker: the `local` workspace backend, CellB Node only (CellD's
+   * node:fs is a request-local /tmp and the read-only bundle; workerd and browsers have none).
+   */
+  localFiles: RUNTIME === "node",
+  /**
+   * Deployment-held keys: SECRETS_KEY and the deployment secrets. A browser deployment holds none
+   * (its secrets are sealed by a key of its own; `@statewalker/ai-host-do/browser`).
+   */
+  deploymentSecrets: RUNTIME !== "browser",
+} as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
 export const LOCAL_MODELS = RUNTIME === "browser";
@@ -54,6 +65,10 @@ export async function startDeployment(
   if (RUNTIME === "browser") {
     const { startBrowserDeployment } = await import("./browser-deployment.js");
     return startBrowserDeployment(projectDir, v);
+  }
+  if (RUNTIME === "celld" || RUNTIME === "workerd") {
+    const { startProcessDeployment } = await import("./process-deployment.js");
+    return startProcessDeployment(RUNTIME, projectDir, v);
   }
   return startNodeDeployment(projectDir, v);
 }
@@ -93,10 +108,9 @@ export async function startNodeDeployment(
   vars: Record<string, string> = {},
 ): Promise<Deployment> {
   const dir = fileURLToPath(projectDir);
-  const config = JSON.parse(stripJsonc(readFileSync(join(dir, "wrangler.jsonc"), "utf8")));
+  const config = projectConfig(dir);
   config.vars = { ...config.vars, ...vars };
   config.main = join(dir, config.main);
-  delete config.$schema;
   const tmp = mkdtempSync(join(tmpdir(), "ai-conformance-"));
   writeFileSync(join(tmp, "wrangler.json"), JSON.stringify(config));
   let project: Awaited<ReturnType<typeof loadProject>>;
