@@ -61,6 +61,11 @@ export interface FlueTurn {
   waiting?: () => boolean;
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
+  /**
+   * The names of the tools the model may be offered, Flue's and the host's (none: all of them). A
+   * sub-agent's are within its parent's (statewalker/statewalker-root#126).
+   */
+  allowTools?: readonly string[];
   /** Aborts the turn: it stops at once, keeping what it reported so far. */
   signal?: AbortSignal;
   /**
@@ -193,7 +198,11 @@ export async function runFlueTurn(
       return { content: [{ type: "text", text: result.output }], details: {} };
     },
   }));
-  const tools = [...TRACER_TOOLS.map((name) => TOOLS[name](sandbox as never)), ...hostTools];
+  const offered = (name: string) => !turn.allowTools || turn.allowTools.includes(name);
+  const tools = [
+    ...TRACER_TOOLS.filter(offered).map((name) => TOOLS[name](sandbox as never)),
+    ...hostTools.filter((tool) => offered(tool.name)),
+  ];
   const agent = new Agent({
     streamFn: streamSimple as never,
     getApiKey: async () => turn.model.apiKey ?? "none",

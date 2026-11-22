@@ -16,6 +16,7 @@ import {
   DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
   decide,
+  type FileAction,
   decideMode,
   fileRoleSource,
   isMode,
@@ -30,6 +31,7 @@ import {
   resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
+  type SubAgentGrant,
   settleAsk,
   WORKSPACE_ROLES,
   WorkspaceAuthority,
@@ -71,6 +73,9 @@ import {
   verifyToken,
 } from "./env.js";
 import { mountWorkspace } from "./workspace-store.js";
+
+/** How strict a verdict is: of two, the stricter one wins. */
+const STRICTNESS = { allow: 0, ask: 1, deny: 2 } as const;
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
@@ -247,19 +252,29 @@ export class Workspace extends DurableObject<Env> {
           { source: "user", rules: state?.rules ?? {} },
           this.#registry.sessionLayer(facts.session, facts.user),
         ];
+        // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user
+        // session's, and the strictest verdict wins: a child is never looser than its parent. A
+        // mode the deployment no longer knows denies.
+        const extra = (facts.modes ?? []).map((m) =>
+          isMode(m, this.#modes) ? modeOf(m, this.#modes) : undefined,
+        );
+        const decideOne = (action: FileAction, target: string) => {
+          let decision = decideMode({ area: "files", action, target }, { mode, layers });
+          for (const m of extra) {
+            const other = m
+              ? decideMode({ area: "files", action, target }, { mode: m, layers })
+              : { verdict: "deny" as const, source: "mode", reason: "an unknown sub-agent mode" };
+            if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
+          }
+          return decision;
+        };
         return checks.map(([action, path]) =>
           // Outside the project nothing is decided here: the roles and the capability refuse it.
           path !== root && !path.startsWith(`${root}/`)
             ? { verdict: "allow" as const, reason: "outside the project" }
             : // An unattended session has nobody to ask: its asks are denies with a reason
               // (statewalker/statewalker-root#127), and the agent carries on.
-              settleAsk(
-                decideMode(
-                  { area: "files", action, target: path === root ? "/" : path.slice(root.length) },
-                  { mode, layers },
-                ),
-                facts,
-              ),
+              settleAsk(decideOne(action, path === root ? "/" : path.slice(root.length)), facts),
         );
       },
       consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
@@ -402,6 +417,21 @@ export class Workspace extends DurableObject<Env> {
   async revoke(userCapability: string, capability: string): Promise<void> {
     const id = await this.#authority.revocationOf(userCapability, capability);
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO revocations VALUES (?, ?)", id, Date.now());
+  }
+
+  /**
+   * The capability of a sub-agent of an agent session (statewalker/statewalker-root#126), for the
+   * user session that session's capability was narrowed from: the parent's capability with a
+   * block this workspace signs, naming the child. A mode must be one the deployment knows.
+   */
+  async delegate(
+    userCapability: string,
+    parentCapability: string,
+    grant: SubAgentGrant,
+  ): Promise<string> {
+    if (grant.mode !== undefined && !isMode(grant.mode, this.#modes))
+      throw codedError("EINVAL", `no mode '${grant.mode}'`);
+    return this.#authority.delegate(userCapability, parentCapability, grant);
   }
 
   /** Refuses (EACCES) a user capability whose user is not the workspace's admin. */

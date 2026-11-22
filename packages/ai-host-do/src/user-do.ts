@@ -15,6 +15,7 @@ import {
   type SecretScope,
   type SetSecretRequest,
   type StartSessionRequest,
+  type SubAgentRequest,
   UserSessions,
 } from "@statewalker/ai-sessions";
 import {
@@ -57,6 +58,7 @@ export class User extends DurableObject<Env> {
           deleteSecret: (capability, req) => ws.deleteSecret(capability, req),
           eraseUserSecrets: (capability) => ws.eraseUserSecrets(capability),
           revoke: (capability, target) => ws.revoke(capability, target),
+          delegate: (capability, parent, grant) => ws.delegate(capability, parent, grant),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -103,6 +105,11 @@ export class User extends DurableObject<Env> {
     return this.#sessions.archiveAgentSession(token, id);
   }
 
+  async subtree(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.subtree(token, id);
+  }
+
   async deleteAgentSession(token: string, id: string) {
     await this.#reachable();
     return this.#sessions.deleteAgentSession(token, id);
@@ -127,6 +134,12 @@ export class User extends DurableObject<Env> {
   async recordApprovals(session: string, requests: ApprovalRequest[]) {
     await this.#reachable();
     return this.#sessions.recordApprovals(session, requests);
+  }
+
+  /** Told by an agent session's DO: start a sub-agent of it (the harness tool `agent.start`). */
+  async startSubAgent(parent: string, capability: string, req: SubAgentRequest) {
+    await this.#reachable();
+    return this.#sessions.startSubAgent(parent, capability, req);
   }
 
   async listApprovals(token: string) {

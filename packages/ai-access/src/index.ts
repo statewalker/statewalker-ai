@@ -18,6 +18,7 @@ export {
   type FileAction,
   type FileRequest,
   type StoredRootKey,
+  type SubAgentGrant,
   WorkspaceAuthority,
 } from "./capabilities.js";
 export { type CodedError, codedError, codeOf, type ErrorCode, statusOf } from "./errors.js";

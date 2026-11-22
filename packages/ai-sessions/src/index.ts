@@ -51,6 +51,7 @@ export {
   type StartSessionRequest,
   type StopReason,
   type StoredAction,
+  type SubAgentRequest,
   TERMINAL_TURN_STATUSES,
   type TurnStatus,
   type TurnView,
