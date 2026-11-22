@@ -47,6 +47,12 @@ catalog:
   "@xterm/addon-fit": ^0.11.0
   "@xterm/xterm": ^6.0.0
   esbuild: ^0.28.2
+  # Tool scripts are bundled by webrun-bundler on esbuild-wasm, on every runtime (statewalker/statewalker-root#130).
+  "@statewalker/webrun-bundler": ^0.2.0
+  esbuild-wasm: ^0.28.2
+  # The acceptance check of workspace and project tool bundles: parse, then every free variable.
+  acorn: ^8.19.0
+  eslint-scope: ^9.1.2
   # Property-based tests (the spec names it for ai-access).
   fast-check: 4.10.2
   just-bash: ^3.6.0
@@ -55,6 +61,11 @@ catalog:
   turbo: ^2.11.7
   typescript: ^7.0.2
   vitest: ^5.0.3
+
+# Peer dependency ranges of the published packages (what consumers must provide).
+catalogs:
+  peers:
+    esbuild-wasm: ^0.28.0
 
 overrides:
   # @flue/runtime asks for pi-ai ^1.1.0; 1.5 breaks it (see the catalog).

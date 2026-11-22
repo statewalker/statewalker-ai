@@ -14,6 +14,17 @@ import type { Profiles } from "./profiles-do.js";
 import type { User } from "./user-do.js";
 import type { Workspace } from "./workspace-do.js";
 
+/** What the harness uses of a Worker Loader binding: code loaded fresh for each call. */
+export interface WorkerLoaderLike {
+  load(code: {
+    compatibilityDate?: string;
+    mainModule: string;
+    modules: Record<string, string>;
+    env?: Record<string, unknown>;
+    globalOutbound?: null;
+  }): { getEntrypoint(name?: string): unknown; dispose?(): void };
+}
+
 /** The deployment's bindings and vars (wrangler.jsonc). */
 export interface Env {
   ISSUER: DurableObjectNamespace<Issuer>;
@@ -107,6 +118,19 @@ export interface Env {
   CATALOG?: string;
   /** The deployment's default agent, `<plugin>/<agent>`, when a project names none. */
   DEFAULT_AGENT?: string;
+  /**
+   * The Worker Loader binding (`worker_loaders`): native tool scripts run in an isolate of their
+   * own per call (statewalker/statewalker-root#130, #94). Without it they answer ENOSYS.
+   */
+  LOADER?: WorkerLoaderLike;
+  /**
+   * The deployment catalog's plugin bundles approved to run their native tools: their sha-256
+   * hashes, comma- or whitespace-separated (a refusal names the hash to approve). Workspace and
+   * project plugins need none: they pass the acceptance check, and adding them approves them.
+   */
+  APPROVED_BUNDLES?: string;
+  /** How long one native tool call may run, in ms (30000). */
+  TOOL_TIMEOUT_MS?: string;
   /**
    * The deployment's limits (statewalker/statewalker-root#179): JSON
    * `[{meter, level, target?, value, period, on_exceed, warn_at?, increment?}]`. A `deployment`

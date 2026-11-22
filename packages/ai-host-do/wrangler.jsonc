@@ -16,6 +16,9 @@
       { "name": "DATABASE", "class_name": "Database" }
     ]
   },
+  // Native tool scripts run in a Worker Loader isolate of their own per call
+  // (statewalker/statewalker-root#130): no network, files only through the capability.
+  "worker_loaders": [{ "binding": "LOADER" }],
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Issuer", "Workspace", "AgentSession"] },
     { "tag": "v2", "new_sqlite_classes": ["User", "Profiles"] },
@@ -48,6 +51,11 @@
     "CATALOG": "{}",
     // The default agent, `<plugin>/<agent>`, for projects whose `.system/settings` names none.
     "DEFAULT_AGENT": "",
+    // The deployment catalog's plugin bundles approved to run their native tools: sha-256 hashes,
+    // comma-separated (a refusal names the hash). Workspace and project plugins need none.
+    "APPROVED_BUNDLES": "",
+    // How long one native tool call may run, in ms.
+    "TOOL_TIMEOUT_MS": "30000",
     // The deployment's model providers and models (statewalker/statewalker-root#134), JSON
     // {"providers": [{id, api, baseUrl, headers?, secret?}], "models": [{id: "<provider>/<model>",
     // alias?, contextWindow?, maxTokens?, input?, cost?}], "allow"?: [...], "default"?: "<id or alias>"}.

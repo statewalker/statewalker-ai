@@ -11,6 +11,17 @@ export {
   parseAgent,
 } from "./agents.js";
 export {
+  acceptBundle,
+  BUILD_DIR,
+  BUILD_MANIFEST,
+  type BuildManifest,
+  buildPlugin,
+  type PluginBuilder,
+  sha256,
+  type ToolBuild,
+  type ToolDescription,
+} from "./builder.js";
+export {
   type CatalogTool,
   catalogAgents,
   catalogPlugins,
@@ -38,8 +49,10 @@ export {
   catalogToolDefinitions,
   closedSchema,
   type JsonSchema,
+  type NativeBuild,
   nativeTools,
   OPERATION_ID,
+  operationIds,
   type RestAuth,
   type RestParam,
   restRequest,
