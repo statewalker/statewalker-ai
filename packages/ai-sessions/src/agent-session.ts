@@ -1084,6 +1084,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     const config = this.#started();
     if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
     const offset = this.#offset();
+    if (message.after_turn !== undefined) await this.#chain(config, String(message.after_turn));
     const running = this.#running;
     if (message.delivery === "steer" && running && !running.endAs) {
       // The model can't change mid-turn: a steer's model is ignored.
@@ -1123,6 +1124,23 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       offset,
       ...(message.ignored.length ? { ignored: message.ignored } : {}),
     };
+  }
+
+  /**
+   * Chains the next message on `turn` (statewalker/statewalker-root#159): nothing to do when it is
+   * the latest turn (the last queued, else the running one, else the head); otherwise the head
+   * moves there first, an implicit rewind that reverts no file, refused (EBUSY) while a turn runs
+   * or waits in the queue. The next turn starts with an item saying so.
+   */
+  async #chain(config: AgentSessionConfig, turn: string): Promise<void> {
+    const queued = this.#rows<TurnRow>(
+      "SELECT * FROM agent_turns WHERE status = 'queued' ORDER BY pos, created",
+    );
+    const latest = queued.at(-1)?.id ?? this.#running?.id ?? this.#head();
+    if (turn === latest) return;
+    const row = this.#treeTurn(turn);
+    if (row.id === this.#head() && !queued.length && !this.#running) return;
+    await this.#move(config, row.id, { cancelRunning: false, rewind: true, reason: "chained" });
   }
 
   /** Queues the turn that continues the session with the user's answer to an approval. */
@@ -1512,7 +1530,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   async #move(
     config: AgentSessionConfig,
     target: string | null,
-    options: { cancelRunning: boolean; rewind: boolean },
+    options: { cancelRunning: boolean; rewind: boolean; reason?: "chained" },
   ): Promise<RewindResult> {
     if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
     if (this.#moving) throw codedError("EBUSY", "the session's head is already moving");
@@ -1556,7 +1574,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         ...this.#effects(rewound),
       };
       this.#setHead(target);
-      this.#note(previous, target, rewound, path);
+      this.#note(previous, target, rewound, path, options.reason);
       if (options.rewind) this.#log("session.rewound", undefined, result);
       this.#log("session.head_changed", undefined, { head: target, previous });
       return result;
@@ -1654,7 +1672,13 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
    * Keeps (or updates) the item the next turn starts with: where the head was before the first
    * move since the last turn, where it is, and the turns set aside meanwhile.
    */
-  #note(previous: string | null, head: string | null, rewound: string[], path: Set<string>): void {
+  #note(
+    previous: string | null,
+    head: string | null,
+    rewound: string[],
+    path: Set<string>,
+    reason?: "chained",
+  ): void {
     const kept = this.#one<{ value: string }>(
       "SELECT value FROM agent_config WHERE key = ?",
       REWIND_NOTE,
@@ -1677,14 +1701,22 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         ? `outside effects (${named(effects.irreversible_effects)})`
         : "",
     ].filter(Boolean);
+    const setAside =
+      `${turns.length} later turn${turns.length === 1 ? "" : "s"} ` +
+      "of it were set aside and are no longer part of it.";
     const text = [
-      `The conversation was rewound: ${turns.length} later turn${turns.length === 1 ? "" : "s"} ` +
-        "of it were set aside and are no longer part of it.",
+      reason === "chained"
+        ? `head moved: chained on an earlier response. ${setAside}`
+        : `The conversation was rewound: ${setAside}`,
       kept_.length ? `Their effects stay as they are, not reverted: ${kept_.join("; ")}.` : "",
     ]
       .filter(Boolean)
       .join(" ");
-    const note: ItemInput = { kind: "rewind", text, rewind: { previous: from, head, turns } };
+    const note: ItemInput = {
+      kind: "rewind",
+      text,
+      rewind: { previous: from, head, turns, ...(reason ? { reason } : {}) },
+    };
     this.#sql.exec(
       "INSERT OR REPLACE INTO agent_config VALUES (?, ?)",
       REWIND_NOTE,
