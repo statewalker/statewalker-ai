@@ -146,6 +146,10 @@ _Avoid_: branch (UHP's word for a fork), clone
 Moving an agent session's head to the end of another of its turns, or to its start, so the next message continues from there; switching branch is the same move. Turns no longer on the path are kept as an inactive branch.
 _Avoid_: undo, truncate, delete
 
+**Pre-image**:
+The state a file had before an agent session's turn first changed it (its content, or that it did not exist), kept by the gate as owner-side data so a rewind can revert the file; a turn's pre-images also serve as its checkpoint.
+_Avoid_: snapshot, backup
+
 **Branch**:
 One line of turns in an agent session; the session's turns form a tree, and the active branch is the path from its first turn to its head. Only a person can erase an inactive branch.
 

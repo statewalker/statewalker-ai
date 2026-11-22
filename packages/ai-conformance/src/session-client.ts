@@ -257,9 +257,19 @@ export interface AgentSession {
   /** The session's model usage, totalled over its turns (single-session reads). */
   usage?: UsageTotals;
   /** A fork's source: the session and turn its history was copied from. */
-  forked_from?: { session: string; turn: string };
+  forked_from?: { session: string; turn: string; checkpoint?: string };
   /** The titles of the session's topics on its active path, from the session index. */
   topics?: string[];
+}
+
+/** What a rewind's `revert_files` did with the files (statewalker/statewalker-root#191). */
+export interface FilesRevert {
+  reverted: string[];
+  conflicts: string[];
+  unavailable: string[];
+  approval?: string;
+  pending?: string[];
+  refused?: string;
 }
 
 /** One topic of a session's table of contents (statewalker/statewalker-root#174). */
@@ -284,6 +294,7 @@ export interface RewindResult {
   memory_writes: { turn: string; item: string; name: string; args?: unknown }[];
   database_changes: { turn: string; item: string; name: string; args?: unknown }[];
   irreversible_effects: { turn: string; item: string; name: string; args?: unknown }[];
+  files?: FilesRevert;
 }
 
 /** The session's tree of turns. */
@@ -523,7 +534,12 @@ export interface SessionClient {
   answerApproval(
     id: string,
     answer: ApprovalAnswer,
-  ): Promise<{ approval: Approval; accepted: MessageAccepted; continued?: MessageAccepted[] }>;
+  ): Promise<{
+    approval: Approval;
+    accepted: MessageAccepted;
+    continued?: MessageAccepted[];
+    files?: FilesRevert;
+  }>;
   /** The secrets of one level (and project) the caller manages: names, bindings, update times. */
   listSecrets(scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   /** Sets or replaces a secret; the answer never holds its value. */
@@ -580,19 +596,24 @@ export interface SessionClient {
   /** The turn tree: `POST /v1/sessions/{id}/rewind`. */
   rewind(
     sessionId: string,
-    req: { to_turn?: string | null; before_turn?: string; cancel_running?: boolean },
+    req: {
+      to_turn?: string | null;
+      before_turn?: string;
+      cancel_running?: boolean;
+      revert_files?: boolean;
+    },
   ): Promise<RewindResult>;
   /** `PUT /v1/sessions/{id}/head`. */
   setHead(sessionId: string, req: { turn: string | null }): Promise<RewindResult>;
   /** `POST /v1/turns/{id}/edit` (REST `202`). */
   editTurn(
     turnId: string,
-    req: { content: string; model?: string },
+    req: { content: string; model?: string; revert_files?: boolean },
   ): Promise<MessageAccepted & { rewind: RewindResult }>;
   /** `POST /v1/turns/{id}/regenerate` (REST `202`). */
   regenerateTurn(
     turnId: string,
-    req?: { model?: string },
+    req?: { model?: string; revert_files?: boolean },
   ): Promise<MessageAccepted & { rewind: RewindResult }>;
   /** `GET /v1/sessions/{id}/branches`. */
   listBranches(sessionId: string): Promise<Branches>;

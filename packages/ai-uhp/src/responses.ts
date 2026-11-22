@@ -633,7 +633,7 @@ async function answerTask(
     });
     // The response is the root's turn: a sub-agent's approval continues it last.
     accepted = [answered.accepted, ...(answered.continued ?? [])].find(
-      (a) => a.session_id === session.id,
+      (a) => a?.session_id === session.id,
     );
   } catch (e) {
     // Answered meanwhile, or cancelled: no longer pending.
