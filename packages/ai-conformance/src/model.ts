@@ -3,6 +3,7 @@
 //   CALL <tool> <json args>   one tool call, then "RESULT: <tool output>"
 //   FAIL                      the model refuses the request (HTTP 400): the turn fails
 //   HOLD <name>               "OK", once the scenario releases <name> (a turn that stays running)
+//   BIG <name>                "OK", reporting 140000 prompt tokens (a context near a large window)
 //   anything else             "OK"
 // A model name can be made to fail (`fail(name, status)`): its requests answer that HTTP status, so
 // scenarios can overload, rate-limit or refuse one model and watch the gateway fall back. Every
@@ -217,10 +218,11 @@ export async function fakeModel(): Promise<FakeModel> {
       message = { role: "assistant", content: "OK" };
       finish = "stop";
     }
+    const big = /^BIG\b/.test(lastUserText) && messages.at(-1)?.role === "user";
     const usage = {
-      prompt_tokens: 12,
+      prompt_tokens: big ? 140_000 : 12,
       completion_tokens: 3,
-      total_tokens: 15,
+      total_tokens: big ? 140_003 : 15,
       prompt_tokens_details: { cached_tokens: 4 },
     };
     if (!json.stream) {

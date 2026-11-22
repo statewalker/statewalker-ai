@@ -1,7 +1,7 @@
 // The model context as the agent loop's initial messages (statewalker/statewalker-root#131).
 import type { ContextEntry, Item } from "@statewalker/ai-sessions";
 import { describe, expect, it } from "vitest";
-import { contextMessages, SUMMARY_MESSAGE_START } from "../src/index.js";
+import { contextMessages, SUMMARY_MESSAGE_START } from "../src/context.js";
 
 const MODEL = { api: "openai-completions", provider: "deployment", id: "m" };
 const item = (seq: number, rest: Partial<Item>): ContextEntry => ({

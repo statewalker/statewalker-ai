@@ -1,4 +1,4 @@
-// The model context of a turn, as pi-agent-core messages (statewalker/statewalker-root#131): the
+// The model context of a turn, as pi messages (statewalker/statewalker-root#131): the
 // harness's context entries (top-level summaries and the items no summary covers, already shaped
 // by ai-sessions) become the loop's initial messages. Flue's own compaction is not used: the
 // harness compacts, so there are never two competing summaries.

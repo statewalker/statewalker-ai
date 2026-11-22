@@ -19,7 +19,7 @@ catalogs:
       specifier: ^5.20261107.1
       version: 5.20261117.1
     '@flue/runtime':
-      specifier: ~2.3.0
+      specifier: 2.3.0
       version: 2.3.0
     '@statewalker/cellb':
       specifier: 0.8.8
@@ -272,9 +272,6 @@ importers:
 
   packages/ai-flue:
     dependencies:
-      '@earendil-works/pi-agent-core':
-        specifier: ~1.4.0
-        version: 1.4.0(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@7.30.2)(ws@8.23.0)(zod@4.6.7)
       '@earendil-works/pi-ai':
         specifier: ~1.4.0
         version: 1.4.0(@aws-sdk/credential-provider-node@3.972.97)(@smithy/signature-v4@5.7.5)(undici@7.30.2)(ws@8.23.0)(zod@4.6.7)
