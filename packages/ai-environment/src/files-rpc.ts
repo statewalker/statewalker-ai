@@ -73,12 +73,28 @@ export function filesRpcEndpoint(server: FilesRpc & { close?(): unknown }): File
 /** Streams known to the guard: what each was opened for. */
 const MAX_TRACKED = 1024;
 
-/** A server whose every chunk is authorized again before it is answered or taken. */
+/** A stream known to the guard: what it was opened for, and its refusal once one was decided. */
+interface Tracked {
+  action: FileAction;
+  path: string;
+  hidden: boolean;
+  refused?: { error: unknown };
+}
+
+/**
+ * A server whose every chunk is authorized again before it is answered or taken.
+ *
+ * Chunks of one stream are asked concurrently (the client reads and writes ahead), so their checks
+ * race. Once one chunk is refused, the stream answers that refusal to every chunk: to those asked
+ * later, to those whose check passes only afterwards, and to those already waiting at the server
+ * when the refusal closed the stream (which would otherwise fail as an unknown or closed stream).
+ * The refusal is kept until the holder closes or aborts the stream.
+ */
 function guarded(
   server: FilesRpcServer,
   checks: StreamChecks,
 ): FilesRpc & { close(): Promise<void> } {
-  const streams = new Map<string, { action: FileAction; path: string; hidden: boolean }>();
+  const streams = new Map<string, Tracked>();
   /** What a stream is opened for, and whether its path was hidden then. */
   const pathOf = async (raw: string) => {
     const path = normalise(raw);
@@ -88,8 +104,38 @@ function guarded(
     streams.set(id, { action, ...p });
     if (streams.size > MAX_TRACKED) streams.delete(streams.keys().next().value as string);
   };
-  const allowed = (s: { action: FileAction; path: string; hidden: boolean }) =>
-    checks.allowed(s.action, s.path, s.hidden);
+  /**
+   * Authorizes one chunk of a stream: throws the stream's refusal if it has one, else checks again
+   * and, on a refusal, keeps it and ends the stream at the server (`end`).
+   */
+  const authorizeChunk = async (s: Tracked | undefined, end: (e: unknown) => Promise<void>) => {
+    if (!s) return;
+    if (s.refused) throw s.refused.error;
+    try {
+      await checks.allowed(s.action, s.path, s.hidden);
+    } catch (e) {
+      // Another chunk may have been refused while this check ran: the first refusal stands.
+      const first = refusalOf(s);
+      if (first) throw first.error;
+      s.refused = { error: e };
+      await end(e);
+      throw e;
+    }
+    // A check that passed after another chunk's refusal answers that refusal.
+    const refused = refusalOf(s);
+    if (refused) throw refused.error;
+  };
+  /** The stream's refusal, read again after an await (another chunk's check may have set it). */
+  const refusalOf = (s: Tracked) => s.refused;
+  /** Runs a server call of a stream; a failure after the stream's refusal is that refusal. */
+  const served = async <T>(s: Tracked | undefined, call: () => Promise<T>): Promise<T> => {
+    try {
+      return await call();
+    } catch (e) {
+      if (s?.refused) throw s.refused.error;
+      throw e;
+    }
+  };
   return {
     stats: (p) => server.stats(p),
     exists: (p) => server.exists(p),
@@ -106,14 +152,8 @@ function guarded(
     },
     async readChunk(streamId, chunkId) {
       const s = streams.get(streamId);
-      if (s)
-        await allowed(s).catch(async (e) => {
-          streams.delete(streamId);
-          await server.closeRead(streamId);
-          throw e;
-        });
-      const chunk = await server.readChunk(streamId, chunkId);
-      return chunk;
+      await authorizeChunk(s, () => server.closeRead(streamId));
+      return served(s, () => server.readChunk(streamId, chunkId));
     },
     async closeRead(streamId) {
       streams.delete(streamId);
@@ -127,17 +167,16 @@ function guarded(
     },
     async writeChunk(streamId, chunkId, data) {
       const s = streams.get(streamId);
-      if (s)
-        await allowed(s).catch(async (e) => {
-          streams.delete(streamId);
-          await server.abortWrite(streamId, String((e as Error)?.message ?? e));
-          throw e;
-        });
-      return server.writeChunk(streamId, chunkId, data);
+      await authorizeChunk(s, (e) =>
+        server.abortWrite(streamId, String((e as Error)?.message ?? e)),
+      );
+      return served(s, () => server.writeChunk(streamId, chunkId, data));
     },
     async closeWrite(streamId, chunks) {
+      const s = streams.get(streamId);
       try {
-        await server.closeWrite(streamId, chunks);
+        if (s?.refused) throw s.refused.error;
+        await served(s, () => server.closeWrite(streamId, chunks));
       } finally {
         streams.delete(streamId);
       }
