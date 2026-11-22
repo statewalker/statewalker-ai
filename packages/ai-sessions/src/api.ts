@@ -53,12 +53,31 @@ export type {
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
   workspace: string;
+  /**
+   * The root of the asking session's tree, for a sub-agent's approval: the turns up to that root
+   * that started the sub-agent wait on it, and its answer continues each (statewalker/statewalker-ai#88).
+   */
+  root?: string;
   /** An unanswered approval past its time counts as denied: "expired". */
   /** "blocked": auto mode's risk classifier denied it; approving it retries exactly that action. */
   /** "cancelled": the turn that asked it was rewound (statewalker/statewalker-root#190). */
   status: "pending" | "allowed" | "denied" | "expired" | "blocked" | "cancelled";
   created: number;
   expires: number;
+}
+
+/**
+ * An answered approval: the turn that continues the session that asked it (`accepted`) and, for a
+ * sub-agent's approval, the turns that continue the sessions up its tree that waited on it, parent
+ * first, the root last (statewalker/statewalker-ai#88).
+ */
+export interface ApprovalAnswered {
+  approval: ApprovalView;
+  /** None for a rewind's revert of files (statewalker/statewalker-root#191): no turn runs. */
+  accepted?: MessageAccepted;
+  continued?: MessageAccepted[];
+  /** What the revert did, for a revert's approval. */
+  files?: FilesRevertResult;
 }
 
 /** The user's answer to an approval (statewalker/statewalker-root#79). */
@@ -108,7 +127,7 @@ export interface AgentSessionView {
   /** The session's model usage, totalled over its turns (single-session reads, #181). */
   usage?: UsageTotals;
   /** A fork: the session and turn its history was copied from (statewalker/statewalker-root#190). */
-  forked_from?: TurnRef;
+  forked_from?: ForkOrigin;
   /**
    * The titles of the session's topics on its active path, from the session index
    * (statewalker/statewalker-root#174); none before its first compaction wrote one.
@@ -120,6 +139,14 @@ export interface AgentSessionView {
 export interface TurnRef {
   session: string;
   turn: string;
+}
+
+/**
+ * Where a fork started: the source's session and turn, and the checkpoint of the gate's file
+ * pre-images then (statewalker/statewalker-root#191), when it kept any of the source.
+ */
+export interface ForkOrigin extends TurnRef {
+  checkpoint?: string;
 }
 
 /** A project's database, as the session API lists it to a member who may use it. */
@@ -355,7 +382,13 @@ export interface StoredAction {
     /** Answering a remote harness's question (the path is the `input_request` id). */
     | "input"
     /** A remote session's write-back, one change set (the target names it; content its digest). */
-    | "changeset";
+    | "changeset"
+    /**
+     * A sub-agent's approval the turn waits on through `agent.start` (the path is the sub-agent
+     * session, the target the approval): its answer continues the sub-agent, whose outcome is the
+     * call's result (statewalker/statewalker-ai#88).
+     */
+    | "agent";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -520,6 +553,14 @@ export interface MessageAccepted {
   voided_approvals?: string[];
 }
 
+/**
+ * An answer accepted by the session that asked it, with the turns of the sessions up its tree that
+ * waited on it through `agent.start` and that the answer continues too, parent first.
+ */
+export type AnswerAccepted = Omit<MessageAccepted, "stream_url"> & {
+  continued?: Omit<MessageAccepted, "stream_url">[];
+};
+
 /** Items, paged: `after` / `before` are item ids. */
 export interface ItemsQuery {
   after?: string;
@@ -553,8 +594,37 @@ export interface RewindRequest {
   before_turn?: string;
   /** Cancels the running turn and the queued ones first; without it they refuse the rewind (409). */
   cancel_running?: boolean;
-  /** Reverting files comes with statewalker/statewalker-root#191: refused until then. */
+  /**
+   * Reverts the files the rewound turns (and the sub-agents they started) changed to their state
+   * before the first of them, where nobody changed them since (statewalker/statewalker-root#191).
+   */
   revert_files?: boolean;
+}
+
+/**
+ * What a rewind's `revert_files` did with the files the rewound turns changed (paths as the file
+ * view names them, `/<project>/...`). The revert is one `write` under the session's mode: in a mode
+ * that asks, nothing is written until the user allows the `approval` (the files `pending`); a
+ * denial is `refused`.
+ */
+export interface FilesRevertResult {
+  /** Restored to their state before the first rewound turn that changed them. */
+  reverted: string[];
+  /** Changed since by someone else: left alone. */
+  conflicts: string[];
+  /** Their pre-image is no longer kept (past the retention, or dropped): left alone. */
+  unavailable: string[];
+  /** The approval the revert waits on; answering it allowed reverts the files then. */
+  approval?: string;
+  /** The files the revert will restore once allowed. */
+  pending?: string[];
+  /** Why the mode refused the revert. */
+  refused?: string;
+}
+
+/** An answer to a revert's approval: what the revert did then (statewalker/statewalker-root#191). */
+export interface RevertAnswered {
+  files: FilesRevertResult;
 }
 
 /** One effect of a rewound turn that a rewind does not revert: the tool call that made it. */
@@ -583,6 +653,8 @@ export interface RewindResult {
   database_changes: TurnEffect[];
   /** Effects outside the harness (outbound requests of tools). */
   irreversible_effects: TurnEffect[];
+  /** With `revert_files`: what the revert did with the files the rewound turns changed. */
+  files?: FilesRevertResult;
 }
 
 /** One turn of the session's tree. */
@@ -997,12 +1069,11 @@ export interface SessionApi extends TasksApi {
   listApprovals(): Promise<{ approvals: ApprovalView[] }>;
   /**
    * Answers one of the caller's approvals. The answer continues the agent session as a turn
-   * (allowing re-checks and runs the stored action), accepted like a message.
+   * (allowing re-checks and runs the stored action), accepted like a message. An answer to a
+   * rewind's revert of files (statewalker/statewalker-root#191) runs no turn: allowing reverts the
+   * files then, and `files` says what it did.
    */
-  answerApproval(
-    id: string,
-    answer: ApprovalAnswer,
-  ): Promise<{ approval: ApprovalView; accepted: MessageAccepted }>;
+  answerApproval(id: string, answer: ApprovalAnswer): Promise<ApprovalAnswered>;
   /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
   files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** A project's databases the caller may use (`db.read` or `db.write`), with their sizes. */
@@ -1192,7 +1263,7 @@ export interface AgentSessionConfig {
   /** A sub-agent's root session (statewalker/statewalker-root#126). */
   root?: string;
   /** A fork's source: the session and turn its history was copied from. */
-  forked_from?: TurnRef;
+  forked_from?: ForkOrigin;
   /**
    * The names of the tools the session may be offered (none: every tool). A sub-agent's are
    * always among its parent's.
@@ -1378,7 +1449,12 @@ export interface AgentPort {
    * Continues the session with the user's answer to an approval it waits on: a turn that runs the
    * stored action again (re-checked at the gate), or tells the model the denial.
    */
-  answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
+  answer(approval: string, answer: ApprovalAnswer): Promise<AnswerAccepted>;
+  /**
+   * The answer to a rewind's revert of files (statewalker/statewalker-root#191): no turn runs; an
+   * allow reverts the files now.
+   */
+  answerRevert(approval: string, answer: ApprovalAnswer): Promise<RevertAnswered>;
   /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
   mcp(message: McpMessage): Promise<McpResponse | null>;
   /** The session level's limits now, with what is used, reserved and left of each. */
@@ -1945,13 +2021,22 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async answerApproval(id, answer) {
       const checked = approvalAnswer(answer);
       const approval = await ports.user.answerApproval(token, String(id), checked);
-      const accepted = await ports.agent(approval.session).answer(approval.id, checked);
+      // A rewind's revert of files runs no turn (statewalker/statewalker-root#191).
+      if (approval.action.method === "revert") {
+        const { files } = await ports.agent(approval.session).answerRevert(approval.id, checked);
+        return { approval, files };
+      }
+      const { continued, ...accepted } = await ports
+        .agent(approval.session)
+        .answer(approval.id, checked);
+      const withUrl = (a: Omit<MessageAccepted, "stream_url">): MessageAccepted => ({
+        ...a,
+        stream_url: streamUrl(a.session_id, a.turn_id, a.offset),
+      });
       return {
         approval,
-        accepted: {
-          ...accepted,
-          stream_url: streamUrl(approval.session, accepted.turn_id, accepted.offset),
-        },
+        accepted: withUrl(accepted),
+        ...(continued?.length ? { continued: continued.map(withUrl) } : {}),
       };
     },
     files: (method, args) => ports.user.files(token, method, args),

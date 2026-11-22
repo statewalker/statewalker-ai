@@ -104,7 +104,7 @@ One agent's conversation, on an attenuated capability with its own tool set; tur
 _Avoid_: thread, conversation, chat
 
 **Sub-agent**:
-An agent started by another agent's session, as a child agent session on a narrower capability.
+An agent started by another agent's session, as a child agent session on a narrower capability. A turn whose sub-agent asks an approval waits on it too; the answer continues the sub-agent, then that turn.
 
 **Remote agent session**:
 An agent session whose core is an external harness reached over UHP: it works on copies of files, and its changes return through the capability.
@@ -145,6 +145,10 @@ _Avoid_: branch (UHP's word for a fork), clone
 **Rewind**:
 Moving an agent session's head to the end of another of its turns, or to its start, so the next message continues from there; switching branch is the same move. Turns no longer on the path are kept as an inactive branch.
 _Avoid_: undo, truncate, delete
+
+**Pre-image**:
+The state a file had before an agent session's turn first changed it (its content, or that it did not exist), kept by the gate as owner-side data so a rewind can revert the file; a turn's pre-images also serve as its checkpoint.
+_Avoid_: snapshot, backup
 
 **Branch**:
 One line of turns in an agent session; the session's turns form a tree, and the active branch is the path from its first turn to its head. Only a person can erase an inactive branch.

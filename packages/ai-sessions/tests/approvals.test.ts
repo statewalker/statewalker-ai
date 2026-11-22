@@ -148,9 +148,9 @@ describe("approvals resume the turn", () => {
     expect(h.wakes).toEqual([2_000]);
     expect(h.core.nextExpiry()).toBe(2_000);
     // Not yet expired: nothing happens.
-    expect(h.core.expire(1_999)).toBe(2_000);
+    expect(await h.core.expire(1_999)).toBe(2_000);
     expect(h.runs).toHaveLength(1);
-    expect(h.core.expire(2_000)).toBeUndefined();
+    expect(await h.core.expire(2_000)).toBeUndefined();
     const { items } = await h.core.items({ types: ["tool_result"] });
     const result = items.find((i) => i.approval === "ap-1");
     expect(result).toMatchObject({
@@ -166,7 +166,7 @@ describe("approvals resume the turn", () => {
 
   it("an answer reaching the session after the approval expired continues nothing more", async () => {
     const h = await harness(["ap-1"], 1000);
-    h.core.expire(2_000);
+    await h.core.expire(2_000);
     const { items } = await h.core.items({ types: ["tool_result"] });
     const expired = items.find((i) => i.approval === "ap-1");
     await h.core.waitTurn(String(expired?.turn));
@@ -181,7 +181,7 @@ describe("approvals resume the turn", () => {
     const h = await harness(["ap-1"], 1000);
     const a = await h.core.answer("ap-1", { decision: "allow", scope: "once" });
     await h.core.waitTurn(a.turn_id);
-    h.core.expire(5_000);
+    await h.core.expire(5_000);
     const { items } = await h.core.items({ types: ["tool_result"] });
     expect(items.filter((i) => i.approval === "ap-1")).toHaveLength(1);
     expect(h.runs).toHaveLength(2);

@@ -26,12 +26,19 @@ import {
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
 const TRANSPORTS = ["rest", "rpc"];
-const USERS = ["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kim", "lou"];
+const USERS = [
+  ...["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kim", "lou"],
+  "mia",
+];
 
 const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const CATALOG: Record<string, string> = {
   "/team/plugin.json": JSON.stringify({ $schema: AP, name: "team" }),
   "/team/dev.cellb.harness/agents/lead.md": "---\nname: lead\n---\nYou are lead.\n",
+  // Starts sub-agents (statewalker/statewalker-ai#88).
+  "/team/dev.cellb.harness/agents/helper.md": "---\nname: helper\n---\nYou are helper.\n",
+  "/team/dev.cellb.harness/agents/boss.md":
+    "---\nname: boss\nagents: [team/helper]\n---\nYou are boss.\n",
 };
 
 function fixtures(): Record<string, string> {
@@ -87,6 +94,7 @@ afterAll(async () => {
 
 const call = (tool: string, args: unknown) => `CALL ${tool} ${JSON.stringify(args)}`;
 const write = (path: string, content = "x\n") => call("write", { path, content });
+const start = (agent: string, message: string) => call("agent_start", { agent, message });
 
 /** A file's text as the user's own file view reads it; undefined when there is none. */
 async function fileText(token: string, path: string): Promise<string | undefined> {
@@ -345,6 +353,37 @@ describe.each(transports)("the OpenAI projection over %s", (name, connect) => {
         }),
       ),
     ).toBe(400);
+  });
+
+  it("asks a sub-agent's approval as the Conversation's mcp_approval_request; approving it continues the Conversation with the sub-agent's outcome", async () => {
+    const { client, openai, read } = await as("mia", "team/boss");
+    await client.setMode({ mode: "default" });
+    const r1 = await openai.responses.create({
+      model: "default",
+      input: start("team/helper", write("notes/m.md", "m\n")),
+    });
+    const root = String(r1.conversation?.id);
+    const child = (await client.listSessions()).sessions.find((s) => s.parent === root);
+    const [approval] = (await client.listApprovals()).approvals.filter(
+      (a) => a.session === child?.id,
+    );
+    const asked = r1.output.find((o) => o.type === "mcp_approval_request");
+    expect(asked?.id).toBe(approval?.id);
+    const r2 = await openai.responses.create({
+      model: "default",
+      previous_response_id: r1.id,
+      input: [
+        { type: "mcp_approval_response", approval_request_id: String(asked?.id), approve: true },
+      ],
+    });
+    expect(r2.conversation?.id).toBe(root);
+    expect(r2.output[0]).toMatchObject({
+      type: "mcp_call",
+      name: "agent_start",
+      approval_request_id: asked?.id,
+      output: expect.stringContaining("notes/m.md: done"),
+    });
+    expect(await read(`/${project}/notes/m.md`)).toBe("m\n");
   });
 
   it("a denying mcp_approval_response gives the model its reason, and changes nothing", async () => {

@@ -18,6 +18,7 @@ import {
   sessionOfTurn,
   TERMINAL_TURN_STATUSES,
   type TurnView,
+  waitsOnSubAgent,
 } from "@statewalker/ai-sessions";
 import {
   approvalRequest,
@@ -326,19 +327,29 @@ export async function createResponse(
     for (const answer of answers) {
       const approval = approvals.find((a) => a.id === answer.id);
       if (!approval) throw codedError("EINVAL", `no approval request ${answer.id}`);
-      session ??= await conversationOf(api, route, approval.session);
-      if (approval.session !== session.id)
+      // A sub-agent's approval is asked and answered as its root's (statewalker/statewalker-ai#88).
+      session ??= await conversationOf(api, route, approval.root ?? approval.session);
+      if (approval.session !== session.id && approval.root !== session.id)
         throw codedError("EINVAL", `approval request ${answer.id} is not of this conversation`);
       if (approval.status !== "pending")
         throw codedError("EINVAL", `approval request ${answer.id} is ${approval.status}`);
+      // A sub-agent's: refused before answering when the Conversation no longer waits on it.
+      if (approval.session !== session.id && !(await waitsOnSubAgent(api, session.id, answer.id)))
+        throw codedError("EINVAL", `approval request ${answer.id} continues no turn here`);
     }
     for (const answer of answers) {
-      const { accepted } = await api.answerApproval(answer.id, {
+      const answered = await api.answerApproval(answer.id, {
         decision: answer.approve ? "allow" : "deny",
         // "For this session" stays native only.
         scope: "once",
         ...(answer.reason ? { message: answer.reason } : {}),
       });
+      // The Conversation's own turn: a sub-agent's approval continues its root's last.
+      const accepted = [answered.accepted, ...(answered.continued ?? [])].find(
+        (a) => a?.session_id === (session as AgentSessionView).id,
+      );
+      if (!accepted)
+        throw codedError("EINVAL", `approval request ${answer.id} continues no turn here`);
       turns.push(accepted.turn_id);
       since = Math.min(since, accepted.offset);
     }
