@@ -113,6 +113,8 @@ export function webllmEngine(options: WebLlmEngineOptions): WebLlmEngine {
   };
   const load = async (model: string, onProgress?: (report: WebLlmProgress) => void) => {
     if (engine && loaded === model) return engine;
+    // WebLLM unloads the current model before it loads another: until this load succeeds, none is.
+    loaded = undefined;
     if (engine) {
       engine.setInitProgressCallback?.(onProgress ?? (() => {}));
       await engine.reload(model);
@@ -159,15 +161,12 @@ export function webllmEngine(options: WebLlmEngineOptions): WebLlmEngine {
           const e = await load(model);
           const onAbort = () => e.interruptGenerate();
           request.signal?.addEventListener("abort", onAbort);
-          const answer = await e.chat.completions.create(webllmRequest(body));
-          if (!body.stream) {
-            request.signal?.removeEventListener("abort", onAbort);
-            return json(200, answer);
-          }
-          // Read to the end inside the queue, so the next request waits for this generation.
           const enc = new TextEncoder();
           const frames: Uint8Array[] = [];
           try {
+            const answer = await e.chat.completions.create(webllmRequest(body));
+            if (!body.stream) return json(200, answer);
+            // Read to the end inside the queue, so the next request waits for this generation.
             for await (const chunk of answer as AsyncIterable<unknown>)
               frames.push(enc.encode(`data: ${JSON.stringify(chunk)}\n\n`));
           } finally {

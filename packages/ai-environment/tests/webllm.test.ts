@@ -199,6 +199,26 @@ describe("the WebLLM engine", () => {
     expect(request.stream).toBe(true);
   });
 
+  it("keeps serving a downloaded model after a failed download of another", async () => {
+    const { module, cached, log } = fakeWebLlm({ text: "still here" });
+    cached.add(MODEL);
+    const { gateway, engine } = gatewayWith(module);
+    expect((await gateway.request(pinned, { context }, () => true, meta)).message).toMatchObject({
+      stopReason: "stop",
+    });
+    // WebLLM unloads the current model before it loads another; this load fails.
+    const created = await module.CreateMLCEngine(MODEL);
+    const reload = created.reload.bind(created);
+    created.reload = async (m: string) => {
+      if (m === "Broken-MLC") throw new Error("network down");
+      return reload(m);
+    };
+    await expect(engine.download("Broken-MLC")).rejects.toThrow(/network down/);
+    const res = await gateway.request(pinned, { context }, () => true, meta);
+    expect(res.message).toMatchObject({ content: [{ type: "text", text: "still here" }] });
+    expect(log.reloaded).toContain(MODEL);
+  });
+
   it("reaches no address but its own engine", async () => {
     const { module, cached } = fakeWebLlm({ text: "hi" });
     cached.add(MODEL);
