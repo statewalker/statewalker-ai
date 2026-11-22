@@ -114,6 +114,9 @@ export function scenarioRates(vars: Record<string, string>): Record<string, stri
   return { ...vars, LIMITS: JSON.stringify([...list, rate("user"), rate("workspace")]) };
 }
 
+/** What the runner's Pyodide engine copies in: small, so a scenario can pass it (#142). */
+export const PYODIDE_LIMITS = { maxBytes: 256 * 1024 };
+
 /** Where the Wasmer engine keeps the registry packages it loads, across runs. */
 const WASMER_CACHE = join(tmpdir(), "wasmer-cache-ai-conformance");
 
@@ -124,7 +127,7 @@ export const PYODIDE_DIR = `${dirname(createRequire(import.meta.url).resolve("py
 // has, as an operator's host would (statewalker/statewalker-root#142).
 if (RUNTIME === "node")
   installCodeEngines({
-    pyodide: pyodideEngine(pyodideNodeHost({ indexDir: PYODIDE_DIR })),
+    pyodide: pyodideEngine(pyodideNodeHost({ indexDir: PYODIDE_DIR }), PYODIDE_LIMITS),
     wasmer: wasmerEngine({
       sdkDist: dirname(fileURLToPath(import.meta.resolve("@wasmer/sdk"))),
       cache: mkdirSync(WASMER_CACHE, { recursive: true }) ?? WASMER_CACHE,

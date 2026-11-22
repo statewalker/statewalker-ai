@@ -29,6 +29,7 @@ export interface EngineHost {
   ): Promise<{ post(m: unknown): void; kill(): void }>;
 }
 
+/** What a run copies in by default: at most this many files and bytes of the project. */
 const MAX_FILES = 5000;
 const MAX_BYTES = 16 * 1024 * 1024;
 /** Pyodide's own top folders: a project of that name cannot be copied in. */
@@ -74,18 +75,21 @@ async function readAll(files: EngineFiles, path: string): Promise<Uint8Array> {
   return out;
 }
 
-/** The readable files under `root`, as contents (bounded). */
-async function copyIn(files: EngineFiles, root: string) {
+/**
+ * The readable files under `root`, as contents (bounded), and the files left out (over the bounds,
+ * or unreadable): those are never written back, since the run never saw what they hold.
+ */
+async function copyIn(files: EngineFiles, root: string, limits: { files: number; bytes: number }) {
   const out: Record<string, Content> = {};
+  const skipped = new Set<string>();
   let count = 0;
   let bytes = 0;
-  let truncated = false;
-  if (!(await files.exists(root))) return { files: out, truncated };
+  if (!(await files.exists(root))) return { files: out, skipped };
   for await (const e of files.list(root, { recursive: true })) {
     const entry = e as { kind?: string; path?: string; size?: number };
     if (entry.kind !== "file" || typeof entry.path !== "string") continue;
-    if (count + 1 > MAX_FILES || bytes + (entry.size ?? 0) > MAX_BYTES) {
-      truncated = true;
+    if (count + 1 > limits.files || bytes + (entry.size ?? 0) > limits.bytes) {
+      skipped.add(entry.path);
       continue;
     }
     try {
@@ -98,18 +102,28 @@ async function copyIn(files: EngineFiles, root: string) {
         out[entry.path] = { $b64: toB64(data) };
       }
     } catch {
-      // A file the view refuses to read is not there.
+      skipped.add(entry.path);
     }
   }
-  return { files: out, truncated };
+  return { files: out, skipped };
 }
 
 type Changes = { written: Record<string, Content>; deleted: string[]; dirs: string[] };
 
-/** Writes a run's changes back through the view: each one authorized again. */
-async function writeBack(files: EngineFiles, changes: Changes): Promise<string[]> {
+/**
+ * Writes a run's changes back through the view, each one authorized again. A file the run was
+ * not given a copy of is never written over (it would lose what the run never saw), and a run
+ * ended meanwhile (`signal`) stops at once: ECANCELED, with nothing more written.
+ */
+async function writeBack(
+  files: EngineFiles,
+  changes: Changes,
+  copied: { files: Record<string, Content>; skipped: Set<string> },
+  signal: AbortSignal,
+): Promise<string[]> {
   const refused: string[] = [];
   const attempt = async (what: string, f: () => unknown) => {
+    if (signal.aborted) throw new Error("ECANCELED: the run was ended during its write-back");
     try {
       await f();
     } catch (e) {
@@ -119,14 +133,22 @@ async function writeBack(files: EngineFiles, changes: Changes): Promise<string[]
   for (const dir of [...(changes.dirs ?? [])].sort())
     await attempt(`mkdir ${dir}`, () => files.mkdir(dir));
   for (const [path, content] of Object.entries(changes.written ?? {}))
-    await attempt(`write ${path}`, () => files.write(path, [bytesOf(content)]));
+    await attempt(`write ${path}`, async () => {
+      if (!(path in copied.files) && (copied.skipped.has(path) || (await files.exists(path))))
+        throw new Error("EEXIST: the file was not copied in, so it is not written over");
+      await files.write(path, [bytesOf(content)]);
+    });
   for (const path of changes.deleted ?? [])
     await attempt(`remove ${path}`, () => files.remove(path));
   return refused;
 }
 
 /** The Pyodide engine over a host: one engine process or Worker per agent session. */
-export function pyodideEngine(host: EngineHost): CodeEngine {
+export function pyodideEngine(
+  host: EngineHost,
+  options: { maxFiles?: number; maxBytes?: number } = {},
+): CodeEngine {
+  const limits = { files: options.maxFiles ?? MAX_FILES, bytes: options.maxBytes ?? MAX_BYTES };
   return {
     programs: ["python", "python3"],
     async open({ files, memoryMb }): Promise<EngineInstance> {
@@ -176,7 +198,7 @@ export function pyodideEngine(host: EngineHost): CodeEngine {
           throw new Error(
             `ENOSYS: a project named ${root.slice(1)} clashes with Pyodide's own folders`,
           );
-        const synced = await copyIn(files, root);
+        const synced = await copyIn(files, root, limits);
         const id = ++next;
         const answer = new Promise<Record<string, unknown>>((resolve) => answers.set(id, resolve));
         const onAbort = () => {
@@ -198,10 +220,10 @@ export function pyodideEngine(host: EngineHost): CodeEngine {
           });
           const m = await answer;
           if (m.dead) throw new Error(`EIO: the Python engine stopped: ${m.dead}`);
-          const refused = await writeBack(files, m.changes as Changes);
+          const refused = await writeBack(files, m.changes as Changes, synced, signal);
           let stderr = String(m.stderr ?? "");
-          if (synced.truncated)
-            stderr += `python: only the first ${MAX_FILES} files (${MAX_BYTES} bytes) were copied in\n`;
+          if (synced.skipped.size)
+            stderr += `python: ${synced.skipped.size} file(s) not copied in (at most ${limits.files} files, ${limits.bytes} bytes)\n`;
           for (const r of refused) stderr += `python: not written back: ${r}\n`;
           const exitCode = Number(m.exitCode) || 0;
           return {

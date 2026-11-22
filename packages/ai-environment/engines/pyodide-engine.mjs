@@ -160,7 +160,19 @@ function clear(root) {
 }
 
 const RUNNER = `
-import sys, runpy, os
+import sys, runpy, os, importlib
+# The interpreter as it was before any run: each run ends by going back to it, so nothing one run
+# imported, put on the path or in the environment reaches the next (an edited module is read anew).
+_BASE_MODULES = set(sys.modules)
+_BASE_PATH = list(sys.path)
+_BASE_ENV = dict(os.environ)
+def _reset():
+    for name in [m for m in sys.modules if m not in _BASE_MODULES]:
+        del sys.modules[name]
+    sys.path[:] = _BASE_PATH
+    os.environ.clear()
+    os.environ.update(_BASE_ENV)
+    importlib.invalidate_caches()
 def _run(argv, cwd):
     os.makedirs(cwd, exist_ok=True)
     os.chdir(cwd)
@@ -198,6 +210,7 @@ def _run(argv, cwd):
     finally:
         sys.stdout.flush()
         sys.stderr.flush()
+        _reset()
 `;
 
 let runner;

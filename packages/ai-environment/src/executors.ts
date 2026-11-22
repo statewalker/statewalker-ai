@@ -214,6 +214,9 @@ export function capOutput(text: string, max: number): string {
   return `${text.slice(0, max)}\n[output cut at ${max} characters]\n`;
 }
 
+/** How long a killed run's work is waited on to stop. */
+const KILL_GRACE_MS = 5_000;
+
 /** How often a running executor's time is charged. */
 const SLICE_MS = 100;
 
@@ -265,11 +268,24 @@ export async function runMetered<T>(
     }, SLICE_MS);
   });
   try {
+    const working = work(controller.signal);
     const outcome = await Promise.race([
-      work(controller.signal).then((value) => ({ value })),
+      working.then((value) => ({ value })),
       ended.then((killed) => ({ killed })),
     ]);
-    if ("killed" in outcome) controller.abort(new Error(outcome.killed));
+    if ("killed" in outcome) {
+      controller.abort(new Error(outcome.killed));
+      // The work is told to stop: its answer waits until it has (a write-back stops at its next
+      // step), or a short grace passes, so nothing it does lands after the run was reported ended.
+      let grace: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        working.catch(() => {}),
+        new Promise((r) => {
+          grace = setTimeout(r, KILL_GRACE_MS);
+        }),
+      ]);
+      clearTimeout(grace);
+    }
     return { ...outcome, ms: Date.now() - started };
   } finally {
     clearInterval(timer);

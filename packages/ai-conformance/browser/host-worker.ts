@@ -41,6 +41,8 @@ installLocalEngine({
 installCodeEngines({
   pyodide: pyodideEngine(
     pyodideWorkerHost({ engineUrl: "/engines/pyodide-engine.mjs", indexURL: "/pyodide/" }),
+    // Small, as on the runner's Node (src/deployment.ts PYODIDE_LIMITS).
+    { maxBytes: 256 * 1024 },
   ),
   // Wasmer in a module Worker: the page is cross-origin isolated for its shared memory.
   wasmer: wasmerWorkerEngine({

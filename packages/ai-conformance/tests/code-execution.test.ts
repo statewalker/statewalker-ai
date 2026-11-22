@@ -52,6 +52,9 @@ const transports: [string, Connect][] = [
   ],
 ];
 
+/** A file larger than the runner's Pyodide engine copies in (its `maxBytes`, 256 KiB). */
+const BIG = "x".repeat(300 * 1024);
+
 let model: FakeModel;
 let deployment: Deployment;
 
@@ -80,7 +83,7 @@ const vars = (extra: Record<string, string> = {}) => ({
   OPERATOR_KEY,
   CATALOG: JSON.stringify(CATALOG),
   DEFAULT_AGENT: "code/default",
-  EXEC_TIMEOUT_MS: "3000",
+  EXEC_TIMEOUT_MS: "6000",
   // WASIX programs the `bash` tool routes to the posix executor.
   EXECUTORS: JSON.stringify({ programs: ["rg", "tee"] }),
   ...extra,
@@ -150,6 +153,8 @@ beforeAll(async () => {
         "    print('no network:', type(e).__name__)",
       ].join("\n");
     }
+    files[`/big-${t}/.system/access`] = JSON.stringify({ [`ann-${t}`]: "owner" });
+    files[`/big-${t}/big.log`] = BIG;
     files[`/other-${t}/.system/access`] = JSON.stringify({ [`ann-${t}`]: "owner" });
     files[`/other-${t}/secret.txt`] = "not yours";
     files[`/meter-${t}/.system/limits`] = JSON.stringify([
@@ -250,6 +255,44 @@ describe.each(transports)("code execution over %s", (name, connect) => {
       content: call("read", { path: `/${project}/pyout/count.txt` }),
     });
     expect(outputOf(read)).toContain("4");
+  });
+
+  it("starts each python run from a fresh interpreter state: an edited module is imported anew", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const write = (path: string, content: string) =>
+      ann.sendMessage(s.id, { content: call("write", { path: `/${project}/${path}`, content }) });
+    await write("pyfresh/helper.py", "X = 1\n");
+    await write(
+      "pyfresh/main.py",
+      "import os, helper\nprint('x', helper.X, os.environ.get('LEAK'))\nos.environ['LEAK'] = 'yes'\n",
+    );
+    const first = await ann.sendMessage(s.id, { content: bash("python pyfresh/main.py") });
+    if (!CAN.python) {
+      expect(outputOf(first)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(outputOf(first)).toContain("x 1 None");
+    await write("pyfresh/helper.py", "X = 2\n");
+    const second = await ann.sendMessage(s.id, { content: bash("python pyfresh/main.py") });
+    expect(outputOf(second)).toContain("x 2 None");
+  });
+
+  it("never writes back over a file python was not given a copy of", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `big-${t}` });
+    const turn = await ann.sendMessage(s.id, {
+      content: bash(`python -c "open('big.log', 'a').write('appended')"`),
+    });
+    if (!CAN.python) {
+      expect(outputOf(turn)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(outputOf(turn)).toMatch(/not written back: write \/big-\w+\/big\.log: .*not copied in/);
+    const read = await ann.sendMessage(s.id, {
+      content: call("bash", { command: "wc -c big.log" }),
+    });
+    expect(outputOf(read)).toContain(String(BIG.length));
   });
 
   it("authorizes python's write-back again: a change the mode asks about is not written", async () => {
