@@ -10,7 +10,7 @@ import {
 } from "@statewalker/ai-conformance";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { devLogin, sessionClient } from "../src/client.js";
-import { createShell, type Shell, words } from "../src/commands.js";
+import { createShell, type LocalModels, type Shell, words } from "../src/commands.js";
 
 const HOST = new URL("../../../packages/ai-host-do/", import.meta.url);
 const ADMIN_KEY = "workbench-admin-key";
@@ -31,7 +31,7 @@ beforeAll(async () => {
     USER_PROVIDER_HOSTS: "127.0.0.1",
   });
   await seed(deployment, ADMIN_KEY, {
-    "/notes/.system/access": JSON.stringify({ wb: "owner", wb2: "owner" }),
+    "/notes/.system/access": JSON.stringify({ wb: "owner", wb2: "owner", wb3: "owner" }),
     "/notes/todo.md": "- ship the workbench\n",
   });
 }, 120_000);
@@ -43,6 +43,7 @@ afterAll(async () => {
 async function shellFor(
   user: string,
   askHidden?: (question: string) => Promise<string>,
+  local?: LocalModels,
 ): Promise<{ shell: Shell; lines: string[] }> {
   const fetch = (path: string, init?: RequestInit) => deployment.fetch(path, init);
   const client = sessionClient(fetch, await devLogin(fetch, user));
@@ -52,6 +53,7 @@ async function shellFor(
     project: "notes",
     out: { writeln: (l) => lines.push(plain(l)) },
     askHidden,
+    ...(local ? { local } : {}),
   });
   return { shell, lines };
 }
@@ -136,6 +138,40 @@ describe("the workbench shell", () => {
     lines.length = 0;
     await shell.run("models");
     expect(lines).toEqual(expect.arrayContaining([expect.stringMatching(/^mine\/own-model/)]));
+  });
+
+  it("says when the page runs no local model engine", async () => {
+    const { shell, lines } = await shellFor("wb3");
+    await shell.run("local download tiny");
+    expect(lines.at(-1)).toMatch(/no local model engine/);
+  });
+
+  it("downloads a local model only when the user asks, then makes it the user's model", async () => {
+    const downloaded = new Set<string>();
+    const asked: string[] = [];
+    const local: LocalModels = {
+      has: async (m) => downloaded.has(m),
+      async download(m, onProgress) {
+        asked.push(m);
+        onProgress?.({ progress: 0.5, text: "half" });
+        downloaded.add(m);
+      },
+    };
+    const { shell, lines } = await shellFor("wb3", undefined, local);
+    await shell.run("local use tiny");
+    lines.length = 0;
+    await shell.run("local");
+    expect(lines).toContain("local/tiny (not downloaded: local download tiny)");
+    expect(asked).toEqual([]);
+    await shell.run("local download tiny");
+    expect(asked).toEqual(["tiny"]);
+    expect(lines).toContainEqual(expect.stringMatching(/50%/));
+    lines.length = 0;
+    await shell.run("local");
+    expect(lines).toContain("local/tiny (downloaded)");
+    lines.length = 0;
+    await shell.run("models");
+    expect(lines).toContainEqual(expect.stringMatching(/^local\/tiny/));
   });
 
   it("starts a new session on `new` and lists the user's sessions, the current one marked", async () => {

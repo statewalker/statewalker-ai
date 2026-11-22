@@ -368,6 +368,9 @@ A place where an agent session's code runs, of one kind (shell, isolate, engine 
 **Provider**:
 A connection to a model service, configured at some level, whose key is a secret.
 
+**Local engine**:
+A model engine running where the harness runs (WebLLM in the user's browser page), declared by the runtime's host; it serves the `local` provider's models with no key, and only models whose weights the user downloaded.
+
 **Model alias**:
 A role name such as `fast` that agents ask for, served by whichever configured model the most specific level maps it to.
 

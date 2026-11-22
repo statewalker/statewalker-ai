@@ -19,7 +19,9 @@
     "@statewalker/webrun-files-mem": "catalog:",
     "@xterm/addon-fit": "catalog:",
     "@xterm/xterm": "catalog:",
-    "@statewalker/ai-host-do": "workspace:^"
+    "@statewalker/ai-host-do": "workspace:^",
+    "@mlc-ai/web-llm": "catalog:",
+    "@statewalker/ai-environment": "workspace:^"
   },
   "devDependencies": {
     "@statewalker/ai-conformance": "workspace:^",
