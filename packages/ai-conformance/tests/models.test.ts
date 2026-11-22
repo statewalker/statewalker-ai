@@ -6,13 +6,13 @@
 // (ai-host-do) on CellB Node in-process, with the scripted model, over REST and RPC.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CAN,
   type Deployment,
   type FakeModel,
   fakeModel,
   type Item,
   login,
   modelUsage,
-  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -353,7 +353,7 @@ describe.each(transports)("the model gateway over %s", (name, connect) => {
     expect(lastModel()).toBe("big");
   });
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "records a fallback whose next model cannot be reached, and fails the turn",
     async () => {
       const ann = await as("ann");
@@ -416,7 +416,7 @@ describe.each(transports)("the model gateway over %s", (name, connect) => {
     ]);
   });
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "injects the provider's key through the secrets gateway, and never shows it",
     async () => {
       const ann = await as("ann");

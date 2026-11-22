@@ -25,8 +25,8 @@ packages/
   ai-openai-compat/  OpenAI projection
   ai-uhp/            UHP projection
   ai-uhp-client/     remote agent sessions over UHP
-  ai-conformance/    (private) conformance suite: deployments on CellB in-process, the scripted
-                     model, the threat-table check
+  ai-conformance/    (private) conformance suite: deployments on CellB (Node, Chromium), CellD and
+                     workerd, the scripted model, the threat-table check
 ```
 
 `ai-access`, `ai-environment`, `ai-definitions`, `ai-sessions`, `ai-flue` and `ai-host-do` are
@@ -53,6 +53,13 @@ What replaces each package:
 1. Install Node.js 24 and enable corepack (`corepack enable`), so the pinned pnpm is used.
 2. `pnpm install`
 3. `pnpm test`: unit tests, and the conformance suite on CellB Node in-process.
+
+CI also runs the conformance suite on the other three runtimes, each in a job of its own
+(statewalker/statewalker-root#85): `pnpm --filter @statewalker/ai-conformance run test:browser`
+(CellB in Chromium, Playwright), `test:celld` (`celld dev` in celld's pinned Docker image; set
+`CELLD_BIN` to a celld binary to run without Docker) and `test:workerd` (`wrangler dev`, local
+workerd). A scenario that needs what only some runtimes offer (the `local` workspace backend,
+deployment-held keys) runs where `CAN` in `packages/ai-conformance/src/deployment.ts` says so.
 
 Before pushing, run what CI runs: `pnpm lint:check`, `pnpm format:check`, `pnpm build`,
 `pnpm typecheck`, `pnpm test`.

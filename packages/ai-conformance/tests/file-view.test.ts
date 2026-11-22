@@ -7,12 +7,12 @@
 // in-process, with the scripted model, over REST and RPC.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CAN,
   type Deployment,
   type FakeModel,
   type FilesClient,
   fakeModel,
   login,
-  RUNTIME,
   restClient,
   restFiles,
   rpcClient,
@@ -296,9 +296,8 @@ describe("workspace backends", () => {
     ["S3", { WORKSPACE_BACKEND: "s3" }],
     ["SqlFs on the Durable Object's SQLite", { WORKSPACE_BACKEND: "sql" }],
   ].filter(
-    // A browser has no local file system for the Worker (CellB Node and CellD only).
-    ([, vars]) =>
-      RUNTIME !== "browser" || (vars as Record<string, string>).WORKSPACE_BACKEND !== "local",
+    // The local backend needs a local file system for the Worker (CellB Node and CellD only).
+    ([, vars]) => CAN.localFiles || (vars as Record<string, string>).WORKSPACE_BACKEND !== "local",
   ) as [string, Record<string, string>][];
   it.each(backends)(
     "serves a workspace from %s, as the deployment's configuration says",

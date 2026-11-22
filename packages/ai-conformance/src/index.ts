@@ -13,10 +13,18 @@ export {
   type ToolDbCall,
   toolDb,
 } from "./db-client.js";
-export { type Deployment, RUNTIME, startDeployment, startNodeDeployment } from "./deployment.js";
+export {
+  CAN,
+  type Deployment,
+  RUNTIME,
+  type Runtime,
+  startDeployment,
+  startNodeDeployment,
+} from "./deployment.js";
 export { type FakeS3, fakeS3 } from "./fake-s3.js";
 export { type FilesClient, restFiles, rpcFiles } from "./files-client.js";
 export { type FakeModel, fakeModel, type ModelRequest } from "./model.js";
+export { CELLD_IMAGE } from "./process-deployment.js";
 export { type FakeRest, fakeRest, type RestRequest } from "./rest-server.js";
 export { type RpcSessionClient, rpcClient } from "./rpc-client.js";
 export {

@@ -55,6 +55,54 @@ jobs:
           pnpm --filter @statewalker/ai-workbench run build
           pnpm --filter @statewalker/ai-workbench run test:page
 
+  # The conformance suite on CellD: each deployment is the Worker bundled by wrangler and run by
+  # `celld dev` in celld's pinned Docker image (CELLD_IMAGE in
+  # packages/ai-conformance/src/process-deployment.ts), on the host network.
+  celld:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: celld image
+        run: docker pull "$(node -p "/CELLD_IMAGE =\s*\"([^\"]+)\"/.exec(require('fs').readFileSync('packages/ai-conformance/src/process-deployment.ts','utf8'))[1]")"
+
+      - name: Conformance on CellD
+        run: pnpm --filter @statewalker/ai-conformance run test:celld
+
+  # The conformance suite on workerd: each deployment is the Worker bundled by wrangler and run by
+  # `wrangler dev` (local workerd), as Cloudflare would run it.
+  workerd:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Conformance on workerd
+        run: pnpm --filter @statewalker/ai-conformance run test:workerd
+
   # The lockfile-only pull request that .github/workflows/statewalker-update.yml opens: merged
   # once every other check on it passes, after checking it changes pnpm-lock.yaml alone
   # (statewalker/statewalker-ci's merge-lockfile.yml; statewalker-root docs/process/merging.md).
