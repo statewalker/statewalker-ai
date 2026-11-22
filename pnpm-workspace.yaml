@@ -54,6 +54,10 @@ catalog:
   # The workbench's local model engine (WebLLM on WebGPU, statewalker/statewalker-root#143).
   "@mlc-ai/web-llm": 0.2.87
   esbuild: ^0.28.2
+  # The Python engine the conformance runner installs on CellB Node and in Chromium (statewalker/statewalker-root#142).
+  pyodide: 314.0.7
+  # The Wasmer engine the conformance runner installs on CellB Node (statewalker/statewalker-root#142).
+  "@wasmer/sdk": 0.19.1
   # Tool scripts are bundled by webrun-bundler on esbuild-wasm, on every runtime (statewalker/statewalker-root#130).
   "@statewalker/webrun-bundler": ^0.2.0
   esbuild-wasm: ^0.28.2

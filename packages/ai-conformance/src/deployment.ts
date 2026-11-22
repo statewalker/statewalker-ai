@@ -2,10 +2,14 @@
 // process (here: a Worker project, wrangler config + main, loaded by @statewalker/cellb with its
 // vars overridden for the run and its cells in a fresh directory), CellB in Chromium
 // (browser-deployment.ts), CellD or workerd (process-deployment.ts).
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { installCodeEngines } from "@statewalker/ai-environment/code-engines";
+import { pyodideEngine, pyodideNodeHost } from "@statewalker/ai-environment/pyodide";
+import { wasmerEngine } from "@statewalker/ai-environment/wasmer";
 import { loadProject } from "@statewalker/cellb/node";
 import { projectConfig } from "./project-config.js";
 
@@ -56,7 +60,9 @@ export const CAN = {
    * (statewalker/statewalker-root#142): CellB in a browser and on Node. Elsewhere `python` and
    * POSIX programs answer ENOSYS.
    */
-  python: false,
+  python: RUNTIME === "node" || RUNTIME === "browser",
+  /** WASIX programs on a Wasmer engine, live over the session's files: CellB in a browser and on Node. */
+  posix: RUNTIME === "node" || RUNTIME === "browser",
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
@@ -107,6 +113,26 @@ export function scenarioRates(vars: Record<string, string>): Record<string, stri
   });
   return { ...vars, LIMITS: JSON.stringify([...list, rate("user"), rate("workspace")]) };
 }
+
+/** What the runner's Pyodide engine copies in: small, so a scenario can pass it (#142). */
+export const PYODIDE_LIMITS = { maxBytes: 256 * 1024 };
+
+/** Where the Wasmer engine keeps the registry packages it loads, across runs. */
+const WASMER_CACHE = join(tmpdir(), "wasmer-cache-ai-conformance");
+
+/** Pyodide's folder, as the runner serves and installs it. */
+export const PYODIDE_DIR = `${dirname(createRequire(import.meta.url).resolve("pyodide/package.json"))}/`;
+
+// CellB Node runs the deployment in this realm: its host (this runner) declares the engines it
+// has, as an operator's host would (statewalker/statewalker-root#142).
+if (RUNTIME === "node")
+  installCodeEngines({
+    pyodide: pyodideEngine(pyodideNodeHost({ indexDir: PYODIDE_DIR }), PYODIDE_LIMITS),
+    wasmer: wasmerEngine({
+      sdkDist: dirname(fileURLToPath(import.meta.resolve("@wasmer/sdk"))),
+      cache: mkdirSync(WASMER_CACHE, { recursive: true }) ?? WASMER_CACHE,
+    }),
+  });
 
 /** Starts the Worker project on CellB Node, in this process. */
 export async function startNodeDeployment(
