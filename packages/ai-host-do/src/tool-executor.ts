@@ -11,7 +11,8 @@
 // structured clone only (statewalker/statewalker-root#141), so there the host's calls cross as
 // plain values instead: the host starts the run (`start(input)`), each answer of the isolate is
 // either the run's end or the host calls the script waits on, and the host answers those
-// (`resume(answers)`) to get the next. (workerd would not take that second form: a promise of one
+// (`resume(answers)`) to get the next. Which form a runtime takes is probed once per isolate with
+// a loaded worker holding no tool code. (workerd would not take that second form: a promise of one
 // call settled by the next counts there as a hung request.) The script sees the same `ctx` either way.
 //
 // Inside the isolate, a wrapper module removes the host's reach from the realm before the bundle
@@ -284,29 +285,69 @@ interface ToolEntrypoint {
   resume(answers: HostAnswer[]): Promise<RunStep>;
 }
 
-/** Whether this runtime's Worker Loader takes a stub as an argument; known after the first run. */
-let stubsCross: boolean | undefined;
+/** A loaded worker with no tool code in it: it only takes a stub, to see whether one crosses. */
+const PROBE = `
+import { WorkerEntrypoint } from "cloudflare:workers";
+export default class extends WorkerEntrypoint {
+  accepts(stub) { return true; }
+}
+`;
 
-/** A refusal to carry a stub into the loaded isolate (CellD): nothing of the call ran. */
+/** A stub with nothing behind it, for the probe. */
+class ProbeTarget extends RpcTarget {}
+
+/**
+ * Whether this runtime's Worker Loader carries a stub into a loaded isolate, found once per
+ * isolate with the probe, never from a call a tool script runs in: a script controls its own
+ * result, and could make it fail as an unclonable value.
+ */
+let stubsCross: Promise<boolean> | undefined;
+
+/** A refusal to carry a stub into the loaded isolate (CellD). */
 const refusedStub = (e: unknown) =>
   (e as Error)?.name === "DataCloneError" ||
   /could not be cloned|Could not serialize|supports only Service Binding/.test(
     String((e as Error)?.message ?? e),
   );
 
-/** Runs the script with the host as a stub where stubs cross, else drives it call by call. */
-async function drive(entry: ToolEntrypoint, input: unknown, host: ToolHost): Promise<RunOutcome> {
-  if (stubsCross !== false) {
+function probeStubs(loader: WorkerLoaderLike): Promise<boolean> {
+  stubsCross ??= (async () => {
+    const worker = loader.load({
+      compatibilityDate: COMPATIBILITY_DATE,
+      mainModule: "probe.js",
+      modules: { "probe.js": PROBE },
+      env: {},
+      globalOutbound: null,
+    });
     try {
-      const outcome = await entry.run(input, host);
-      stubsCross = true;
-      return outcome;
+      const entry = worker.getEntrypoint() as unknown as {
+        accepts(stub: unknown): Promise<boolean>;
+      };
+      return (await entry.accepts(new ProbeTarget())) === true;
     } catch (e) {
-      if (stubsCross || !refusedStub(e)) throw e;
-      stubsCross = false;
+      if (refusedStub(e)) return false;
+      throw e;
+    } finally {
+      try {
+        worker.dispose?.();
+      } catch {}
     }
-  }
-  return driveByValues(entry, input, host);
+  })();
+  // A probe that failed otherwise (the loader itself) is tried again by the next run.
+  stubsCross.catch(() => {
+    stubsCross = undefined;
+  });
+  return stubsCross;
+}
+
+/** Runs the script with the host as a stub where stubs cross, else drives it call by call. */
+async function drive(
+  loader: WorkerLoaderLike,
+  entry: ToolEntrypoint,
+  input: unknown,
+  host: ToolHost,
+): Promise<RunOutcome> {
+  return (await probeStubs(loader)) ? entry.run(input, host) : driveByValues(entry, input, host);
 }
 
 /** Drives one run by plain values: answers the host calls the script waits on until it ends. */
@@ -448,7 +489,7 @@ async function runIn(
   });
   try {
     const outcome = await Promise.race([
-      drive(entry, run.input, run.host).then((r) => ({ r })),
+      drive(loader, entry, run.input, run.host).then((r) => ({ r })),
       ended.then((killed) => ({ killed })),
     ]);
     if ("killed" in outcome) {

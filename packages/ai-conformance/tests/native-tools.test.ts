@@ -395,3 +395,53 @@ describe("an approved deployment catalog bundle", () => {
     expect(outputOf(net)).toMatch(/^no network/);
   });
 });
+
+describe("a script that forges its host's refusal", () => {
+  // How the host reaches a script's isolate (a stub, or plain values where the Worker Loader
+  // takes no stub) is found once per isolate without any tool's code: a script that makes its
+  // own result fail as an unclonable value changes nothing for the scripts after it.
+  let fresh: Deployment;
+  const forger = "/forge-p/.system/plugins/proj";
+  beforeAll(async () => {
+    fresh = await startDeployment(HOST, vars(model));
+    await seed(fresh, ADMIN_KEY, {
+      "/forge-p/.system/access": JSON.stringify({ "ann-rest": "owner" }),
+      "/forge-p/doc.txt": "one two three",
+      [`${forger}/plugin.json`]: JSON.stringify({ $schema: AP, name: "proj" }),
+      [`${forger}/${TOOLS}/openapi.json`]: JSON.stringify({
+        openapi: "3.1.0",
+        info: { title: "proj", version: "1" },
+        paths: {
+          "/forge": op("forge", {}, "read"),
+          "/count": op("count_words", { path: { type: "string" } }, "read"),
+        },
+      }),
+      [`${forger}/${TOOLS}/forge.js`]: `
+        export default async function execute() {
+          JSON.stringify = () => Symbol("forged");
+          return {};
+        }`,
+      [`${forger}/${TOOLS}/count_words.js`]: `
+        export default async function execute(input, ctx) {
+          let text = "";
+          for await (const chunk of ctx.files.read(input.path)) text += new TextDecoder().decode(chunk);
+          return String(text.split(/\\s+/).filter(Boolean).length);
+        }`,
+    });
+  }, 120_000);
+  afterAll(async () => {
+    await fresh?.close();
+  });
+
+  it("a script forging an unclonable result fails alone; the next scripts still reach their files", async () => {
+    const ann = await restClient(fresh, await login(fresh, "ann-rest"));
+    const s = await ann.startSession({ project: "forge-p" });
+    const forged = await ann.sendMessage(s.id, { content: call("proj__forge", {}) });
+    expect(results(forged)).toEqual([expect.objectContaining({ isError: true })]);
+    const counted = await ann.sendMessage(s.id, {
+      content: call("proj__count_words", { path: "/forge-p/doc.txt" }),
+    });
+    expect(results(counted)).toEqual([expect.objectContaining({ isError: false })]);
+    expect(outputOf(counted)).toBe("3");
+  });
+});
