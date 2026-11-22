@@ -211,7 +211,9 @@ export function estimateRequest(
   provider: CatalogProvider,
   call: ModelCall,
 ): ModelEstimate {
-  const input = Math.ceil(JSON.stringify(call.context ?? {}).length / 3);
+  // A byte-level BPE token covers at least one byte, so the context's UTF-8 size bounds its
+  // input tokens from above, whatever the script (#179: a reservation never undercounts).
+  const input = new TextEncoder().encode(JSON.stringify(call.context ?? {})).length;
   const cap = model.maxTokens ?? 4096;
   const max = Math.min(call.maxTokens && call.maxTokens > 0 ? call.maxTokens : cap, cap);
   const c = model.cost;

@@ -239,7 +239,7 @@ export class DatabaseGate {
     ): Promise<DbServerKind> => {
       if (typeof sql !== "string") throw codedError("EINVAL", "sql must be a string");
       if (db.private) {
-        if (!isReadStatement(sql)) await this.#o.admitWrite?.(holder.project);
+        if (!isReadStatement(sql) && !freesRoom(sql)) await this.#o.admitWrite?.(holder.project);
         return "write";
       }
       // Reads never wait on an approval: one the mode does not allow is refused.
@@ -248,7 +248,7 @@ export class DatabaseGate {
         return "read";
       };
       if (isReadStatement(sql) || !db.write) return readOnly();
-      await this.#o.admitWrite?.(holder.project);
+      if (!freesRoom(sql)) await this.#o.admitWrite?.(holder.project);
       await this.#settle(holder, "write", db.name, {
         op,
         sql,
@@ -388,6 +388,17 @@ export class DatabaseGate {
       out.push({ project, database, bytes: await this.#backend(project, database).size() });
     return out;
   }
+}
+
+/**
+ * Whether a statement only makes room (DELETE, DROP): it runs over a storage limit, as
+ * deleting a file does (statewalker/statewalker-root#179). Comments and whitespace lead nothing.
+ */
+export function freesRoom(sql: string): boolean {
+  const lead = sql.replace(/^(\s+|--[^\n]*\n?|\/\*[\s\S]*?\*\/)+/, "");
+  if (!/^(delete|drop)\b/i.test(lead)) return false;
+  // One statement only: a batch could slip a write in after the delete.
+  return !/;\s*\S/.test(lead.replace(/;\s*$/, ""));
 }
 
 /** A backend's error with a code: SQL errors and db-rpc's are the caller's (EINVAL, ENOENT). */

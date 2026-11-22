@@ -176,11 +176,25 @@ export class AgentSession extends DurableObject<Env> {
       ) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         const rest = restTools(env.REST_TOOLS, async (call) => {
+          // The session's own limits on outbound requests, counted here (#179); the workspace
+          // counts its levels in gatewayFetch.
+          const scopes = this.#limits.scopes(config);
+          try {
+            this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+          } catch (e) {
+            return { ok: false, error: String((refusal(e) as Error).message), secrets: [] };
+          }
           const { warnings, ...result } = await workspace.gatewayFetch(config.capability, {
             ...call,
             turn,
           });
           for (const warning of warnings ?? []) emit({ kind: "limit_warning", warning });
+          for (const warning of this.#limits.ledger.add(
+            scopes,
+            { outbound_requests: 1 },
+            this.#limits.meta(config, turn),
+          ))
+            emit({ kind: "limit_warning", warning: warningView(warning) });
           return result;
         });
         // The tools this session is offered: a sub-agent's are within its parent's.

@@ -5,6 +5,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
+  estimateRequest,
   LimitExceeded,
   LimitLedger,
   type LimitScope,
@@ -238,5 +239,20 @@ describe("limits", () => {
     expect(ledger.records().map((r) => r.created)).toEqual([Date.UTC(2026, 2, 1)]);
     expect(ledger.used({ level: "workspace", target: "w" }, "turns", "month")).toBe(1);
     expect(ledger.used({ level: "workspace", target: "w" }, "turns", "total")).toBe(2);
+  });
+
+  it("reserves at least one token per UTF-8 byte of the context, so non-ASCII never overshoots", () => {
+    const model = { id: "m", provider: "p", maxTokens: 10, cost: { input: 1_000_000, output: 0 } };
+    const provider = { id: "p", api: "openai-completions", level: "workspace" };
+    const text = "漢字".repeat(300);
+    const e = estimateRequest(
+      model as never,
+      provider as never,
+      {
+        context: { messages: [{ role: "user", content: text }] },
+      } as never,
+    );
+    expect(e.input_tokens).toBeGreaterThanOrEqual(new TextEncoder().encode(text).length);
+    expect(e.cost).toBeGreaterThanOrEqual(text.length);
   });
 });

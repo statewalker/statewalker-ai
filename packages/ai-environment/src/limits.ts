@@ -77,6 +77,18 @@ export const isGauge = (meter: string): boolean => GAUGES.includes(meter);
  * left out; an `ask` where only `deny` applies (workspace, project, deployment) denies, and a
  * gauge counts its total whatever period is named.
  */
+/**
+ * The meters an agent session's DO counts: a session limit on another (storage, streams, sessions,
+ * outbound bytes) would never hold, so it is refused.
+ */
+export function isSessionMeter(meter: string): boolean {
+  return (
+    ["turns", "tool_calls", "model_spend", "model_tokens", "outbound_requests"].includes(meter) ||
+    meter === "executor_cpu_ms" ||
+    meter.startsWith("executor_cpu_ms:")
+  );
+}
+
 export function parseLimits(text: unknown): { limits: Limit[]; problems: string[] } {
   if (text === undefined || text === null || text === "") return { limits: [], problems: [] };
   let value: unknown = text;
@@ -115,6 +127,10 @@ export function parseLimits(text: unknown): { limits: Limit[]; problems: string[
       continue;
     }
     const level = r.level as LimitLevel;
+    if (level === "session" && !isSessionMeter(r.meter)) {
+      problems.push(`${where}: the session level does not count ${r.meter}`);
+      continue;
+    }
     let period: Period = (PERIODS as readonly unknown[]).includes(r.period)
       ? (r.period as Period)
       : "total";

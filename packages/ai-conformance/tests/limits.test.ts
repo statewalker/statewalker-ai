@@ -72,6 +72,8 @@ function projectFiles(t: string): Record<string, string> {
     [`/dbfull-${t}/.system/access`]: owner("ann"),
     [`/dbfull-${t}/.system/databases`]: JSON.stringify({ notes: {} }),
     [`/dbfull-${t}/.system/limits`]: limits({ meter: "storage_bytes", level: "project", value: 0 }),
+    [`/dbroom-${t}/.system/access`]: owner("ann"),
+    [`/dbroom-${t}/.system/databases`]: JSON.stringify({ notes: {} }),
     [`/net-${t}/.system/access`]: owner("ann"),
     [`/net-${t}/.system/limits`]: limits({
       meter: "outbound_requests",
@@ -418,6 +420,31 @@ describe.each(transports)("limits over %s", (name, connect) => {
     });
   });
 
+  it("refuses an outbound request over the session's own limit, and the agent carries on", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({
+      project: `free-${t}`,
+      limits: [{ meter: "outbound_requests", value: 1, period: "total" }],
+    });
+    const first = await ann.sendMessage(s.id, { content: "CALL fixture__call {}" });
+    expect(first.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });
+    const calls = rest.requests.length;
+    const second = await ann.sendMessage(s.id, { content: "CALL fixture__call {}" });
+    expect(second.items.find((i) => i.kind === "tool_result")).toMatchObject({
+      isError: true,
+      output: expect.stringContaining("outbound_requests"),
+    });
+    expect(rest.requests.length).toBe(calls);
+  });
+
+  it("refuses a session limit on a meter the session level does not count", async () => {
+    const ann = await as("ann");
+    for (const meter of ["storage_bytes", "streams", "sessions", "outbound_bytes"])
+      await expect(
+        ann.startSession({ project: `free-${t}`, limits: [{ meter, value: 1, period: "total" }] }),
+      ).rejects.toMatchObject({ status: 400, message: expect.stringContaining(meter) });
+  });
+
   it("refuses an outbound request over the project's limit, and the agent carries on", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project: `net-${t}` });
@@ -469,6 +496,24 @@ describe.each(transports)("limits over %s", (name, connect) => {
     await expect(db.exec(`dbfull-${t}`, "notes", "CREATE TABLE t (x)")).rejects.toMatchObject({
       message: expect.stringContaining("ENOSPC"),
     });
+  });
+
+  it("lets deletes and drops through over the storage limit, so room can be made", async () => {
+    const token = await login(deployment, u("ann"));
+    const db = t === "rest" ? restDb(deployment, token) : await rpcDb(deployment, token);
+    sockets.push(db);
+    const p = `dbroom-${t}`;
+    await db.exec(p, "notes", "CREATE TABLE t (x)");
+    await db.exec(p, "notes", "INSERT INTO t VALUES (1), (2)");
+    // Now the project is over its limit.
+    await seed(deployment, ADMIN_KEY, {
+      [`/${p}/.system/limits`]: limits({ meter: "storage_bytes", level: "project", value: 0 }),
+    });
+    await expect(db.exec(p, "notes", "INSERT INTO t VALUES (3)")).rejects.toMatchObject({
+      message: expect.stringContaining("ENOSPC"),
+    });
+    await db.exec(p, "notes", "DELETE FROM t");
+    await db.exec(p, "notes", "DROP TABLE t");
   });
 
   it("answers 429 to a stream over the member's limit on concurrent streams, until one ends", async () => {
