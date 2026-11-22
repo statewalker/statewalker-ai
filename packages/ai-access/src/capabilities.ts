@@ -63,6 +63,25 @@ export interface SubAgentGrant {
   modes?: string[];
 }
 
+/** A database action: `db.read`, `db.write` (DML and DDL) or `db.admin` (create and drop). */
+export type DatabaseAction = "read" | "write" | "admin";
+
+/** A database action of a holder, with the facts the Workspace DO knows when it happens. */
+export interface DatabaseRequest {
+  action: DatabaseAction;
+  /** The database's name in its project. */
+  database: string;
+  project: string;
+  /** What the member's roles grant in the project now (none for a non-member). */
+  grants: readonly RoleGrant[];
+}
+
+/** The plugin tool a capability was narrowed for (statewalker/statewalker-root#81, #136). */
+export interface ToolGrant {
+  plugin: string;
+  tool: string;
+}
+
 /** What an agent session's capability says: its user (root-signed) and its grant. */
 export interface AgentSessionFacts extends AgentSessionGrant {
   user: string;
@@ -73,6 +92,8 @@ export interface AgentSessionFacts extends AgentSessionGrant {
   lineage?: string[];
   /** The modes the sub-agent blocks add, each one only stricter (outermost first). */
   modes?: string[];
+  /** The plugin tool the capability was narrowed for, by a block the workspace signed. */
+  tool?: ToolGrant;
 }
 
 /** How a Workspace DO's authority is told about its revocation list. */
@@ -110,6 +131,19 @@ const SUB_AGENT_BLOCK = `agent_session({session});
 parent_session({parent});
 agent({agent});`;
 const SUB_AGENT_FACTS = ["agent_session", "parent_session", "agent"] as const;
+
+// A plugin tool's block, signed by the workspace's key as a third-party block: the tool's
+// databases (`<plugin>:<name>`) are reached only with it. It adds no check: the session's blocks
+// still bind the tool to the project, and revoking the session stops it.
+const TOOL_BLOCK = `tool_plugin({plugin});
+tool_name({tool});`;
+const TOOL_FACTS = ["tool_plugin", "tool_name"] as const;
+/** A plugin's name and a tool's (an operationId), as definitions name them. */
+const PLUGIN_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const TOOL_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+/** A database action's facts: every resource is the project's folder itself. */
+const DATABASE_FACTS = `resource({root});
+root({root});`;
 const MODE_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const hex = (bytes: Uint8Array) => [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -270,6 +304,20 @@ export class WorkspaceAuthority {
     const modes: string[] = [];
     for (const later of verified.token.blocks.slice(2)) {
       if (later.externalKey !== this.#externalKey) continue;
+      // A tool's capability is narrowed no further by the workspace.
+      if (facts.tool) throw codedError("EACCES", "not an agent session's capability");
+      if (later.facts.some((f) => f.predicate.name === "tool_plugin")) {
+        const tool: Record<string, string> = {};
+        for (const name of TOOL_FACTS) {
+          const found = later.facts.filter((f) => f.predicate.name === name);
+          const t = found[0]?.predicate.terms[0] as Term | undefined;
+          if (found.length !== 1 || found[0]?.predicate.terms.length !== 1 || t?.t !== "str")
+            throw codedError("EACCES", "not an agent session's capability");
+          tool[name] = t.v;
+        }
+        facts.tool = { plugin: String(tool.tool_plugin), tool: String(tool.tool_name) };
+        continue;
+      }
       const sub: Record<string, string> = {};
       for (const name of SUB_AGENT_FACTS) {
         const found = later.facts.filter((f) => f.predicate.name === name);
@@ -335,6 +383,54 @@ export class WorkspaceAuthority {
       },
     );
     return token.appendThirdParty(block).toBase64();
+  }
+
+  /**
+   * The capability of one plugin tool of an agent session (statewalker/statewalker-root#81): the
+   * session's capability with one more block, which this workspace signs, naming the plugin and
+   * the tool. It reaches what the session reaches, and the plugin's own databases besides; the
+   * agent never holds it. The caller (the Workspace DO) checks the tool is one the session may call.
+   */
+  async forTool(agentCapability: string, grant: ToolGrant): Promise<string> {
+    const facts = await this.agentSessionOf(agentCapability);
+    if (facts.tool) throw codedError("EACCES", "a tool's capability is narrowed no further");
+    if (!PLUGIN_NAME.test(String(grant.plugin)) || !TOOL_NAME.test(String(grant.tool)))
+      throw codedError("EINVAL", "a tool is named by its plugin and its name");
+    const token = Biscuit.fromBase64(agentCapability);
+    const block = thirdPartyBlock(token.thirdPartyRequest(), this.#keys.secretKey, TOOL_BLOCK, 0, {
+      plugin: grant.plugin,
+      tool: grant.tool,
+    });
+    return token.appendThirdParty(block).toBase64();
+  }
+
+  /**
+   * Authorizes one database action under a capability: allowed when one of the member's roles
+   * grants `db.<action>` on the database's name, within that role's checks, and every block of the
+   * capability agrees (an agent session's binds it to its own project); EACCES otherwise.
+   */
+  async authorizeDatabase(capability: string, req: DatabaseRequest): Promise<void> {
+    let ok = false;
+    try {
+      const verified = await this.#verify(capability);
+      if (!NAME.test(req.project)) throw codedError("EACCES", "no such project");
+      const extra = { code: DATABASE_FACTS, params: { root: `/${req.project}/` } };
+      ok = req.grants.some((grant) => {
+        const { code, params } = roleAuthorizer(
+          grant,
+          { area: "db", action: req.action, target: req.database },
+          extra,
+        );
+        try {
+          return verified.authorize(code, { params }).kind === "ok";
+        } catch {
+          return false;
+        }
+      });
+    } catch {
+      ok = false;
+    }
+    if (!ok) throw codedError("EACCES", `may not ${req.action} database '${req.database}'`);
   }
 
   /**

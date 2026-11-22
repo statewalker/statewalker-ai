@@ -8,6 +8,7 @@ import {
   verifyAccessToken,
 } from "@statewalker/ai-access";
 import type { AgentSession } from "./agent-session-do.js";
+import type { Database } from "./database-do.js";
 import type { Issuer } from "./issuer-do.js";
 import type { Profiles } from "./profiles-do.js";
 import type { User } from "./user-do.js";
@@ -20,6 +21,8 @@ export interface Env {
   USER: DurableObjectNamespace<User>;
   PROFILES: DurableObjectNamespace<Profiles>;
   AGENT: DurableObjectNamespace<AgentSession>;
+  /** One DO per database, `<workspace>/<project>/<database>`, reached only from its Workspace DO. */
+  DATABASE: DurableObjectNamespace<Database>;
   /** The workspaces this deployment serves, comma-separated; the first is the default. */
   WORKSPACES?: string;
   /**
@@ -53,6 +56,14 @@ export interface Env {
   PERMISSION_RULES?: string;
   /** The deployment's own modes, JSON `{name: definition}`, beside the built-in ones. */
   MODES?: string;
+  /**
+   * Auto mode's risk classifier (statewalker/statewalker-root#137), JSON `{model?, timeout_ms?,
+   * max_tokens?, max_denials_in_row?, max_denials?, protected?}`: the classifier's model (one the
+   * deployment's MODELS configures; none: every classified action denies), its timeout (5000 ms)
+   * and token cap (256), the denials after which a session falls back to `default` (3 in a row, 20
+   * in all), and the paths (relative to each project) writes to which are never a safe class.
+   */
+  AUTO_MODE?: string;
   /** How long a pending approval waits before it counts as denied (default 24 hours). */
   APPROVAL_TTL_MS?: string;
   /**

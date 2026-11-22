@@ -1,7 +1,21 @@
 // The environment: the workspace store, the gated file view and the file protocol to it, secrets
-// and the model gateway. Later tickets add databases, search, executors and tools
+// the model gateway and databases. Later tickets add search, executors and tools
 // (statewalker/statewalker-root#111).
 
+export {
+  DATABASES_FILE,
+  type DatabaseAction,
+  type DatabaseDeclaration,
+  DB_RPC_METHODS,
+  type DbRpcMethod,
+  decodeDatabaseAction,
+  encodeDatabaseAction,
+  formatDatabases,
+  isDatabaseName,
+  isReadStatement,
+  parseDatabases,
+  privateDatabaseOf,
+} from "./databases.js";
 export {
   FILES_RPC_METHODS,
   type FilesRpcCall,
@@ -29,6 +43,9 @@ export {
   approvalAware,
   approvalError,
   approvalOf,
+  type ClassifiedVerdict,
+  type GateDecision,
+  type GateStep,
   type ModeGate,
   type ModeVerdict,
   modeGated,

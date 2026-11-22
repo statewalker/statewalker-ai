@@ -31,7 +31,7 @@ describe("built-in roles", () => {
       ["files", "write", "/a"],
       ["comments", "write", "/a"],
       ["tools", "call", "search"],
-      ["db", "admin", "main"],
+      ["db", "write", "main"],
       ["models", "use", "fast"],
       ["memory", "write", "project"],
       ["memory", "write", "agent"],

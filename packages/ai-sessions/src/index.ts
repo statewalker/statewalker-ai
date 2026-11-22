@@ -24,10 +24,13 @@ export {
   type ApprovalView,
   type CreatedServiceAccount,
   createSessionApi,
+  type DatabaseCall,
+  type DatabaseView,
   type DeleteSecretRequest,
   type Delivery,
   type EventsPage,
   type EventsQuery,
+  type GateDecisionInput,
   type Item,
   type ItemInput,
   type ItemsPage,
@@ -99,6 +102,12 @@ export {
   type TrimStrategy,
   trimToolResult,
 } from "./context/trim.js";
+export {
+  type DatabasesRpcConnection,
+  databasesRpcClient,
+  handleDatabasesRest,
+  serveDatabasesRpc,
+} from "./databases.js";
 export {
   type FilesRpcConnection,
   filesRpcClient,

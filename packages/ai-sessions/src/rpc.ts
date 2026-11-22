@@ -39,6 +39,7 @@ const METHODS = [
   "listModels",
   "getModelConfig",
   "setModelConfig",
+  "listDatabases",
 ] as const;
 type Method = (typeof METHODS)[number];
 type Channel = Pick<SessionApi, Method> & { authenticate(token: string): Promise<UserSessionView> };

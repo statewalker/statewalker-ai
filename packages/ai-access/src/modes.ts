@@ -40,6 +40,11 @@ export interface ModeDefinition {
   asks?: "allow" | "deny";
   /** Why this mode asks about an action no rule matches, shown with the approval. */
   askReason?: string;
+  /**
+   * Whether the risk classifier decides what no rule and no safe class settles (`auto`,
+   * statewalker/statewalker-root#96); without it, such actions get `otherwise`.
+   */
+  classifier?: boolean;
 }
 
 /** The mode a new user session starts in. */
@@ -87,9 +92,10 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
     askReason: "default mode asks before changing anything",
   },
   acceptEdits: {
-    rules: { allow: [...READS, "files.write", "comments.write"] },
+    // Database writes are edits too (statewalker/statewalker-root#81).
+    rules: { allow: [...READS, "files.write", "comments.write", "db.write"] },
     otherwise: "ask",
-    askReason: "acceptEdits mode allows file edits; deletes and other actions ask",
+    askReason: "acceptEdits mode allows file and database edits; deletes and other actions ask",
   },
   plan: {
     rules: { allow: [...READS, "files.write:{folders}", "files.delete:{folders}"] },
@@ -98,8 +104,13 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
     askReason:
       "plan mode writes only in {folders}: allow to widen access, or switch to a writing mode",
   },
-  // A risk classifier decides in `auto` (#96); until it exists (#137), `auto` is `default`.
-  auto: { extends: "default" },
+  // The risk classifier decides in `auto` what no rule and no safe class settles (#96, #137); where
+  // no classifier runs (a sub-agent's own modes), `auto` asks as `default` does.
+  auto: {
+    extends: "default",
+    classifier: true,
+    askReason: "auto mode's risk classifier asks before this action",
+  },
   bypassPermissions: { otherwise: "allow", asks: "allow" },
   dontAsk: {
     rules: { allow: READS },
@@ -118,6 +129,7 @@ export interface ResolvedMode {
   otherwise: Verdict;
   asks?: "allow" | "deny";
   askReason?: string;
+  classifier?: boolean;
 }
 
 type CompiledRule = { permission: Permission } | { tool: string };
@@ -197,6 +209,7 @@ function resolve(
     otherwise: merged.otherwise ?? "ask",
     ...(merged.asks ? { asks: merged.asks } : {}),
     ...(askReason ? { askReason } : {}),
+    ...(merged.classifier ? { classifier: true } : {}),
   };
 }
 
@@ -284,6 +297,28 @@ export function decideMode(
   req: ModeRequest,
   { mode, layers }: { mode: ResolvedMode; layers: readonly RuleLayer[] },
 ): ModeDecision {
+  let decision: ModeDecision = matchRules(req, { mode, layers }) ?? {
+    verdict: mode.otherwise,
+    source: "mode",
+    reason: mode.askReason ?? `the ${mode.name} mode's verdict for unmatched actions`,
+  };
+  if (decision.verdict === "ask" && mode.asks)
+    decision = {
+      verdict: mode.asks,
+      source: decision.source,
+      reason: `${mode.name} mode ${mode.asks === "allow" ? "never asks" : "denies instead of asking"}`,
+    };
+  return decision;
+}
+
+/**
+ * The decision of the first rule that matches, of the mode's own and every layer's (deny beats
+ * ask, ask beats allow); undefined when no rule matches.
+ */
+export function matchRules(
+  req: ModeRequest,
+  { mode, layers }: { mode: ResolvedMode; layers: readonly RuleLayer[] },
+): ModeDecision | undefined {
   const sources: Record<Verdict, string | undefined> = {
     deny: undefined,
     ask: undefined,
@@ -297,22 +332,10 @@ export function decideMode(
         sources[verdict] ??= layer.source;
   }
   const found = VERDICTS.find((v) => sources[v] !== undefined);
-  let decision: ModeDecision = found
-    ? {
-        verdict: found,
-        source: sources[found] as string,
-        reason: `a ${found} rule of the ${sources[found] === "mode" ? `${mode.name} mode` : sources[found]}`,
-      }
-    : {
-        verdict: mode.otherwise,
-        source: "mode",
-        reason: mode.askReason ?? `the ${mode.name} mode's verdict for unmatched actions`,
-      };
-  if (decision.verdict === "ask" && mode.asks)
-    decision = {
-      verdict: mode.asks,
-      source: decision.source,
-      reason: `${mode.name} mode ${mode.asks === "allow" ? "never asks" : "denies instead of asking"}`,
-    };
-  return decision;
+  if (!found) return undefined;
+  return {
+    verdict: found,
+    source: sources[found] as string,
+    reason: `a ${found} rule of the ${sources[found] === "mode" ? `${mode.name} mode` : sources[found]}`,
+  };
 }
