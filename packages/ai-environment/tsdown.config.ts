@@ -7,6 +7,7 @@ export default defineConfig({
     "src/webllm.ts",
     "src/code-engines.ts",
     "src/pyodide.ts",
+    "src/wasmer.ts",
   ],
   unbundle: true,
   format: ["esm"],
