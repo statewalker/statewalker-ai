@@ -191,6 +191,7 @@ export {
   cleanAttributes,
   codeOfError,
   createTelemetry,
+  ERROR_CODES,
   type LogRecord,
   type MetricRecord,
   NO_TELEMETRY,

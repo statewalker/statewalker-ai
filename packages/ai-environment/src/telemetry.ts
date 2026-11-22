@@ -21,8 +21,6 @@ const NAME = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/;
  * never a path (a target starting with `/`).
  */
 const PERMISSION = /^[a-z][a-z0-9_.-]{0,63}(:[A-Za-z0-9_.-][A-Za-z0-9_./-]{0,127})?$/;
-/** An error code: `E` and capitals (`EACCES`, `ELIMIT`). */
-const CODE = /^E[A-Z0-9_]{1,31}$/;
 
 /**
  * The attributes telemetry may carry (the decision's list: internal ids, model and provider, token
@@ -87,7 +85,7 @@ function fits(kind: Kind, value: unknown): boolean {
     case "permission":
       return typeof value === "string" && PERMISSION.test(value);
     case "code":
-      return typeof value === "string" && CODE.test(value);
+      return typeof value === "string" && ERROR_CODES.has(value);
     case "count":
       return typeof value === "number" && Number.isInteger(value) && value >= 0;
     case "number":
@@ -464,10 +462,37 @@ export function createTelemetry(options: TelemetryOptions): Telemetry {
   };
 }
 
-/** An error's code (`EACCES`), never its message. */
-export function codeOfError(error: unknown): string | undefined {
+/**
+ * The harness's own error codes: the only ones telemetry keeps. A message's first word is free
+ * text (a tool's or a provider's), so a code is taken from it, or from an error's `code`, only
+ * when it is one of these; anything else is `EIO`.
+ */
+export const ERROR_CODES: ReadonlySet<string> = new Set([
+  "EACCES",
+  "EAPPROVAL",
+  "EAUTH",
+  "EBUSY",
+  "EEXIST",
+  "EINTR",
+  "EINVAL",
+  "EIO",
+  "EISDIR",
+  "ELIMIT",
+  "ENOENT",
+  "ENOSPC",
+  "ENOSYS",
+  "ENOTDIR",
+  "EPERM",
+  "EPROTO",
+  "ERATELIMITED",
+  "ETIMEDOUT",
+]);
+
+/** An error's code (`EACCES`), one of the harness's own (`ERROR_CODES`), never its message. */
+export function codeOfError(error: unknown): string {
   const code = (error as { code?: unknown })?.code;
-  if (typeof code === "string" && CODE.test(code)) return code;
+  if (typeof code === "string" && ERROR_CODES.has(code)) return code;
   const message = String((error as Error)?.message ?? error ?? "");
-  return /^(E[A-Z0-9_]{1,31})\b/.exec(message)?.[1] ?? "EIO";
+  const word = /^(E[A-Z0-9_]{1,31})\b/.exec(message)?.[1];
+  return word && ERROR_CODES.has(word) ? word : "EIO";
 }

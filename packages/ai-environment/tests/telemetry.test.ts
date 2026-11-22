@@ -85,6 +85,24 @@ describe("traces", () => {
     expect(JSON.stringify(c.batches)).not.toMatch(/secret-plans|hunter2/);
   });
 
+  it("takes an error code only from the harness's own codes, never a word of free text", async () => {
+    const c = collector();
+    const t = createTelemetry({ exporter: c.exporter });
+    const fail = (e: unknown) => t.span("tool.call", {}, () => Promise.reject(e)).catch(() => {});
+    await fail(new Error("EBITDA_Q3_TARGET is 42M"));
+    await fail(new Error("ENOENT: no such file '/alpha/x.md'"));
+    await fail(Object.assign(new Error("the provider is down"), { code: "ETIMEDOUT" }));
+    await fail(Object.assign(new Error("x"), { code: "ESECRETWORD" }));
+    await t.flush();
+    expect(c.spans().map((s) => s.attributes["error.code"])).toEqual([
+      "EIO",
+      "ENOENT",
+      "ETIMEDOUT",
+      "EIO",
+    ]);
+    expect(JSON.stringify(c.batches)).not.toContain("EBITDA");
+  });
+
   it("keeps the sampled share of spans", async () => {
     const c = collector();
     const low = createTelemetry({ exporter: c.exporter, random: () => 0.1 });

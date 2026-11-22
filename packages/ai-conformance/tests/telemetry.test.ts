@@ -35,6 +35,7 @@ const SECRET = "secret-value-q8z3k1";
 const FILE_TEXT = "file-content-w4v7p2 the plans";
 const MEMORY_TEXT = "memory-entry-m5n9r6 remembered";
 const MESSAGE_TEXT = "message-text-h2j6t8 from the user";
+const BOOM = "EBOOM_TARGET_Z7X4";
 const EMAIL = (t: string) => `eve.${t}@example.com`;
 
 const op = (id: string, props: Record<string, unknown>) => ({
@@ -57,6 +58,7 @@ const projectPlugin = (root: string) => ({
     paths: {
       "/peek": op("peek", { path: { type: "string" } }),
       "/scribble": op("scribble", { path: { type: "string" } }),
+      "/boom": op("boom", {}),
     },
   }),
   [`${root}/proj/${TOOLS}/peek.js`]: `
@@ -64,6 +66,11 @@ const projectPlugin = (root: string) => ({
       let text = "";
       for await (const chunk of ctx.files.read(input.path)) text += new TextDecoder().decode(chunk);
       return text;
+    }`,
+  // Fails with a message whose first word looks like an error code: it is free text all the same.
+  [`${root}/proj/${TOOLS}/boom.js`]: `
+    export default async function execute() {
+      throw new Error("${BOOM} the quarterly target");
     }`,
   // Says it only reads, and writes: the gate asks about the write, which a tool cannot wait for.
   [`${root}/proj/${TOOLS}/scribble.js`]: `
@@ -179,6 +186,7 @@ describe.each(transports)("telemetry over %s", (name, connect) => {
           call("read", { path: `/${project}/plans.md` }),
           call("proj__peek", { path: `/${project}/plans.md` }),
           call("fixture__echo", {}),
+          call("proj__boom", {}),
           call("memory", {
             kind: "project",
             actions: [{ op: "add", body: MEMORY_TEXT, title: "kept" }],
@@ -191,7 +199,8 @@ describe.each(transports)("telemetry over %s", (name, connect) => {
         isError?: boolean;
       }[];
       // The turn did hold every one of them.
-      expect(results.map((r) => r.isError)).toEqual([false, false, false, false]);
+      expect(results.map((r) => r.isError)).toEqual([false, false, false, true, false]);
+      expect(String(results[3]?.output)).toContain(BOOM);
       expect(String(results[0]?.output)).toContain(FILE_TEXT);
       expect(String(results[1]?.output)).toContain(FILE_TEXT);
       // The secret went out in the tool's request (the gateway masks it in the answer).
@@ -209,7 +218,15 @@ describe.each(transports)("telemetry over %s", (name, connect) => {
         ),
       );
       const exported = collector.text();
-      for (const value of [SECRET, FILE_TEXT, MEMORY_TEXT, MESSAGE_TEXT, EMAIL(t), "plans.md"])
+      for (const value of [
+        SECRET,
+        FILE_TEXT,
+        MEMORY_TEXT,
+        MESSAGE_TEXT,
+        EMAIL(t),
+        "plans.md",
+        BOOM,
+      ])
         expect(exported).not.toContain(value);
       expect(exported).not.toContain("w4v7p2");
       expect(exported).not.toContain("m5n9r6");
