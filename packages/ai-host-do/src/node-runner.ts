@@ -156,6 +156,7 @@ for (const [names, source] of [
 const NODE_MAIN = `
 import { WorkerEntrypoint } from "cloudflare:workers";
 import "./harden.js";
+import main from "./tool.js";
 
 const controller = new AbortController();
 ${PLUMBING}
@@ -221,7 +222,7 @@ export default class extends WorkerEntrypoint {
     define("__harness", { host, console, cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
     let exitCode = 0;
     try {
-      await import("./tool.js");
+      await main();
       exitCode = Number(proc.exitCode ?? 0) || 0;
     } catch (e) {
       if (e instanceof Exit) exitCode = Number(e.code) || 0;
@@ -273,7 +274,17 @@ export async function bundleNodeScript(
       "EACCES",
       `${script} reaches outside what a node script in an isolate may: ${problems.join("; ")}`,
     );
-  return code;
+  return asFunction(code);
+}
+
+/**
+ * The bundle as one async function, the module's default export: the script's top level runs
+ * when the run calls it, not when the isolate loads its modules (workerd refuses I/O and timers in
+ * a module's global scope). A script's own exports are dropped: nothing imports it.
+ */
+function asFunction(code: string): string {
+  const body = code.replace(/\nexport\s*\{[^}]*\};?\s*$/, "\n");
+  return `export default async function main() {\n${body}\n}\n`;
 }
 
 /** The most a script reads at once, and lists, through its host. */
