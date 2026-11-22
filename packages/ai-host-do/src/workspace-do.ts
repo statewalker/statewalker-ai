@@ -18,6 +18,7 @@ import {
   classifierPrompt,
   classifierTranscript,
   codedError,
+  codeOf,
   DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
   DenialCounter,
@@ -71,6 +72,7 @@ import {
   checkUserProvider,
   deploymentSecrets,
   discoverModels,
+  estimateRequest,
   FilesRpcHost,
   type FilesRpcMethod,
   type GateDecision,
@@ -80,11 +82,15 @@ import {
   gatewayFetch,
   IGNORE_FILE,
   ignoreRules,
+  type Limit,
+  lookupModel,
   type ModeGate,
   type ModelCall,
   type ModelCatalog,
   ModelGateway,
   type ModelLevel,
+  type ModelMeter,
+  type ModelRequestMeta,
   type ModelResponse,
   type ModelRight,
   type ModelsConfig,
@@ -99,6 +105,7 @@ import {
   SecretStore,
   type StoredLevel,
   sessionSecrets,
+  withDelay,
 } from "@statewalker/ai-environment";
 import type {
   AgentRun,
@@ -127,6 +134,13 @@ import {
   nameOf,
   verifyToken,
 } from "./env.js";
+import {
+  meteredFiles,
+  refusal,
+  type WarningView,
+  WorkspaceLimits,
+  warningView,
+} from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { mountWorkspace } from "./workspace-store.js";
 
@@ -160,6 +174,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #definitions: DefinitionsStore;
   readonly #models: ModelStore;
   readonly #databases: DatabaseGate;
+  /** The workspace's, its projects' and its members' limits and counters (#179). */
+  readonly #limits: WorkspaceLimits;
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -201,6 +217,9 @@ export class Workspace extends DurableObject<Env> {
           .toArray().length > 0,
     });
     this.#sqlRoles = new SqlRoleSource(sql);
+    this.#limits = new WorkspaceLimits(sql, env, this.#name, async (path) =>
+      tryReadText(await this.#store, path),
+    );
     const files = fileRoleSource(
       async (path) => tryReadText(await this.#store, path),
       DEFAULT_SYSTEM_FOLDER,
@@ -239,6 +258,9 @@ export class Workspace extends DurableObject<Env> {
       classify: async (facts, request) => this.#classify(facts, await this.#store, request),
       record: (facts, decision) => this.#record(facts, decision),
       mayCallTool: (facts, tool) => this.#mayCallTool(facts, tool),
+      // A write over a storage limit fails with ENOSPC; queries still run (#179).
+      admitWrite: async (project) =>
+        this.#limits.admitStorage(project, 1, await this.#store, () => this.#databases.storage()),
     });
   }
 
@@ -376,6 +398,8 @@ export class Workspace extends DurableObject<Env> {
       agentModels: agent?.models ?? [],
       right: this.#modelRight(access.grants),
     });
+    // An active session counts against the limits on sessions (429 over them, #179).
+    await this.#limits.startSession(project, user, String(req.session));
     this.#models.pin(String(req.session), user, project, models);
     for (const p of plugins) this.#definitions.keep(p);
     this.#definitions.pin(
@@ -385,14 +409,18 @@ export class Workspace extends DurableObject<Env> {
       plugins.map((p) => ({ name: p.name, hash: p.hash })),
       run,
     );
-    return run
-      ? {
-          agent: run.id,
-          run: agentRun(run),
-          model: models.model,
-          plugins: plugins.map((p) => p.name),
-        }
-      : { agent: "default", model: models.model, plugins: plugins.map((p) => p.name) };
+    const limits = await this.#limits.sessionLimits(project);
+    const ownKeys = [models.model, ...models.fallbacks].some((id) => {
+      const m = lookupModel(models.catalog, id);
+      return m && models.catalog.providers[m.provider]?.level === "user";
+    });
+    return {
+      ...(run ? { agent: run.id, run: agentRun(run) } : { agent: "default" }),
+      model: models.model,
+      plugins: plugins.map((p) => p.name),
+      ...(limits.length ? { limits } : {}),
+      ...(ownKeys ? { ownKeys: true } : {}),
+    };
   }
 
   // --- the model gateway (statewalker/statewalker-root#105, #134) ------------------------------
@@ -480,8 +508,9 @@ export class Workspace extends DurableObject<Env> {
         : undefined;
     const gateway = new ModelGateway({
       secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
-      // The budget records every request; limits reserve and refuse in `admit` (#179).
-      meter: { record: (usage, meta) => this.#models.record(usage, meta) },
+      // The budget records every request; limits reserve its worst case in `admit` and settle it
+      // in `record` (#179).
+      meter: this.#modelMeter(facts.project, facts.user),
     });
     return gateway.request(
       found.pinned,
@@ -498,6 +527,95 @@ export class Workspace extends DurableObject<Env> {
         project: facts.project,
       },
     );
+  }
+
+  /**
+   * The worst case of an agent session's next model request (statewalker/statewalker-root#179),
+   * over every model it may run on (the one asked for, the session's and its fallbacks): what the
+   * session reserves against its own limits, and, for the user's own keys, against the user's.
+   */
+  async modelEstimate(
+    capability: string,
+    call: ModelCall,
+  ): Promise<{ worst: Record<string, number>; own?: Record<string, number> }> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    const found = this.#models.pinned(facts.session);
+    if (!found || found.user !== facts.user || found.project !== facts.project)
+      throw codedError("ENOENT", "the agent session pinned no model");
+    const { catalog } = found.pinned;
+    const ids = [
+      ...(typeof call.model === "string" && call.model ? [call.model] : []),
+      found.pinned.model,
+      ...found.pinned.fallbacks,
+    ];
+    const worst: Record<string, number> = { model_tokens: 0 };
+    let own: Record<string, number> | undefined;
+    for (const id of ids) {
+      const model = lookupModel(catalog, id);
+      const provider = model ? catalog.providers[model.provider] : undefined;
+      if (!model || !provider) continue;
+      const e = estimateRequest(model, provider, {
+        context: call.context,
+        ...(typeof call.maxTokens === "number" ? { maxTokens: call.maxTokens } : {}),
+      });
+      const amounts = { model_tokens: e.input_tokens + e.max_tokens, model_spend: e.cost ?? 0 };
+      if (e.own_key) own ??= { model_tokens: 0 };
+      for (const into of e.own_key && own ? [worst, own] : [worst])
+        for (const [k, v] of Object.entries(amounts)) into[k] = Math.max(into[k] ?? 0, v);
+    }
+    return { worst, ...(own ? { own } : {}) };
+  }
+
+  /**
+   * The workspace's side of model spend (statewalker/statewalker-root#179): the worst case of each
+   * request is reserved against the workspace (and the deployment's ceilings), the project and the
+   * member before the model is asked, and settled to the real cost after. The user's own key is
+   * charged to the user (their User DO), not here.
+   */
+  #modelMeter(project: string, user: string): ModelMeter {
+    return {
+      admit: async (_model, meta, estimate) => {
+        if (estimate.own_key) return undefined;
+        const scopes = await this.#limits.scopes(project, user);
+        const amounts = {
+          model_tokens: estimate.input_tokens + estimate.max_tokens,
+          ...(estimate.cost ? { model_spend: estimate.cost } : {}),
+        };
+        try {
+          return await withDelay(() =>
+            this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
+          );
+        } catch (e) {
+          throw refusal(e);
+        }
+      },
+      record: (usage, meta, admitted) => {
+        this.#models.record(usage, meta);
+        const id = (admitted as { id?: string } | undefined)?.id;
+        if (!id) return [];
+        return this.#limits.ledger
+          .settle(
+            id,
+            {
+              model_tokens: usage.input_tokens + usage.output_tokens,
+              ...(usage.cost ? { model_spend: usage.cost } : {}),
+            },
+            this.#modelUsageMeta(meta),
+            {
+              model: usage.model,
+              input_tokens: usage.input_tokens,
+              output_tokens: usage.output_tokens,
+              cached_tokens: usage.cached_tokens,
+              outcome: usage.outcome,
+            },
+          )
+          .map(warningView);
+      },
+    };
+  }
+
+  #modelUsageMeta(meta: ModelRequestMeta) {
+    return this.#limits.meta(meta.project, meta.user, meta.session, meta.turn);
   }
 
   /**
@@ -622,7 +740,7 @@ export class Workspace extends DurableObject<Env> {
    * unless the user granted that exact action.
    */
   async #fileView(capability: string) {
-    const raw = await this.#store;
+    const raw = this.#meteredStore(await this.#store);
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
     const store = agent ? await this.#withDefinitions(raw, agent) : raw;
@@ -648,6 +766,19 @@ export class Workspace extends DurableObject<Env> {
         : {}),
     };
     return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
+  }
+
+  /**
+   * The store as file views write to it: every change counts against the storage limits of the
+   * project it lands in, and fails with ENOSPC over one (statewalker/statewalker-root#179).
+   */
+  #meteredStore(store: FilesApi): FilesApi {
+    return meteredFiles(store, {
+      ensure: (project) => this.#limits.ensureStorage(project, store),
+      admit: (project, delta) =>
+        this.#limits.admitStorage(project, delta, store, () => this.#databases.storage()),
+      adjust: (project, delta) => this.#limits.adjustStorage(project, "", delta, store),
+    });
   }
 
   /**
@@ -836,7 +967,8 @@ export class Workspace extends DurableObject<Env> {
         });
         const gateway = new ModelGateway({
           secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
-          meter: { record: (usage, meta) => this.#models.record(usage, meta) },
+          // The classifier spends the workspace's budget like any request (#179).
+          meter: this.#modelMeter(facts.project, facts.user),
         });
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<"timeout">((ok) => {
@@ -945,6 +1077,95 @@ export class Workspace extends DurableObject<Env> {
     return this.#authority.forTool(agentCapability, tool);
   }
 
+  // --- limits (statewalker/statewalker-root#179) -----------------------------------------------
+
+  /**
+   * Charges one of an agent session's flow meters (turns, tool calls, executor time) to its
+   * workspace, project and member, at once: ELIMIT when a limit refuses. The warnings crossed are
+   * answered, for the session's items and events.
+   */
+  async chargeUsage(
+    capability: string,
+    call: { meter: string; amount: number; turn?: string; detail?: Record<string, unknown> },
+  ): Promise<WarningView[]> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    const amount = Number(call.amount);
+    if (!["turns", "tool_calls"].includes(call.meter) && !/^executor_cpu_ms(:|$)/.test(call.meter))
+      throw codedError("EINVAL", `an agent session does not charge ${call.meter}`);
+    if (!(amount > 0)) return [];
+    const turn = this.#turnOf(facts.session, call.turn);
+    const warnings = await this.#limits.charge(
+      facts.project,
+      facts.user,
+      { [call.meter]: amount },
+      this.#limits.meta(facts.project, facts.user, facts.session, turn),
+      call.detail,
+    );
+    return warnings.map(warningView);
+  }
+
+  /** A turn id of the session's own, or none. */
+  #turnOf(session: string, turn: unknown): string | undefined {
+    return typeof turn === "string" && turn.startsWith(`${session}.tu-`) ? turn : undefined;
+  }
+
+  /** Holds one of a user's streams (an SSE stream, a long poll): ELIMIT (429) over a limit. */
+  async holdStream(userCapability: string, id: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    await this.#limits.holdStream(user, String(id));
+  }
+
+  /** Releases one of the user's streams. */
+  async releaseStream(userCapability: string, id: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    await this.#limits.releaseStream(user, String(id));
+  }
+
+  /**
+   * An agent session of this user ended (archived, revoked or deleted), told by their User DO
+   * with the user capability: it stops counting against the limits on sessions.
+   */
+  async sessionsEnded(userCapability: string, sessions: string[]): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    for (const session of Array.isArray(sessions) ? sessions.map(String) : []) {
+      const pinned = this.#models.pinned(session);
+      if (pinned && pinned.user === user) await this.#limits.endSession(session);
+    }
+  }
+
+  /**
+   * Raises a member limit that asked by one increment, once the user approved it: the approval
+   * the user granted at this gate (their User DO pushed it) is consumed, so a raise happens only
+   * with the user's answer, and once (statewalker/statewalker-root#179).
+   */
+  async raiseLimit(
+    capability: string,
+    raise: { approval: string; key: string; increment: number },
+  ): Promise<void> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    let ref: unknown[];
+    try {
+      ref = JSON.parse(String(raise.key)) as unknown[];
+    } catch {
+      throw codedError("EINVAL", "no such limit");
+    }
+    if (ref[0] !== "member" || ref[1] !== facts.user)
+      throw codedError("EACCES", "only the session's own member limit is raised here");
+    if (!this.#registry.consume(String(raise.approval), facts.session, facts.user))
+      throw codedError("EACCES", "the user did not approve raising this limit");
+    // The increment is the limit's own (what it says now), never the caller's word.
+    const limit = (await this.#limits.scopes(facts.project, facts.user))
+      .find((s) => s.level === "member")
+      ?.limits.find((l) => l.meter === ref[2] && l.period === ref[3]);
+    if (!limit) throw codedError("ENOENT", "no such limit");
+    this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
+  }
+
+  /** Test-only: the workspace's usage records after a seq. */
+  async usageRecords(since = 0) {
+    return this.#limits.ledger.records(Number(since) || 0);
+  }
+
   // --- tools (statewalker/statewalker-root#90, #129) -------------------------------------------
 
   /**
@@ -1048,8 +1269,8 @@ export class Workspace extends DurableObject<Env> {
    */
   async callTool(
     agentCapability: string,
-    call: { name: string; args?: unknown },
-  ): Promise<{ output: string; isError: boolean; secrets?: string[] }> {
+    call: { name: string; args?: unknown; turn?: string },
+  ): Promise<{ output: string; isError: boolean; secrets?: string[]; warnings?: WarningView[] }> {
     const facts = await this.#authority.agentSessionOf(agentCapability);
     const name = String(call?.name);
     const args = (call?.args ?? {}) as Record<string, unknown>;
@@ -1122,11 +1343,23 @@ export class Workspace extends DurableObject<Env> {
       } catch (e) {
         return { output: String((e as Error)?.message ?? e), isError: true };
       }
-      const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
-      const result = await gatewayFetch(request, x.plugin, lookup);
+      let result: GatewayResult & { warnings?: WarningView[] };
+      try {
+        result = await this.#meteredFetch(facts, request, x.plugin, call.turn);
+      } catch (e) {
+        // A limit on outbound requests refuses the call; the agent carries on (#179).
+        if (codeOf(e) === "ELIMIT") return { output: String((e as Error).message), isError: true };
+        throw e;
+      }
       const secrets = result.secrets.length ? { secrets: result.secrets } : {};
-      if (result.error) return { output: result.error, isError: true, ...secrets };
-      return { output: `${result.status} ${result.body ?? ""}`, isError: !result.ok, ...secrets };
+      const warnings = result.warnings?.length ? { warnings: result.warnings } : {};
+      if (result.error) return { output: result.error, isError: true, ...secrets, ...warnings };
+      return {
+        output: `${result.status} ${result.body ?? ""}`,
+        isError: !result.ok,
+        ...secrets,
+        ...warnings,
+      };
     }
     // Native tool scripts run in isolates with statewalker/statewalker-root#130; remote MCP
     // servers' tools with #135.
@@ -1261,13 +1494,59 @@ export class Workspace extends DurableObject<Env> {
    */
   async gatewayFetch(
     capability: string,
-    call: { plugin: string; request: OutgoingRequest },
-  ): Promise<GatewayResult> {
+    call: { plugin: string; request: OutgoingRequest; turn?: string },
+  ): Promise<GatewayResult & { warnings?: WarningView[] }> {
     const facts = await this.#authority.agentSessionOf(capability);
     if (!(await this.#access(facts.project, facts.user)).member)
       throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
+    return this.#meteredFetch(facts, call.request, String(call.plugin), call.turn);
+  }
+
+  /**
+   * One outgoing request of a plugin, metered (#179): outbound requests and bytes are charged to
+   * the workspace, project and member, and a request over a limit is refused before it is sent;
+   * the answer's bytes are counted after.
+   */
+  async #meteredFetch(
+    facts: AgentSessionFacts,
+    request: OutgoingRequest,
+    plugin: string,
+    turn?: string,
+  ): Promise<GatewayResult & { warnings?: WarningView[] }> {
     const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
-    return gatewayFetch(call.request, String(call.plugin), lookup);
+    const meta = this.#limits.meta(
+      facts.project,
+      facts.user,
+      facts.session,
+      this.#turnOf(facts.session, turn),
+    );
+    let host = "";
+    try {
+      host = new URL(String(request?.url)).host;
+    } catch {
+      // gatewayFetch refuses it.
+    }
+    const sent = new TextEncoder().encode(String(request?.body ?? "")).length;
+    const detail = { plugin, host };
+    const warnings = await this.#limits.charge(
+      facts.project,
+      facts.user,
+      { outbound_requests: 1, outbound_bytes: sent },
+      meta,
+      detail,
+    );
+    const result = await gatewayFetch(request, plugin, lookup);
+    const received =
+      "body" in result ? new TextEncoder().encode(String(result.body ?? "")).length : 0;
+    warnings.push(
+      ...this.#limits.ledger.add(
+        await this.#limits.scopes(facts.project, facts.user),
+        { outbound_bytes: received },
+        meta,
+        detail,
+      ),
+    );
+    return { ...result, ...(warnings.length ? { warnings: warnings.map(warningView) } : {}) };
   }
 
   /**
@@ -1297,6 +1576,8 @@ export class Workspace extends DurableObject<Env> {
     run?: AgentRun;
     model?: string;
     plugins?: string[];
+    limits?: Limit[];
+    ownKeys?: boolean;
   }> {
     // The parent must be narrowed from this very user session (revocation ids name it).
     await this.#authority.revocationOf(userCapability, parentCapability);
@@ -1328,6 +1609,8 @@ export class Workspace extends DurableObject<Env> {
       ...(child.run ? { run: child.run } : {}),
       ...(child.model ? { model: child.model } : {}),
       ...(child.plugins ? { plugins: child.plugins } : {}),
+      ...(child.limits ? { limits: child.limits } : {}),
+      ...(child.ownKeys ? { ownKeys: true } : {}),
     };
   }
 

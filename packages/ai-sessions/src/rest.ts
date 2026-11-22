@@ -1,6 +1,6 @@
 // REST onto the session API's methods: a thin router. Errors keep their code; the status is
 // derived from it (EAUTH 401, EACCES 403, ENOENT 404, EINVAL 400).
-import { codedError, statusOf } from "@statewalker/ai-access";
+import { codedError, retryAfterOf, statusOf } from "@statewalker/ai-access";
 import type { SessionApi, SessionsQuery } from "./api.js";
 import { eventStream } from "./sse.js";
 
@@ -9,6 +9,22 @@ const json = (value: unknown, status = 200) =>
     status,
     headers: { "content-type": "application/json" },
   });
+
+/**
+ * An error as REST answers it: its message, the status its code maps to and, for a limit that
+ * resets (429), `Retry-After` in seconds (statewalker/statewalker-root#179).
+ */
+export function errorResponse(e: unknown): Response {
+  const status = statusOf(e);
+  const retry = status === 429 ? retryAfterOf(e) : undefined;
+  return new Response(JSON.stringify({ error: String((e as Error)?.message ?? e) }), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      ...(retry !== undefined ? { "retry-after": String(retry) } : {}),
+    },
+  });
+}
 
 const NOT_A_ROUTE = Symbol("not a route");
 
@@ -122,7 +138,7 @@ export async function handleSessionRest(
     if (result instanceof Response) return result;
     return json(result);
   } catch (e) {
-    return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
+    return errorResponse(e);
   }
 }
 

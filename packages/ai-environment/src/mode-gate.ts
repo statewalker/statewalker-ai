@@ -83,7 +83,16 @@ export interface ModeGate {
  * a database action (`db`: the path is the database, the content its encoded action), and a tool
  * call (`tool`: the path is the tool's name, the content its arguments as JSON).
  */
-export type ApprovalMethod = "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool";
+/** `limit`: raising a limit that asks (statewalker/statewalker-root#179). */
+export type ApprovalMethod =
+  | "write"
+  | "mkdir"
+  | "remove"
+  | "copy"
+  | "move"
+  | "db"
+  | "tool"
+  | "limit";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -393,6 +402,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a database action runs through the database gate");
       case "tool":
         throw codedError("EINVAL", "a tool call runs through the workspace's tools");
+      case "limit":
+        throw codedError("EINVAL", "a limit is raised by the DO that counts it");
     }
   } catch (e) {
     const request = approvalOf(e);

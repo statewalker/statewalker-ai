@@ -28,7 +28,14 @@ export interface Item {
   seq: number;
   id: string;
   turn: string;
-  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback" | "mode_decision";
+  kind:
+    | "message"
+    | "tool_call"
+    | "tool_result"
+    | "approval"
+    | "model_fallback"
+    | "mode_decision"
+    | "limit_warning";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -63,6 +70,17 @@ export interface Item {
   latency_ms?: number;
   /** Set on the denial after which the session fell back to this mode. */
   fallback?: string;
+  /** A `limit_warning` item: the limit whose warning share usage crossed. */
+  warning?: {
+    meter: string;
+    level: string;
+    target: string;
+    limit_level: string;
+    period: string;
+    used: number;
+    value: number;
+    warn_at: number;
+  };
 }
 
 /** One request to a model, metered. */
@@ -255,6 +273,7 @@ export const TERMINAL_EVENTS = [
   "turn.failed",
   "turn.cancelled",
   "turn.interrupted",
+  "turn.incomplete",
 ];
 
 /** A JSON-RPC 2.0 message of MCP (a request or a notification). */
@@ -282,6 +301,8 @@ export interface SessionClient {
     unattended?: boolean;
     /** A model (an id or an alias) the session runs on instead of the agent's, within rights. */
     model?: string;
+    /** The session's own limits (session level). */
+    limits?: Record<string, unknown>[];
   }): Promise<AgentSession>;
   getSession(id: string): Promise<AgentSession>;
   updateSession(id: string, req: { metadata: Metadata }): Promise<AgentSession>;
