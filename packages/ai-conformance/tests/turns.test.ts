@@ -58,11 +58,6 @@ beforeAll(async () => {
     DEV_LOGIN: "true",
     ADMIN_KEY,
     SSE_KEEPALIVE_MS: "200",
-    // One user runs many scenarios a minute here: past the session API's default of 60 requests
-    // a minute per user (tests/rate-limits.test.ts holds it).
-    LIMITS: JSON.stringify([
-      { meter: "api_requests", level: "user", value: 6000, period: "minute", on_exceed: "delay" },
-    ]),
   });
   await seed(deployment, ADMIN_KEY, FILES);
 }, 120_000);
