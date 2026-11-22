@@ -13,6 +13,7 @@ import {
   serviceAccountUser,
   settleAsk,
   TokenIssuer,
+  verifyAccessToken,
   WorkspaceAuthority,
 } from "../src/index.js";
 
@@ -157,6 +158,21 @@ describe("service accounts", () => {
       issuer.issueServiceAccount(serviceAccountUser("acme", "ci"), "acme"),
     ).not.toThrow();
     expect(() => issuer.issueServiceAccount("ann", "acme")).toThrow(/EINVAL/);
+  });
+
+  it("accepts an access token only for a workspace the deployment serves", async () => {
+    const issuer = new TokenIssuer(TokenIssuer.generateKeys(), { id: "issuer" });
+    const { token } = issuer.issue("ann", "acme");
+    await expect(
+      verifyAccessToken(token, issuer.publicKey, { workspace: "acme" }),
+    ).resolves.toMatchObject({ user: "ann", workspace: "acme" });
+    await expect(
+      verifyAccessToken(token, issuer.publicKey, { workspace: ["other", "acme"] }),
+    ).resolves.toMatchObject({ workspace: "acme" });
+    for (const workspace of ["other", ["other", "acme-2"], []])
+      await expect(verifyAccessToken(token, issuer.publicKey, { workspace })).rejects.toThrow(
+        /EAUTH/,
+      );
   });
 
   it("makes API keys that are unguessable and kept only as a hash", async () => {
