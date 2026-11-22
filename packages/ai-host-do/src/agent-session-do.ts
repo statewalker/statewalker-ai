@@ -746,8 +746,13 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.eraseBranch(turnId);
   }
 
-  exportPath(atTurn: string) {
-    return this.#core.exportPath(atTurn);
+  /** A turn's path for a fork, with the session's limits: its defaults and its own (#181). */
+  async exportPath(atTurn: string) {
+    const history = await this.#core.exportPath(atTurn);
+    const config = this.#core.config();
+    const limits = config ? (this.#limits.scopes(config)[0]?.limits ?? []) : [];
+    const { limits: _l, ...rest } = history;
+    return { ...rest, ...(limits.length ? { limits } : {}) };
   }
 
   /** A fork's copied history: nothing is charged for it (statewalker/statewalker-root#190). */
