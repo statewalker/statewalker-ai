@@ -191,7 +191,7 @@ export async function chatPlan(
       });
       // This session's own turn: a sub-agent's approval continues its root's last.
       const accepted = [answered.accepted, ...(answered.continued ?? [])].find(
-        (x) => x.session_id === session,
+        (x) => x?.session_id === session,
       );
       if (!accepted) throw codedError("EINVAL", `approval ${a.id} continues no turn here`);
       turns.push(accepted.turn_id);

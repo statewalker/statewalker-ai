@@ -85,9 +85,11 @@ import {
   type ClassifiedVerdict,
   checkModelsConfig,
   checkUserProvider,
+  DEFAULT_PRE_IMAGE_RETENTION,
   deploymentSecrets,
   discoverModels,
   estimateRequest,
+  type FilesRevert,
   FilesRpcHost,
   type FilesRpcMethod,
   filesOverRpc,
@@ -118,8 +120,12 @@ import {
   normalise,
   type OutgoingRequest,
   type Period,
+  PreImageLog,
+  type PreImageRetention,
   parseModelsConfig,
+  parsePreImageRetention,
   pickSessionModel,
+  preImaged,
   redactSecrets,
   resolveModels,
   resolveSecrets,
@@ -243,6 +249,10 @@ const UHP_SERVERS_FILE = "uhp-servers";
 const DEFAULT_WRITEBACK_MAX = 16 * 1024 * 1024;
 /** Where a project's memory lives in its system folder (#157). */
 const MEMORY_FOLDER = "memory";
+/** The workspace's retention of file pre-images, in its system folder (#191). */
+const PRE_IMAGES_FILE = "pre-images";
+/** Separates a file view's capability from the turn its holder acts in. */
+const HOLDER_TURN = "\n";
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
@@ -270,6 +280,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #memoryLock = new KeyedLock();
   /** Edits of a limits file are serialized (#181). */
   readonly #limitsLock = new KeyedLock();
+  /** Agent sessions' file changes and the pre-images they keep (statewalker/statewalker-root#191). */
+  readonly #preImages: PreImageLog;
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -290,7 +302,8 @@ export class Workspace extends DurableObject<Env> {
     const sql = ctx.storage.sql;
     this.#store = mountWorkspace(env, ctx.storage, this.#name);
     this.#store.catch(() => {});
-    this.#files = new FilesRpcHost((capability) => this.#fileView(capability));
+    this.#files = new FilesRpcHost((holder) => this.#fileView(holder));
+    this.#preImages = new PreImageLog(sql);
     sql.exec("CREATE TABLE IF NOT EXISTS ws_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
     // The tracer kept user and agent sessions here; they live in User DOs now. No release held
     // them, so their rows are dropped rather than migrated.
@@ -1033,15 +1046,23 @@ export class Workspace extends DurableObject<Env> {
    * the next action of a running session. A change the mode asks about waits on an approval,
    * unless the user granted that exact action.
    */
-  async #fileView(capability: string) {
-    const { store, options, agent } = await this.#gatedOptions(capability);
+  async #fileView(holder: string) {
+    // A holder is a capability, and the turn of its agent session the calls belong to, if any.
+    const at = holder.indexOf(HOLDER_TURN);
+    const capability = at < 0 ? holder : holder.slice(0, at);
+    const turn = at < 0 ? undefined : holder.slice(at + 1);
+    const { store, options, agent } = await this.#gatedOptions(capability, turn);
     return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
   }
 
   /** The store and options of the gated view a capability holds (before the mode). */
-  async #gatedOptions(capability: string) {
-    const raw = this.#meteredStore(await this.#store);
+  async #gatedOptions(capability: string, turn?: string) {
+    const metered = this.#meteredStore(await this.#store);
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
+    // An agent session's every change is recorded first, with the file's pre-image (#191).
+    const raw = agent
+      ? this.#preImaged(metered, agent, this.#turnOf(agent.session, turn))
+      : metered;
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
     const store = agent ? await this.#withDefinitions(raw, agent) : raw;
     // Many actions at once (a folder's entries): the roles read once per project, the capability
@@ -1098,8 +1119,139 @@ export class Workspace extends DurableObject<Env> {
    * user session's own), decided now. User, project and session come from the capability itself;
    * a capability this workspace did not sign is refused (EACCES).
    */
-  async files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
-    return this.#files.call(capability, method, args);
+  async files(
+    capability: string,
+    method: FilesRpcMethod,
+    args: unknown[],
+    turn?: string,
+  ): Promise<unknown> {
+    // Each turn of an agent session has its own server: its changes are recorded under the turn.
+    const holder =
+      typeof turn === "string" && turn && !turn.includes(HOLDER_TURN)
+        ? `${capability}${HOLDER_TURN}${turn}`
+        : capability;
+    return this.#files.call(holder, method, args);
+  }
+
+  // --- file pre-images (statewalker/statewalker-root#191) ---------------------------------------
+
+  /** How long pre-images are kept: the deployment's PRE_IMAGES, then the workspace's file. */
+  async #retention(store: FilesApi): Promise<PreImageRetention> {
+    const deployment = parsePreImageRetention(this.env.PRE_IMAGES, DEFAULT_PRE_IMAGE_RETENTION);
+    return parsePreImageRetention(
+      await tryReadText(store, `/${DEFAULT_SYSTEM_FOLDER}/${PRE_IMAGES_FILE}`),
+      deployment,
+    );
+  }
+
+  /** Pre-images kept or freed count in their project's files meter. */
+  async #adjustPreImages(deltas: { project: string; bytes: number }[]): Promise<void> {
+    const store = await this.#store;
+    for (const d of deltas)
+      if (d.project && d.bytes) await this.#limits.adjustStorage(d.project, "", d.bytes, store);
+  }
+
+  /** A store whose every change by an agent session is recorded, with its pre-image. */
+  #preImaged(store: FilesApi, facts: AgentSessionFacts, turn: string | undefined): FilesApi {
+    return preImaged(store, {
+      log: this.#preImages,
+      actor: {
+        session: facts.session,
+        lineage: facts.lineage?.length ? [...facts.lineage, facts.session] : [facts.session],
+        ...(turn ? { turn } : {}),
+      },
+      retention: async () => this.#retention(await this.#store),
+      adjust: (deltas) => this.#adjustPreImages(deltas),
+    });
+  }
+
+  /**
+   * Reverts the files an agent session's rewound turns (and the sub-agents they started) changed
+   * to their state before the first of them, where nobody changed them since; the others are
+   * conflicts, left alone. The revert is one `write` under the session's mode for all the files:
+   * a denial refuses it (`refused`), an ask answers the approval to record (`approval`) unless the
+   * user granted exactly this revert, which is then consumed. The files are then written through
+   * the session's own gated view, authorized again by its capability and roles.
+   */
+  async revertFiles(
+    agentCapability: string,
+    req: { turns: string[]; children?: string[]; approval?: string },
+  ): Promise<FilesRevert & { refused?: string; approval?: ApprovalRequest; pending?: string[] }> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    const turns = (Array.isArray(req?.turns) ? req.turns : [])
+      .map(String)
+      .filter((t) => this.#turnOf(facts.session, t));
+    const children = (Array.isArray(req?.children) ? req.children : []).map(String);
+    const store = await this.#store;
+    const retention = await this.#retention(store);
+    await this.#adjustPreImages(
+      this.#preImages.prune(facts.lineage?.[0] ?? facts.session, retention),
+    );
+    const plan = await this.#preImages.plan(store, { session: facts.session, turns, children });
+    const outcome = { conflicts: plan.conflicts, unavailable: plan.unavailable };
+    if (!plan.steps.length) return { reverted: [], ...outcome };
+    const root = `/${facts.project}`;
+    const paths = plan.steps.map((s) => s.path);
+    const gate = this.#modeGate(facts, store);
+    const verdicts = await gate.decide(paths.map((p) => ["write", p] as [FileAction, string]));
+    const denied = verdicts.flatMap((v, i) =>
+      v.verdict === "deny" ? [`${paths[i]}: ${v.reason}`] : [],
+    );
+    if (denied.length) return { reverted: [], ...outcome, refused: denied.join("; ") };
+    const worst = verdicts.reduce((a, b) =>
+      STRICTNESS[b.verdict] > STRICTNESS[a.verdict] ? b : a,
+    );
+    if (worst.verdict !== "allow") {
+      const id = await approvalId(
+        facts.session,
+        "revert",
+        root,
+        new TextEncoder().encode(JSON.stringify({ turns, children, paths })),
+      );
+      const request: ApprovalRequest = {
+        id,
+        session: facts.session,
+        project: facts.project,
+        action: { method: "revert", path: root },
+        permission: `files.write:${(paths[0] as string).slice(root.length)}`,
+        reason: `the rewind reverts ${paths.length} file(s): ${paths.join(", ")}; ${worst.reason}`,
+      };
+      const granted = this.#registry.consume(id, facts.session, facts.user);
+      if (!granted) {
+        // Auto mode's classifier decides it as it would any change; it never asks for nothing.
+        if (worst.verdict === "classify") {
+          const c = await this.#classify(facts, store, request);
+          if (c.verdict === "deny")
+            return {
+              reverted: [],
+              ...outcome,
+              refused: `the risk classifier denied it: ${c.reason}`,
+            };
+          if (c.verdict === "ask")
+            return {
+              reverted: [],
+              ...outcome,
+              approval: { ...request, reason: c.reason },
+              pending: paths,
+            };
+        } else return { reverted: [], ...outcome, approval: request, pending: paths };
+      }
+    }
+    // Written through the session's own view: the capability and the roles authorize each file.
+    const { store: view, options } = await this.#gatedOptions(agentCapability);
+    return this.#preImages.apply(gatedFiles(view, options), plan);
+  }
+
+  /**
+   * The checkpoint a fork starts from (#159): the position of the source session's pre-image log
+   * when it was forked, if the gate keeps any of it.
+   */
+  async preImageCheckpoint(userCapability: string, session: string): Promise<string | null> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const pinned = this.#models.pinned(String(session));
+    if (!pinned || pinned.user !== user) return null;
+    const seq = this.#preImages.position(String(session));
+    return seq === undefined ? null : `pi-${seq}`;
   }
 
   /**
@@ -1777,7 +1929,7 @@ export class Workspace extends DurableObject<Env> {
    */
   async applyChangeSet(
     agentCapability: string,
-    req: { files: { path: string; content: Uint8Array }[] },
+    req: { files: { path: string; content: Uint8Array }[]; turn?: string },
   ): Promise<{ written: string[] }> {
     const facts = await this.#authority.agentSessionOf(agentCapability);
     const found = await this.#definitions.session(facts.session);
@@ -1860,7 +2012,7 @@ export class Workspace extends DurableObject<Env> {
       }
     }
     // Each write authorized again by the capability and the roles, in the agent's own view.
-    const { store: view, options } = await this.#gatedOptions(agentCapability);
+    const { store: view, options } = await this.#gatedOptions(agentCapability, req?.turn);
     const files$ = gatedFiles(view, options);
     for (const f of files) await files$.write(f.path, [f.content]);
     return { written: files.map((f) => f.path) };
@@ -1938,7 +2090,11 @@ export class Workspace extends DurableObject<Env> {
     const user = await this.#authority.userOfUserCapability(userCapability);
     for (const session of Array.isArray(sessions) ? sessions.map(String) : []) {
       const pinned = this.#models.pinned(session);
-      if (pinned && pinned.user === user) await this.#limits.endSession(session);
+      if (pinned && pinned.user === user) {
+        await this.#limits.endSession(session);
+        // Its pre-images, and its sub-agents', go with it (#191).
+        await this.#adjustPreImages(this.#preImages.drop({ root: session }));
+      }
     }
   }
 
@@ -2532,7 +2688,8 @@ export class Workspace extends DurableObject<Env> {
     // An action the mode asks about is refused: a running tool cannot wait for an approval.
     const files = filesOverRpc(
       (method, a) =>
-        this.#files.call(capability, method, a).catch((e) => {
+        // Recorded under the calling turn, with pre-images, as the agent's own changes (#191).
+        this.files(capability, method, a, turn).catch((e) => {
           const asked = approvalOf(e);
           if (!asked) throw e;
           throw codedError(
@@ -3200,6 +3357,8 @@ export class Workspace extends DurableObject<Env> {
   async deleteProject(project: string): Promise<void> {
     const name = projectName(project);
     await (await this.#store).remove(`/${name}`);
+    // The pre-images of its files go with it (#191).
+    this.#preImages.drop({ project: name });
   }
 
   /**
