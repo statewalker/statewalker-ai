@@ -93,7 +93,12 @@ export type ApprovalMethod =
   | "db"
   | "tool"
   | "limit"
-  | "memory";
+  | "memory"
+  // A remote agent session's actions (statewalker/statewalker-root#144): starting its task,
+  // answering its harness's question, writing its artifacts back.
+  | "remote"
+  | "input"
+  | "changeset";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -342,14 +347,19 @@ export function approvalAware(
   onApproval: (request: ApprovalRequest, call: StoredCall) => void,
 ): FilesApi {
   let waitingOn: ApprovalRequest | undefined;
+  /** The approval each change asked waits on: a change tried again names its own. */
+  const asked = new Map<string, ApprovalRequest>();
+  const keyOf = (call: StoredCall) => `${call.method} ${call.path} ${call.target ?? ""}`;
   const change = async <T>(call: StoredCall, run: () => Promise<T>): Promise<T> => {
-    if (waitingOn) throw new ApprovalPending(waitingOn);
+    if (waitingOn) throw new ApprovalPending(asked.get(keyOf(call)) ?? waitingOn);
     try {
       return await run();
     } catch (e) {
       const request = approvalOf(e);
       if (!request) throw e;
-      waitingOn = request;
+      // Concurrent changes (a batch of tool calls) may each wait on their own approval.
+      waitingOn ??= request;
+      asked.set(keyOf(call), request);
       onApproval(request, call);
       throw new ApprovalPending(request);
     }
@@ -407,6 +417,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a limit is raised by the DO that counts it");
       case "memory":
         throw codedError("EINVAL", "a memory batch runs through the memory service");
+      default:
+        throw codedError("EINVAL", `a ${call.method} action runs through its remote agent session`);
     }
   } catch (e) {
     const request = approvalOf(e);

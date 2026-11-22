@@ -79,7 +79,19 @@
     // context budget, the tail never compacted (by messages or by tokens), messages per depth-1
     // summary, same-depth summaries before promotion. "{}" keeps the defaults (100000 tokens, the
     // last 8 messages, 6, 4).
-    "COMPACTION": "{}"
+    "COMPACTION": "{}",
+    // UHP servers for remote agent sessions (statewalker/statewalker-root#144), JSON [{id, baseUrl,
+    // secret, harnesses}]: `secret` names the secret holding the server's bearer token (bound to
+    // plugin "uhp" and the server's host), `harnesses` the ones it may serve here,
+    // {"<name>": "<UHP harness id>"}, each the remote agent `remote:<id>/<name>` (used with
+    // `agents.use:remote:<id>/<name>`, which no built-in role holds). Workspaces add theirs in
+    // `/.system/uhp-servers`; a harness no one listed is off.
+    "UHP_SERVERS": "[]",
+    // How often a remote session's DO polls its task (ms), and the bytes of files copied in at
+    // start and of a write-back.
+    "UHP_POLL_MS": "2000",
+    "UHP_INPUT_MAX_BYTES": "4194304",
+    "UHP_WRITEBACK_MAX_BYTES": "16777216"
     // The S3 workspace backend's keys, set as runtime secrets, never vars:
     //   WORKSPACE_S3_ACCESS_KEY_ID, WORKSPACE_S3_SECRET_ACCESS_KEY
     // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:

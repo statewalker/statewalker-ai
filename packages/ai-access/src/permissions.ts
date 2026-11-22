@@ -65,7 +65,9 @@ export const AREAS: Readonly<Record<string, AreaSpec>> = {
     aliases: { fetch: ["read", "write"] },
   },
   // `agents.use:<plugin>/<agent>` (#80, #82): granted only by name, so `*` never reaches it; the
-  // built-in roles name it for plugin agents (roles.ts).
+  // built-in roles name it for plugin agents (roles.ts). A remote agent (#144) is used with
+  // `agents.use:remote:<server>/<harness>`, which parses to the action `remote`: no built-in role
+  // holds it, and no plain `agents.use[:<x>/<y>]` grant (nor `*`) reaches it.
   agents: { actions: ["use"], target: "name", byName: true },
   // Workspace-level: the workspace admin's.
   projects: { actions: ["create"], target: "name", byName: true },
@@ -73,6 +75,17 @@ export const AREAS: Readonly<Record<string, AreaSpec>> = {
   // by name, so a role of `*.*` does not hand out keys; users manage their own without a grant.
   secrets: { actions: ["write"], target: "name", byName: true },
 };
+
+/** A remote agent's id prefix (`remote:<server>/<harness>`, statewalker/statewalker-root#144). */
+export const REMOTE_AGENT_PREFIX = "remote:";
+
+/**
+ * What using the remote agent `<server>/<harness>` asks for: only `agents.use:remote:<pattern>`
+ * grants it.
+ */
+export function remoteAgentRequest(target: string): AccessRequest {
+  return { area: "agents", action: "remote", target };
+}
 
 const SEGMENT = /^(?:[a-z][a-z0-9_-]*|\*)$/;
 // A target is printable and has no whitespace; length bounded so patterns stay cheap.
@@ -106,6 +119,11 @@ function parseOne(text: string): Permission[] | string {
   if (!SEGMENT.test(area) || !SEGMENT.test(action))
     return "an area or action is a lowercase name or *";
   if (target !== undefined && !TARGET.test(target)) return "an empty or malformed target";
+  if (area === "agents" && action === "use" && target?.startsWith(REMOTE_AGENT_PREFIX)) {
+    const rest = target.slice(REMOTE_AGENT_PREFIX.length);
+    if (!TARGET.test(rest)) return "an empty or malformed target";
+    return [{ area: "agents", action: "remote", target: rest }];
+  }
   const areas = area === "*" ? Object.keys(AREAS).filter((a) => !AREAS[a]?.byName) : [area];
   const out: Permission[] = [];
   for (const a of areas) {

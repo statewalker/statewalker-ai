@@ -214,8 +214,15 @@ export interface ItemInput {
     | "mode_decision"
     | "limit_warning"
     | "rewind"
-    | "memory_primed";
+    | "memory_primed"
+    /** A remote harness's free-text question, answered through /v1/approvals like an approval. */
+    | "question";
   role?: "user" | "assistant";
+  /**
+   * Produced by a remote agent session's external harness (statewalker/statewalker-root#144):
+   * untrusted output, never shown to the risk classifier.
+   */
+  external?: true;
   text?: string;
   callId?: string;
   name?: string;
@@ -273,7 +280,13 @@ export interface ItemInput {
    * A `rewind` item (statewalker/statewalker-root#190), the first of the turn after a rewind or a
    * branch switch: where the head was and went, and the turns set aside. Its `text` tells the model.
    */
-  rewind?: { previous: string | null; head: string | null; turns: string[] };
+  rewind?: {
+    previous: string | null;
+    head: string | null;
+    turns: string[];
+    /** "chained": a message chained on an earlier turn moved the head (statewalker/statewalker-root#159). */
+    reason?: "chained";
+  };
   /**
    * A `memory_primed` item (statewalker/statewalker-root#157): the memory the session was primed
    * with at its start or after a compaction, each entry's kind, id, version and tokens.
@@ -318,7 +331,22 @@ export interface StoredAction {
    * path is the tool's name, the content its arguments as JSON), or a memory batch (`memory`: the
    * path is the kind, the content its actions as JSON).
    */
-  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool" | "limit" | "memory";
+  method:
+    | "write"
+    | "mkdir"
+    | "remove"
+    | "copy"
+    | "move"
+    | "db"
+    | "tool"
+    | "limit"
+    | "memory"
+    /** Starting a remote agent session's task (the path is `<server>/<harness>`, #144). */
+    | "remote"
+    /** Answering a remote harness's question (the path is the `input_request` id). */
+    | "input"
+    /** A remote session's write-back, one change set (the target names it; content its digest). */
+    | "changeset";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -453,6 +481,13 @@ export interface SendMessageRequest {
   delivery?: Delivery;
   /** A model to run the turn on; the agent's own unless the caller holds its right. */
   model?: string;
+  /**
+   * The turn to chain the message on (statewalker/statewalker-root#159): when it is not the latest
+   * turn, the head moves there first, an implicit rewind that never reverts files, recorded by the
+   * item "head moved: chained on an earlier response"; refused (409) while a turn runs or waits.
+   * The projections' `previous_response_id` (OpenAI) and UHP's chaining without `branch`.
+   */
+  after_turn?: string;
 }
 
 /** A message the session accepted (REST: `202`). For `steer`, accepted is not yet applied. */
@@ -729,6 +764,13 @@ export interface AgentRun {
   /** A mode it asks for, which may only be stricter than the session's. */
   mode?: string;
   requires?: unknown;
+  /**
+   * A remote agent's core (statewalker/statewalker-root#144): the UHP server and harness, both as
+   * the deployment or workspace registered them.
+   */
+  remote?: { server: string; harness: string };
+  /** The project paths copied in to a remote agent at start (patterns; default every file). */
+  inputs?: string[];
 }
 
 /** What starting an agent session pinned: the agent it runs (none: the generic agent). */
@@ -1170,6 +1212,8 @@ export interface AgentMessage {
   delivery: Delivery;
   model?: string;
   ignored: string[];
+  /** The turn to chain the message on (`SendMessageRequest.after_turn`). */
+  after_turn?: string;
   /**
    * "agent": written by another agent (a sub-agent's task from its parent), not by the user; auto
    * mode's risk classifier never takes it as the user's words.
@@ -1291,7 +1335,9 @@ export function metadataOf(value: unknown): Metadata {
 }
 
 /** `<plugin>/<agent>`: a plugin name, then an agent name (ai-definitions). */
-const AGENT_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+// `<plugin>/<agent>`, or a remote agent `remote:<server>/<harness>` (statewalker/statewalker-root#144).
+const AGENT_ID =
+  /^(?:remote:)?[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 
 function modelName(model: unknown): string {
   if (typeof model !== "string" || !model || model.length > 320)
@@ -1307,7 +1353,7 @@ function startRequest(req: unknown): StartSessionRequest {
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (agent !== undefined && (typeof agent !== "string" || !AGENT_ID.test(agent)))
-    throw codedError("EINVAL", "agent must be '<plugin>/<agent>'");
+    throw codedError("EINVAL", "agent must be '<plugin>/<agent>' or 'remote:<server>/<harness>'");
   if (unattended !== undefined && typeof unattended !== "boolean")
     throw codedError("EINVAL", "unattended is true or false");
   return {
@@ -1399,23 +1445,26 @@ function approvalAnswer(answer: unknown): ApprovalAnswer {
   return { decision, scope: scope ?? "once", ...(message ? { message } : {}) };
 }
 
-const MESSAGE_FIELDS = ["content", "delivery", "model"];
+const MESSAGE_FIELDS = ["content", "delivery", "model", "after_turn"];
 const DELIVERIES: readonly string[] = ["next", "steer", "interrupt"];
 
 /** A message request, checked; the fields it holds that the API does not use are reported. */
 function messageOf(req: unknown): AgentMessage {
   const body = (req ?? {}) as Record<string, unknown>;
-  const { content, delivery = "next", model } = body;
+  const { content, delivery = "next", model, after_turn } = body;
   if (typeof content !== "string" || !content)
     throw codedError("EINVAL", "content must be a non-empty string");
   if (typeof delivery !== "string" || !DELIVERIES.includes(delivery))
     throw codedError("EINVAL", "delivery is next, steer or interrupt");
   if (model !== undefined && (typeof model !== "string" || !model))
     throw codedError("EINVAL", "model must be a model's name");
+  if (after_turn !== undefined && (typeof after_turn !== "string" || !after_turn))
+    throw codedError("EINVAL", "after_turn must be a turn's id");
   return {
     content,
     delivery: delivery as Delivery,
     ...(model ? { model: model as string } : {}),
+    ...(after_turn ? { after_turn: after_turn as string } : {}),
     ignored: Object.keys(body)
       .filter((k) => !MESSAGE_FIELDS.includes(k))
       .sort(),

@@ -270,6 +270,15 @@ export class WorkspaceAuthority {
   }
 
   /**
+   * Every block's revocation id of a capability this workspace signed and has not revoked: putting
+   * any of them on the revocation list stops it (statewalker/statewalker-root#144 cancels a remote
+   * session's task when one of its blocks is revoked).
+   */
+  async revocationIdsOf(capability: string): Promise<string[]> {
+    return [...(await this.#verify(capability)).revocationIds];
+  }
+
+  /**
    * What an agent session's capability says: the user from its root-signed authority block, and
    * the session, project and agent from its first attenuation block, which the User DO
    * wrote. A capability without that block (a bare user capability) is refused: only agent

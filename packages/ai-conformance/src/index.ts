@@ -58,6 +58,8 @@ export {
   type ModelView,
   makeUserUnreachable,
   modelUsage,
+  type OpenAiClientOptions,
+  openAiBaseUrl,
   openUserSessionAt,
   type Profile,
   renewToken,
@@ -97,3 +99,4 @@ export {
   parseThreatTable,
   type ThreatRow,
 } from "./threat-table.js";
+export { type FakeUhp, fakeUhp, type UhpRequest } from "./uhp-server.js";
