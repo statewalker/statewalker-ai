@@ -13,11 +13,25 @@ export {
   type ToolDbCall,
   toolDb,
 } from "./db-client.js";
-export { type Deployment, RUNTIME, startDeployment, startNodeDeployment } from "./deployment.js";
+export {
+  type Deployment,
+  LOCAL_MODELS,
+  RUNTIME,
+  startDeployment,
+  startNodeDeployment,
+} from "./deployment.js";
 export { type FakeS3, fakeS3 } from "./fake-s3.js";
 export { type FilesClient, restFiles, rpcFiles } from "./files-client.js";
 export { type FakeMcp, fakeMcp, MCP_REVISION, type McpServerRequest } from "./mcp-server.js";
 export { type FakeModel, fakeModel, type ModelRequest } from "./model.js";
+export {
+  type CollectedLog,
+  type CollectedMetric,
+  type CollectedSpan,
+  type FakeCollector,
+  fakeCollector,
+  type OtlpAttributes,
+} from "./otlp-collector.js";
 export { type FakeRest, fakeRest, type RestRequest } from "./rest-server.js";
 export { type RpcSessionClient, rpcClient } from "./rpc-client.js";
 export {

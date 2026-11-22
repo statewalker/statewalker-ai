@@ -9,6 +9,7 @@ import { streamSimple as openaiCompletions } from "@earendil-works/pi-ai/api/ope
 import { streamSimple as openaiResponses } from "@earendil-works/pi-ai/api/openai-responses";
 import { codedError } from "@statewalker/ai-access";
 import { limitOfMessage } from "./limits.js";
+import type { LocalEngine } from "./local-models.js";
 import {
   type CatalogModel,
   type CatalogProvider,
@@ -248,6 +249,29 @@ export interface ModelGatewayOptions {
   meter: ModelMeter;
   /** Test seam: the stream function for an API (pi-ai's otherwise). */
   streamOf?: (api: string) => StreamFn | undefined;
+  /**
+   * The runtime's local model engine (`localEngine()`), which serves the `local` provider's models;
+   * without it they answer ENOSYS (statewalker/statewalker-root#143).
+   */
+  local?: LocalEngine;
+}
+
+/** Where the gateway addresses a local engine: no network, `LocalEngine.fetch` answers it. */
+const LOCAL_BASE_URL = "http://local-engine.invalid/v1";
+
+/**
+ * The `fetch` pi-ai's chat-completions client reaches a local engine with: only the engine's own
+ * address, and no key (the client sends a placeholder, dropped here).
+ */
+function localFetch(engine: LocalEngine): typeof fetch {
+  return async (input, init) => {
+    const req = new Request(input, init);
+    if (!req.url.startsWith(`${LOCAL_BASE_URL}/`))
+      throw codedError("EACCES", "a local model request goes only to the local engine");
+    const headers = new Headers(req.headers);
+    headers.delete("authorization");
+    return engine.fetch(new Request(req, { headers }));
+  };
 }
 
 /** The secret levels each provider level may be served by. */
@@ -309,6 +333,30 @@ export async function discoverModels(
   } catch (e) {
     throw new Error(redactSecrets(String((e as Error)?.message ?? e), used));
   }
+}
+
+/** An attempt that never reached a model because it is unavailable here: nothing spent. */
+function unavailable(
+  model: CatalogModel,
+  provider: CatalogProvider,
+  error: string,
+): { message: ModelMessage; attempt: ModelAttempt } {
+  return {
+    message: errorMessage(model, error),
+    attempt: {
+      usage: {
+        model: model.id,
+        provider: provider.id,
+        input_tokens: 0,
+        output_tokens: 0,
+        cached_tokens: 0,
+        latency_ms: 0,
+        outcome: "unavailable",
+        charged: provider.level !== "user",
+      },
+      error,
+    },
+  };
 }
 
 export class ModelGateway {
@@ -421,12 +469,28 @@ export class ModelGateway {
     warnings: unknown[],
   ): Promise<{ message: ModelMessage; attempt: ModelAttempt }> {
     if (!provider) throw codedError("EIO", `model ${model.id} has no provider`);
-    if (provider.api === "local")
-      throw codedError("ENOSYS", "the local provider runs only in a browser");
-    const stream = (this.#o.streamOf ?? ((api) => STREAMS[api]))(provider.api);
+    const local = provider.api === "local";
+    if (local) {
+      // A local model runs only where the runtime has an engine, and only once the user put its
+      // weights in the browser: a request never downloads them. Either way it is unavailable,
+      // so the agent's next model serves the request.
+      const engine = this.#o.local;
+      const why = !engine
+        ? "ENOSYS: the local provider runs only where the runtime has a local engine (a browser page)"
+        : !(await engine.has(model.name))
+          ? `ENOENT: the weights of ${model.id} are not in this browser: download them first`
+          : undefined;
+      if (why) return unavailable(model, provider, why);
+    }
+    const stream = local
+      ? (STREAMS["openai-completions"] as StreamFn)
+      : (this.#o.streamOf ?? ((api) => STREAMS[api]))(provider.api);
     if (!stream) throw codedError("ENOSYS", `the gateway does not speak ${provider.api}`);
     // Refusals before the model is asked (a key not bound to the gateway, a limit) fail the turn.
-    const access = await providerAccess(provider, this.#o.secrets);
+    // A local engine takes no key and no headers.
+    const access = local
+      ? { headers: {}, used: [] as ResolvedSecret[] }
+      : await providerAccess(provider, this.#o.secrets);
     // The worst case is reserved against every limit before the model is asked, and the request
     // is capped at the `max_tokens` reserved, so spend never overshoots.
     const estimate = estimateRequest(model, provider, call);
@@ -434,9 +498,9 @@ export class ModelGateway {
     const piModel = {
       id: model.name,
       name: model.name,
-      api: provider.api,
+      api: local ? "openai-completions" : provider.api,
       provider: provider.id,
-      baseUrl: provider.baseUrl,
+      baseUrl: local ? LOCAL_BASE_URL : provider.baseUrl,
       headers: access.headers,
       input: model.input ?? ["text"],
       cost: {
@@ -456,9 +520,10 @@ export class ModelGateway {
         piModel as never,
         call.context as never,
         {
-          apiKey: access.apiKey ?? "none",
+          apiKey: ("apiKey" in access && access.apiKey) || "none",
           maxRetries: 0,
           maxTokens: estimate.max_tokens,
+          ...(local && this.#o.local ? { fetch: localFetch(this.#o.local) } : {}),
         } as never,
       ).result();
     } catch (e) {

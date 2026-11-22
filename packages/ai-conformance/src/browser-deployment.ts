@@ -347,6 +347,14 @@ export async function startBrowserDeployment(
         });
         return answer;
       },
+      localModels: {
+        async download(model, scripted) {
+          await p.evaluate(
+            ([d, m, sc]) => (globalThis as unknown as HostWindow).cellbHost.localDownload(d, m, sc),
+            [name, model, scripted] as const,
+          );
+        },
+      },
       async close() {
         try {
           await p
@@ -372,6 +380,7 @@ export async function startBrowserDeployment(
 interface HostWindow {
   cellbHost: {
     start(deployment: string, url: string): Promise<{ unsupported: string[] }>;
+    localDownload(deployment: string, model: string, scripted: string): Promise<void>;
     post(deployment: string, message: Record<string, unknown>): void;
     close(deployment: string): Promise<void>;
   };

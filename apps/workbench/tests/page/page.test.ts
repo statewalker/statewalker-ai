@@ -91,4 +91,10 @@ describe("the workbench page", () => {
     await type("secret list", /OWN_KEY \{/);
     expect(await screen()).not.toContain("sk-page-77");
   });
+
+  it("runs a local model engine in the page, downloading no weights until the user asks", async () => {
+    const m = "SmolLM2-135M-Instruct-q0f16-MLC";
+    await type(`local use ${m}`, new RegExp(`download it first: local download ${m}`));
+    await type("local", new RegExp(`local/${m} \\(not downloaded`));
+  });
 });

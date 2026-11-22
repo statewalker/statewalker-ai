@@ -21,6 +21,9 @@ catalogs:
     '@flue/runtime':
       specifier: 2.3.0
       version: 2.3.0
+    '@mlc-ai/web-llm':
+      specifier: 0.2.87
+      version: 0.2.87
     '@statewalker/cellb':
       specifier: 0.8.8
       version: 0.8.8
@@ -170,6 +173,12 @@ importers:
 
   apps/workbench:
     dependencies:
+      '@mlc-ai/web-llm':
+        specifier: 'catalog:'
+        version: 0.2.87
+      '@statewalker/ai-environment':
+        specifier: workspace:^
+        version: link:../../packages/ai-environment
       '@statewalker/ai-host-do':
         specifier: workspace:^
         version: link:../../packages/ai-host-do
@@ -1159,6 +1168,9 @@ packages:
 
   '@mixmark-io/domino@2.2.0':
     resolution: {integrity: sha512-Y28PR25bHXUg88kCV7nivXrP2Nj2RueZ3/l/jdx6J9f8J4nsEGcgX0Qe6lt7Pa+J79+kPiJU3LguR6O/6zrLOw==}
+
+  '@mlc-ai/web-llm@0.2.87':
+    resolution: {integrity: sha512-34N19988MdaEtzh8Mq/IOrfKCk2HRDOrXgEkLT28r3aiyAU6ZJSUB+v35t7zyU+0QEaFl91Y4U5SuPN/cwoHNw==}
 
   '@modelcontextprotocol/client@2.4.0':
     resolution: {integrity: sha512-LgrD2OphHuG12vfKFKz6SOnq7bKHQmhGJIAYdD+MZBn2npHEyry6uD8zvktodtl5CQM85MO0anUyD9JwmUmxww==}
@@ -2382,6 +2394,10 @@ packages:
 
   lines-and-columns@1.2.4:
     resolution: {integrity: sha512-7ylylesZQ/PV29jhEDl3Ufjo6ZX7gCqJr5F7PKrqc93v7fzSymt1BpwEU8nAUXs8qzzvqhbjhK5QZg6Mt/HkBg==}
+
+  loglevel@1.9.2:
+    resolution: {integrity: sha512-HgMmCqIJSAKqo68l0rS2AanEWfkxaZ5wNiEFb5ggm08lDs9Xl2KxBlX3PTcaD2chBM1gXAYf491/M2Rv8Jwayg==}
+    engines: {node: '>= 0.6.0'}
 
   long@5.3.2:
     resolution: {integrity: sha512-mNAgZ1GmyNhD7AuqnTG3/VQ26o760+ZYBPKjPvugO8+nLbYfX6TVpJPseBvopbdY+qpZ/lKUnmEc1LeZYS3QAA==}
@@ -3682,6 +3698,10 @@ snapshots:
 
   '@mixmark-io/domino@2.2.0': {}
 
+  '@mlc-ai/web-llm@0.2.87':
+    dependencies:
+      loglevel: 1.9.2
+
   '@modelcontextprotocol/client@2.4.0':
     dependencies:
       '@modelcontextprotocol/core': 2.4.0
@@ -4787,6 +4807,8 @@ snapshots:
       lightningcss-win32-x64-msvc: 1.33.0
 
   lines-and-columns@1.2.4: {}
+
+  loglevel@1.9.2: {}
 
   long@5.3.2: {}
 

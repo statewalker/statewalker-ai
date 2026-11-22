@@ -49,6 +49,8 @@ import {
   type ModelMessage,
   type ModelResponse,
   type ModelUsage,
+  type Telemetry,
+  turnTrace,
 } from "@statewalker/ai-environment";
 import type {
   Complete,
@@ -136,6 +138,14 @@ export interface FlueTurn {
    * result), nothing to run it.
    */
   admitTool?(name: string): Promise<string | undefined>;
+  /**
+   * Telemetry (statewalker/statewalker-root#182): every tool call is a span of the turn's trace
+   * (memory-tool calls `memory.call`, others `tool.call`), carrying the tool's name, its
+   * outcome and the error code of a failure, never its input or output.
+   */
+  telemetry?: Telemetry;
+  /** Further attributes of a tool's spans (its kind, its permission), from the host. */
+  toolAttributes?(name: string): Record<string, string | undefined>;
   /**
    * The names of the tools the model may be offered, Flue's and the host's (none: all of them). A
    * sub-agent's are within its parent's (statewalker/statewalker-root#126).
@@ -591,6 +601,32 @@ function admitted(tool: AgentTool, turn: FlueTurn): AgentTool {
   };
 }
 
+/** The name of the harness's memory tool: its calls are `memory.call` spans. */
+const MEMORY_TOOL_NAME = "memory";
+
+/** A tool whose every call is a span of the turn's trace, with ids and outcomes only (#182). */
+function observed(tool: AgentTool, turn: FlueTurn): AgentTool {
+  const telemetry = turn.telemetry;
+  if (!telemetry || !turn.turn) return tool;
+  const trace = turnTrace(turn.turn);
+  return {
+    ...tool,
+    execute(id, params, signal, onUpdate) {
+      return telemetry.span(
+        tool.name === MEMORY_TOOL_NAME ? "memory.call" : "tool.call",
+        {
+          "session.id": turn.id,
+          "turn.id": turn.turn,
+          "tool.name": tool.name,
+          ...turn.toolAttributes?.(tool.name),
+        },
+        () => tool.execute(id, params, signal, onUpdate),
+        { parent: trace },
+      );
+    },
+  };
+}
+
 /** The session's tool set for this turn: Flue's file tools and the host's, as offered. */
 function toolsFor(session: string, sandbox: unknown): AgentTool[] {
   const live = LIVE.get(session);
@@ -619,7 +655,7 @@ function toolsFor(session: string, sandbox: unknown): AgentTool[] {
   return [
     ...TRACER_TOOLS.filter(offered).map((name) => TOOLS[name](sandbox as never) as AgentTool),
     ...hostTools,
-  ].map((tool) => approvalAware(admitted(tool, turn), waiting));
+  ].map((tool) => observed(approvalAware(admitted(tool, turn), waiting), turn));
 }
 
 /**

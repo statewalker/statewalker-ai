@@ -253,6 +253,10 @@ _Avoid_: throttle
 **Provider share**:
 The part of a deployment provider key's rate limits (requests and tokens a minute) one workspace is held to, in its own Workspace DO.
 
+**Telemetry**:
+The operator's OpenTelemetry traces (one per turn), metrics and structured logs, carrying ids, sizes, timings and outcomes only; what may be exported is a schema of allowed attributes, never content. Exported through the deployment's exporter (OTLP, a console, or off).
+_Avoid_: tracing (for the whole), debug logging
+
 **Increment**:
 What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.
 
@@ -382,6 +386,9 @@ A place where an agent session's code runs, of one kind (shell, isolate, engine 
 
 **Provider**:
 A connection to a model service, configured at some level, whose key is a secret.
+
+**Local engine**:
+A model engine running where the harness runs (WebLLM in the user's browser page), declared by the runtime's host; it serves the `local` provider's models with no key, and only models whose weights the user downloaded.
 
 **Model alias**:
 A role name such as `fast` that agents ask for, served by whichever configured model the most specific level maps it to.

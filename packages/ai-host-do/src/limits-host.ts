@@ -152,7 +152,7 @@ export class WorkspaceLimits {
     read: (path: string) => Promise<string | undefined>,
   ) {
     this.clock = clockOf(env, sql);
-    this.ledger = new LimitLedger(sql, { ...ledgerOptions(env), now: this.clock.now });
+    this.ledger = new LimitLedger(sql, { ...ledgerOptions(env, "workspace"), now: this.clock.now });
     this.#sql = sql;
     sql.exec(`CREATE TABLE IF NOT EXISTS limit_sessions (session TEXT PRIMARY KEY,
       user TEXT NOT NULL, project TEXT NOT NULL)`);
@@ -603,7 +603,7 @@ export class UserLimits {
 
   constructor(sql: SqlLike, env: Env, user: string, read: () => Promise<string | undefined>) {
     this.clock = clockOf(env, sql);
-    this.ledger = new LimitLedger(sql, { ...ledgerOptions(env), now: this.clock.now });
+    this.ledger = new LimitLedger(sql, { ...ledgerOptions(env, "user"), now: this.clock.now });
     this.#sql = sql;
     sql.exec("CREATE TABLE IF NOT EXISTS limit_approvals_used (id TEXT PRIMARY KEY)");
     this.#env = env;
