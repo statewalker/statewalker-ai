@@ -247,8 +247,11 @@ async function scan(api: UiStreamApi, session: string): Promise<TurnMark[]> {
   return [...marks.values()].sort((a, b) => a.queued - b.queued);
 }
 
-/** One frame of a UI message stream: a chunk (with its log offset, if it has one) or idle time. */
-export type UiStreamFrame = { chunk: UIMessageChunk; seq?: number } | { idle: true };
+/**
+ * One frame of a UI message stream: the chunks of one log event (with its offset, if it has one),
+ * written together so a resume after that offset never splits an event; or idle time.
+ */
+export type UiStreamFrame = { chunks: UIMessageChunk[]; seq?: number } | { idle: true };
 
 /**
  * The frames of one UI message stream: chunks as the log grows, and an idle frame each time
@@ -396,11 +399,13 @@ export async function* uiMessageFrames(
 
   try {
     yield {
-      chunk: {
-        type: "start",
-        ...(plan.messageId ? { messageId: plan.messageId } : {}),
-        messageMetadata: { session },
-      },
+      chunks: [
+        {
+          type: "start",
+          ...(plan.messageId ? { messageId: plan.messageId } : {}),
+          messageMetadata: { session },
+        },
+      ],
     };
     let upToDate = false;
     let checked = false;
@@ -415,21 +420,22 @@ export async function* uiMessageFrames(
         since = event.seq;
         if (event.type === "approval.requested" && !event.turn) {
           yield {
-            chunk: { type: "data-sub-agent-approvals", id: `ev-${event.seq}`, data: event.data },
+            chunks: [{ type: "data-sub-agent-approvals", id: `ev-${event.seq}`, data: event.data }],
             seq: event.seq,
           };
           continue;
         }
         if (!event.turn || !following.has(event.turn)) continue;
-        if (event.type === "turn.started") yield { chunk: { type: "start-step" }, seq: event.seq };
+        const chunks: UIMessageChunk[] = [];
+        if (event.type === "turn.started") chunks.push({ type: "start-step" });
         else if (event.type === "item.created")
-          for await (const chunk of itemChunks(event.data as Item)) yield { chunk, seq: event.seq };
+          for await (const chunk of itemChunks(event.data as Item)) chunks.push(chunk);
         else if (TERMINAL.has(event.type)) {
-          for (const chunk of flush(event.turn)) yield { chunk, seq: event.seq };
-          yield { chunk: { type: "finish-step" }, seq: event.seq };
+          chunks.push(...flush(event.turn), { type: "finish-step" });
           ended.set(event.turn, event.data as TurnView);
           following.delete(event.turn);
         }
+        if (chunks.length) yield { chunks, seq: event.seq };
         if (!following.size) break;
       }
       upToDate = page.up_to_date;
@@ -461,25 +467,29 @@ export async function* uiMessageFrames(
     };
     const failed = views.find((v) => v.status === "failed");
     const stopped = views.find((v) => v.status === "cancelled" || v.status === "interrupted");
-    if (stopped) yield { chunk: { type: "abort", reason: stopped.status } };
-    else if (failed) {
+    if (stopped) yield { chunks: [{ type: "abort", reason: stopped.status }] };
+    else if (failed)
       yield {
-        chunk: {
-          type: "error",
-          errorText: failed.error ?? failed.stop_reason?.message ?? "the turn failed",
-        },
+        chunks: [
+          {
+            type: "error",
+            errorText: failed.error ?? failed.stop_reason?.message ?? "the turn failed",
+          },
+          { type: "finish", finishReason: "error", messageMetadata: metadata },
+        ],
       };
-      yield { chunk: { type: "finish", finishReason: "error", messageMetadata: metadata } };
-    } else
+    else
       yield {
-        chunk: {
-          type: "finish",
-          finishReason: last?.status === "waiting" ? "tool-calls" : "stop",
-          messageMetadata: metadata,
-        },
+        chunks: [
+          {
+            type: "finish",
+            finishReason: last?.status === "waiting" ? "tool-calls" : "stop",
+            messageMetadata: metadata,
+          },
+        ],
       };
   } catch (e) {
-    yield { chunk: { type: "error", errorText: messageOf(e) } };
+    yield { chunks: [{ type: "error", errorText: messageOf(e) }] };
   }
 }
 
@@ -504,8 +514,8 @@ export function uiMessageChunks(
           controller.close();
           return;
         }
-        if ("chunk" in next.value) {
-          controller.enqueue(next.value.chunk);
+        if ("chunks" in next.value && next.value.chunks.length) {
+          for (const chunk of next.value.chunks) controller.enqueue(chunk);
           return;
         }
       }
@@ -517,8 +527,10 @@ export function uiMessageChunks(
 }
 
 /**
- * The SSE response of one UI message stream: each chunk as `data:` (with its log offset as `id`,
- * for a resume with `Last-Event-ID`), a keep-alive comment when idle, then `data: [DONE]`.
+ * The SSE response of one UI message stream: each chunk as `data:`, a keep-alive comment when
+ * idle, then `data: [DONE]`. The chunks of one log event are written at once, and only the last
+ * carries the event's offset as `id`: a client resuming with its `Last-Event-ID` gets every event
+ * after the last one it saw whole.
  */
 export function uiMessageStreamResponse(
   api: UiStreamApi,
@@ -544,7 +556,12 @@ export function uiMessageStreamResponse(
       else
         controller.enqueue(
           encoder.encode(
-            `${frame.seq !== undefined ? `id: ${frame.seq}\n` : ""}data: ${JSON.stringify(frame.chunk)}\n\n`,
+            frame.chunks
+              .map(
+                (chunk, i) =>
+                  `${frame.seq !== undefined && i === frame.chunks.length - 1 ? `id: ${frame.seq}\n` : ""}data: ${JSON.stringify(chunk)}\n\n`,
+              )
+              .join(""),
           ),
         );
     },

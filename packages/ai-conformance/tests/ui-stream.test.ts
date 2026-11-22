@@ -367,7 +367,7 @@ describe("the AI SDK UI message stream over REST", () => {
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
     });
 
-  it("answers with the UI message stream's headers, each chunk numbered by its log offset", async () => {
+  it("answers with the UI message stream's headers, its events numbered by their log offsets", async () => {
     const token = await login(deployment, "eli-rest");
     const s = await restClient(deployment, token).startSession({ project: "proj" });
     const res = await open(`/v1/sessions/${s.id}/chat`, token, {
@@ -392,6 +392,43 @@ describe("the AI SDK UI message stream over REST", () => {
     const rest = [];
     for await (const c of uiChunks(again.body as ReadableStream<Uint8Array>)) rest.push(c.type);
     expect(rest).toEqual(["start", "finish-step", "finish"]);
+  });
+
+  it("numbers only the last frame of each log event, so a resume after a cut mid-event resends all of it", async () => {
+    const token = await login(deployment, "ann-rest");
+    const s = await restClient(deployment, token).startSession({ project: "proj" });
+    const res = await open(`/v1/sessions/${s.id}/chat`, token, {
+      method: "POST",
+      body: JSON.stringify({ messages: [user("hello")] }),
+    });
+    const frames = [];
+    for await (const f of sseFrames(res.body as ReadableStream<Uint8Array>)) frames.push(f);
+    const types = frames.map((f) =>
+      f.data && f.data !== "[DONE]" ? JSON.parse(f.data).type : f.data,
+    );
+    // The text item is one event: its start and delta carry no id, its end carries the event's.
+    const start = types.indexOf("text-start");
+    expect(frames[start]?.id).toBeUndefined();
+    expect(frames[start + 1]?.id).toBeUndefined();
+    expect(frames[start + 2]?.id).toBeDefined();
+    // The connection dropped right after text-start: the client's Last-Event-ID is the last id it saw.
+    const seen = frames
+      .slice(0, start + 1)
+      .filter((f) => f.id !== undefined)
+      .at(-1)?.id;
+    const again = await deployment.fetch(`/v1/sessions/${s.id}/chat/stream`, {
+      headers: { authorization: `Bearer ${token}`, "last-event-id": String(seen) },
+    });
+    const rest = [];
+    for await (const c of uiChunks(again.body as ReadableStream<Uint8Array>)) rest.push(c.type);
+    expect(rest).toEqual([
+      "start",
+      "text-start",
+      "text-delta",
+      "text-end",
+      "finish-step",
+      "finish",
+    ]);
   });
 
   it("ends an open UI message stream with an error once its token expires", async () => {
