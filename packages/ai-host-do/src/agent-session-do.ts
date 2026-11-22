@@ -177,6 +177,7 @@ export class AgentSession extends DurableObject<Env> {
             onSteer,
             tools: [...databases, ...rest, agentStart],
             allowTools: offered,
+            ...(config.plugins ? { plugins: config.plugins } : {}),
           },
           emit,
         );

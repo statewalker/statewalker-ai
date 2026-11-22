@@ -19,7 +19,26 @@ import {
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
 
+const skill = (name: string, description: string, body: string) =>
+  `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`;
+
 const FILES = {
+  // A workspace plugin and a project plugin, both with a skill named "standup": the workspace's
+  // comes first in pinned order (deployment, workspace, project), so it is the one Flue holds.
+  "/.system/plugins/flteam/.claude-plugin/plugin.json": JSON.stringify({ name: "flteam" }),
+  "/.system/plugins/flteam/skills/standup/SKILL.md": skill(
+    "standup",
+    "Team standup.",
+    "STANDUP-BODY",
+  ),
+  "/.system/plugins/flteam/skills/standup/notes.md": "STANDUP-NOTES",
+  "/.system/plugins/flteam/skills/retro/SKILL.md": skill("retro", "Team retro.", "RETRO-BODY"),
+  "/fl-alpha/.system/plugins/flproj/.claude-plugin/plugin.json": JSON.stringify({ name: "flproj" }),
+  "/fl-alpha/.system/plugins/flproj/skills/standup/SKILL.md": skill(
+    "standup",
+    "Project standup.",
+    "PROJECT-STANDUP-BODY",
+  ),
   "/fl-alpha/AGENTS.md": "Always answer in the house style of fl-alpha.\n",
   "/fl-alpha/readme.md": "# fl-alpha\n",
   "/fl-alpha/.system/access": JSON.stringify({ ann: "editor", bob: "reader" }),
@@ -107,6 +126,39 @@ describe.each(transports)("Flue's runtime over %s", (name, connect) => {
     const request = model.requests.find((r) => r.lastUserText === text);
     expect(request?.tools).toEqual(expect.arrayContaining(["read", "write", "bash"]));
     expect(request?.tools).not.toContain("task");
+  });
+
+  it("registers the view's skills with Flue: the catalog in the prompt, activate_skill serves one", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: "fl-alpha" });
+    const text = `CALL activate_skill ${JSON.stringify({ name: "retro" })}`;
+    const turn = await ann.sendMessage(s.id, { content: text });
+    expect(turn.status).toBe("completed");
+    const request = model.requests.find((r) => r.lastUserText === text);
+    expect(request?.system).toContain("Team retro.");
+    expect(request?.tools).toContain("activate_skill");
+    const result = turn.items.find((i) => i.kind === "tool_result");
+    expect(result).toMatchObject({ name: "activate_skill", isError: false });
+    expect(result?.output).toContain("RETRO-BODY");
+  });
+
+  it("on a skill name two plugins share, Flue holds the first in pinned order; both stay in the view", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: "fl-alpha" });
+    const text = `CALL activate_skill ${JSON.stringify({ name: "standup" })}`;
+    const turn = await ann.sendMessage(s.id, { content: text });
+    const request = model.requests.find((r) => r.lastUserText === text);
+    expect(request?.system).toContain("Team standup.");
+    expect(request?.system).not.toContain("Project standup.");
+    const result = turn.items.find((i) => i.kind === "tool_result");
+    expect(result?.output).toContain("STANDUP-BODY");
+    expect(result?.output).not.toContain("PROJECT-STANDUP-BODY");
+    const read = await ann.sendMessage(s.id, {
+      content: `CALL read ${JSON.stringify({ path: "/fl-alpha/.agents/skills/flproj/standup/SKILL.md" })}`,
+    });
+    expect(read.items.find((i) => i.kind === "tool_result")?.output).toContain(
+      "PROJECT-STANDUP-BODY",
+    );
   });
 
   it("never compacts in Flue: an answer near a large context window makes no extra model request", async () => {
