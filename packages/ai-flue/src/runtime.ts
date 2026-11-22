@@ -111,8 +111,13 @@ export interface FlueTurn {
   model?: string;
   /** The model the turn's message asked for (an id or an alias), within the user's rights. */
   requested?: string;
-  /** The user's message. */
+  /** The user's message (for a continuation, Flue's submission text only: never the model's). */
   content: string;
+  /**
+   * The turn continues after the user answered its approvals (statewalker/statewalker-root#214):
+   * the model is shown the context alone, which ends with the answered actions' results.
+   */
+  continues?: boolean;
   /**
    * The model context before the user's message, as the harness shaped it (summaries and the
    * items they leave). The harness compacts: Flue's own compaction is off.
@@ -432,9 +437,12 @@ function gatewayStream(model: { id: string }, context: { messages: Message[] }, 
   }
   const entries: ContextEntry[] = [
     ...(turn.context ?? []),
-    ...[{ kind: "message", role: "user", text: turn.content } as ItemInput, ...live.items].map(
-      (item) => ({ type: "item", item: item as unknown as Item }) as ContextEntry,
-    ),
+    ...[
+      ...(turn.continues
+        ? []
+        : [{ kind: "message", role: "user", text: turn.content } as ItemInput]),
+      ...live.items,
+    ].map((item) => ({ type: "item", item: item as unknown as Item }) as ContextEntry),
   ];
   const messages = [
     ...systemOf(context.messages),

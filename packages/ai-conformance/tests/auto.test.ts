@@ -212,6 +212,8 @@ describe.each(transports)("auto mode over %s", (name, connect) => {
     expect(retried.status).toBe("completed");
     expect(toolResult(retried)).toMatchObject({ isError: false });
     expect(decisions(retried).at(-1)).toMatchObject({ step: "approval", verdict: "allow" });
+    // The agent continues with the retried action's result (statewalker/statewalker-root#214).
+    expect(retried.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
     expect(await exists(cy, s.id, `build-cy-${t}/out.js`)).toBe(false);
     expect((await cy.me()).blocked).toEqual([]);
   });
@@ -422,6 +424,8 @@ describe.each(transports)("auto mode over %s", (name, connect) => {
     const retried = await nan.waitTurn(accepted);
     expect(retried.status).toBe("completed");
     expect(decisions(retried).at(-1)).toMatchObject({ step: "approval", verdict: "allow" });
+    // The agent continues with the retried action's result (statewalker/statewalker-root#214).
+    expect(retried.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
     expect(toolResult(await nan.sendMessage(s.id, { content: select }))?.output).toContain("nan");
     // An unattended session's ask is a deny.
     const u = await nan.startSession({ project: "proj", unattended: true });

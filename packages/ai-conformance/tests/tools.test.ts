@@ -341,6 +341,9 @@ describe.each(transports)("tools over %s", (name, connect) => {
       const { accepted } = await mo.answerApproval(id, { decision: "allow", scope: "once" });
       const answered = await mo.waitTurn(accepted);
       expect(toolResults(answered).at(-1)).toMatchObject({ isError: false, approval: id });
+      // The agent continues the turn with the tool's answer (statewalker/statewalker-root#214).
+      expect(answered.status).toBe("completed");
+      expect(answered.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
       expect(rest.requests.slice(from)).toEqual([
         expect.objectContaining({
           method: "POST",
