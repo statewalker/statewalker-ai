@@ -10,6 +10,7 @@
 // New tables only: limit_counters, limit_reservations, limit_raises, limit_warned, usage_records
 // and limit_meta. Rolling back leaves them unused.
 import type { SqlLike } from "./sql.js";
+import type { Telemetry } from "./telemetry.js";
 
 /** The meters, each in its natural unit. `executor_cpu_ms` takes a kind: `executor_cpu_ms:node`. */
 export const METERS = [
@@ -481,6 +482,22 @@ export interface LedgerOptions {
   /** How long usage records are kept (13 months). */
   retentionMonths?: number;
   now?: () => number;
+  /**
+   * Counts usage per meter and denials per meter and level (statewalker/statewalker-root#182),
+   * as the ledger named `ledger` (its DO's kind: session, workspace, user).
+   */
+  telemetry?: Telemetry;
+  ledger?: string;
+}
+
+/** A refusal, counted: a delay is not one until it gives up (withDelay). */
+function countDenial(telemetry: Telemetry | undefined, e: LimitExceeded, ledger?: string): void {
+  telemetry?.count("harness.denials", 1, {
+    meter: e.limit.meter,
+    "limit.level": e.breach.level,
+    "error.code": "ELIMIT",
+    ledger,
+  });
 }
 
 interface Entry {
@@ -502,9 +519,13 @@ export class LimitLedger {
   readonly #tz: string;
   readonly #retention: number;
   readonly #now: () => number;
+  readonly #telemetry: Telemetry | undefined;
+  readonly #ledger: string | undefined;
 
   constructor(sql: SqlLike, options: LedgerOptions = {}) {
     this.#sql = sql;
+    this.#telemetry = options.telemetry;
+    this.#ledger = options.ledger;
     this.#tz = options.timeZone || "UTC";
     this.#retention = options.retentionMonths ?? 13;
     this.#now = options.now ?? Date.now;
@@ -648,7 +669,10 @@ export class LimitLedger {
   /** Throws the first breach a charge would make (LimitExceeded). */
   check(scopes: readonly LimitScope[], amounts: Record<string, number>): void {
     const [first] = this.breaches(scopes, amounts);
-    if (first) throw new LimitExceeded(first);
+    if (!first) return;
+    const e = new LimitExceeded(first);
+    if (first.verdict !== "delay") countDenial(this.#telemetry, e, this.#ledger);
+    throw e;
   }
 
   /**
@@ -793,6 +817,10 @@ export class LimitLedger {
           warnings.push({ limit, level: scope.level, target: scope.target, used, value });
         }
       }
+    // Counted once per charge, whatever the number of levels it lands on.
+    for (const [meter, amount] of Object.entries(amounts))
+      if (amount > 0)
+        this.#telemetry?.count("harness.usage", amount, { meter, ledger: this.#ledger });
     if (options?.record === false) return warnings;
     for (const [meter, amount] of Object.entries(amounts)) {
       if (!amount) continue;
@@ -925,6 +953,8 @@ export interface DelayOptions {
   /** The clock (tests move a virtual one). */
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  /** Records how long a delayed request waited, and counts the delay that gave up as a denial. */
+  telemetry?: Telemetry;
 }
 
 /**
@@ -938,14 +968,27 @@ export async function withDelay<T>(
 ): Promise<T> {
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
-  const deadline = now() + (options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS);
+  const started = now();
+  const deadline = started + (options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS);
+  let meter: string | undefined;
+  const waited = () => {
+    if (meter !== undefined)
+      options.telemetry?.record("harness.queue.wait", now() - started, { meter });
+  };
   for (;;) {
     try {
-      return await charge();
+      const result = await charge();
+      waited();
+      return result;
     } catch (e) {
       if (!(e instanceof LimitExceeded) || e.verdict !== "delay") throw e;
+      meter = e.limit.meter;
       const wait = e.breach.retryAfterMs;
-      if (wait === undefined || now() + wait > deadline) throw e;
+      if (wait === undefined || now() + wait > deadline) {
+        waited();
+        countDenial(options.telemetry, e);
+        throw e;
+      }
       await sleep(wait + 1);
     }
   }

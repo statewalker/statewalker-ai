@@ -91,7 +91,13 @@
     // start and of a write-back.
     "UHP_POLL_MS": "2000",
     "UHP_INPUT_MAX_BYTES": "4194304",
-    "UHP_WRITEBACK_MAX_BYTES": "16777216"
+    "UHP_WRITEBACK_MAX_BYTES": "16777216",
+    // Telemetry for the operator (statewalker/statewalker-root#182): "off", "console" (Workers
+    // Observability here; stdout on CellB and CellD on Node), or JSON {"exporter": "otlp",
+    // "endpoint": "https://<collector>", "headers_secret"?: "<runtime secret holding the
+    // collector's headers as JSON>", "gate_sample"?: 0.01, "flush_ms"?: 1000}. Ids, sizes,
+    // timings and outcomes only, never content.
+    "TELEMETRY": "off"
     // The S3 workspace backend's keys, set as runtime secrets, never vars:
     //   WORKSPACE_S3_ACCESS_KEY_ID, WORKSPACE_S3_SECRET_ACCESS_KEY
     // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:

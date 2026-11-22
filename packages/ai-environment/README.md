@@ -22,5 +22,18 @@ npm install @statewalker/ai-environment
 import { gatedFiles, ModelGateway, SecretStore } from "@statewalker/ai-environment";
 ```
 
+A browser page that runs the harness declares its local model engine before it starts the
+deployment, so the gateway's `local` provider serves models in the page (statewalker/statewalker-root#143);
+without one, `local` models answer `ENOSYS`. The page downloads weights only when its user asks:
+
+```ts
+import { installLocalEngine } from "@statewalker/ai-environment/local-models";
+import { webllmEngine } from "@statewalker/ai-environment/webllm";
+
+const engine = webllmEngine({ load: () => import("@mlc-ai/web-llm") });
+installLocalEngine(engine);
+await engine.download("SmolLM2-360M-Instruct-q4f16_1-MLC", (p) => console.log(p.text)); // the user's action
+```
+
 The harness is reached by clients through the session API of a running deployment, not through
 these packages; they are the deployment's parts.

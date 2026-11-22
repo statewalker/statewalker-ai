@@ -2,6 +2,7 @@
 // @statewalker/cellb/browser, its cells in OPFS. The page relays the conformance runner's
 // requests here and the answers back (host-page.ts); WebSockets the Worker accepts are relayed
 // message by message.
+import { installLocalEngine } from "@statewalker/ai-environment/local-models";
 import { loadProject } from "@statewalker/cellb/browser";
 
 type LoadedProject = Awaited<ReturnType<typeof loadProject>>;
@@ -12,6 +13,25 @@ interface ServerSocket {
   close(code?: number, reason?: string): void;
   addEventListener(type: string, listener: (event: { data?: unknown }) => void): void;
 }
+
+// The page's local model engine (statewalker/statewalker-root#143), a stand-in for WebLLM: a
+// model's "weights" are where the runner's scripted model answers for it, put here only by the
+// runner's `download` (the user's action in the page).
+const weights = new Map<string, string>();
+installLocalEngine({
+  has: async (model) => weights.has(model),
+  async fetch(req) {
+    const body = await req.text();
+    const upstream = weights.get(String(JSON.parse(body).model));
+    if (!upstream) return new Response("the model is not downloaded", { status: 404 });
+    const path = new URL(req.url).pathname.replace(/^\/v1/, "");
+    return fetch(`${upstream.replace(/\/+$/, "")}${path}`, {
+      method: req.method,
+      headers: req.headers,
+      body,
+    });
+  },
+});
 
 let project: LoadedProject | undefined;
 let data = "";
@@ -107,6 +127,10 @@ self.addEventListener("message", async (event: MessageEvent) => {
         break;
       case "request":
         await request(msg);
+        break;
+      case "local-download":
+        weights.set(msg.model, msg.scripted);
+        post({ type: "downloaded", id: msg.id });
         break;
       case "cancel":
         await bodies.get(msg.id)?.cancel();

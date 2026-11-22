@@ -4,6 +4,8 @@
 // keeps only its user's own (statewalker/statewalker-root#132). The page reaches it only through
 // the session API: requests come in as messages, answers go back as a head and body chunks.
 
+import { installLocalEngine } from "@statewalker/ai-environment/local-models";
+import { webllmEngine } from "@statewalker/ai-environment/webllm";
 import { browserDeploymentConfig } from "@statewalker/ai-host-do/browser";
 import { loadProject } from "@statewalker/cellb/browser";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
@@ -17,6 +19,14 @@ export interface StartMessage {
   /** Variables over the built configuration: the page's own (an admin key it made, say). */
   vars: Record<string, string>;
 }
+
+// The page's local model engine (statewalker/statewalker-root#143): WebLLM in this worker, behind
+// the harness's `local` provider. Its weights come only from the user's `local download` (a
+// message from the page), into the browser's cache; WebLLM itself loads when first used.
+const local = webllmEngine({
+  load: () => import("@mlc-ai/web-llm") as never,
+});
+installLocalEngine(local);
 
 let project: LoadedProject | undefined;
 const bodies = new Map<number, ReadableStreamDefaultReader<Uint8Array>>();
@@ -95,6 +105,14 @@ self.addEventListener("message", async (event: MessageEvent) => {
       post({ type: "started", id: msg.id });
     } else if (msg.type === "request") await request(msg);
     else if (msg.type === "cancel") await bodies.get(msg.id)?.cancel();
+    else if (msg.type === "local-has")
+      post({ type: "local-done", id: msg.id, value: await local.has(msg.model) });
+    else if (msg.type === "local-download") {
+      await local.download(msg.model, ({ progress, text }) =>
+        post({ type: "local-progress", id: msg.id, progress, text }),
+      );
+      post({ type: "local-done", id: msg.id });
+    }
   } catch (e) {
     post({ type: "error", id: msg.id, message: String((e as Error)?.message ?? e) });
   }

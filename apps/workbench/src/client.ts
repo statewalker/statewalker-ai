@@ -187,10 +187,10 @@ export function sessionClient(fetch: DeploymentFetch, token: string) {
     getModelConfig: () => call<Record<string, unknown>>("GET", "/v1/me/models"),
     setModelConfig: (config: unknown) => call<unknown>("PUT", "/v1/me/models", config),
     listModels: (project: string) =>
-      call<{ models: { id: string; alias?: string[] }[]; default?: string }>(
-        "GET",
-        `/v1/models?${new URLSearchParams({ project })}`,
-      ),
+      call<{
+        models: { id: string; aliases?: string[]; provider: string; allowed?: boolean }[];
+        default?: string;
+      }>("GET", `/v1/models?${new URLSearchParams({ project })}`),
     async list(path: string): Promise<FileEntry[]> {
       const res = await fetch(`${filePath(path)}?list`, { headers });
       return (await answer<{ entries: FileEntry[] }>(res)).entries;
