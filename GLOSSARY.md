@@ -369,6 +369,13 @@ _Avoid_: composite file system
 **Executor**:
 A place where an agent session's code runs, of one kind (shell, isolate, engine or pool), reaching files only through the session's capability.
 
+**Code engine**:
+Pyodide or Wasmer, declared by the runtime's host where it can confine them (CellB in a browser and on Node); an instance belongs to one agent session, and `python` and POSIX programs answer ENOSYS where no host declared one.
+_Avoid_: sandbox (for the engine itself)
+
+**Requires**:
+What an agent's definition says it needs of the environment (`requires: [python, node]`); its session refuses to start where a requirement isn't met.
+
 **Provider**:
 A connection to a model service, configured at some level, whose key is a secret.
 

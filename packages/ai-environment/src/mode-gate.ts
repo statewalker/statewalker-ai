@@ -101,7 +101,10 @@ export type ApprovalMethod =
   | "changeset"
   // A sub-agent's approval a turn waits on through `agent.start` (statewalker/statewalker-ai#88):
   // the path is the sub-agent session, the target the approval.
-  | "agent";
+  | "agent"
+  // A run of code from the `bash` tool (statewalker/statewalker-root#142): the path is its command
+  // line, the content the exact run as JSON.
+  | "run";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -420,6 +423,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a limit is raised by the DO that counts it");
       case "memory":
         throw codedError("EINVAL", "a memory batch runs through the memory service");
+      case "run":
+        throw codedError("EINVAL", "a run of code runs on the session's executors");
       default:
         throw codedError("EINVAL", `a ${call.method} action runs through its remote agent session`);
     }

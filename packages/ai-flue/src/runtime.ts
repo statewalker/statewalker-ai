@@ -61,7 +61,7 @@ import type {
   TurnOutcome,
 } from "@statewalker/ai-sessions";
 import { type FilesApi, readFile } from "@statewalker/webrun-files";
-import { Bash } from "just-bash/browser";
+import { Bash, defineCommand } from "just-bash/browser";
 import { contextMessages } from "./context.js";
 import { FilesFs } from "./files-fs.js";
 
@@ -92,6 +92,25 @@ export interface HostTool {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<{ output: string; isError?: boolean; secrets?: string[] }>;
+}
+
+/** One command of the `bash` tool run on an executor, as the host answers it. */
+export interface CodeRun {
+  command: string;
+  args: string[];
+  /** The shell's working directory. */
+  cwd: string;
+  stdin?: string;
+  /** The shell's exported variables. */
+  env?: Record<string, string>;
+}
+
+/** The host's executors, as the `bash` tool reaches them. */
+export interface CodePort {
+  /** The commands routed to the host. */
+  commands: readonly string[];
+  /** Runs one; a refusal (ENOSYS, EACCES, a limit) throws, and the shell reports it. */
+  run(run: CodeRun): Promise<{ stdout: string; stderr: string; exitCode: number }>;
 }
 
 export interface FlueTurn {
@@ -132,6 +151,12 @@ export interface FlueTurn {
   waiting?: () => boolean;
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
+  /**
+   * Code the `bash` tool runs on an executor (statewalker/statewalker-root#142): `node`, `python`
+   * and the deployment's WASIX programs are commands of the shell, each run by the host (decided
+   * as the `code.run` action, on the executor the deployment picked, or ENOSYS).
+   */
+  exec?: CodePort;
   /**
    * Asked before every tool call (statewalker/statewalker-root#179): a refusal's text when a limit
    * on tool calls refuses it (the call is not run, the agent carries on with the refusal as its
@@ -658,6 +683,41 @@ function toolsFor(session: string, sandbox: unknown): AgentTool[] {
   ].map((tool) => observed(approvalAware(admitted(tool, turn), waiting), turn));
 }
 
+/** Latin-1 bytes (the shell's stdin) as UTF-8 text. */
+const utf8 = (latin1: string) =>
+  new TextDecoder().decode(Uint8Array.from(latin1, (c) => c.charCodeAt(0) & 0xff));
+
+/**
+ * The `bash` tool's commands that run on an executor (#142): each asks the running turn's host,
+ * and a refusal is the command's error (ENOSYS: 127, as a missing command; others: 126).
+ */
+function codeCommands(session: string) {
+  const commands = LIVE.get(session)?.turn.exec?.commands ?? [];
+  return commands.map((name) =>
+    defineCommand(name, async (args, ctx) => {
+      const exec = LIVE.get(session)?.turn.exec;
+      if (!exec) return { stdout: "", stderr: `${name}: ENOSYS: no executor\n`, exitCode: 127 };
+      try {
+        const stdin = ctx.stdin === undefined ? "" : utf8(String(ctx.stdin));
+        return await exec.run({
+          command: name,
+          args,
+          cwd: ctx.cwd,
+          ...(stdin ? { stdin } : {}),
+          ...(ctx.exportedEnv ? { env: { ...ctx.exportedEnv } } : {}),
+        });
+      } catch (e) {
+        const message = String((e as Error)?.message ?? e);
+        return {
+          stdout: "",
+          stderr: `${name}: ${message}\n`,
+          exitCode: /^ENOSYS/.test(message) ? 127 : 126,
+        };
+      }
+    }),
+  );
+}
+
 /**
  * The generic agent: its definition is the running turn's (instructions, project, tools). Its
  * sandbox is the session's gated file view; the model is the gateway, with Flue's threshold
@@ -673,7 +733,11 @@ function HarnessAgent(props: { id: string }) {
       createSandbox: ({ id }: { id: string }) =>
         flueBash(
           () =>
-            new Bash({ fs: new FilesFs(liveFiles(session)) as never, cwd: `/${project}` }) as never,
+            new Bash({
+              fs: new FilesFs(liveFiles(session)) as never,
+              cwd: `/${project}`,
+              customCommands: codeCommands(session),
+            }) as never,
         ).createSandbox({ id }),
       tools: (sandbox: unknown) => toolsFor(session, sandbox),
     } as never,

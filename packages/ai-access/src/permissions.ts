@@ -57,6 +57,9 @@ export const AREAS: Readonly<Record<string, AreaSpec>> = {
   limits: { actions: ["write"], target: "name" },
   triggers: { actions: ["write"], target: "name" },
   tasks: { actions: ["publish", "subscribe", "admin"], target: "subject" },
+  // `code.run:<kind>` (statewalker/statewalker-root#94, #142): running code on an executor from the
+  // agent's `bash` tool, `node`, `python` or `posix` (WASIX programs). The owner's (`*.*`).
+  code: { actions: ["run"], target: "name" },
   // Held by no built-in role (#161, #80-era UHP decision): granted only by name, in custom roles.
   net: {
     actions: ["read", "write"],

@@ -3,6 +3,16 @@
 // (statewalker/statewalker-root#111).
 
 export {
+  type CodeEngine,
+  type CodeEngines,
+  codeEngines,
+  type EngineFiles,
+  type EngineInstance,
+  type EngineResult,
+  type EngineRun,
+  installCodeEngines,
+} from "./code-engines.js";
+export {
   DATABASES_FILE,
   type DatabaseAction,
   type DatabaseDeclaration,
@@ -16,6 +26,26 @@ export {
   parseDatabases,
   privateDatabaseOf,
 } from "./databases.js";
+export {
+  CODE_KINDS,
+  type CodeKind,
+  capOutput,
+  codeKindOf,
+  type ExecRequest,
+  type ExecResult,
+  type Executor,
+  type ExecutorKind,
+  type ExecutorPlan,
+  type ExecutorPool,
+  noExecutor,
+  type PoolLease,
+  type PoolMount,
+  parseExecutors,
+  requirementsOf,
+  routedCommands,
+  runMetered,
+  unmetRequirement,
+} from "./executors.js";
 export {
   FILES_RPC_METHODS,
   type FilesRpcCall,
