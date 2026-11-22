@@ -6,11 +6,16 @@ import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import { catalogAgents, catalogSkills, catalogTools } from "./catalog.js";
 import { parseFrontMatter } from "./front-matter.js";
 import { EXTENSION, isItemName, isPluginName } from "./loader.js";
+import type { ToolAction } from "./tools.js";
 
-/** Whether the user may use a skill, tool, agent or model (`<area>.use:<target>`) now. */
+/**
+ * Whether the user may use a skill, tool, agent or model (`<area>.use:<target>`) now; for a tool,
+ * its action is given, since a read tool may also be used with `tools.read` (readers).
+ */
 export type Allow = (
   area: "skills" | "tools" | "agents" | "models",
   target: string,
+  action?: ToolAction,
 ) => boolean | Promise<boolean>;
 
 export interface AgentDefinition {
@@ -112,14 +117,20 @@ export async function narrowAgent(
   agent: AgentDefinition,
   allow: Allow,
 ): Promise<NarrowedAgent> {
-  const tools = (await catalogTools(catalog)).map((t) => t.id);
+  const tools: string[] = [];
+  for (const t of await catalogTools(catalog))
+    if (
+      (!agent.tools || agent.tools.some((p) => matches(p, t.id))) &&
+      (await allow("tools", t.id, t.definition["x-dev.cellb.harness"].action))
+    )
+      tools.push(t.id);
   const models: string[] = [];
   for (const m of agent.models) if (await allow("models", m)) models.push(m);
   return {
     ...agent,
     models,
     skills: await allowed(await catalogSkills(catalog), "skills", allow, agent.skills),
-    tools: await allowed(tools, "tools", allow, agent.tools),
+    tools,
     agents: await allowed(await catalogAgents(catalog), "agents", allow, agent.agents),
   };
 }

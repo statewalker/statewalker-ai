@@ -13,6 +13,7 @@ import {
   modeOf,
   parseAutoMode,
   parseClassifierAnswer,
+  toolRequest,
 } from "../src/index.js";
 
 const files = (action: string, target: string) => ({ area: "files", action, target });
@@ -56,6 +57,13 @@ describe("auto mode", () => {
     });
     expect(auto(files("write", "/package.json.bak"), [], named)).toMatchObject({ step: "safe" });
     expect(auto(files("write", "/src/package.json"), [], named)).toMatchObject({ step: "safe" });
+  });
+
+  it("lets read tools through as a safe class and sends other tools to the classifier", () => {
+    const read = toolRequest({ id: "w/forecast", name: "w__forecast", action: "read" });
+    const write = toolRequest({ id: "w/report", name: "w__report", action: "write" });
+    expect(auto(read as never)).toMatchObject({ step: "safe", verdict: "allow" });
+    expect(auto(write as never)).toMatchObject({ step: "classifier" });
   });
 
   it("sets broad allow rules aside, but keeps narrow ones", () => {

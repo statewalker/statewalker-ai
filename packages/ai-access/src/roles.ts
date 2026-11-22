@@ -48,6 +48,7 @@ export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
     "files.list",
     "comments.read",
     "db.read",
+    "tools.read",
     "skills.use",
     "agents.use",
     "models.use",
