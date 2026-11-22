@@ -421,6 +421,12 @@ describe.skipIf(RUNTIME === "browser").each(transports)(
         const turn = await hal.sendMessage(session.id, { content: `metered-${t}` });
         expect(turn.status).toBe("failed");
         expect(turn.error).toMatch(/ELIMIT.*outbound_requests/);
+        // The task does not run on remotely: its cancel is never refused by the limit.
+        const id = [...uhp.tasks.values()].find((x) =>
+          JSON.stringify(x.final).includes(`metered-${t}`),
+        )?.id;
+        expect(id).toBeTruthy();
+        await until(() => uhp.cancels.includes(id as string), "UHP cancel past the limit");
       } finally {
         uhp.polls = 1;
       }
@@ -440,6 +446,21 @@ describe.skipIf(RUNTIME === "browser").each(transports)(
       ).rejects.toMatchObject({ status: 409 });
       const files = restFiles(deployment, await login(deployment, `hal-${t}`));
       expect(await files.exists(`/alpha/out/dropped-${t}.md`)).toBe(false);
+    });
+
+    it("fails the answered turn when the server refuses the answer", async () => {
+      const kit = await as("kit");
+      const session = await kit.startSession({ project: "alpha", agent: "remote:hr/coder" });
+      const asked = await kit.sendMessage(session.id, { content: "ASK free_text Who?" });
+      const id = asked.stop_reason?.approval_ids?.[0] as string;
+      uhp.failNext = 10;
+      try {
+        const { turn } = await answer(kit, id, { decision: "allow", scope: "once", message: "x" });
+        expect(turn.status).toBe("failed");
+        expect(turn.error).toMatch(/refused the answer/);
+      } finally {
+        uhp.failNext = 0;
+      }
     });
 
     it("sends only the server's own token, bound to its host", async () => {

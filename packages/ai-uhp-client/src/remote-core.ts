@@ -184,6 +184,12 @@ export class RemoteCore {
       else {
         // Nothing left to follow: a write-back the user answered is applied (or refused) by now.
         this.#dropWriteBacks();
+        // An answer the server refused fails the turn it continues.
+        const failed = this.#state("answer_error");
+        if (failed !== undefined) {
+          this.#sql.exec("DELETE FROM uhp_state WHERE key = 'answer_error'");
+          throw new Error(failed);
+        }
         return undefined;
       }
     }
@@ -191,11 +197,11 @@ export class RemoteCore {
     try {
       await this.#drive(port, config, task, run, emit);
     } catch (e) {
-      if (signal.aborted) {
-        const now = this.#task("id = ?", task.id) ?? task;
-        await this.#cancel(port, now);
-        this.#dropWriteBacks();
-      }
+      // A turn that ends without its task (cancelled, or failed: a limit, a refusal) stops the
+      // task too, so nothing keeps running remotely.
+      const now = this.#task("id = ?", task.id) ?? task;
+      if (signal.aborted || now.status === "running") await this.#cancel(port, now);
+      this.#dropWriteBacks();
       throw e;
     }
     return undefined;
@@ -242,8 +248,13 @@ export class RemoteCore {
   }
 
   /** A call, retried while it fails transiently (the same Idempotency-Key for a respond). */
-  async #call(port: RemotePort, call: UhpCall, what: string, signal?: AbortSignal) {
-    const retries = this.#options.retries ?? 5;
+  async #call(
+    port: RemotePort,
+    call: UhpCall,
+    what: string,
+    signal?: AbortSignal,
+    retries = this.#options.retries ?? 5,
+  ) {
     for (let attempt = 0; ; attempt++) {
       signal?.throwIfAborted();
       const answer = await port.call(call);
@@ -392,17 +403,26 @@ export class RemoteCore {
     this.#sql.exec(
       "UPDATE uhp_tasks SET status = 'dropped' WHERE turn IS NULL AND status = 'pending'",
     );
-    const sent = await this.#call(
-      port,
-      {
-        op: "respond",
-        idempotencyKey: idem,
-        body: { input, previous_response_id: stored.target, background: true, store: true },
-      },
-      "the answer",
-    );
-    const id = (sent.json as UhpResponse)?.id;
-    if (!isUhpId(id)) throw codedError("EIO", "the UHP server answered no response id");
+    let id: unknown;
+    try {
+      const sent = await this.#call(
+        port,
+        {
+          op: "respond",
+          idempotencyKey: idem,
+          body: { input, previous_response_id: stored.target, background: true, store: true },
+        },
+        "the answer",
+        undefined,
+        1,
+      );
+      id = (sent.json as UhpResponse)?.id;
+      if (!isUhpId(id)) throw codedError("EIO", "the UHP server answered no response id");
+    } catch (e) {
+      // Kept for the turn the answer continues, which fails with it (never the answer itself).
+      this.#setState("answer_error", String((e as Error)?.message ?? e));
+      throw e;
+    }
     this.#sql.exec(
       "INSERT INTO uhp_tasks (turn, idem, previous, response, status, created) VALUES (NULL, ?, ?, ?, 'running', ?)",
       idem,

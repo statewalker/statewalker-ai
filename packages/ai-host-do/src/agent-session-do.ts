@@ -912,13 +912,18 @@ export class AgentSession extends DurableObject<Env> {
       });
       const item = items.find((i) => i.approval === approval && i.stored && i.request);
       if (item?.stored && item.request) {
-        await this.#remote.answer(
-          this.#remotePort(config),
-          approval,
-          item.stored,
-          item.request,
-          answer,
-        );
+        try {
+          await this.#remote.answer(
+            this.#remotePort(config),
+            approval,
+            item.stored,
+            item.request,
+            answer,
+          );
+        } catch (e) {
+          // The User DO has the answer already: the turn it continues fails with the refusal.
+          console.warn(`answer to ${approval}: ${String((e as Error)?.message ?? e)}`);
+        }
         if (item.request.input?.kind === "secret") {
           const { message: _secret, ...kept } = answer;
           return this.#core.answer(approval, kept);
@@ -942,11 +947,13 @@ export class AgentSession extends DurableObject<Env> {
     return {
       call: async (call: UhpCall) => {
         const scopes = this.#limits.scopes(config);
-        try {
-          this.#limits.ledger.check(scopes, { outbound_requests: 1 });
-        } catch (e) {
-          throw refusal(e);
-        }
+        // A cancel is never refused by a limit: it is counted after (#144).
+        if (call.op !== "cancel")
+          try {
+            this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+          } catch (e) {
+            throw refusal(e);
+          }
         const answer = await workspace.uhp(config.capability, {
           ...call,
           ...(turn ? { turn } : {}),

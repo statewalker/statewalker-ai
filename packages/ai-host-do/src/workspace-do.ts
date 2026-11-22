@@ -1333,6 +1333,7 @@ export class Workspace extends DurableObject<Env> {
       headers?: Record<string, string>;
       binary?: boolean;
       turn?: string;
+      uncharged?: boolean;
     } = {},
   ): Promise<{
     status: number;
@@ -1359,13 +1360,19 @@ export class Workspace extends DurableObject<Env> {
     if (!resolved.ok) return { status: 0, error: resolved.error, refused: true };
     const meta = this.#limits.meta(facts.project, facts.user, facts.session, options.turn);
     const detail = { plugin: UHP_PLUGIN, host: new URL(request.url).host };
-    await this.#limits.charge(
-      facts.project,
-      facts.user,
-      { outbound_requests: 1, outbound_bytes: new TextEncoder().encode(body ?? "").length },
-      meta,
-      detail,
-    );
+    const sent = {
+      outbound_requests: 1,
+      outbound_bytes: new TextEncoder().encode(body ?? "").length,
+    };
+    // A cancel is never refused by a limit: it is counted after (#144).
+    if (options.uncharged)
+      this.#limits.ledger.add(
+        await this.#limits.scopes(facts.project, facts.user),
+        sent,
+        meta,
+        detail,
+      );
+    else await this.#limits.charge(facts.project, facts.user, sent, meta, detail);
     let res: Response;
     try {
       res = await fetch(resolved.url, {
@@ -1381,6 +1388,10 @@ export class Workspace extends DurableObject<Env> {
       };
     }
     const max = Number(this.env.UHP_WRITEBACK_MAX_BYTES) || DEFAULT_WRITEBACK_MAX;
+    if (Number(res.headers.get("content-length") ?? 0) > max) {
+      await res.body?.cancel();
+      return { status: 0, error: "EIO: the UHP server's answer is too large", refused: true };
+    }
     const bytes = new Uint8Array(await res.arrayBuffer());
     this.#limits.ledger.add(
       await this.#limits.scopes(facts.project, facts.user),
@@ -1572,7 +1583,9 @@ export class Workspace extends DurableObject<Env> {
         if (!isUhpId(call.response)) throw codedError("EINVAL", "no such response");
         done(call.response);
         return answer(
-          await this.#uhpSend(facts, server, "POST", `/v1/responses/${call.response}/cancel`),
+          await this.#uhpSend(facts, server, "POST", `/v1/responses/${call.response}/cancel`, {
+            uncharged: true,
+          }),
         );
       }
       case "download": {
@@ -1615,7 +1628,9 @@ export class Workspace extends DurableObject<Env> {
       const server = servers.find((s) => s.id === row.server);
       if (!server) continue;
       try {
-        await this.#uhpSend(row, server, "POST", `/v1/responses/${row.response}/cancel`);
+        await this.#uhpSend(row, server, "POST", `/v1/responses/${row.response}/cancel`, {
+          uncharged: true,
+        });
       } catch (e) {
         console.warn(`UHP cancel of ${row.response}: ${String((e as Error)?.message ?? e)}`);
       }
