@@ -27,6 +27,34 @@ export function errorResponse(e: unknown): Response {
   });
 }
 
+/**
+ * Every page of a usage records export as NDJSON, one record per line: the first page given, the
+ * next ones read as the stream is pulled (statewalker/statewalker-root#181).
+ */
+export function ndjsonResponse(
+  first: { records: unknown[]; next?: number },
+  page: (after: number) => Promise<{ records: unknown[]; next?: number }>,
+): Response {
+  const encoder = new TextEncoder();
+  let current: { records: unknown[]; next?: number } | undefined = first;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (!current) {
+        controller.close();
+        return;
+      }
+      const lines = current.records.map((r) => `${JSON.stringify(r)}\n`).join("");
+      if (lines) controller.enqueue(encoder.encode(lines));
+      try {
+        current = current.next === undefined ? undefined : await page(current.next);
+      } catch (e) {
+        controller.error(e);
+      }
+    },
+  });
+  return new Response(body, { headers: { "content-type": "application/x-ndjson" } });
+}
+
 const NOT_A_ROUTE = Symbol("not a route");
 
 /** The bearer token of a request ("" when there is none). */
@@ -65,6 +93,31 @@ export async function handleSessionRest(
         project: url.searchParams.get("project") ?? "",
         discover: url.searchParams.get("discover") === "true",
       });
+    if (route === "GET /limits/effective")
+      return api().effectiveLimits({
+        project: url.searchParams.get("project") ?? undefined,
+        session: url.searchParams.get("session") ?? undefined,
+      });
+    if (route === "GET /usage/records") {
+      const since = url.searchParams.get("since") ?? undefined;
+      // The first page is read before answering, so a refusal keeps its status.
+      const first = await api().usageRecords({ since } as never);
+      return ndjsonResponse(first, (after) => api().usageRecords({ since, after } as never));
+    }
+    if (route === "GET /usage")
+      return api().usage({
+        level: url.searchParams.get("level") ?? undefined,
+        project: url.searchParams.get("project") ?? undefined,
+        period: url.searchParams.get("period") ?? undefined,
+        group_by: url.searchParams.get("group_by") ?? undefined,
+      } as never);
+    if (parts[1] === "limits" && parts.length === 4 && parts[2] !== "effective") {
+      const [, , level, target] = parts as [string, string, string, string];
+      if (request.method === "GET") return api().getLimits(level, target);
+      if (request.method === "PUT")
+        return api().setLimits(level, target, (await bodyOf(request)) as never);
+      if (request.method === "DELETE") return api().deleteLimits(level, target);
+    }
     if (route === "GET /approvals") return api().listApprovals();
     if (request.method === "POST" && parts[1] === "approvals" && parts[2] && parts.length === 3)
       return api().answerApproval(parts[2], (await bodyOf(request)) as never);

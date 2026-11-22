@@ -35,6 +35,7 @@ export {
   type Delivery,
   type EditAccepted,
   type EditRequest,
+  type EffectiveLimitsQuery,
   type EventsPage,
   type EventsQuery,
   type ForkRequest,
@@ -45,6 +46,9 @@ export {
   type ItemInput,
   type ItemsPage,
   type ItemsQuery,
+  type LimitState,
+  type LimitsCall,
+  type LimitsView,
   type LimitWarningView,
   type McpMessage,
   type McpResponse,
@@ -89,6 +93,11 @@ export {
   type TurnRef,
   type TurnStatus,
   type TurnView,
+  type UsageQuery,
+  type UsageRecordsPage,
+  type UsageRecordsQuery,
+  type UsageReport,
+  type UsageTotals,
   type UserPort,
   type UserSessionView,
 } from "./api.js";
@@ -139,7 +148,7 @@ export {
   handleFilesRest,
   serveFilesRpc,
 } from "./files.js";
-export { bearerOf, bodyOf, errorResponse, handleSessionRest } from "./rest.js";
+export { bearerOf, bodyOf, errorResponse, handleSessionRest, ndjsonResponse } from "./rest.js";
 export { type SessionRpcConnection, serveSessionRpc, sessionRpcClient } from "./rpc.js";
 export type { SqlLike } from "./sql.js";
 export { sessionOfTurn } from "./turns.js";

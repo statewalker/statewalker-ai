@@ -7,6 +7,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Deployment,
+  exportUsage,
   type FakeModel,
   type FakeRest,
   fakeModel,
@@ -26,6 +27,7 @@ import {
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
+const OPERATOR_KEY = "conformance-operator-key";
 
 const TRANSPORTS = ["rest", "rpc"];
 
@@ -122,12 +124,7 @@ const transports: [string, Connect][] = [
 
 /** The workspace's usage records (test-only admin route). */
 async function usageRecords(workspace: string): Promise<Record<string, unknown>[]> {
-  const res = await deployment.fetch(`/admin/workspaces/${workspace}/usage-records`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${ADMIN_KEY}`, "content-type": "application/json" },
-    body: "{}",
-  });
-  return ((await res.json()) as { records: Record<string, unknown>[] }).records;
+  return (await exportUsage(deployment, OPERATOR_KEY, { workspace })) as never;
 }
 
 let model: FakeModel;
@@ -158,6 +155,7 @@ beforeAll(async () => {
     DEFAULT_AGENT: "fixture/default",
     DEV_LOGIN: "true",
     ADMIN_KEY,
+    OPERATOR_KEY,
     SECRETS_KEY: "conformance-secrets-key",
     USER_PROVIDER_HOSTS: "127.0.0.1",
     MODELS: model.deploymentModels({

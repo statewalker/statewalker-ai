@@ -162,6 +162,11 @@ export interface Env {
   TIME_ZONE?: string;
   /** How many months usage records are kept (13). */
   USAGE_RETENTION_MONTHS?: string;
+  /**
+   * The operator token (a runtime secret): `GET /v1/usage/records` with it as bearer exports the
+   * usage records of every workspace (statewalker/statewalker-root#181). Unset: no operator export.
+   */
+  OPERATOR_KEY?: string;
   /** Test-only: the SSE keep-alive interval in ms (30 s otherwise). */
   SSE_KEEPALIVE_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */

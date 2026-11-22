@@ -96,9 +96,11 @@ import {
   gatedFiles,
   gatedFilesRpc,
   gatewayFetch,
+  groupUsage,
   IGNORE_FILE,
   ignoreRules,
   type Limit,
+  type LimitState,
   lookupModel,
   type ModeGate,
   type ModelCall,
@@ -114,6 +116,7 @@ import {
   mayUse,
   normalise,
   type OutgoingRequest,
+  type Period,
   parseModelsConfig,
   pickSessionModel,
   redactSecrets,
@@ -124,6 +127,8 @@ import {
   SecretStore,
   type StoredLevel,
   sessionSecrets,
+  USAGE_GROUPS,
+  windowOf,
   withDelay,
 } from "@statewalker/ai-environment";
 import {
@@ -146,6 +151,8 @@ import type {
   AgentRun,
   CreatedServiceAccount,
   DeleteSecretRequest,
+  LimitsCall,
+  LimitsView,
   ModelsQuery,
   ModelView,
   PinnedDefinitions,
@@ -153,6 +160,10 @@ import type {
   SecretView,
   ServiceAccountView,
   SetSecretRequest,
+  UsageQuery,
+  UsageRecordsPage,
+  UsageRecordsQuery,
+  UsageReport,
 } from "@statewalker/ai-sessions";
 import {
   foldUhpServers,
@@ -183,10 +194,13 @@ import {
   deploymentRules,
   type Env,
   issuerOf,
+  ledgerOptions,
   nameOf,
   verifyToken,
 } from "./env.js";
 import {
+  editLimitsFile,
+  LIMITS_FILE,
   meteredFiles,
   refusal,
   type WarningView,
@@ -251,6 +265,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #limits: WorkspaceLimits;
   /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
   readonly #memoryLock = new KeyedLock();
+  /** Edits of a limits file are serialized (#181). */
+  readonly #limitsLock = new KeyedLock();
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -1819,9 +1835,200 @@ export class Workspace extends DurableObject<Env> {
     this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
   }
 
-  /** Test-only: the workspace's usage records after a seq. */
-  async usageRecords(since = 0) {
-    return this.#limits.ledger.records(Number(since) || 0);
+  /**
+   * The limits on a user's usage now, with what is used, reserved and left of each
+   * (statewalker/statewalker-root#181): the workspace's (and the deployment's ceilings) and the
+   * member's, and a project's when one is named, which the user must be a member of.
+   */
+  async effectiveLimits(
+    userCapability: string,
+    query: { project?: string },
+  ): Promise<LimitState[]> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const project = typeof query?.project === "string" ? query.project : "";
+    if (project && !(await this.#member(project, user)))
+      throw codedError("EACCES", `${user} is not a member of ${project}`);
+    return this.#limits.states(project, user);
+  }
+
+  /**
+   * A usage report over the period's current window (statewalker/statewalker-root#181): a user's
+   * own usage here, a project's with a project role granting `usage.read:project` or a workspace
+   * role granting `usage.read:workspace`, the workspace's with the latter. Usage under users' own
+   * keys is never counted here: other reports show it as groups with `own_key` and no amounts.
+   */
+  async usageReport(userCapability: string, query: UsageQuery): Promise<UsageReport> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const level = query?.level ?? "user";
+    const period = (query?.period ?? "month") as Period;
+    const groupBy = (query?.group_by ?? []).filter((g) =>
+      (USAGE_GROUPS as readonly string[]).includes(g),
+    );
+    const { timeZone } = ledgerOptions(this.env);
+    const window = windowOf(period, Date.now(), timeZone);
+    const until = Number.isFinite(window.reset) ? window.reset : Number.MAX_SAFE_INTEGER;
+    const workspaceReader = async () =>
+      decide(await this.#workspaceGrants(user), {
+        area: "usage",
+        action: "read",
+        target: "workspace",
+      });
+    let target: string;
+    let filter: { user?: string; project?: string } = {};
+    if (level === "user") {
+      target = user;
+      filter = { user };
+    } else if (level === "project") {
+      target = String(query.project ?? "");
+      const access = await this.#access(target, user);
+      // Only project roles: a workspace role reaches projects through usage.read:workspace.
+      const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+      const reads =
+        (access.member && decide(grants, { area: "usage", action: "read", target: "project" })) ||
+        (await workspaceReader());
+      if (!reads) throw codedError("EACCES", `${user} may not read the usage of ${target}`);
+      filter = { project: target };
+    } else if (level === "workspace") {
+      target = this.#name;
+      if (!(await workspaceReader()))
+        throw codedError("EACCES", `${user} may not read this workspace's usage`);
+    } else throw codedError("EINVAL", "level is user, project or workspace");
+    const rows = this.#limits.ledger.aggregate({ from: window.start, until, ...filter });
+    const own =
+      level === "user" ? [] : this.#models.ownKeyRows(window.start, until, filter.project);
+    const agents = this.#definitions.agents(
+      [...rows, ...own].flatMap((r) => (r.session ? [r.session] : [])),
+    );
+    const options = { timeZone, agentOf: (s: string) => agents.get(s) ?? "" };
+    return {
+      level,
+      target,
+      period,
+      start: window.start,
+      ...(Number.isFinite(window.reset) ? { end: window.reset } : {}),
+      group_by: groupBy,
+      groups: [
+        ...groupUsage(rows, groupBy, options),
+        ...groupUsage(own, groupBy, { ...options, ownKey: true }),
+      ],
+    };
+  }
+
+  /** The user's workspace roles' grants (a project's roles never reach the workspace). */
+  async #workspaceGrants(user: string): Promise<RoleGrant[]> {
+    const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+      Object.hasOwn(WORKSPACE_ROLES, r),
+    );
+    return resolveRoles(held, {}).grants;
+  }
+
+  /**
+   * One call on the limits a user manages here (statewalker/statewalker-root#181), each in the
+   * file its level is read from: the workspace admin's (`limits.write:workspace`, `:project`,
+   * `:member`) in `/.system/limits`; a project owner's (project roles granting
+   * `limits.write:project`, `:session`) in `<project>/.system/limits`. Each manager reads and
+   * replaces only their own entries: an owner never lifts the admin's limit on their project.
+   */
+  async manageLimits(userCapability: string, call: LimitsCall): Promise<LimitsView> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const level = call?.level;
+    const target = String(call?.target ?? "");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(target))
+      throw codedError("EINVAL", "target must be a name");
+    const writes = (grants: readonly RoleGrant[], what: string) =>
+      decide(grants, { area: "limits", action: "write", target: what });
+    const refuse = () =>
+      codedError("EACCES", `${user} may not manage ${level} limits of ${target}`);
+    const workspaceFile = `/${DEFAULT_SYSTEM_FOLDER}/${LIMITS_FILE}`;
+    const projectFile = `/${target}/${DEFAULT_SYSTEM_FOLDER}/${LIMITS_FILE}`;
+    const projectGrants = async () => {
+      const access = await this.#access(target, user);
+      return access.member
+        ? access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role))
+        : [];
+    };
+    let path: string;
+    let mine: (e: Record<string, unknown>) => boolean;
+    let stored = (l: Limit): Limit => l;
+    const ws = await this.#workspaceGrants(user);
+    switch (level) {
+      case "workspace":
+        if (!writes(ws, "workspace")) throw refuse();
+        if (target !== this.#name) throw codedError("ENOENT", `no workspace ${target} here`);
+        path = workspaceFile;
+        mine = (e) => e.level === "workspace";
+        break;
+      case "member":
+        if (!writes(ws, "member")) throw refuse();
+        path = workspaceFile;
+        mine = (e) => e.level === "member" && e.target === target;
+        break;
+      case "project":
+        if (writes(ws, "project")) {
+          path = workspaceFile;
+          mine = (e) => e.level === "project" && e.target === target;
+        } else if (writes(await projectGrants(), "project")) {
+          path = projectFile;
+          mine = (e) => e.level === "project";
+        } else throw refuse();
+        break;
+      case "session":
+        // A project's defaults for its new sessions (a session's own are its agent session's).
+        if (!writes(await projectGrants(), "session")) throw refuse();
+        path = projectFile;
+        mine = (e) => e.level === "session" && e.target === undefined;
+        stored = ({ target: _t, ...l }) => l;
+        break;
+      default:
+        throw codedError("EINVAL", `no ${String(level)} limits are managed here`);
+    }
+    const store = await this.#store;
+    const limits = await this.#limitsLock.run(path, () =>
+      editLimitsFile(
+        store,
+        path,
+        mine,
+        call.op === "set"
+          ? (call.limits ?? []).map((l) => stored({ ...l, level, target }))
+          : call.op === "delete"
+            ? []
+            : undefined,
+      ),
+    );
+    return { level, target, limits };
+  }
+
+  /**
+   * A page of the workspace's usage records for its admin (a workspace role granting
+   * `usage.read:workspace`, statewalker/statewalker-root#181). Usage under users' own keys is
+   * kept in their User DOs, never here.
+   */
+  async usageExport(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    if (
+      !decide(await this.#workspaceGrants(user), {
+        area: "usage",
+        action: "read",
+        target: "workspace",
+      })
+    )
+      throw codedError("EACCES", `${user} may not export this workspace's usage`);
+    return this.operatorUsageExport(query);
+  }
+
+  /**
+   * A page of the workspace's usage records for the deployment's operator: the Worker answers it
+   * only to the operator token (OPERATOR_KEY).
+   */
+  operatorUsageExport(query: UsageRecordsQuery): UsageRecordsPage {
+    const limit = Math.min(Math.max(1, Number(query?.limit) || 1000), 1000);
+    const records = this.#limits.ledger.recordsFrom({
+      from: Number(query?.since) || 0,
+      after: Number(query?.after) || 0,
+      limit,
+    });
+    const last = records.at(-1);
+    return { records, ...(records.length === limit && last ? { next: last.seq } : {}) };
   }
 
   // --- tools (statewalker/statewalker-root#90, #129) -------------------------------------------

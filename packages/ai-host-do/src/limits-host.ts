@@ -11,6 +11,7 @@ import {
   LimitLedger,
   type LimitLevel,
   type LimitScope,
+  type LimitState,
   type LimitWarning,
   limitsFor,
   parseLimits,
@@ -18,7 +19,7 @@ import {
   type UsageMeta,
   withDelay,
 } from "@statewalker/ai-environment";
-import type { FilesApi } from "@statewalker/webrun-files";
+import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
 import { type Env, ledgerOptions } from "./env.js";
 
 /** The limits file in the workspace's and each project's system folder, and a user's profile. */
@@ -162,6 +163,14 @@ export class WorkspaceLimits {
         : []),
       { level: "member", target: user, limits: limitsFor(all, "member", user) },
     ];
+  }
+
+  /**
+   * Each limit on a user's usage in a project now (the workspace's, the deployment's ceilings, the
+   * project's and the member's): `project` empty, the workspace's and the member's only.
+   */
+  async states(project: string, user: string): Promise<LimitState[]> {
+    return this.ledger.states(await this.scopes(project, user));
   }
 
   /** The session limits a new session in a project starts with (deployment, workspace, project). */
@@ -328,16 +337,79 @@ export class WorkspaceLimits {
   }
 }
 
+/**
+ * Reads, and with `replace` rewrites, the entries of a limits file that one manager owns
+ * (`mine`): the others stay as they are, so no manager removes another's
+ * (statewalker/statewalker-root#181). Answers the manager's limits as they now are.
+ */
+export async function editLimitsFile(
+  files: FilesApi,
+  path: string,
+  mine: (entry: Record<string, unknown>) => boolean,
+  replace?: Limit[],
+): Promise<Limit[]> {
+  const text = await tryReadText(files, path);
+  let list: Record<string, unknown>[] = [];
+  if (text?.trim()) {
+    let value: unknown;
+    try {
+      value = JSON.parse(text);
+    } catch {
+      value = undefined;
+    }
+    const found = Array.isArray(value)
+      ? value
+      : Array.isArray((value as { limits?: unknown })?.limits)
+        ? (value as { limits: unknown[] }).limits
+        : undefined;
+    if (!found) throw codedError("EINVAL", `${path} is not a list of limits: fix it first`);
+    list = found.map((e) => (e && typeof e === "object" ? e : {}) as Record<string, unknown>);
+  }
+  if (replace === undefined) return parseLimits(list.filter(mine)).limits;
+  const kept = list.filter((e) => !mine(e));
+  await writeText(files, path, `${JSON.stringify([...kept, ...replace], null, 2)}\n`);
+  return replace;
+}
+
 /** The Agent DO's limits: the session level, from the session's config, counted in its DO. */
 export class SessionLimits {
   readonly ledger: LimitLedger;
+  readonly #sql: SqlLike;
 
   constructor(sql: SqlLike, env: Env) {
     this.ledger = new LimitLedger(sql, ledgerOptions(env));
+    this.#sql = sql;
+    // New table only (#181): the session's own limits once its user replaced them.
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS session_own_limits (id INTEGER PRIMARY KEY, limits TEXT NOT NULL)",
+    );
   }
 
-  scopes(config: { id: string; limits?: Limit[] }): LimitScope[] {
-    return [{ level: "session", target: config.id, limits: config.limits ?? [] }];
+  /**
+   * The session's own limits: what its user set through the limits API, or else its start
+   * request's (statewalker/statewalker-root#181).
+   */
+  own(config: { ownLimits?: Limit[] }): Limit[] {
+    const row = this.#sql.exec("SELECT limits FROM session_own_limits WHERE id = 1").toArray()[0];
+    return row ? (JSON.parse(String(row.limits)) as Limit[]) : (config.ownLimits ?? []);
+  }
+
+  /** Replaces the session's own limits; the broader levels' defaults stay. */
+  setOwn(limits: Limit[]): void {
+    this.#sql.exec(
+      "INSERT OR REPLACE INTO session_own_limits VALUES (1, ?)",
+      JSON.stringify(limits),
+    );
+  }
+
+  scopes(config: { id: string; limits?: Limit[]; ownLimits?: Limit[] }): LimitScope[] {
+    return [
+      {
+        level: "session",
+        target: config.id,
+        limits: [...(config.limits ?? []), ...this.own(config)],
+      },
+    ];
   }
 
   meta(
