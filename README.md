@@ -12,6 +12,9 @@ tests in [`docs/security.md`](docs/security.md).
 ## Layout
 
 ```
+apps/
+  workbench/         (private) a terminal in a browser page, a client of the session API; the
+                     harness runs in the page on CellB
 packages/
   ai-environment/    files, databases, executors, tools, model gateway, store, secrets
   ai-access/         tokens, roles, permissions, modes, approvals, risk classifier

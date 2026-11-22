@@ -53,6 +53,7 @@ import {
 } from "@statewalker/ai-access";
 import {
   type Allow,
+  buildPlugin,
   catalogToolDefinitions,
   catalogTools,
   definitionsView,
@@ -64,9 +65,11 @@ import {
   restRequest,
   TOOL_EXTENSION,
   type ToolDefinition,
+  type ToolExtension,
 } from "@statewalker/ai-definitions";
 import {
   approvalError,
+  approvalOf,
   type CatalogModel,
   type ClassifiedVerdict,
   checkModelsConfig,
@@ -76,6 +79,7 @@ import {
   estimateRequest,
   FilesRpcHost,
   type FilesRpcMethod,
+  filesOverRpc,
   type GateDecision,
   type GatedFilesOptions,
   type GatewayResult,
@@ -142,7 +146,8 @@ import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { isBrowserHosting, localSecretsKey } from "./browser.js";
 import { type DatabaseCall, DatabaseGate, type DatabaseView } from "./database-gate.js";
-import { agentRun, DefinitionsStore } from "./definitions-store.js";
+import { databaseOf } from "./db-tools.js";
+import { agentRun, DefinitionsStore, type PluginLevel } from "./definitions-store.js";
 import {
   agentOf,
   blockSizeOf,
@@ -161,6 +166,8 @@ import {
   warningView,
 } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
+import { toolEsbuild } from "./tool-bundler.js";
+import { describeBundle, runBundle, ToolHost } from "./tool-executor.js";
 import { mountWorkspace } from "./workspace-store.js";
 
 /** How strict a verdict is: of two, the stricter one wins ("classify" may still deny). */
@@ -171,6 +178,10 @@ const AGENTS_FILE = "AGENTS.md";
 
 /** The definitions mount's folder in each project of an agent session's file view. */
 const DEFINITIONS_FOLDER = ".agents";
+
+/** The most a native tool reads of a file at once, and lists of a folder. */
+const MAX_TOOL_READ = 16 * 1024 * 1024;
+const MAX_TOOL_LIST = 10_000;
 
 /** The workspace's and each project's model configuration, in their system folders. */
 const MODELS_FILE = "models";
@@ -207,6 +218,8 @@ export class Workspace extends DurableObject<Env> {
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
   #deploymentPlugins?: Promise<{ plugins: Plugin[]; problems: string[] }>;
+  /** Plugin builds by level and source hash (statewalker/statewalker-root#130). */
+  readonly #builds = new Map<string, Promise<{ plugin?: Plugin; problems: string[] }>>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -363,24 +376,51 @@ export class Workspace extends DurableObject<Env> {
    * system folder and the project's `.system/plugins/`. A name taken at a broader level stays
    * that level's: a project can't replace a deployment or workspace plugin.
    */
-  async #plugins(project: string): Promise<Plugin[]> {
+  async #plugins(project: string): Promise<(Plugin & { level: PluginLevel })[]> {
     const store = await this.#store;
-    const levels = [
-      await this.#readDeploymentPlugins(),
-      await readPlugins(store, `/${DEFAULT_SYSTEM_FOLDER}/plugins`),
-      await readPlugins(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/plugins`),
+    const levels: [PluginLevel, { plugins: Plugin[]; problems: string[] }][] = [
+      ["deployment", await this.#readDeploymentPlugins()],
+      ["workspace", await readPlugins(store, `/${DEFAULT_SYSTEM_FOLDER}/plugins`)],
+      ["project", await readPlugins(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/plugins`)],
     ];
-    const plugins: Plugin[] = [];
+    const plugins: (Plugin & { level: PluginLevel })[] = [];
     const problems: string[] = [];
-    for (const level of levels) {
-      problems.push(...level.problems);
-      for (const p of level.plugins)
-        if (plugins.some((q) => q.name === p.name))
-          problems.push(`${p.name}: already loaded at a broader level; skipped`);
-        else plugins.push(p);
+    for (const [level, read] of levels) {
+      problems.push(...read.problems);
+      for (const source of read.plugins) {
+        if (plugins.some((q) => q.name === source.name)) {
+          problems.push(`${source.name}: already loaded at a broader level; skipped`);
+          continue;
+        }
+        const built = await this.#build(source, level);
+        problems.push(...built.problems);
+        if (built.plugin) plugins.push({ ...built.plugin, level });
+      }
     }
     if (problems.length) console.warn(`plugins of ${project}: ${problems.join("; ")}`);
     return plugins;
+  }
+
+  /**
+   * A plugin's native tools built into its bundle (statewalker/statewalker-root#130): bundled by
+   * webrun-bundler, OpenCode-style tools described in an isolate, and workspace and project
+   * plugins held to the acceptance check. Kept by level and source hash while this DO lives.
+   */
+  #build(plugin: Plugin, level: PluginLevel): Promise<{ plugin?: Plugin; problems: string[] }> {
+    const key = `${level}:${plugin.hash}`;
+    let built = this.#builds.get(key);
+    if (!built) {
+      const loader = this.env.LOADER;
+      built = buildPlugin(plugin, {
+        esbuild: toolEsbuild,
+        accept: level !== "deployment",
+        ...(loader ? { describe: (code: string) => describeBundle(loader, code) } : {}),
+      });
+      this.#builds.set(key, built);
+      built.catch(() => this.#builds.delete(key));
+      if (this.#builds.size > 256) this.#builds.delete(this.#builds.keys().next().value as string);
+    }
+    return built;
   }
 
   /**
@@ -440,7 +480,7 @@ export class Workspace extends DurableObject<Env> {
       String(req.session),
       user,
       project,
-      plugins.map((p) => ({ name: p.name, hash: p.hash })),
+      plugins.map((p) => ({ name: p.name, hash: p.hash, level: p.level })),
       run,
     );
     const limits = await this.#limits.sessionLimits(project);
@@ -1316,7 +1356,13 @@ export class Workspace extends DurableObject<Env> {
   async callTool(
     agentCapability: string,
     call: { name: string; args?: unknown; turn?: string },
-  ): Promise<{ output: string; isError: boolean; secrets?: string[]; warnings?: WarningView[] }> {
+  ): Promise<{
+    output: string;
+    isError: boolean;
+    secrets?: string[];
+    warnings?: WarningView[];
+    executor_cpu_ms?: number;
+  }> {
     const facts = await this.#authority.agentSessionOf(agentCapability);
     const name = String(call?.name);
     const args = (call?.args ?? {}) as Record<string, unknown>;
@@ -1407,12 +1453,159 @@ export class Workspace extends DurableObject<Env> {
         ...warnings,
       };
     }
-    // Native tool scripts run in isolates with statewalker/statewalker-root#130; remote MCP
-    // servers' tools with #135.
+    if (route.kind === "native") return this.#runNative(agentCapability, facts, x, args, call.turn);
+    // Remote MCP servers' tools run with statewalker/statewalker-root#135.
     return {
       output: `ENOSYS: ${route.kind} tools do not run in this deployment yet`,
       isError: true,
     };
+  }
+
+  /** The deployment catalog's plugin bundles approved to run native tools, by hash. */
+  #approvedBundles(): Set<string> {
+    return new Set(
+      String(this.env.APPROVED_BUNDLES ?? "")
+        .split(/[\s,]+/)
+        .map((h) => h.trim().toLowerCase())
+        .filter(Boolean),
+    );
+  }
+
+  /**
+   * One call of a native tool script (statewalker/statewalker-root#130), already allowed: its
+   * bundle, as the session pinned it, runs in an isolate of its own with the capability the
+   * workspace narrows for the tool (the session's files and databases, and the plugin's private
+   * databases). A deployment catalog bundle runs only once approved by hash; workspace and project
+   * plugins passed the acceptance check when they were built. The isolate's time is charged to the
+   * workspace, project and member (`executor_cpu_ms:isolate`) as it runs, and the run is ended when
+   * a limit refuses more, or at TOOL_TIMEOUT_MS. Python scripts answer ENOSYS until the
+   * code-execution ticket.
+   */
+  async #runNative(
+    agentCapability: string,
+    facts: AgentSessionFacts,
+    x: ToolExtension,
+    args: Record<string, unknown>,
+    turn: string | undefined,
+  ): Promise<{ output: string; isError: boolean; executor_cpu_ms?: number }> {
+    const route = x.route;
+    if (route.kind !== "native") throw codedError("EINVAL", `${x.name} is not a native tool`);
+    if (route.language === "python")
+      return { output: `ENOSYS: Python tools do not run in this deployment yet`, isError: true };
+    const loader = this.env.LOADER;
+    if (!loader || route.language !== "js" || !route.bundle)
+      return { output: `ENOSYS: native tools do not run in this deployment`, isError: true };
+    const found = await this.#definitions.session(facts.session);
+    const pin = found?.pins.find((p) => p.name === x.plugin);
+    if (!found || !pin) throw codedError("EACCES", `the tool '${x.name}' is not pinned`);
+    if ((pin.level ?? "deployment") === "deployment" && !this.#approvedBundles().has(pin.hash))
+      return {
+        output: `EACCES: the plugin bundle ${x.plugin} (sha256 ${pin.hash}) is not approved to run its tools in this deployment (APPROVED_BUNDLES)`,
+        isError: true,
+      };
+    const code = await tryReadText(found.catalog, `/${x.plugin}/${route.bundle}`);
+    if (code === undefined) throw codedError("ENOENT", `the bundle of ${x.name} is missing`);
+    const capability = await this.forTool(agentCapability, { plugin: x.plugin, tool: x.tool });
+    // An action the mode asks about is refused: a running tool cannot wait for an approval.
+    const files = filesOverRpc(
+      (method, a) =>
+        this.#files.call(capability, method, a).catch((e) => {
+          const asked = approvalOf(e);
+          if (!asked) throw e;
+          throw codedError(
+            "EACCES",
+            `the mode asks before this (${asked.reason}), and a tool cannot wait for an approval`,
+          );
+        }),
+      { blockSize: blockSizeOf(this.env) },
+    );
+    const db = (name: string) =>
+      databaseOf(
+        {
+          call: (req) => this.#databases.call(capability, req),
+          manage: async () => {},
+          list: async () => [],
+        },
+        name.includes(":") ? name : `${x.plugin}:${name}`,
+      );
+    const host = new ToolHost({
+      async read(path, start, length) {
+        const parts: Uint8Array[] = [];
+        let n = 0;
+        const options = {
+          ...(typeof start === "number" ? { start } : {}),
+          ...(typeof length === "number" ? { length } : {}),
+        };
+        for await (const chunk of files.read(path, options)) {
+          n += chunk.length;
+          if (n > MAX_TOOL_READ)
+            throw codedError("EINVAL", `${path} is larger than a tool may read at once`);
+          parts.push(chunk);
+        }
+        const out = new Uint8Array(n);
+        let at = 0;
+        for (const p of parts) {
+          out.set(p, at);
+          at += p.length;
+        }
+        return out;
+      },
+      write: (path, data) => files.write(path, [new Uint8Array(data)]),
+      mkdir: (path) => files.mkdir(path),
+      async list(path, recursive) {
+        const out: unknown[] = [];
+        for await (const e of files.list(path, { recursive })) {
+          out.push({ ...e });
+          if (out.length > MAX_TOOL_LIST)
+            throw codedError("EINVAL", `${path} lists too many entries`);
+        }
+        return out;
+      },
+      stats: async (path) => (await files.stats(path)) ?? null,
+      exists: (path) => files.exists(path),
+      remove: (path) => files.remove(path),
+      move: (source, target) => files.move(source, target),
+      copy: (source, target) => files.copy(source, target),
+      async dbQuery(name, sql, params) {
+        const d = db(name);
+        try {
+          return await d.query(sql, params);
+        } finally {
+          await d.close();
+        }
+      },
+      async dbExec(name, sql) {
+        const d = db(name);
+        try {
+          await d.exec(sql);
+        } finally {
+          await d.close();
+        }
+      },
+    });
+    const meter = "executor_cpu_ms:isolate";
+    const meta = this.#limits.meta(
+      facts.project,
+      facts.user,
+      facts.session,
+      this.#turnOf(facts.session, turn),
+    );
+    const detail = { tool: x.id };
+    const timeout = Number(this.env.TOOL_TIMEOUT_MS);
+    const result = await runBundle(loader, {
+      code,
+      input: args,
+      host,
+      timeoutMs: timeout > 0 ? timeout : 30_000,
+      charge: async (ms) => {
+        await this.#limits.charge(facts.project, facts.user, { [meter]: ms }, meta, detail);
+      },
+      record: async (ms) => {
+        const scopes = await this.#limits.scopes(facts.project, facts.user);
+        this.#limits.ledger.add(scopes, { [meter]: ms }, meta, detail);
+      },
+    });
+    return { output: result.output, isError: result.isError, executor_cpu_ms: result.ms };
   }
 
   /** Test-only, and the storage meter's input (#179): every database and the bytes it takes. */

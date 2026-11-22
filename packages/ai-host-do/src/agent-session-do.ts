@@ -114,6 +114,8 @@ function databaseHost(env: Env, config: AgentSessionConfig, capability: string):
   };
 }
 
+/** The meter of native tool scripts' isolate time (statewalker/statewalker-root#130). */
+const ISOLATE_METER = "executor_cpu_ms:isolate";
 export class AgentSession extends DurableObject<Env> {
   readonly #core: AgentSessionCore;
   /** The session level's limits and counters (statewalker/statewalker-root#179). */
@@ -211,18 +213,32 @@ export class AgentSession extends DurableObject<Env> {
       isError: boolean;
       secrets?: string[];
       warnings?: WarningView[];
+      executor_cpu_ms?: number;
     }>,
   ) {
     const outbound = definition[TOOL_EXTENSION].route.kind === "rest";
+    // A native tool's isolate time counts against the session's limits too (#130): refused before
+    // it runs once the session's limit is spent, counted here after.
+    const native = definition[TOOL_EXTENSION].route.kind === "native";
     const scopes = this.#limits.scopes(config);
-    if (outbound)
+    if (outbound || native)
       try {
-        this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+        this.#limits.ledger.check(
+          scopes,
+          outbound ? { outbound_requests: 1 } : { [ISOLATE_METER]: 1 },
+        );
       } catch (e) {
         return { output: String((refusal(e) as Error).message), isError: true };
       }
-    const { warnings, ...result } = await call();
+    const { warnings, executor_cpu_ms, ...result } = await call();
     for (const warning of warnings ?? []) emit?.({ kind: "limit_warning", warning });
+    if (native && executor_cpu_ms && executor_cpu_ms > 0)
+      for (const warning of this.#limits.ledger.add(
+        scopes,
+        { [ISOLATE_METER]: executor_cpu_ms },
+        this.#limits.meta(config, turn),
+      ))
+        emit?.({ kind: "limit_warning", warning: warningView(warning) });
     if (outbound)
       for (const warning of this.#limits.ledger.add(
         scopes,
@@ -372,10 +388,20 @@ export class AgentSession extends DurableObject<Env> {
         if (call.method === "tool") {
           // An approved tool call runs again at the workspace, re-checked against the current set.
           try {
-            return await workspace.callTool(config.capability, {
-              name: call.path,
-              args: JSON.parse(new TextDecoder().decode(call.content ?? new Uint8Array())),
-            });
+            const run = () =>
+              workspace.callTool(config.capability, {
+                name: call.path,
+                args: JSON.parse(new TextDecoder().decode(call.content ?? new Uint8Array())),
+              });
+            // Held to the session's own limits as a direct call is (#outbound): outbound requests,
+            // a native tool's isolate time.
+            const definition = (await this.#tools(config, () => {})).definitions.find(
+              (d) => d[TOOL_EXTENSION]?.name === call.path,
+            );
+            if (definition)
+              return await this.#outbound(config, definition, undefined, undefined, run);
+            const { executor_cpu_ms: _ms, warnings: _w, ...result } = await run();
+            return result;
           } catch (e) {
             const request = approvalOf(e);
             if (request) return { $approval: request };

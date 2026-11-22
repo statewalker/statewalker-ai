@@ -1,0 +1,33 @@
+{
+  "name": "@statewalker/ai-workbench",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "description": "The harness's workbench: a terminal in a browser page, talking to the harness through the session API; the harness itself runs in the page, on CellB.",
+  "type": "module",
+  "scripts": {
+    "harness": "node scripts/build-harness.mjs",
+    "dev": "node scripts/build-harness.mjs && vite",
+    "build": "node scripts/build-harness.mjs && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:page": "vitest run --config vitest.page.config.ts"
+  },
+  "dependencies": {
+    "@statewalker/cellb": "catalog:",
+    "@statewalker/webrun-files-mem": "catalog:",
+    "@xterm/addon-fit": "catalog:",
+    "@xterm/xterm": "catalog:",
+    "@statewalker/ai-host-do": "workspace:^"
+  },
+  "devDependencies": {
+    "@statewalker/ai-conformance": "workspace:^",
+    "@types/node": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:",
+    "playwright": "catalog:"
+  }
+}

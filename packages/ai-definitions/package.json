@@ -40,13 +40,20 @@
     "@statewalker/webrun-files": "catalog:",
     "@statewalker/webrun-files-composite": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
-    "yaml": "catalog:"
+    "yaml": "catalog:",
+    "@statewalker/webrun-bundler": "catalog:",
+    "acorn": "catalog:",
+    "eslint-scope": "catalog:"
+  },
+  "peerDependencies": {
+    "esbuild-wasm": "catalog:peers"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "esbuild-wasm": "catalog:"
   },
   "engines": {
     "node": ">=22.13"

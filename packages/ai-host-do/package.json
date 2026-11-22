@@ -59,6 +59,8 @@
     "@statewalker/webrun-files-composite": "catalog:",
     "@statewalker/db-rpc": "catalog:",
     "@statewalker/db-api": "catalog:",
+    "esbuild-wasm": "catalog:",
+    "@statewalker/webrun-bundler": "catalog:",
     "@statewalker/ai-memory": "workspace:^"
   },
   "devDependencies": {
