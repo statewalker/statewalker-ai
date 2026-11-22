@@ -20,6 +20,7 @@ import {
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import type {
+  AgentRun,
   AgentSessionConfig,
   AgentSessionView,
   ApprovalAnswer,
@@ -34,6 +35,7 @@ import type {
   ServiceAccountView,
   SetSecretRequest,
   StartSessionRequest,
+  SubAgentRequest,
   UserPort,
   UserSessionView,
 } from "./api.js";
@@ -74,6 +76,15 @@ export interface WorkspaceGrants {
    * workspace's revocation list: it, and everything narrowed from it, is refused from now on.
    */
   revoke(userCapability: string, capability: string): Promise<void>;
+  /**
+   * Narrows an agent session's capability (narrowed from this user capability) for a sub-agent,
+   * with a block the workspace signs (statewalker/statewalker-root#126).
+   */
+  delegate(
+    userCapability: string,
+    parentCapability: string,
+    grant: { session: string; agent: string; mode?: string },
+  ): Promise<{ capability: string; agent: string; run?: AgentRun }>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -133,6 +144,9 @@ interface AgentRow {
   capability: string | null;
   unattended: number;
   revoked: number;
+  /** A sub-agent's parent and root sessions (statewalker/statewalker-root#126). */
+  parent: string | null;
+  root: string | null;
 }
 
 interface AgentMetaRow {
@@ -150,6 +164,7 @@ const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   revoked: Boolean(row.revoked),
   metadata: row.metadata ? (JSON.parse(row.metadata) as Metadata) : {},
   ...(row.archived ? { archived: Number(row.archived) } : {}),
+  ...(row.parent ? { parent: row.parent, root: String(row.root) } : {}),
 });
 
 /** The session index with each session's metadata and archive time (a table of its own). */
@@ -183,6 +198,9 @@ export class UserSessions implements UserPort {
       ["capability", "TEXT"],
       ["unattended", "INTEGER NOT NULL DEFAULT 0"],
       ["revoked", "INTEGER NOT NULL DEFAULT 0"],
+      // statewalker/statewalker-root#126: the tree of sub-agents.
+      ["parent", "TEXT"],
+      ["root", "TEXT"],
     ] as const)
       if (!columns.has(name))
         this.#o.sql.exec(`ALTER TABLE agent_sessions ADD COLUMN ${name} ${type}`);
@@ -409,6 +427,8 @@ export class UserSessions implements UserPort {
       capability,
       unattended: req.unattended ? 1 : 0,
       revoked: 0,
+      parent: null,
+      root: null,
     };
     // The gate decides every action by the user session's current mode, so it is told now.
     await this.#pushUserSession(us);
@@ -444,6 +464,90 @@ export class UserSessions implements UserPort {
     };
   }
 
+  /**
+   * Starts a sub-agent of one of this user's agent sessions (the harness tool `agent.start`,
+   * statewalker/statewalker-root#126). Told by the parent's DO, which proves it is the parent by
+   * the capability it holds; no access token is needed, so a tree keeps growing after the user's
+   * token expired. The workspace narrows the parent's capability for the child, so the child can do
+   * nothing its parent can't, and revoking the parent stops it.
+   */
+  async startSubAgent(
+    parentId: string,
+    parentCapability: string,
+    req: SubAgentRequest,
+  ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
+    const parent = this.#one<AgentRow & AgentMetaRow>(`${INDEX} WHERE a.id = ?`, String(parentId));
+    if (!parent?.capability || parent.capability !== parentCapability)
+      throw codedError("EACCES", "not an agent session of this user");
+    if (parent.revoked || parent.archived)
+      throw codedError("EACCES", "the agent session is revoked");
+    const us = this.#one<UserSessionRow>(
+      "SELECT * FROM user_sessions WHERE workspace = ?",
+      parent.workspace,
+    );
+    if (!us) throw codedError("EACCES", "the user session is revoked");
+    if (req.mode !== undefined && !isMode(req.mode, this.#o.modes))
+      throw codedError("EINVAL", `no mode '${req.mode}'`);
+    const id = `as-${crypto.randomUUID()}`;
+    // The workspace checks the agent against the parent's definition and the user's roles, pins
+    // the child's definitions and narrows the parent's capability for it.
+    const { capability, agent, run } = await this.#o
+      .workspace(us.workspace)
+      .delegate(us.capability, parentCapability, {
+        session: id,
+        agent: req.agent,
+        ...(req.mode ? { mode: req.mode } : {}),
+      });
+    // The parent may have been archived or revoked while the workspace worked: a child joining
+    // the tree now would be missed by that archive, so it is refused.
+    const now = this.#one<AgentRow & AgentMetaRow>(`${INDEX} WHERE a.id = ?`, parent.id);
+    if (!now || now.revoked || now.archived)
+      throw codedError("EACCES", "the agent session is revoked");
+    const row: AgentRow = {
+      id,
+      workspace: parent.workspace,
+      project: parent.project,
+      agent,
+      created: Date.now(),
+      capability,
+      unattended: parent.unattended,
+      revoked: 0,
+      parent: parent.id,
+      root: parent.root ?? parent.id,
+    };
+    this.#o.sql.exec(
+      `INSERT INTO agent_sessions (id, workspace, project, agent, created, capability, unattended,
+        revoked, parent, root) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      row.id,
+      row.workspace,
+      row.project,
+      row.agent,
+      row.created,
+      row.capability,
+      row.unattended,
+      row.revoked,
+      row.parent,
+      row.root,
+    );
+    this.#o.sql.exec("INSERT INTO agent_session_meta VALUES (?, '{}', NULL)", row.id);
+    return {
+      session: view({ ...row, metadata: "{}", archived: null }),
+      config: {
+        id: row.id,
+        user: this.#o.user,
+        workspace: row.workspace,
+        project: row.project,
+        agent: row.agent,
+        capability,
+        parent: String(row.parent),
+        root: String(row.root),
+        ...(run ? { run } : {}),
+        ...(req.tools ? { tools: [...req.tools] } : {}),
+        ...(req.mode ? { mode: req.mode } : {}),
+      },
+    };
+  }
+
   async ownAgentSession(token: string, id: string): Promise<AgentSessionView> {
     const { workspace } = await this.claims(token);
     const row = this.#one<AgentRow & AgentMetaRow>(
@@ -466,15 +570,57 @@ export class UserSessions implements UserPort {
     return this.ownAgentSession(token, id);
   }
 
-  async archiveAgentSession(token: string, id: string) {
+  /** A session and its descendants (sub-agents, theirs, …), the session first. */
+  #tree(id: string): string[] {
+    return this.#o.sql
+      .exec(
+        `WITH RECURSIVE tree(id) AS (SELECT ? UNION SELECT a.id FROM agent_sessions a
+          JOIN tree ON a.parent = tree.id) SELECT id FROM tree`,
+        id,
+      )
+      .toArray()
+      .map((r) => String((r as { id: unknown }).id));
+  }
+
+  /** One of the caller's agent sessions and its descendants, the session first. */
+  async subtree(token: string, id: string): Promise<string[]> {
     const own = await this.ownAgentSession(token, id);
-    if (!own.archived)
+    return this.#tree(own.id);
+  }
+
+  /**
+   * Revokes a session's capability at the workspace (which stops every capability narrowed from
+   * it: its sub-agents' too), and marks it and its descendants revoked.
+   */
+  async #revokeTree(us: UserSessionRow, row: AgentRow): Promise<void> {
+    // A session recorded before capabilities were kept has none to name (and no sub-agents):
+    // it is never marked revoked while the gate would still accept it.
+    if (!row.capability) return;
+    if (!row.revoked) await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
+    for (const id of this.#tree(row.id))
+      this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE id = ?", id);
+  }
+
+  /**
+   * Archives one of the caller's agent sessions and its descendants (statewalker/statewalker-root#126):
+   * the session's capability is revoked, so the gate refuses it and every sub-agent's narrowed
+   * from it at their next operation; its siblings keep running.
+   */
+  async archiveAgentSession(token: string, id: string) {
+    const us = await this.#userSession(token);
+    const own = await this.ownAgentSession(token, id);
+    const row = this.#one<AgentRow>(
+      "SELECT * FROM agent_sessions WHERE id = ?",
+      own.id,
+    ) as AgentRow;
+    await this.#revokeTree(us, row);
+    const now = Date.now();
+    for (const sid of this.#tree(own.id))
       this.#o.sql.exec(
-        `INSERT INTO agent_session_meta VALUES (?, ?, ?)
-          ON CONFLICT (id) DO UPDATE SET archived = excluded.archived`,
-        own.id,
-        JSON.stringify(own.metadata),
-        Date.now(),
+        `INSERT INTO agent_session_meta VALUES (?, '{}', ?)
+          ON CONFLICT (id) DO UPDATE SET archived = COALESCE(agent_session_meta.archived, excluded.archived)`,
+        sid,
+        now,
       );
     return this.ownAgentSession(token, id);
   }
@@ -561,17 +707,15 @@ export class UserSessions implements UserPort {
       us.workspace,
     );
     if (!row) throw codedError("ENOENT", "no such agent session");
-    if (!row.revoked) {
-      // A session recorded before its capability was kept cannot be named on the revocation
-      // list alone; answering "revoked" while the gate still accepts it would be a lie.
-      if (!row.capability)
-        throw codedError(
-          "EINVAL",
-          "this agent session predates per-session revocation: revoke the user session instead",
-        );
-      await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
-      this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE id = ?", id);
-    }
+    // A session recorded before its capability was kept cannot be named on the revocation list
+    // alone; answering "revoked" while the gate still accepts it would be a lie.
+    if (!row.revoked && !row.capability)
+      throw codedError(
+        "EINVAL",
+        "this agent session predates per-session revocation: revoke the user session instead",
+      );
+    // Its sub-agents' capabilities are narrowed from its own: they stop with it.
+    await this.#revokeTree(us, row);
     return { revoked: true };
   }
 

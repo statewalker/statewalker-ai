@@ -627,6 +627,16 @@ export class AgentSessionCore implements AgentPort {
     return { turn_id: id, session_id: config.id, delivery: "next", offset };
   }
 
+  /**
+   * Posts the approvals a sub-agent's turn waits on to this session's events stream, as the root
+   * of its tree (statewalker/statewalker-root#126): whoever follows the root sees every approval
+   * of the tree. Told by the sub-agent's DO.
+   */
+  async subAgentApprovals(session: string, requests: ApprovalRequest[]): Promise<void> {
+    this.#started();
+    this.#log("approval.requested", undefined, { session, approvals: requests });
+  }
+
   async turn(turnId: string): Promise<TurnView> {
     this.#started();
     return this.#view(this.#turnRow(turnId));

@@ -17,6 +17,7 @@ import {
   DEFAULT_SYSTEM_FOLDER,
   decide,
   decideMode,
+  type FileAction,
   fileRoleSource,
   isMode,
   type ModeDefinition,
@@ -62,6 +63,7 @@ import {
   sessionSecrets,
 } from "@statewalker/ai-environment";
 import type {
+  AgentRun,
   CreatedServiceAccount,
   DeleteSecretRequest,
   PinnedDefinitions,
@@ -84,6 +86,9 @@ import {
   verifyToken,
 } from "./env.js";
 import { mountWorkspace } from "./workspace-store.js";
+
+/** How strict a verdict is: of two, the stricter one wins. */
+const STRICTNESS = { allow: 0, ask: 1, deny: 2 } as const;
 
 /** The definitions mount's folder in each project of an agent session's file view. */
 const DEFINITIONS_FOLDER = ".agents";
@@ -402,6 +407,22 @@ export class Workspace extends DurableObject<Env> {
           { source: "user", rules: state?.rules ?? {} },
           this.#registry.sessionLayer(facts.session, facts.user),
         ];
+        // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user
+        // session's, and the strictest verdict wins: a child is never looser than its parent. A
+        // mode the deployment no longer knows denies.
+        const extra = (facts.modes ?? []).map((m) =>
+          isMode(m, this.#modes) ? modeOf(m, this.#modes) : undefined,
+        );
+        const decideOne = (action: FileAction, target: string) => {
+          let decision = decideMode({ area: "files", action, target }, { mode, layers });
+          for (const m of extra) {
+            const other = m
+              ? decideMode({ area: "files", action, target }, { mode: m, layers })
+              : { verdict: "deny" as const, source: "mode", reason: "an unknown sub-agent mode" };
+            if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
+          }
+          return decision;
+        };
         const definitions = `${root}/${DEFINITIONS_FOLDER}`.toLowerCase();
         return checks.map(([action, path]) =>
           // Outside the project nothing is decided here: the roles and the capability refuse it.
@@ -415,17 +436,7 @@ export class Workspace extends DurableObject<Env> {
               ? { verdict: "deny" as const, reason: "the definitions mount is read-only" }
               : // An unattended session has nobody to ask: its asks are denies with a reason
                 // (statewalker/statewalker-root#127), and the agent carries on.
-                settleAsk(
-                  decideMode(
-                    {
-                      area: "files",
-                      action,
-                      target: path === root ? "/" : path.slice(root.length),
-                    },
-                    { mode, layers },
-                  ),
-                  facts,
-                ),
+                settleAsk(decideOne(action, path === root ? "/" : path.slice(root.length)), facts),
         );
       },
       consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
@@ -568,6 +579,45 @@ export class Workspace extends DurableObject<Env> {
   async revoke(userCapability: string, capability: string): Promise<void> {
     const id = await this.#authority.revocationOf(userCapability, capability);
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO revocations VALUES (?, ?)", id, Date.now());
+  }
+
+  /**
+   * Starts a sub-agent of an agent session (statewalker/statewalker-root#126), for the user session
+   * that session's capability was narrowed from: the agent must be one the parent's pinned
+   * definition lists and the user may use now; the child's definitions are pinned like any
+   * session's, and its capability is the parent's with a block this workspace signs, naming the
+   * child and any mode (asked for, or its definition's) that may only make the gate stricter.
+   */
+  async delegate(
+    userCapability: string,
+    parentCapability: string,
+    grant: { session: string; agent: string; mode?: string },
+  ): Promise<{ capability: string; agent: string; run?: AgentRun }> {
+    // The parent must be narrowed from this very user session (revocation ids name it).
+    await this.#authority.revocationOf(userCapability, parentCapability);
+    const parent = await this.#authority.agentSessionOf(parentCapability);
+    const pinned = await this.#definitions.session(parent.session);
+    const listed =
+      pinned?.user === parent.user && pinned.project === parent.project
+        ? (pinned.run?.agents ?? [])
+        : [];
+    if (!listed.includes(String(grant.agent)))
+      throw codedError("EACCES", `${parent.agent} may not start '${grant.agent}'`);
+    if (grant.mode !== undefined && !isMode(grant.mode, this.#modes))
+      throw codedError("EINVAL", `no mode '${grant.mode}'`);
+    const child = await this.pinDefinitions(userCapability, {
+      session: grant.session,
+      project: parent.project,
+      agent: grant.agent,
+    });
+    // A mode the definition asks for, like one the parent asks for, may only be stricter.
+    const modes = [grant.mode, child.run?.mode].filter((m): m is string => !!m);
+    const capability = await this.#authority.delegate(userCapability, parentCapability, {
+      session: grant.session,
+      agent: child.agent,
+      modes,
+    });
+    return { capability, agent: child.agent, ...(child.run ? { run: child.run } : {}) };
   }
 
   /** Refuses (EACCES) a user capability whose user is not the workspace's admin. */

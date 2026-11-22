@@ -52,6 +52,10 @@ export interface AgentSessionView {
   archived?: number;
   /** The session's status (single-session reads; lists filtered by status). */
   status?: SessionStatus;
+  /** A sub-agent's parent: the session that started it with `agent.start`. */
+  parent?: string;
+  /** A sub-agent's root: the session the user started, whose events stream gets its approvals. */
+  root?: string;
 }
 
 /** A workspace's service account, as the session API lists it: never its API key. */
@@ -414,6 +418,26 @@ export interface AgentSessionConfig {
   capability: string;
   /** The agent's definition, pinned at start (none: the generic agent). */
   run?: AgentRun;
+  /** A sub-agent's parent session. */
+  parent?: string;
+  /** A sub-agent's root session (statewalker/statewalker-root#126). */
+  root?: string;
+  /**
+   * The names of the tools the session may be offered (none: every tool). A sub-agent's are
+   * always among its parent's.
+   */
+  tools?: string[];
+  /** A sub-agent's own mode, beside the user session's: the gate applies the stricter. */
+  mode?: string;
+}
+
+/** What the harness tool `agent.start` asks for: a child session of the calling session. */
+export interface SubAgentRequest {
+  agent: string;
+  /** A mode for the child: it may only make the gate stricter. */
+  mode?: string;
+  /** The tools the child is offered: already within the parent's. */
+  tools?: string[];
 }
 
 /** The caller's User DO's side of the API: everything that needs the token checked. */
@@ -428,7 +452,10 @@ export interface UserPort {
   /** The caller's agent sessions in the token's workspace, archived ones included. */
   listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }>;
   updateAgentSession(token: string, id: string, metadata: Metadata): Promise<AgentSessionView>;
+  /** Archives a session and its descendants, revoking its capability (so theirs). */
   archiveAgentSession(token: string, id: string): Promise<AgentSessionView>;
+  /** A session of the caller and its descendants, the session first. */
+  subtree(token: string, id: string): Promise<string[]>;
   /** Removes one of the caller's agent sessions from the index. */
   deleteAgentSession(token: string, id: string): Promise<void>;
   profile(token: string): Promise<ProfileView>;
@@ -627,8 +654,17 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async archiveSession(id) {
       const session = await own(id);
+      // Revoked first, so no new sub-agent joins the tree; then every session of it stops.
+      const archived = await ports.user.archiveAgentSession(token, session.id);
+      const [, ...descendants] = await ports.user.subtree(token, session.id);
       await ports.agent(session.id).archive();
-      return withStatus(await ports.user.archiveAgentSession(token, session.id));
+      for (const sid of descendants)
+        await ports
+          .agent(sid)
+          .archive()
+          // A sub-agent whose DO never started has nothing to stop.
+          .catch(() => {});
+      return withStatus(archived);
     },
     async deleteSession(id) {
       const session = await own(id);
@@ -657,6 +693,8 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async sendMessage(sessionId, req) {
       const message = messageOf(req);
       const session = await own(sessionId);
+      // Archiving revokes too: an archived session says so first (409, as before revocation).
+      if (session.archived) throw codedError("EBUSY", "the agent session is archived");
       if (session.revoked) throw codedError("EACCES", "the agent session is revoked");
       const accepted = await ports.agent(session.id).send(message);
       return {
