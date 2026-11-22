@@ -21,6 +21,7 @@ import type {
   Delivery,
   EventsPage,
   EventsQuery,
+  GateDecisionInput,
   Item,
   ItemInput,
   ItemsPage,
@@ -177,6 +178,8 @@ interface Running {
   applied: Set<string>;
   /** Set when the turn is being cut short: the status it ends with. */
   endAs?: "cancelled" | "interrupted";
+  /** Why it was cut short, when not by the user. */
+  endReason?: string;
   done: Promise<void>;
 }
 
@@ -195,6 +198,7 @@ const KINDS: readonly string[] = [
   "tool_result",
   "approval",
   "model_fallback",
+  "mode_decision",
 ];
 const MAX_PAGE = 1000;
 const MAX_WAIT_MS = 60_000;
@@ -243,6 +247,7 @@ export class AgentSessionCore implements AgentPort {
         turn TEXT, data TEXT NOT NULL, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS approval_answers (turn TEXT PRIMARY KEY, approval TEXT NOT NULL,
         decision TEXT NOT NULL, message TEXT);
+      CREATE TABLE IF NOT EXISTS agent_origin_turns (turn TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
         used TEXT NOT NULL, reason TEXT NOT NULL);`);
     this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
@@ -449,7 +454,14 @@ export class AgentSessionCore implements AgentPort {
         error = String((e as Error)?.message ?? e);
       }
     } else {
-      const prompt = this.#append(row.id, { kind: "message", role: "user", text: row.content });
+      // A message another agent wrote (a sub-agent's task) is marked so: never the user's words.
+      const byAgent = !!this.#one("SELECT 1 FROM agent_origin_turns WHERE turn = ?", row.id);
+      const prompt = this.#append(row.id, {
+        kind: "message",
+        role: "user",
+        text: row.content,
+        ...(byAgent ? { origin: "agent" as const } : {}),
+      });
       try {
         const context = await this.#context(row.id, prompt.seq, running.abort.signal);
         outcome = await this.#runTurn(
@@ -512,7 +524,12 @@ export class AgentSessionCore implements AgentPort {
       }
     }
     if (running.endAs)
-      this.#finish(row.id, running.endAs, { type: running.endAs }, model ? { model } : {});
+      this.#finish(
+        row.id,
+        running.endAs,
+        { type: running.endAs, ...(running.endReason ? { message: running.endReason } : {}) },
+        model ? { model } : {},
+      );
     else if (error)
       this.#finish(
         row.id,
@@ -560,10 +577,10 @@ export class AgentSessionCore implements AgentPort {
     pending: Pending,
   ): Promise<void> {
     const item = this.#rows<ItemRow>(
-      "SELECT * FROM items WHERE kind = 'approval' ORDER BY seq DESC",
+      "SELECT * FROM items WHERE kind IN ('approval', 'mode_decision') ORDER BY seq DESC",
     )
       .map(itemOf)
-      .find((i) => i.approval === answer.approval);
+      .find((i) => i.approval === answer.approval && i.stored);
     if (!item?.stored || !item.request) throw codedError("ENOENT", "no such approval");
     const { method, path, target } = item.stored;
     const result = (output: string, isError: boolean) =>
@@ -632,6 +649,8 @@ export class AgentSessionCore implements AgentPort {
       },
       delivery === "interrupt",
     );
+    if (message.origin === "agent")
+      this.#sql.exec("INSERT OR IGNORE INTO agent_origin_turns VALUES (?)", id);
     if (delivery === "interrupt" && running) void this.#cut(running, "interrupted");
     else this.#pump();
     return {
@@ -651,9 +670,12 @@ export class AgentSessionCore implements AgentPort {
     const config = this.#started();
     if (this.#archived()) throw codedError("EBUSY", "the agent session is archived");
     const offset = this.#offset();
-    const known = this.#rows<ItemRow>("SELECT * FROM items WHERE kind = 'approval'")
+    // An approval a turn waits on, or a block of auto mode's classifier (a retry).
+    const known = this.#rows<ItemRow>(
+      "SELECT * FROM items WHERE kind IN ('approval', 'mode_decision')",
+    )
       .map(itemOf)
-      .some((i) => i.approval === approval);
+      .some((i) => i.approval === approval && i.stored);
     if (!known) throw codedError("ENOENT", "no such approval");
     const content = `${answer.decision === "allow" ? "allowed" : "denied"}: ${approval}`;
     const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false);
@@ -666,6 +688,56 @@ export class AgentSessionCore implements AgentPort {
     );
     this.#pump();
     return { turn_id: id, session_id: config.id, delivery: "next", offset };
+  }
+
+  /**
+   * Keeps one decision of auto mode (statewalker/statewalker-root#137) as an item of the running
+   * turn (or the latest one), told by the gate while the turn's file call waits on it. A denial
+   * that made an unattended session fall back stops the running turn.
+   */
+  async gateDecision(decision: GateDecisionInput): Promise<void> {
+    this.#started();
+    const running = this.#running;
+    const turn =
+      running?.id ??
+      this.#one<{ id: string }>("SELECT id FROM agent_turns ORDER BY created DESC LIMIT 1")?.id;
+    if (!turn) return;
+    const { stored, stop, ...rest } = decision;
+    this.#append(turn, {
+      kind: "mode_decision",
+      ...rest,
+      ...(stored ? { stored: storedOf(stored) } : {}),
+    });
+    if (stop && running && !running.endAs) {
+      running.endReason = stop;
+      // Not awaited: the turn's file call is waiting on this very decision.
+      void this.#cut(running, "cancelled");
+    }
+  }
+
+  /**
+   * What auto mode's risk classifier may be shown of the session: the user's messages and the
+   * agent's tool calls, the latest ones. Tool results and every other item never leave here for it.
+   */
+  async classifierItems(): Promise<
+    { kind: string; role?: string; text?: string; name?: string; args?: unknown }[]
+  > {
+    this.#started();
+    return (
+      this.#rows<ItemRow>(
+        "SELECT * FROM items WHERE kind IN ('message', 'tool_call') ORDER BY seq DESC LIMIT 200",
+      )
+        .map(itemOf)
+        .reverse()
+        // The user's own messages only: a message another agent wrote (a sub-agent's task) may carry
+        // text that agent read, so it is never shown as the user's.
+        .filter((i) => i.kind === "tool_call" || (i.role === "user" && i.origin !== "agent"))
+        .map((i) =>
+          i.kind === "message"
+            ? { kind: i.kind, role: i.role, text: i.text }
+            : { kind: i.kind, name: i.name, args: i.args },
+        )
+    );
   }
 
   /**

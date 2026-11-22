@@ -19,8 +19,46 @@ import type { FileInfo, FilesApi } from "@statewalker/webrun-files";
 import { normalise } from "./paths.js";
 
 export interface ModeVerdict {
+  /** "classify": `auto` mode leaves the action to its risk classifier (ModeGate.classify). */
+  verdict: "allow" | "ask" | "deny" | "classify";
+  reason: string;
+  /**
+   * Which step of `auto` decided (statewalker/statewalker-root#137): a verdict with a step is
+   * recorded as a decision item when it decides a change.
+   */
+  step?: GateStep;
+}
+
+/** The steps of `auto` a decision item names. */
+export type GateStep = "rule" | "safe" | "classifier" | "approval" | "mode";
+
+/** The risk classifier's verdict on one change, already settled for unattended sessions. */
+export interface ClassifiedVerdict {
   verdict: "allow" | "ask" | "deny";
   reason: string;
+  /** The model that answered, and how long the classifier took. */
+  model?: string;
+  latency_ms: number;
+  /** Set when this denial made the session fall back to that mode. */
+  fallback?: string;
+  /** Set when the session's running turn stops with this decision, and why. */
+  stop?: string;
+}
+
+/** One decision of `auto` on a change, as the gate reports it to the agent session (an item). */
+export interface GateDecision {
+  action: ApprovalRequest["action"];
+  step: GateStep;
+  verdict: "allow" | "ask" | "deny";
+  reason: string;
+  model?: string;
+  latency_ms?: number;
+  fallback?: string;
+  stop?: string;
+  /** A block's approval id, request and exact call: approving it retries exactly that call. */
+  approval?: string;
+  request?: ApprovalRequest;
+  stored?: StoredCall;
 }
 
 /** What the gate knows of one agent session's mode and approvals, read at every call. */
@@ -34,6 +72,10 @@ export interface ModeGate {
   decide(checks: readonly [FileAction, string][]): Promise<ModeVerdict[]>;
   /** Uses up the user's grant of this approval to this session; whether there was one. */
   consume(id: string): Promise<boolean>;
+  /** `auto` mode's risk classifier on one change no rule and no safe class settles. */
+  classify?(request: ApprovalRequest): Promise<ClassifiedVerdict>;
+  /** Reports one decision of `auto` on a change, to be kept as an item of the session. */
+  record?(decision: GateDecision): Promise<void>;
 }
 
 /**
@@ -81,7 +123,7 @@ async function bytesOf(content: Iterable<Uint8Array> | AsyncIterable<Uint8Array>
   return out;
 }
 
-const RANK = { allow: 0, ask: 1, deny: 2 } as const;
+const RANK = { allow: 0, classify: 1, ask: 2, deny: 3 } as const;
 
 /** The gate's side: the agent session's gated view, with every operation decided by the mode. */
 export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
@@ -99,7 +141,12 @@ export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
     });
     return worst;
   };
-  /** Allowed, EACCES, or the approval error (unless the user granted exactly this action). */
+  /**
+   * Allowed, EACCES, or the approval error (unless the user granted exactly this action). In
+   * `auto`, an action the rules and safe classes leave open goes to the risk classifier, and every
+   * decision on a change is recorded; a classifier's block keeps the exact call, so the user can
+   * approve a retry.
+   */
   const settle = async (
     checks: [FileAction, string][],
     method: ApprovalMethod,
@@ -107,28 +154,78 @@ export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
     extra: { target?: string; content?: () => Promise<Uint8Array> } = {},
   ) => {
     const worst = await strictest(checks);
-    if (!worst || worst.verdict === "allow") return undefined;
+    if (!worst) return undefined;
     const inside = worst.path === path ? "" : ` (on ${worst.path}, inside)`;
-    if (worst.verdict === "deny")
+    const target = extra.target !== undefined ? { target: extra.target } : {};
+    const record = async (d: Omit<GateDecision, "action">, size?: number) => {
+      if (!gate.record) return;
+      await gate.record({
+        action: { method, path, ...target, ...(size !== undefined ? { size } : {}) },
+        ...d,
+      });
+    };
+    if (worst.verdict === "allow") {
+      if (worst.step) await record({ step: worst.step, verdict: "allow", reason: worst.reason });
+      return undefined;
+    }
+    if (worst.verdict === "deny") {
+      if (worst.step) await record({ step: worst.step, verdict: "deny", reason: worst.reason });
       throw codedError("EACCES", `may not ${worst.action} '${path}': ${worst.reason}${inside}`);
+    }
     const content = await extra.content?.();
     const key = extra.target === undefined ? path : `${path}\n${extra.target}`;
     const id = await approvalId(gate.session, method, key, content);
-    if (await gate.consume(id)) return content;
     const [first] = checks;
-    throw approvalError({
+    const request: ApprovalRequest = {
       id,
       session: gate.session,
       project: gate.project,
-      action: {
-        method,
-        path,
-        ...(extra.target !== undefined ? { target: extra.target } : {}),
-        ...(content ? { size: content.length } : {}),
-      },
+      action: { method, path, ...target, ...(content ? { size: content.length } : {}) },
       permission: `files.${first?.[0] ?? worst.action}:${relative(first?.[1] ?? path)}`,
       reason: `${worst.reason}${inside}`,
-    });
+    };
+    if (await gate.consume(id)) {
+      if (worst.step)
+        await record(
+          { step: "approval", verdict: "allow", reason: "the user approved this action" },
+          content?.length,
+        );
+      return content;
+    }
+    if (worst.verdict === "classify") {
+      const c: ClassifiedVerdict = gate.classify
+        ? await gate.classify(request)
+        : { verdict: "deny", reason: "no risk classifier runs here", latency_ms: 0 };
+      const decided = { ...request, reason: c.reason };
+      await record(
+        {
+          step: "classifier",
+          verdict: c.verdict,
+          reason: c.reason,
+          ...(c.model ? { model: c.model } : {}),
+          latency_ms: c.latency_ms,
+          ...(c.fallback ? { fallback: c.fallback } : {}),
+          ...(c.stop ? { stop: c.stop } : {}),
+          ...(c.verdict === "deny"
+            ? {
+                approval: id,
+                request: decided,
+                stored: { method, path, ...target, ...(content ? { content } : {}) },
+              }
+            : {}),
+        },
+        content?.length,
+      );
+      if (c.verdict === "allow") return content;
+      if (c.verdict === "deny")
+        throw codedError(
+          "EACCES",
+          `may not ${worst.action} '${path}': the risk classifier denied it: ${c.reason} (blocked: the user may approve a retry, ${id})`,
+        );
+      throw approvalError(decided);
+    }
+    if (worst.step) await record({ step: worst.step, verdict: "ask", reason: request.reason });
+    throw approvalError(request);
   };
   /** An agent never removes, moves or replaces its project's folder itself, whatever the mode. */
   const changeable = (path: string) => {

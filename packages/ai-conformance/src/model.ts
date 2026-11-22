@@ -11,6 +11,10 @@
 // A summarizer request (its system prompt starts "You are summarising") is answered with the JSON
 // summary the harness asks for: content "SUMMARY[<each input line without its id> / ...]", and one
 // section whose refs are the first id of the input.
+// A risk classifier request (its system prompt starts "You are the risk classifier") obeys the
+// last `CLASSIFY <answer>` anywhere in what it is shown, as a model open to injection would:
+// allow, ask or deny answer that verdict as JSON, `garbage` answers something that is not JSON,
+// `slow` answers allow after 3 s; with none it denies.
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -20,6 +24,8 @@ export interface ModelRequest {
   messages: { role: string; text: string }[];
   /** Whether it was a summarizer request. */
   summary: boolean;
+  /** Whether it was a risk classifier request. */
+  classifier: boolean;
   lastUserText: string;
   /** The model the request named. */
   model?: string;
@@ -115,6 +121,7 @@ export async function fakeModel(): Promise<FakeModel> {
     ).trim();
     const system = text(messages.find((m) => m.role === "system")?.content);
     const summary = system.startsWith("You are summarising");
+    const classifier = system.startsWith("You are the risk classifier");
     requests.push({
       tools: (json.tools ?? []).map((t) => String(t.function?.name)),
       messages: messages.map((m) => ({
@@ -124,6 +131,7 @@ export async function fakeModel(): Promise<FakeModel> {
           (m.tool_calls ?? []).map((c) => `CALL ${c.function?.name ?? ""}`).join(" "),
       })),
       summary,
+      classifier,
       lastUserText,
       model: json.model,
       system: messages
@@ -160,7 +168,23 @@ export async function fakeModel(): Promise<FakeModel> {
     const call = /^CALL\s+(\S+)\s*([\s\S]*)$/.exec(lastUserText);
     let message: Record<string, unknown>;
     let finish: string;
-    if (summary) {
+    if (classifier) {
+      const directive = [...lastUserText.matchAll(/CLASSIFY\s+(\w+)/g)].at(-1)?.[1];
+      if (directive === "slow") await new Promise((ok) => setTimeout(ok, 3000));
+      const verdict = directive === "slow" ? "allow" : directive;
+      message = {
+        role: "assistant",
+        content:
+          directive === "garbage"
+            ? "I think it is probably fine"
+            : JSON.stringify(
+                verdict === "allow" || verdict === "ask" || verdict === "deny"
+                  ? { verdict, reason: `the scripted classifier says ${verdict}` }
+                  : { verdict: "deny", reason: "the scripted classifier was told nothing" },
+              ),
+      };
+      finish = "stop";
+    } else if (summary) {
       const lines = lastUserText.split("\n");
       const first = /^\[([^\]]+)\]/.exec(lines[0] ?? "")?.[1];
       const content = `SUMMARY[${lines

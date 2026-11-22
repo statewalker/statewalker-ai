@@ -30,6 +30,7 @@ export {
   type Delivery,
   type EventsPage,
   type EventsQuery,
+  type GateDecisionInput,
   type Item,
   type ItemInput,
   type ItemsPage,
