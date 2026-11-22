@@ -38,6 +38,7 @@ import {
   type AgentMessage,
   type AgentSessionConfig,
   AgentSessionCore,
+  type AnswerDecision,
   type ApprovalAnswer,
   type ApprovalRequest,
   createModelSummarizer,
@@ -69,7 +70,7 @@ import { refusal, SessionLimits, type WarningView, warningView } from "./limits-
 import { MEMORY_TOOL, memoryHost, memoryTool, runStoredMemoryCall } from "./memory-tool.js";
 import { SESSION_SEARCH_TOOL, sessionSearchOf, sessionSearchTool } from "./session-search-tool.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
-import { AGENT_START, agentStartTool, type SubAgentHost } from "./sub-agents.js";
+import { AGENT_START, agentStartTool, outcomeOf, type SubAgentHost } from "./sub-agents.js";
 
 type OnApproval = TurnRun["onApproval"];
 
@@ -199,19 +200,23 @@ export class AgentSession extends DurableObject<Env> {
       memoryTool(memoryHost(env, config), onApproval),
       // The user's own earlier sessions in the project (#174).
       sessionSearchTool(sessionSearchOf(env, config)),
-      agentStartTool(offered, {
-        startSubAgent: async (req) => {
-          const started = (await userOf(env, config.user).startSubAgent(
-            config.id,
-            config.capability,
-            req,
-          )) as Awaited<ReturnType<SubAgentHost["startSubAgent"]>>;
-          // A rewind of this turn stops the child (statewalker/statewalker-root#190).
-          if (turn) await this.#core.childStarted(turn, started.session.id);
-          return started;
+      agentStartTool(
+        offered,
+        {
+          startSubAgent: async (req) => {
+            const started = (await userOf(env, config.user).startSubAgent(
+              config.id,
+              config.capability,
+              req,
+            )) as Awaited<ReturnType<SubAgentHost["startSubAgent"]>>;
+            // A rewind of this turn stops the child (statewalker/statewalker-root#190).
+            if (turn) await this.#core.childStarted(turn, started.session.id);
+            return started;
+          },
+          run: (child, message, signal) => runChild(env, child, message, signal),
         },
-        run: (child, message, signal) => runChild(env, child, message, signal),
-      }),
+        onApproval,
+      ),
     ]
       .filter((t) => set.harness.includes(t.name))
       .map((t) => ({ ...t, executionMode: executionModeOf(harnessDefinition(t)) }));
@@ -482,6 +487,12 @@ export class AgentSession extends DurableObject<Env> {
         // A remote session's answers went to its server with the answer; its task is started by
         // the turn that continues. A write-back runs once, with the user's grant.
         if (call.method === "remote" || call.method === "input") return {};
+        // A sub-agent's approval: the answer continued the sub-agent; its outcome is the result.
+        if (call.method === "agent")
+          return outcomeOf(
+            call.path,
+            await agentOf(env, call.path).answerTurn(String(call.target)),
+          );
         if (call.method === "changeset")
           try {
             return await this.#remote.applyWriteBack(
@@ -540,6 +551,12 @@ export class AgentSession extends DurableObject<Env> {
       },
       // A rewind cancels the approvals of the turns it rewound, at the user's User DO.
       cancelApprovals: (config, ids) => userOf(env, config.user).cancelApprovals(config.id, ids),
+      // An answer here continues the parent's turn waiting on it through agent.start (#88).
+      subAgentAnswered: (config, approval, decision) =>
+        agentOf(env, String(config.parent)).subAgentAnswered(approval, decision),
+      // An answer the child took while the turn waiting on it still ran (#88).
+      subAgentDecision: (_config, stored) =>
+        agentOf(env, stored.path).answerDecision(String(stored.target)),
       effectOf,
       // The topic titles on the active path, kept in the user's session index (#174).
       onTopics: (config, titles) =>
@@ -956,7 +973,7 @@ export class AgentSession extends DurableObject<Env> {
   async alarm() {
     const config = this.#core.config();
     if (!config) return;
-    const next = this.#core.expire();
+    const next = await this.#core.expire();
     // A remote session's polls run on the alarm (#144).
     for (const wake of [...this.#ticks]) wake();
     if (config.run?.remote) {
@@ -974,6 +991,24 @@ export class AgentSession extends DurableObject<Env> {
   async #arm(at: number): Promise<void> {
     const current = await this.ctx.storage.getAlarm();
     if (current === null || current > at) await this.ctx.storage.setAlarm(at);
+  }
+
+  /**
+   * Told by a sub-agent's DO: one of its approvals was answered (or expired); a turn here waiting
+   * on it through agent.start continues (statewalker/statewalker-ai#88).
+   */
+  subAgentAnswered(approval: string, decision: AnswerDecision) {
+    return this.#core.subAgentAnswered(approval, decision);
+  }
+
+  /** Asked by a parent's DO: how this session answered an approval, if it did. */
+  answerDecision(approval: string) {
+    return this.#core.answerDecision(approval);
+  }
+
+  /** Told by a parent's DO: the turn that continued this session with an approval's answer. */
+  answerTurn(approval: string) {
+    return this.#core.answerTurn(approval);
   }
 
   /** Told by a sub-agent's DO: the approvals its turn waits on, for this root's events stream. */

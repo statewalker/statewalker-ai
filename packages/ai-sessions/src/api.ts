@@ -52,12 +52,28 @@ export type {
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
   workspace: string;
+  /**
+   * The root of the asking session's tree, for a sub-agent's approval: the turns up to that root
+   * that started the sub-agent wait on it, and its answer continues each (statewalker/statewalker-ai#88).
+   */
+  root?: string;
   /** An unanswered approval past its time counts as denied: "expired". */
   /** "blocked": auto mode's risk classifier denied it; approving it retries exactly that action. */
   /** "cancelled": the turn that asked it was rewound (statewalker/statewalker-root#190). */
   status: "pending" | "allowed" | "denied" | "expired" | "blocked" | "cancelled";
   created: number;
   expires: number;
+}
+
+/**
+ * An answered approval: the turn that continues the session that asked it (`accepted`) and, for a
+ * sub-agent's approval, the turns that continue the sessions up its tree that waited on it, parent
+ * first, the root last (statewalker/statewalker-ai#88).
+ */
+export interface ApprovalAnswered {
+  approval: ApprovalView;
+  accepted: MessageAccepted;
+  continued?: MessageAccepted[];
 }
 
 /** The user's answer to an approval (statewalker/statewalker-root#79). */
@@ -352,7 +368,13 @@ export interface StoredAction {
     /** Answering a remote harness's question (the path is the `input_request` id). */
     | "input"
     /** A remote session's write-back, one change set (the target names it; content its digest). */
-    | "changeset";
+    | "changeset"
+    /**
+     * A sub-agent's approval the turn waits on through `agent.start` (the path is the sub-agent
+     * session, the target the approval): its answer continues the sub-agent, whose outcome is the
+     * call's result (statewalker/statewalker-ai#88).
+     */
+    | "agent";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -516,6 +538,14 @@ export interface MessageAccepted {
   /** The approvals `void_approvals` passed over. */
   voided_approvals?: string[];
 }
+
+/**
+ * An answer accepted by the session that asked it, with the turns of the sessions up its tree that
+ * waited on it through `agent.start` and that the answer continues too, parent first.
+ */
+export type AnswerAccepted = Omit<MessageAccepted, "stream_url"> & {
+  continued?: Omit<MessageAccepted, "stream_url">[];
+};
 
 /** Items, paged: `after` / `before` are item ids. */
 export interface ItemsQuery {
@@ -963,10 +993,7 @@ export interface SessionApi {
    * Answers one of the caller's approvals. The answer continues the agent session as a turn
    * (allowing re-checks and runs the stored action), accepted like a message.
    */
-  answerApproval(
-    id: string,
-    answer: ApprovalAnswer,
-  ): Promise<{ approval: ApprovalView; accepted: MessageAccepted }>;
+  answerApproval(id: string, answer: ApprovalAnswer): Promise<ApprovalAnswered>;
   /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
   files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** A project's databases the caller may use (`db.read` or `db.write`), with their sizes. */
@@ -1340,7 +1367,7 @@ export interface AgentPort {
    * Continues the session with the user's answer to an approval it waits on: a turn that runs the
    * stored action again (re-checked at the gate), or tells the model the denial.
    */
-  answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
+  answer(approval: string, answer: ApprovalAnswer): Promise<AnswerAccepted>;
   /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
   mcp(message: McpMessage): Promise<McpResponse | null>;
   /** The session level's limits now, with what is used, reserved and left of each. */
@@ -1895,13 +1922,17 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async answerApproval(id, answer) {
       const checked = approvalAnswer(answer);
       const approval = await ports.user.answerApproval(token, String(id), checked);
-      const accepted = await ports.agent(approval.session).answer(approval.id, checked);
+      const { continued, ...accepted } = await ports
+        .agent(approval.session)
+        .answer(approval.id, checked);
+      const withUrl = (a: Omit<MessageAccepted, "stream_url">): MessageAccepted => ({
+        ...a,
+        stream_url: streamUrl(a.session_id, a.turn_id, a.offset),
+      });
       return {
         approval,
-        accepted: {
-          ...accepted,
-          stream_url: streamUrl(approval.session, accepted.turn_id, accepted.offset),
-        },
+        accepted: withUrl(accepted),
+        ...(continued?.length ? { continued: continued.map(withUrl) } : {}),
       };
     },
     files: (method, args) => ports.user.files(token, method, args),

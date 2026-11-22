@@ -11,7 +11,9 @@
 //   `session_branching` is not declared.
 // - An approval the turn waits on is its last item, an `input_request` (`confirm`, options
 //   `allow`/`deny`; a remote harness's question keeps its own kind), one at a time, and the turn
-//   ends `incomplete` with reason `input_required`. An `input_response` answers it with scope
+//   ends `incomplete` with reason `input_required`. A sub-agent's approval is asked as the root's:
+//   the turn that started it through `agent.start` waits on it, and the answer's response is the
+//   root's turn that continues with the sub-agent's outcome (statewalker/statewalker-ai#88). An `input_response` answers it with scope
 //   "once"; any other input passes it over (`void_approvals`), reported in
 //   `metadata.voided_input_requests`.
 // - Request fields the projection does not act on are reported in `metadata.ignored_fields`: they
@@ -161,13 +163,18 @@ export async function inputRequestOf(
   if (!ids.length) return undefined;
   const listed = approvals ?? (await api.listApprovals()).approvals;
   for (const id of ids) {
+    // The session's own, or a sub-agent's of its tree that the turn waits on.
     const approval = listed.find(
-      (a) => a.id === id && a.session === view.session && a.status === "pending",
+      (a) => a.id === id && ofTree(a, view.session) && a.status === "pending",
     );
     if (approval) return { approval, item: inputRequestItem(approval) };
   }
   return undefined;
 }
+
+/** Whether an approval is a session's own, or a sub-agent's of the tree it is the root of. */
+const ofTree = (approval: ApprovalView, session: string) =>
+  approval.session === session || approval.root === session;
 
 /** Finds the call an approval stood for: the call whose result waited on it (one scan, lazily). */
 export function callLookup(api: UhpApi, session: string) {
@@ -587,7 +594,7 @@ async function answerTask(
       ? answer.request.slice(INPUT_REQUEST_PREFIX.length)
       : undefined;
     const approval = id
-      ? (await api.listApprovals()).approvals.find((a) => a.id === id && a.session === session.id)
+      ? (await api.listApprovals()).approvals.find((a) => a.id === id && ofTree(a, session.id))
       : undefined;
     if (
       approval?.status === "expired" &&
@@ -616,20 +623,29 @@ async function answerTask(
       detail: { options: options ?? ["yes", "no"] },
     });
   const gate = !asked.approval.input;
-  let accepted: { turn_id: string; offset: number };
+  let accepted: { turn_id: string; offset: number; session_id: string } | undefined;
   try {
-    ({ accepted } = await api.answerApproval(asked.approval.id, {
+    const answered = await api.answerApproval(asked.approval.id, {
       decision: gate ? (answer.answer === "allow" ? "allow" : "deny") : "allow",
       // "For this session" stays native only.
       scope: "once",
       ...(gate ? {} : { message: answer.answer }),
-    }));
+    });
+    // The response is the root's turn: a sub-agent's approval continues it last.
+    accepted = [answered.accepted, ...(answered.continued ?? [])].find(
+      (a) => a.session_id === session.id,
+    );
   } catch (e) {
     // Answered meanwhile, or cancelled: no longer pending.
     if (/^E(INVAL|BUSY|NOENT):/.test(String((e as Error)?.message)))
       throw uhpError(409, "input_not_pending", messageOf(e), { param });
     throw toUhpError(e);
   }
+  if (!accepted)
+    // The sub-agent took the answer, but the turn that waited on it here no longer does.
+    throw uhpError(409, "input_not_pending", "the answer continues no turn of this session", {
+      param,
+    });
   return { session, turn: accepted.turn_id, since: accepted.offset, context };
 }
 

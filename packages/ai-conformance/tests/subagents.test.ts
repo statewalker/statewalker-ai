@@ -25,7 +25,7 @@ import {
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
 
-const USERS = ["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo"];
+const USERS = ["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kai"];
 const TRANSPORTS = ["rest", "rpc"];
 
 const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -224,6 +224,51 @@ describe.each(transports)("sub-agents over %s", (name, connect) => {
     expect(done.items.filter((i) => i.kind === "tool_result")).toEqual([
       expect.objectContaining({ isError: false }),
     ]);
+  });
+
+  it("a turn whose sub-agent asks waits on that approval, and the answer continues every turn up to the root (statewalker/statewalker-ai#88)", async () => {
+    const kai = await as("kai");
+    await kai.setMode({ mode: "default" });
+    const root = await kai.startSession({ project: "alpha", agent: "team/lead" });
+    const path = `/alpha/relayed-${t}.md`;
+    const turn = await kai.sendMessage(root.id, {
+      content: start({
+        agent: "team/helper",
+        message: start({ agent: "team/writer", message: write(path, "relayed\n") }),
+      }),
+    });
+    const sessions = (await kai.listSessions()).sessions.filter((s) => s.root === root.id);
+    const helper = sessions.find((s) => s.parent === root.id);
+    const writer = sessions.find((s) => s.parent === helper?.id);
+    const approval = ((await kai.me()).approvals ?? []).find((a) => a.session === writer?.id);
+    expect(approval).toMatchObject({ root: root.id, action: { method: "write", path } });
+    // Each turn up the tree waits on the grandchild's approval, as its own.
+    expect(turn).toMatchObject({
+      status: "waiting",
+      stop_reason: { type: "approval", approval_ids: [approval?.id] },
+    });
+    const answered = await kai.answerApproval(String(approval?.id), {
+      decision: "allow",
+      scope: "once",
+    });
+    // The writer ran its write once.
+    const wrote = await kai.waitTurn(answered.accepted);
+    expect(wrote.items.filter((i) => i.kind === "tool_result")).toEqual([
+      expect.objectContaining({ isError: false, output: expect.stringContaining(": done") }),
+    ]);
+    // The answer continues the writer, then the helper, then the root.
+    expect(answered.continued?.map((a) => a.session_id)).toEqual([helper?.id, root.id]);
+    const last = answered.continued?.at(-1);
+    const done = await kai.waitTurn(last as NonNullable<typeof last>);
+    expect(done).toMatchObject({ status: "completed", answers: approval?.id });
+    const reported = done.items.find((i) => i.kind === "tool_result");
+    expect(reported).toMatchObject({ approval: approval?.id, isError: false });
+    expect(reported?.output).toMatch(/sub-agent session .*, turn completed/);
+    // What the writer's answer did, relayed up through the helper.
+    expect(reported?.output).toContain(`write ${path}: done`);
+    // The root's model continued with it.
+    expect(done.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
+    expect((await kai.getSession(root.id)).status).toBe("idle");
   });
 
   it("archiving a session revokes it and its descendants; siblings keep running", async () => {
