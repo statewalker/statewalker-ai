@@ -122,4 +122,112 @@ describe.each(transports)("pre-images over %s", (name, connect, connectFiles) =>
     expect(await tryReadText(files, `${dir}/readme.md`)).toBe("# ann\n");
     expect(await files.exists(`${dir}/new.md`)).toBe(false);
   });
+
+  it("asks once in the default mode: the files revert when the user allows it, and stay on a denial", async () => {
+    const { api, files } = await as("dee");
+    const dir = `/${project}/dee`;
+    await api.setMode({ mode: "bypassPermissions" });
+    const s = await api.startSession({ project });
+    const a = await api.sendMessage(s.id, { content: "start" });
+    await api.sendMessage(s.id, { content: write(`${dir}/readme.md`, "one\n") });
+    await api.sendMessage(s.id, { content: write(`${dir}/two.md`, "two\n") });
+    await api.setMode({ mode: "default" });
+    const result = await api.rewind(s.id, { to_turn: a.id, revert_files: true });
+    expect(result.head).toBe(a.id);
+    const pending = result.files;
+    expect(pending).toMatchObject({
+      reverted: [],
+      conflicts: [],
+      unavailable: [],
+      pending: [`${dir}/readme.md`, `${dir}/two.md`],
+      approval: expect.any(String),
+    });
+    // Nothing is written before the answer; one approval covers every file.
+    expect(await tryReadText(files, `${dir}/readme.md`)).toBe("one\n");
+    const listed = (await api.listApprovals()).approvals.filter(
+      (x) => x.session === s.id && x.status === "pending",
+    );
+    expect(listed.map((x) => x.id)).toEqual([pending?.approval]);
+    expect(listed[0]?.action).toMatchObject({ method: "revert", path: `/${project}` });
+    const answered = await api.answerApproval(String(pending?.approval), {
+      decision: "allow",
+      scope: "once",
+    });
+    expect(answered.files).toEqual({
+      reverted: [`${dir}/readme.md`, `${dir}/two.md`],
+      conflicts: [],
+      unavailable: [],
+    });
+    expect(await tryReadText(files, `${dir}/readme.md`)).toBe("# dee\n");
+    expect(await files.exists(`${dir}/two.md`)).toBe(false);
+    // A denial leaves the files as they are.
+    await api.setMode({ mode: "bypassPermissions" });
+    const c = await api.sendMessage(s.id, { content: write(`${dir}/three.md`, "3\n") });
+    expect(c.status).toBe("completed");
+    await api.setMode({ mode: "default" });
+    const again = await api.rewind(s.id, { to_turn: a.id, revert_files: true });
+    const denied = await api.answerApproval(String(again.files?.approval), {
+      decision: "deny",
+      scope: "once",
+    });
+    expect(denied.files).toMatchObject({ reverted: [], refused: expect.stringContaining("denied") });
+    expect(await tryReadText(files, `${dir}/three.md`)).toBe("3\n");
+  });
+
+  it("is refused where the mode denies writes, and leaves the files alone", async () => {
+    const { api, files } = await as("eli");
+    const dir = `/${project}/eli`;
+    await api.setMode({ mode: "bypassPermissions" });
+    const s = await api.startSession({ project });
+    const a = await api.sendMessage(s.id, { content: "start" });
+    await api.sendMessage(s.id, { content: write(`${dir}/readme.md`, "one\n") });
+    // The project's rules now deny writes there.
+    await seed(deployment, ADMIN_KEY, {
+      [`/${project}/.system/permission-rules`]: JSON.stringify({ deny: ["files.write:/eli/**"] }),
+    });
+    const result = await api.rewind(s.id, { to_turn: a.id, revert_files: true });
+    expect(result.files).toMatchObject({ reverted: [], refused: expect.any(String) });
+    expect(await tryReadText(files, `${dir}/readme.md`)).toBe("one\n");
+  });
+
+  it("leaves the files someone changed since alone and lists them as conflicts", async () => {
+    const { api, files } = await as("bob");
+    await api.setMode({ mode: "bypassPermissions" });
+    const dir = `/${project}/bob`;
+    const s = await api.startSession({ project });
+    const a = await api.sendMessage(s.id, { content: write(`${dir}/x.md`, "x0\n") });
+    await api.sendMessage(s.id, { content: write(`${dir}/x.md`, "x1\n") });
+    await api.sendMessage(s.id, { content: write(`${dir}/readme.md`, "agent\n") });
+    await api.sendMessage(s.id, { content: write(`${dir}/y.md`, "y\n") });
+    // The user edits one file; a later turn kept on the path edits another.
+    await files.write(`${dir}/readme.md`, [new TextEncoder().encode("user\n")]);
+    const result = await api.rewind(s.id, { to_turn: a.id, revert_files: true });
+    expect(result.files).toEqual({
+      reverted: [`${dir}/x.md`, `${dir}/y.md`],
+      conflicts: [`${dir}/readme.md`],
+      unavailable: [],
+    });
+    expect(await tryReadText(files, `${dir}/x.md`)).toBe("x0\n");
+    expect(await files.exists(`${dir}/y.md`)).toBe(false);
+    expect(await tryReadText(files, `${dir}/readme.md`)).toBe("user\n");
+  });
+
+  it("counts a later turn's change on another branch as a change since", async () => {
+    const { api, files } = await as("cy");
+    await api.setMode({ mode: "bypassPermissions" });
+    const dir = `/${project}/cy`;
+    const s = await api.startSession({ project });
+    const a = await api.sendMessage(s.id, { content: "start" });
+    const b = await api.sendMessage(s.id, { content: write(`${dir}/readme.md`, "b\n") });
+    // Rewound without reverting: a sibling turn writes the same file again.
+    await api.rewind(s.id, { to_turn: a.id });
+    await api.sendMessage(s.id, { content: write(`${dir}/readme.md`, "c\n") });
+    // Back on b's branch (no file is touched), then rewound with the revert: b's file changed since.
+    const back = await api.setHead(s.id, { turn: b.id });
+    expect(back.files).toBeUndefined();
+    expect(await tryReadText(files, `${dir}/readme.md`)).toBe("c\n");
+    const result = await api.rewind(s.id, { to_turn: a.id, revert_files: true });
+    expect(result.files).toEqual({ reverted: [], conflicts: [`${dir}/readme.md`], unavailable: [] });
+    expect(await tryReadText(files, `${dir}/readme.md`)).toBe("c\n");
+  });
 });
