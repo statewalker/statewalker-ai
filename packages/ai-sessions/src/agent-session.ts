@@ -235,6 +235,7 @@ export class AgentSessionCore implements AgentPort {
         turn TEXT, data TEXT NOT NULL, created INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS approval_answers (turn TEXT PRIMARY KEY, approval TEXT NOT NULL,
         decision TEXT NOT NULL, message TEXT);
+      CREATE TABLE IF NOT EXISTS agent_origin_turns (turn TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
         used TEXT NOT NULL, reason TEXT NOT NULL);`);
     this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
@@ -441,7 +442,14 @@ export class AgentSessionCore implements AgentPort {
         error = String((e as Error)?.message ?? e);
       }
     } else {
-      const prompt = this.#append(row.id, { kind: "message", role: "user", text: row.content });
+      // A message another agent wrote (a sub-agent's task) is marked so: never the user's words.
+      const byAgent = !!this.#one("SELECT 1 FROM agent_origin_turns WHERE turn = ?", row.id);
+      const prompt = this.#append(row.id, {
+        kind: "message",
+        role: "user",
+        text: row.content,
+        ...(byAgent ? { origin: "agent" as const } : {}),
+      });
       try {
         const context = await this.#context(row.id, prompt.seq, running.abort.signal);
         outcome = await this.#runTurn(
@@ -626,6 +634,8 @@ export class AgentSessionCore implements AgentPort {
       },
       delivery === "interrupt",
     );
+    if (message.origin === "agent")
+      this.#sql.exec("INSERT OR IGNORE INTO agent_origin_turns VALUES (?)", id);
     if (delivery === "interrupt" && running) void this.#cut(running, "interrupted");
     else this.#pump();
     return {
@@ -698,17 +708,21 @@ export class AgentSessionCore implements AgentPort {
     { kind: string; role?: string; text?: string; name?: string; args?: unknown }[]
   > {
     this.#started();
-    return this.#rows<ItemRow>(
-      "SELECT * FROM items WHERE kind IN ('message', 'tool_call') ORDER BY seq DESC LIMIT 200",
-    )
-      .map(itemOf)
-      .reverse()
-      .filter((i) => i.kind === "tool_call" || i.role === "user")
-      .map((i) =>
-        i.kind === "message"
-          ? { kind: i.kind, role: i.role, text: i.text }
-          : { kind: i.kind, name: i.name, args: i.args },
-      );
+    return (
+      this.#rows<ItemRow>(
+        "SELECT * FROM items WHERE kind IN ('message', 'tool_call') ORDER BY seq DESC LIMIT 200",
+      )
+        .map(itemOf)
+        .reverse()
+        // The user's own messages only: a message another agent wrote (a sub-agent's task) may carry
+        // text that agent read, so it is never shown as the user's.
+        .filter((i) => i.kind === "tool_call" || (i.role === "user" && i.origin !== "agent"))
+        .map((i) =>
+          i.kind === "message"
+            ? { kind: i.kind, role: i.role, text: i.text }
+            : { kind: i.kind, name: i.name, args: i.args },
+        )
+    );
   }
 
   /**

@@ -38,7 +38,13 @@ async function runChild(
 ) {
   const child = agentOf(env, config.id);
   await child.start(config);
-  const accepted = await child.send({ content: message, delivery: "next", ignored: [] });
+  const accepted = await child.send({
+    content: message,
+    delivery: "next",
+    ignored: [],
+    // The parent agent wrote it: never the user's words to the child's risk classifier.
+    origin: "agent",
+  });
   if (!signal) return child.waitTurn(accepted.turn_id);
   signal.throwIfAborted();
   let onAbort = () => {};

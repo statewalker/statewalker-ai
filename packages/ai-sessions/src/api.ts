@@ -110,6 +110,8 @@ export interface ItemInput {
   secrets?: string[];
   /** A user message that steered the running turn: the steer's id. */
   steer?: string;
+  /** A `user` message another agent wrote (a sub-agent's task from its parent). */
+  origin?: "agent";
   /** Cut short: the partial assistant message of a cancelled or interrupted turn. */
   incomplete?: true;
   /**
@@ -576,6 +578,11 @@ export interface AgentMessage {
   delivery: Delivery;
   model?: string;
   ignored: string[];
+  /**
+   * "agent": written by another agent (a sub-agent's task from its parent), not by the user; auto
+   * mode's risk classifier never takes it as the user's words.
+   */
+  origin?: "agent";
 }
 
 /** One agent session DO's side of the API. */
