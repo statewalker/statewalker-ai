@@ -95,6 +95,7 @@ import {
   IGNORE_FILE,
   ignoreRules,
   type Limit,
+  type LimitState,
   lookupModel,
   type ModeGate,
   type ModelCall,
@@ -1262,6 +1263,22 @@ export class Workspace extends DurableObject<Env> {
       ?.limits.find((l) => l.meter === ref[2] && l.period === ref[3]);
     if (!limit) throw codedError("ENOENT", "no such limit");
     this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
+  }
+
+  /**
+   * The limits on a user's usage now, with what is used, reserved and left of each
+   * (statewalker/statewalker-root#181): the workspace's (and the deployment's ceilings) and the
+   * member's, and a project's when one is named, which the user must be a member of.
+   */
+  async effectiveLimits(
+    userCapability: string,
+    query: { project?: string },
+  ): Promise<LimitState[]> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const project = typeof query?.project === "string" ? query.project : "";
+    if (project && !(await this.#member(project, user)))
+      throw codedError("EACCES", `${user} is not a member of ${project}`);
+    return this.#limits.states(project, user);
   }
 
   /** Test-only: the workspace's usage records after a seq. */

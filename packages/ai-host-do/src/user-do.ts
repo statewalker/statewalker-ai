@@ -78,6 +78,7 @@ export class User extends DurableObject<Env> {
           eraseUserSecrets: (capability) => ws.eraseUserSecrets(capability),
           revoke: (capability, target) => ws.revoke(capability, target),
           delegate: (capability, parent, grant) => ws.delegate(capability, parent, grant),
+          effectiveLimits: (capability, query) => ws.effectiveLimits(capability, query),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -155,6 +156,16 @@ export class User extends DurableObject<Env> {
     );
     if (!limit) throw codedError("ENOENT", "no such limit");
     this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
+  }
+
+  /**
+   * The limits on the user's usage in the token's workspace, and the user level's (spend on their
+   * own keys, held here) (statewalker/statewalker-root#181).
+   */
+  async effectiveLimits(token: string, query: { project?: string }) {
+    await this.#reachable();
+    const { limits } = await this.#sessions.effectiveLimits(token, query);
+    return { limits: [...limits, ...this.#limits.ledger.states(await this.#limits.scopes())] };
   }
 
   /** Test-only: the user's own-key usage records after a seq. */

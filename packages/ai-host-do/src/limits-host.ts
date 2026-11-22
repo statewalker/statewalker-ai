@@ -11,6 +11,7 @@ import {
   LimitLedger,
   type LimitLevel,
   type LimitScope,
+  type LimitState,
   type LimitWarning,
   limitsFor,
   parseLimits,
@@ -162,6 +163,14 @@ export class WorkspaceLimits {
         : []),
       { level: "member", target: user, limits: limitsFor(all, "member", user) },
     ];
+  }
+
+  /**
+   * Each limit on a user's usage in a project now (the workspace's, the deployment's ceilings, the
+   * project's and the member's): `project` empty, the workspace's and the member's only.
+   */
+  async states(project: string, user: string): Promise<LimitState[]> {
+    return this.ledger.states(await this.scopes(project, user));
   }
 
   /** The session limits a new session in a project starts with (deployment, workspace, project). */

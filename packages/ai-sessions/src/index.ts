@@ -29,6 +29,7 @@ export {
   type DatabaseView,
   type DeleteSecretRequest,
   type Delivery,
+  type EffectiveLimitsQuery,
   type EventsPage,
   type EventsQuery,
   type GateDecisionInput,
@@ -36,6 +37,7 @@ export {
   type ItemInput,
   type ItemsPage,
   type ItemsQuery,
+  type LimitState,
   type LimitWarningView,
   type McpMessage,
   type McpResponse,
@@ -73,6 +75,7 @@ export {
   TERMINAL_TURN_STATUSES,
   type TurnStatus,
   type TurnView,
+  type UsageTotals,
   type UserPort,
   type UserSessionView,
 } from "./api.js";

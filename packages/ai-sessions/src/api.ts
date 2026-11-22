@@ -6,6 +6,7 @@ import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 import {
   type FilesRpcMethod,
   type Limit,
+  type LimitState,
   type ModelLevel,
   type ModelsConfig,
   type ModelUsage,
@@ -31,6 +32,7 @@ export type {
   FileView,
   KindView,
   Limit,
+  LimitState,
   MemoryAction,
   MemoryCall,
   ModelsConfig,
@@ -91,6 +93,8 @@ export interface AgentSessionView {
   parent?: string;
   /** A sub-agent's root: the session the user started, whose events stream gets its approvals. */
   root?: string;
+  /** The session's model usage, totalled over its turns (single-session reads, #181). */
+  usage?: UsageTotals;
 }
 
 /** A project's database, as the session API lists it to a member who may use it. */
@@ -366,10 +370,22 @@ export interface TurnView {
   ignored?: string[];
   /** The approval this turn continues the session with: a turn queued by answering it. */
   answers?: string;
+  /** The turn's model usage, totalled over its requests (statewalker/statewalker-root#181). */
+  usage?: UsageTotals;
   created: number;
   started?: number;
   ended?: number;
   items: Item[];
+}
+
+/** Model usage totalled over requests: a turn's or a session's (statewalker/statewalker-root#181). */
+export interface UsageTotals {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  /** In the models' price unit; 0 when none has prices. */
+  cost: number;
 }
 
 /** The statuses a turn ends in. */
@@ -701,6 +717,18 @@ export interface SessionApi {
   exportProfile(): Promise<Uint8Array>;
   /** Erases the caller's profile: their preferences and their user memory of every project. */
   eraseProfile(): Promise<{ erased: true }>;
+  /**
+   * Each limit that applies in the caller's context (statewalker/statewalker-root#181): the
+   * workspace's, the member's and the user's own (their keys), a project's when one is named (the
+   * caller must be a member), and one of the caller's sessions' when named (its project too), each
+   * with what is used, reserved and left, and when it resets.
+   */
+  effectiveLimits(query?: EffectiveLimitsQuery): Promise<{ limits: LimitState[] }>;
+}
+
+export interface EffectiveLimitsQuery {
+  project?: string;
+  session?: string;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -795,6 +823,8 @@ export interface UserPort {
   memory(token: string, call: MemoryCall): Promise<unknown>;
   exportProfile(token: string): Promise<Uint8Array>;
   eraseProfile(token: string): Promise<{ erased: true }>;
+  /** The limits on the caller's usage in the token's workspace (and a project), and their own. */
+  effectiveLimits(token: string, query: { project?: string }): Promise<{ limits: LimitState[] }>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -868,6 +898,10 @@ export interface AgentPort {
   answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
   /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
   mcp(message: McpMessage): Promise<McpResponse | null>;
+  /** The session level's limits now, with what is used, reserved and left of each. */
+  limits(): Promise<LimitState[]>;
+  /** The session's model usage, totalled; none before its first request. */
+  usage(): Promise<UsageTotals | undefined>;
 }
 
 export interface SessionApiPorts {
@@ -1039,7 +1073,11 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       await ports.agent(session.id).start(config);
       return session;
     },
-    getSession: async (id) => withStatus(await own(id)),
+    async getSession(id) {
+      const session = await withStatus(await own(id));
+      const usage = await ports.agent(session.id).usage();
+      return usage ? { ...session, usage } : session;
+    },
     async updateSession(id, req) {
       const metadata = metadataOf((req as { metadata?: unknown } | undefined)?.metadata ?? {});
       const session = await own(id);
@@ -1218,6 +1256,20 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     exportProfile: () => ports.user.exportProfile(token),
     eraseProfile: () => ports.user.eraseProfile(token),
+    async effectiveLimits(query) {
+      const q = (query ?? {}) as Record<string, unknown>;
+      for (const k of ["project", "session"] as const)
+        if (q[k] !== undefined && (typeof q[k] !== "string" || !NAME.test(q[k] as string)))
+          throw codedError("EINVAL", `${k} must be a ${k}'s name`);
+      const session = typeof q.session === "string" ? await own(q.session) : undefined;
+      const project = session?.project ?? (q.project as string | undefined);
+      if (session && q.project !== undefined && q.project !== session.project)
+        throw codedError("EINVAL", "the session is in another project");
+      const { limits } = await ports.user.effectiveLimits(token, project ? { project } : {});
+      return {
+        limits: session ? [...limits, ...(await ports.agent(session.id).limits())] : limits,
+      };
+    },
   };
 }
 

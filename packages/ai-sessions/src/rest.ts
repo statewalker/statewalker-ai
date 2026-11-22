@@ -65,6 +65,11 @@ export async function handleSessionRest(
         project: url.searchParams.get("project") ?? "",
         discover: url.searchParams.get("discover") === "true",
       });
+    if (route === "GET /limits/effective")
+      return api().effectiveLimits({
+        project: url.searchParams.get("project") ?? undefined,
+        session: url.searchParams.get("session") ?? undefined,
+      });
     if (route === "GET /approvals") return api().listApprovals();
     if (request.method === "POST" && parts[1] === "approvals" && parts[2] && parts.length === 3)
       return api().answerApproval(parts[2], (await bodyOf(request)) as never);

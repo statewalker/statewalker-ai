@@ -50,6 +50,7 @@ export {
   LimitLedger,
   type LimitLevel,
   type LimitScope,
+  type LimitState,
   type LimitWarning,
   limitOfMessage,
   limitsFor,

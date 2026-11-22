@@ -238,6 +238,8 @@ export interface AgentSession {
   parent?: string;
   /** The root of its tree: the session the user started. */
   root?: string;
+  /** The session's model usage, totalled over its turns (single-session reads). */
+  usage?: UsageTotals;
 }
 
 /** A workspace's service account, as the session API lists it (never its key). */
@@ -287,6 +289,24 @@ export interface ModelsConfig {
   default?: string;
 }
 
+/** One limit as it applies to the caller's context now (statewalker/statewalker-root#181). */
+export interface LimitState {
+  meter: string;
+  level: string;
+  target: string;
+  /** The limit's own level: a deployment ceiling held by a workspace says `deployment`. */
+  limit_level: string;
+  period: string;
+  on_exceed: string;
+  warn_at: number;
+  value: number;
+  used: number;
+  reserved: number;
+  remaining: number;
+  /** When the window resets (ms since the epoch); none for a total. */
+  reset?: number;
+}
+
 /** One request to a model, as the workspace's budget recorded it (test-only admin route). */
 export interface ModelUsageRecord {
   session: string;
@@ -316,7 +336,18 @@ export interface Turn {
   ignored?: string[];
   /** The approval this turn continues the session with (an answer turn). */
   answers?: string;
+  /** The turn's model usage, totalled over its requests. */
+  usage?: UsageTotals;
   items: Item[];
+}
+
+/** Model usage totalled over requests (statewalker/statewalker-root#181). */
+export interface UsageTotals {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost: number;
 }
 
 export interface ItemsPage {
@@ -458,6 +489,11 @@ export interface SessionClient {
   exportProfile(): Promise<Uint8Array>;
   /** `DELETE /v1/me/profile`. */
   eraseProfile(): Promise<{ erased: true }>;
+  /** `GET /v1/limits/effective`: each limit of the caller's context, with what is left. */
+  effectiveLimits(query?: {
+    project?: string;
+    session?: string;
+  }): Promise<{ limits: LimitState[] }>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -568,6 +604,14 @@ const itemsSearch = (q: ItemsQuery = {}) => {
   for (const k of ["after", "before", "limit", "order"] as const)
     if (q[k] !== undefined) p.set(k, String(q[k]));
   for (const t of q.types ?? []) p.append("types[]", t);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
+
+/** A query string of the defined values. */
+const search = (q: Record<string, unknown>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
   const s = p.toString();
   return s ? `?${s}` : "";
 };
@@ -695,6 +739,8 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         `/v1/models?${new URLSearchParams({ project, ...(discover ? { discover: "true" } : {}) })}`,
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
+    effectiveLimits: (q = {}) =>
+      call("GET", `/v1/limits/effective${search(q as Record<string, unknown>)}`),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
     listMemory: (target) => call("GET", memoryCollection(target)),
     memoryEntry: (target, id) =>

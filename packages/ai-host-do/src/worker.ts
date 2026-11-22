@@ -80,6 +80,7 @@ function sessionApi(env: Env, token: string) {
       memory: async (t, call) => (await user()).memory(t, call),
       exportProfile: async (t) => (await user()).exportProfile(t),
       eraseProfile: async (t) => (await user()).eraseProfile(t),
+      effectiveLimits: async (t, q) => (await user()).effectiveLimits(t, q),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -96,6 +97,8 @@ function sessionApi(env: Env, token: string) {
         purge: () => agent.purge(),
         answer: (approval, answer) => agent.answer(approval, answer),
         mcp: (message) => agent.mcp(message),
+        limits: () => agent.limits(),
+        usage: () => agent.usage(),
       };
     },
   });

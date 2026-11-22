@@ -22,6 +22,7 @@ import {
   approvalError,
   type FilesRpcMethod,
   type Limit,
+  type LimitState,
   type ModelsConfig,
   rootedFiles,
 } from "@statewalker/ai-environment";
@@ -156,6 +157,8 @@ export interface WorkspaceGrants {
   releaseStream(userCapability: string, id: string): Promise<void>;
   /** Agent sessions of this user that ended: they no longer count as active (#179). */
   sessionsEnded(userCapability: string, sessions: string[]): Promise<void>;
+  /** The limits on the user's usage there now (a project's: EACCES for a non-member). */
+  effectiveLimits(userCapability: string, query: { project?: string }): Promise<LimitState[]>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -1182,6 +1185,16 @@ export class UserSessions implements UserPort {
   async setModelConfig(token: string, config: unknown): Promise<ModelsConfig> {
     const us = await this.#userSession(token);
     return this.#o.workspace(us.workspace).setModelConfig(us.capability, config);
+  }
+
+  async effectiveLimits(
+    token: string,
+    query: { project?: string },
+  ): Promise<{ limits: LimitState[] }> {
+    const us = await this.#userSession(token);
+    return {
+      limits: await this.#o.workspace(us.workspace).effectiveLimits(us.capability, query),
+    };
   }
 
   async listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }> {

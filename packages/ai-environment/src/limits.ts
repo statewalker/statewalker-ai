@@ -283,6 +283,26 @@ export interface LimitBreach {
   retryAfterMs?: number;
 }
 
+/** One limit as it holds a scope now: what is used, reserved and left of it, and when it resets. */
+export interface LimitState {
+  meter: Meter;
+  level: LimitLevel;
+  target: string;
+  /** The limit's own level: a deployment ceiling held by a workspace says `deployment`. */
+  limit_level: LimitLevel;
+  period: Period;
+  on_exceed: OnExceed;
+  warn_at: number;
+  /** The limit's value now, with the increments approvals added in this window. */
+  value: number;
+  used: number;
+  reserved: number;
+  /** What is left before the limit refuses: never below 0. */
+  remaining: number;
+  /** When the window resets (ms since the epoch); none for a total. */
+  reset?: number;
+}
+
 /** A warning left once per window when usage crosses a limit's `warn_at`. */
 export interface LimitWarning {
   limit: Limit;
@@ -488,6 +508,40 @@ export class LimitLedger {
     // A deny can't be approved away: it is said first, then a delay, then an ask.
     const rank = { deny: 0, delay: 1, ask: 2 };
     return found.sort((a, b) => rank[a.verdict] - rank[b.verdict]);
+  }
+
+  /** Each limit of each scope as it holds now: used, reserved, remaining and its reset. */
+  states(scopes: readonly LimitScope[]): LimitState[] {
+    const now = this.#now();
+    const found: LimitState[] = [];
+    for (const scope of scopes)
+      for (const limit of scope.limits) {
+        const w = this.#window(limit.period, now);
+        const ref = {
+          level: scope.level,
+          target: scope.target,
+          meter: limit.meter,
+          period: limit.period,
+          window: w.start,
+        };
+        const { used, reserved } = this.#counter(ref);
+        const value = limit.value + this.#raised(keyOf(ref));
+        found.push({
+          meter: limit.meter,
+          level: scope.level,
+          target: scope.target,
+          limit_level: limit.level,
+          period: limit.period,
+          on_exceed: limit.on_exceed,
+          warn_at: limit.warn_at,
+          value,
+          used,
+          reserved,
+          remaining: Math.max(0, value - used - reserved),
+          ...(Number.isFinite(w.reset) ? { reset: w.reset } : {}),
+        });
+      }
+    return found;
   }
 
   /** Throws the first breach a charge would make (LimitExceeded). */

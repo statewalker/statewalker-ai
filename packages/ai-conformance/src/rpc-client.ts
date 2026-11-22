@@ -89,6 +89,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     listAgentMemories: (project) => api.listAgentMemories(project).catch(refusal) as never,
     exportProfile: async () => new Uint8Array(await api.exportProfile().catch(refusal)),
     eraseProfile: () => api.eraseProfile().catch(refusal) as never,
+    effectiveLimits: (q) => api.effectiveLimits(q ?? {}).catch(refusal) as never,
     close: () => connection.close(),
   };
   return client;

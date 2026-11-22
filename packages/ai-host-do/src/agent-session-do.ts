@@ -10,7 +10,7 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
-import { approvalId, codeOf, settleAsk } from "@statewalker/ai-access";
+import { approvalId, codedError, codeOf, settleAsk } from "@statewalker/ai-access";
 import { TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
 import {
   approvalAware,
@@ -684,6 +684,17 @@ export class AgentSession extends DurableObject<Env> {
 
   status() {
     return this.#core.status();
+  }
+
+  usage() {
+    return this.#core.usage();
+  }
+
+  /** The session level's limits now (statewalker/statewalker-root#181). */
+  limits() {
+    const config = this.#core.config();
+    if (!config) throw codedError("ENOENT", "no such agent session");
+    return this.#limits.ledger.states(this.#limits.scopes(config));
   }
 
   archive() {
