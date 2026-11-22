@@ -23,11 +23,10 @@ import {
   decide,
   decideAuto,
   decideMode,
-  type FileAction,
   fileRoleSource,
   isMode,
-  type ModeDecision,
   type ModeDefinition,
+  type ModeRequest,
   modeOf,
   PERMISSION_RULES_FILE,
   type PermissionRules,
@@ -65,6 +64,7 @@ import {
   discoverModels,
   FilesRpcHost,
   type FilesRpcMethod,
+  type GateDecision,
   type GatedFilesOptions,
   type GatewayResult,
   gatedFilesRpc,
@@ -222,9 +222,13 @@ export class Workspace extends DurableObject<Env> {
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       backend: (name) => env.DATABASE.get(env.DATABASE.idFromName(name)),
       access: (project, user) => this.#access(project, user),
-      decide: async (facts, req) =>
-        (await this.#modeDecider(facts, await this.#store))(req.area, req.action, req.target),
+      decide: async (facts, req) => {
+        const decide = await this.#decider(facts, await this.#store);
+        return this.#settled(decide(req.area, req.action, req.target), facts);
+      },
       consume: async (facts, id) => this.#registry.consume(id, facts.session, facts.user),
+      classify: async (facts, request) => this.#classify(facts, await this.#store, request),
+      record: (facts, decision) => this.#record(facts, decision),
       mayCallTool: (facts, tool) => this.#mayCallTool(facts, tool),
     });
   }
@@ -645,21 +649,27 @@ export class Workspace extends DurableObject<Env> {
 
   /**
    * How the rules of the deployment, the project, the user and the agent session, and the user
-   * session's current mode, decide the actions of one agent session: read once, then decided per
-   * action (databases). An unattended session's asks are denies with a reason
-   * (statewalker/statewalker-root#127), and the agent carries on. The risk classifier
-   * (statewalker/statewalker-root#137) judges file changes only: a classifier mode decides
-   * database actions as `default` does.
+   * session's current mode, decide the actions of one agent session: read once (per operation),
+   * then decided per action, for files and databases alike. In a classifier mode (`auto`,
+   * statewalker/statewalker-root#137) the rules come first (broad allow rules set aside), then the
+   * safe classes; what they leave is "classify", for the risk classifier. After too many
+   * classifier denials the session falls back to `default` for good. Verdicts carry their step
+   * (and so become items) while the session runs a classifier mode, or fell back from one. Asks
+   * are not settled here (unattended sessions): the caller settles them.
    */
-  async #modeDecider(
+  async #decider(
     facts: AgentSessionFacts,
     store: FilesApi,
-  ): Promise<(area: string, action: string, target: string) => ModeDecision> {
+  ): Promise<(area: string, action: string, target: string) => ModeVerdict> {
+    const auto = this.#auto;
     const root = `/${facts.project}`;
     const state = this.#registry.userSession(facts.user);
+    const fallen = this.#denials.fallenBack(facts.session);
+    // A classifier mode the session fell back from is `default`.
+    const effective = (m: ResolvedMode) =>
+      m.classifier && fallen ? modeOf(DEFAULT_MODE, this.#modes) : m;
     const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
-    const plain = (m: ResolvedMode) => (m.classifier ? modeOf(DEFAULT_MODE, this.#modes) : m);
-    const mode = plain(modeOf(name, this.#modes));
+    const mode = effective(modeOf(name, this.#modes));
     const projectRules = parseRules(
       await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
     );
@@ -673,89 +683,68 @@ export class Workspace extends DurableObject<Env> {
     // and the strictest verdict wins: a child is never looser than its parent. A mode the
     // deployment no longer knows denies.
     const extra = (facts.modes ?? []).map((m) =>
-      isMode(m, this.#modes) ? plain(modeOf(m, this.#modes)) : undefined,
+      isMode(m, this.#modes) ? effective(modeOf(m, this.#modes)) : undefined,
     );
+    const recorded = !!mode.classifier || (fallen && name !== DEFAULT_MODE);
+    const decideIn = (m: ResolvedMode, req: ModeRequest): ModeVerdict => {
+      if (m.classifier) {
+        const d = decideAuto(req, { mode: m, layers, protectedPaths: auto.protectedPaths });
+        return d.step === "classifier"
+          ? { verdict: "classify", reason: d.reason, step: "classifier" }
+          : { verdict: d.verdict, reason: d.reason, step: d.step };
+      }
+      const d = decideMode(req, { mode: m, layers });
+      return { verdict: d.verdict, reason: d.reason, step: d.source === "mode" ? "mode" : "rule" };
+    };
     return (area, action, target) => {
-      let decision: ModeDecision = decideMode({ area, action, target }, { mode, layers });
+      const req = { area, action, target };
+      let decision = decideIn(mode, req);
       for (const m of extra) {
-        const other = m
-          ? decideMode({ area, action, target }, { mode: m, layers })
-          : { verdict: "deny" as const, source: "mode", reason: "an unknown sub-agent mode" };
+        const other: ModeVerdict = m
+          ? decideIn(m, req)
+          : { verdict: "deny", reason: "an unknown sub-agent mode", step: "mode" };
         if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
       }
-      return settleAsk(decision, facts);
+      if (!recorded) {
+        const { step: _step, ...plain } = decision;
+        return plain;
+      }
+      return decision;
     };
   }
 
+  /** An unattended session has nobody to ask: its asks are denies with a reason (#127). */
+  #settled(decision: ModeVerdict, facts: AgentSessionFacts): ModeVerdict {
+    return decision.verdict === "classify"
+      ? decision
+      : (settleAsk(
+          decision as ModeVerdict & { verdict: "allow" | "ask" | "deny" },
+          facts,
+        ) as ModeVerdict);
+  }
+
+  /** Keeps one decision of `auto` as an item of the agent session. */
+  async #record(facts: AgentSessionFacts, decision: GateDecision): Promise<void> {
+    try {
+      await agentOf(this.env, facts.session).gateDecision(decision);
+    } catch (e) {
+      // The decision stands; only its item is missing.
+      console.warn(`decision item of ${facts.session}: ${String((e as Error)?.message ?? e)}`);
+    }
+  }
+
   /**
-   * The mode and the rules of one agent session, as the gate decides them at every call. In a
-   * classifier mode (`auto`, statewalker/statewalker-root#137) the rules come first (broad allow
-   * rules set aside), then the safe classes; what they leave goes to the risk classifier, and every
-   * decision on a change is kept as an item of the session. After too many classifier denials the
-   * session falls back to `default` for good.
+   * The mode and the rules of one agent session, as the files gate decides them at every call,
+   * every decision on a change kept as an item of the session in a classifier mode.
    */
   #modeGate(facts: AgentSessionFacts, store: FilesApi): ModeGate {
-    const auto = this.#auto;
     return {
       session: facts.session,
       project: facts.project,
       decide: async (checks) => {
         const root = `/${facts.project}`;
         // Read once per operation: the user session's mode and rules, and the project's rules.
-        const state = this.#registry.userSession(facts.user);
-        const fallen = this.#denials.fallenBack(facts.session);
-        // A classifier mode the session fell back from is `default`.
-        const effective = (m: ResolvedMode) =>
-          m.classifier && fallen ? modeOf(DEFAULT_MODE, this.#modes) : m;
-        const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
-        const mode = effective(modeOf(name, this.#modes));
-        const projectRules = parseRules(
-          await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
-        );
-        const layers = [
-          { source: "deployment", rules: this.#deploymentRules },
-          { source: "project", rules: projectRules },
-          { source: "user", rules: state?.rules ?? {} },
-          this.#registry.sessionLayer(facts.session, facts.user),
-        ];
-        // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user
-        // session's, and the strictest verdict wins: a child is never looser than its parent. A
-        // mode the deployment no longer knows denies.
-        const extra = (facts.modes ?? []).map((m) =>
-          isMode(m, this.#modes) ? effective(modeOf(m, this.#modes)) : undefined,
-        );
-        // Decisions carry their step (and so become items) while the session runs a classifier
-        // mode, or fell back from one.
-        const recorded = !!mode.classifier || (fallen && name !== DEFAULT_MODE);
-        const decideIn = (m: ResolvedMode, action: FileAction, target: string): ModeVerdict => {
-          const req = { area: "files", action, target };
-          if (m.classifier) {
-            const d = decideAuto(req, { mode: m, layers, protectedPaths: auto.protectedPaths });
-            return d.step === "classifier"
-              ? { verdict: "classify", reason: d.reason, step: "classifier" }
-              : { verdict: d.verdict, reason: d.reason, step: d.step };
-          }
-          const d = decideMode(req, { mode: m, layers });
-          return {
-            verdict: d.verdict,
-            reason: d.reason,
-            step: d.source === "mode" ? "mode" : "rule",
-          };
-        };
-        const decideOne = (action: FileAction, target: string): ModeVerdict => {
-          let decision = decideIn(mode, action, target);
-          for (const m of extra) {
-            const other: ModeVerdict = m
-              ? decideIn(m, action, target)
-              : { verdict: "deny", reason: "an unknown sub-agent mode", step: "mode" };
-            if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
-          }
-          if (!recorded) {
-            const { step: _step, ...plain } = decision;
-            return plain;
-          }
-          return decision;
-        };
+        const decideOne = await this.#decider(facts, store);
         const definitions = `${root}/${DEFINITIONS_FOLDER}`.toLowerCase();
         return checks.map(([action, path]): ModeVerdict => {
           // Outside the project nothing is decided here: the roles and the capability refuse it.
@@ -768,27 +757,18 @@ export class Workspace extends DurableObject<Env> {
             (path.toLowerCase() === definitions || path.toLowerCase().startsWith(`${definitions}/`))
           )
             return { verdict: "deny", reason: "the definitions mount is read-only" };
-          const decision = decideOne(action, path === root ? "/" : path.slice(root.length));
-          // An unattended session has nobody to ask: its asks are denies with a reason
-          // (statewalker/statewalker-root#127), and the agent carries on.
-          return decision.verdict === "classify"
-            ? decision
-            : (settleAsk(
-                decision as ModeVerdict & { verdict: "allow" | "ask" | "deny" },
-                facts,
-              ) as ModeVerdict);
+          const decision = decideOne(
+            "files",
+            action,
+            path === root ? "/" : path.slice(root.length),
+          );
+          // An unattended session's asks are denies with a reason, and the agent carries on.
+          return this.#settled(decision, facts);
         });
       },
       consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
       classify: (request) => this.#classify(facts, store, request),
-      record: async (decision) => {
-        try {
-          await agentOf(this.env, facts.session).gateDecision(decision);
-        } catch (e) {
-          // The decision stands; only its item is missing.
-          console.warn(`decision item of ${facts.session}: ${String((e as Error)?.message ?? e)}`);
-        }
-      },
+      record: (decision) => this.#record(facts, decision),
     };
   }
 

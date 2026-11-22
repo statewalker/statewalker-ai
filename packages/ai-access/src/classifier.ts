@@ -83,7 +83,10 @@ export type TranscriptEntry =
 /** The tools that only read: their calls are left out (they change nothing). */
 const READ_TOOLS = new Set(["read", "grep", "glob", "ls", "find"]);
 
-/** Arguments holding file contents an agent writes: shown only by their size. */
+/**
+ * Arguments holding file contents an agent writes, or a database statement and its values: shown
+ * only by their size.
+ */
 const CONTENT_ARGS = new Set([
   "content",
   "contents",
@@ -96,6 +99,8 @@ const CONTENT_ARGS = new Set([
   "new_string",
   "patch",
   "diff",
+  "sql",
+  "params",
 ]);
 
 const MAX_ENTRIES = 60;
@@ -110,7 +115,7 @@ function redact(args: unknown): unknown {
   for (const [key, value] of Object.entries(args as Record<string, unknown>)) {
     if (CONTENT_ARGS.has(key))
       out[key] = Array.isArray(value)
-        ? `<${value.length} edits>`
+        ? `<${value.length} ${key === "params" ? "values" : "edits"}>`
         : typeof value === "string"
           ? `<${value.length} characters>`
           : "<redacted>";
