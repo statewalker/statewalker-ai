@@ -29,6 +29,7 @@ import type {
   MemoryUsage,
   PrimedEntry,
 } from "@statewalker/ai-memory";
+import type { Topic } from "./context/topics.js";
 import { sessionOfTurn } from "./turns.js";
 
 export type {
@@ -107,6 +108,11 @@ export interface AgentSessionView {
   usage?: UsageTotals;
   /** A fork: the session and turn its history was copied from (statewalker/statewalker-root#190). */
   forked_from?: ForkOrigin;
+  /**
+   * The titles of the session's topics on its active path, from the session index
+   * (statewalker/statewalker-root#174); none before its first compaction wrote one.
+   */
+  topics?: string[];
 }
 
 /** A turn of a session, by both ids. */
@@ -398,8 +404,19 @@ export interface StopLimit {
  * `failed`, `incomplete`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
  */
 export interface StopReason {
-  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval" | "budget";
-  /** What went wrong, for `error`; which limit, for `budget`. */
+  type:
+    | "end_turn"
+    | "cancelled"
+    | "interrupted"
+    | "error"
+    | "restart"
+    | "approval"
+    | "budget"
+    | "rate_limited";
+  /**
+   * What went wrong, for `error`; which limit, for `budget`; for `rate_limited`, why no model
+   * could be asked within its rate limits (statewalker/statewalker-root#180).
+   */
   message?: string;
   /** The approvals a `waiting` turn waits on. */
   approval_ids?: string[];
@@ -521,6 +538,14 @@ export interface ItemsQuery {
    */
   branch?: string;
   /** Every item of the session, on every branch. */
+  all?: boolean;
+}
+
+/** Which topics of a session's table of contents (statewalker/statewalker-root#174, #159). */
+export interface TopicsQuery {
+  /** The topics on the path to this turn, instead of the active path. */
+  branch?: string;
+  /** Every branch's topics. */
   all?: boolean;
 }
 
@@ -684,6 +709,15 @@ export interface SessionHistory {
     tokens: number;
     through_turn: string;
     created: number;
+  }[];
+  /** The table of contents on the path (statewalker/statewalker-root#174); refs as JSON. */
+  topics?: {
+    id: string;
+    title: string;
+    body: string;
+    refs: string;
+    through_turn: string;
+    updated_at: number;
   }[];
   /** The source session's limits, which the fork keeps (counted afresh). */
   limits?: Limit[];
@@ -937,6 +971,11 @@ export interface SessionApi {
   regenerateTurn(turnId: string, req?: RegenerateRequest): Promise<EditAccepted>;
   /** The session's tree of turns. */
   listBranches(sessionId: string): Promise<BranchesView>;
+  /**
+   * The session's table of contents (statewalker/statewalker-root#174): its topics on the active
+   * path, a branch's (`branch`, a turn) or every branch's (`all`). None before it compacted.
+   */
+  listTopics(sessionId: string, query?: TopicsQuery): Promise<{ topics: Topic[] }>;
   /** Erases an inactive branch: the turn and every turn after it (never the active path). */
   eraseBranch(sessionId: string, turnId: string): Promise<{ erased: string[] }>;
   /**
@@ -1192,8 +1231,19 @@ export interface SubAgentRequest {
   tools?: string[];
 }
 
+/**
+ * What a session API request is, for the session API's rate limits (statewalker/statewalker-root#180):
+ * a message (sent, an edit, a regeneration), a stream opened (SSE), a session started (or forked).
+ */
+export type ApiRequestKind = "message" | "stream" | "session";
+
 /** The caller's User DO's side of the API: everything that needs the token checked. */
 export interface UserPort {
+  /**
+   * Counts one request against the caller's rate limits (theirs, in their User DO) and their
+   * workspace's: a request over a `delay` limit waits up to the max delay, then ELIMIT (429).
+   */
+  admitRequest(token: string, kind: ApiRequestKind): Promise<void>;
   openUserSession(token: string): Promise<UserSessionView>;
   startAgentSession(
     token: string,
@@ -1358,6 +1408,8 @@ export interface AgentPort {
   ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }>;
   branches(): Promise<BranchesView>;
   eraseBranch(turnId: string): Promise<{ erased: string[] }>;
+  /** The table of contents (statewalker/statewalker-root#174). */
+  topics(query?: TopicsQuery): Promise<{ topics: Topic[] }>;
   /** A turn and its ancestors with their items: what a fork copies. 409 while the turn runs. */
   exportPath(atTurn: string): Promise<SessionHistory>;
   /** Copies a history into this new session: its turns `copied`, the copy of `at_turn` the head. */
@@ -1695,7 +1747,9 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
   return {
     me: () => ports.user.openUserSession(token),
     async startSession(req) {
-      const { session, config } = await ports.user.startAgentSession(token, startRequest(req));
+      const request = startRequest(req);
+      await ports.user.admitRequest(token, "session");
+      const { session, config } = await ports.user.startAgentSession(token, request);
       await ports.agent(session.id).start(config);
       return session;
     },
@@ -1740,6 +1794,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async sendMessage(sessionId, req) {
       const message = messageOf(req);
+      await ports.user.admitRequest(token, "message");
       const session = await own(sessionId);
       // Archiving revokes too: an archived session says so first (409, as before revocation).
       if (session.archived) throw codedError("EBUSY", "the agent session is archived");
@@ -1782,7 +1837,11 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const session = await own(sessionId);
       return ports.agent(session.id).events((query ?? {}) as EventsQuery);
     },
-    holdStream: () => ports.user.holdStream(token),
+    // An SSE stream opened counts against the rate limits; a long poll's cursor reads do not.
+    async holdStream() {
+      await ports.user.admitRequest(token, "stream");
+      return ports.user.holdStream(token);
+    },
     releaseStream: async (id) => ports.user.releaseStream(token, String(id)),
     async rewind(sessionId, req) {
       const r = rewindRequest(req);
@@ -1798,6 +1857,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async editTurn(turnId, req) {
       const r = editRequest(req);
+      await ports.user.admitRequest(token, "message");
       const session = open(await own(sessionOfTurn(String(turnId))));
       const accepted = await ports.agent(session.id).edit(String(turnId), r);
       await stopChildren(accepted.rewind);
@@ -1805,6 +1865,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async regenerateTurn(turnId, req) {
       const r = regenerateRequest(req);
+      await ports.user.admitRequest(token, "message");
       const session = open(await own(sessionOfTurn(String(turnId))));
       const accepted = await ports.agent(session.id).regenerate(String(turnId), r);
       await stopChildren(accepted.rewind);
@@ -1818,9 +1879,22 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const session = await own(sessionId);
       return ports.agent(session.id).eraseBranch(String(turnId));
     },
+    async listTopics(sessionId, query) {
+      const q = (query ?? {}) as Record<string, unknown>;
+      if (q.branch !== undefined && typeof q.branch !== "string")
+        throw codedError("EINVAL", "branch is a turn id");
+      if (q.all !== undefined && q.all !== true && q.all !== false && q.all !== "true")
+        throw codedError("EINVAL", "all is a boolean");
+      const session = await own(sessionId);
+      return ports.agent(session.id).topics({
+        ...(q.branch ? { branch: q.branch as string } : {}),
+        ...(q.all === true || q.all === "true" ? { all: true } : {}),
+      });
+    },
     async forkSession(sessionId, req) {
       const r = forkRequest(req);
       const message = r.message === undefined ? undefined : messageOf({ content: r.message });
+      await ports.user.admitRequest(token, "session");
       const source = await own(sessionId);
       if (source.parent) throw codedError("EINVAL", "only a top-level session can be forked");
       const history = await ports.agent(source.id).exportPath(r.at_turn);

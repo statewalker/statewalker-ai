@@ -399,7 +399,10 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
     await dan.setLimits("user", u("dan"), {
       limits: [{ meter: "model_spend", value: 5, period: "month" }],
     });
-    expect((await dan.effectiveLimits()).limits.find((l) => l.level === "user")).toMatchObject({
+    // The user level also holds the session API's rate limit (#180): its own key's are its others.
+    const ownKey = (l: { level: string; meter: string }) =>
+      l.level === "user" && l.meter !== "api_requests";
+    expect((await dan.effectiveLimits()).limits.find(ownKey)).toMatchObject({
       meter: "model_spend",
       value: 5,
       target: u("dan"),
@@ -409,7 +412,7 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
       dan.setLimits("user", u("ann"), { limits: [{ meter: "model_spend", value: 5 }] }),
     ).rejects.toMatchObject({ status: 403 });
     await dan.deleteLimits("user", u("dan"));
-    expect((await dan.effectiveLimits()).limits.some((l) => l.level === "user")).toBe(false);
+    expect((await dan.effectiveLimits()).limits.some(ownKey)).toBe(false);
   });
 
   it("exports the workspace's usage records as NDJSON to its admin alone", async () => {

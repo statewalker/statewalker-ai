@@ -19,13 +19,15 @@
 // items count, and only summaries whose `through_turn` (the turn of their last item) is on it: a
 // summary drawn from a path runs through its last turn, so the turns it drew from are exactly the
 // path up to that turn. A summary whose parent is off the path stands at the top itself (it is
-// never promoted again: a row's `parent_id` is set once). Each summary's `sections` (with refs to
-// the ids they draw from) seed the session's table of contents (#174).
+// never promoted again: a row's `parent_id` is set once). Each depth-1 summary's call also writes
+// the session's table of contents (#174, `topics.ts`): it is given the topics on the path and its
+// topics are merged in, through the range's last turn.
 import type { Item } from "../api.js";
 import { type ItemRow, itemOf } from "../items.js";
 import type { SqlLike } from "../sql.js";
 import { createTokenEstimator, type TokenEstimator } from "./estimate.js";
 import type { Summarizer, Summary, SummarySection } from "./summarizer.js";
+import { type Topic, TopicStore } from "./topics.js";
 import { createTrimPolicy, type TrimPolicy, trimToolResult } from "./trim.js";
 
 /** How the tail (never compacted) is sized: the last messages, or the last tokens' worth. */
@@ -125,10 +127,17 @@ const summaryOf = (row: SummaryRow): Summary => ({
 export class ContextShaper {
   readonly #sql: SqlLike;
   readonly #options: CompactionOptions;
+  readonly #topics: TopicStore;
 
-  constructor(options: { sql: SqlLike; options?: Partial<CompactionOptions> }) {
+  constructor(options: {
+    sql: SqlLike;
+    options?: Partial<CompactionOptions>;
+    /** The session's table of contents (one over the same storage otherwise). */
+    topics?: TopicStore;
+  }) {
     this.#sql = options.sql;
     this.#options = compactionOptions(options.options);
+    this.#topics = options.topics ?? new TopicStore({ sql: options.sql });
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS summaries (id TEXT PRIMARY KEY, depth INTEGER NOT NULL,
         from_seq INTEGER NOT NULL, to_seq INTEGER NOT NULL, parent_id TEXT, content TEXT NOT NULL,
@@ -355,8 +364,13 @@ export class ContextShaper {
     nodes: Node[],
     tailStart: number,
     summarizer: Summarizer,
-    signal?: AbortSignal,
+    hooks: {
+      signal?: AbortSignal;
+      path?: readonly string[];
+      onTopics?(topics: Topic[]): void;
+    },
   ): Promise<Summary | undefined> {
+    const signal = hooks.signal;
     const run: Segment[] = [];
     for (let i = 0; i < tailStart && run.length < this.#options.groupSize; i++) {
       const node = nodes[i] as Node;
@@ -370,9 +384,17 @@ export class ContextShaper {
     const first = items[0];
     const last = items[items.length - 1];
     if (!first || !last) return undefined;
-    const out = await summarizer.summarize({ kind: "items", items }, signal);
+    const current = this.#topics.list({ path: hooks.path });
+    const out = await summarizer.summarize({ kind: "items", items, topics: current }, signal);
     signal?.throwIfAborted();
-    return this.#insert(out, 1, first.seq, last.seq);
+    const summary = this.#insert(out, 1, first.seq, last.seq);
+    const written = this.#topics.merge(out.topics, {
+      throughTurn: summary.through_turn,
+      current,
+      items: new Set(items.map((i) => i.id)),
+    });
+    if (written.length) hooks.onTopics?.(written);
+    return summary;
   }
 
   /**
@@ -420,6 +442,8 @@ export class ContextShaper {
       signal?: AbortSignal;
       onSummary?(summary: Summary): void;
       onThrash?(info: { budget: number; estimated: number }): void;
+      /** Told the topics a depth-1 summary's call wrote (statewalker/statewalker-root#174). */
+      onTopics?(topics: Topic[]): void;
       /** The path of turns the context is on (statewalker/statewalker-root#190); none: every item. */
       path?: readonly string[];
     } = {},
@@ -436,7 +460,7 @@ export class ContextShaper {
       if (estimated <= budget) return made;
       const summary =
         pass < this.#options.maxPasses
-          ? ((await this.#group(nodes, tailStart, summarizer, hooks.signal)) ??
+          ? ((await this.#group(nodes, tailStart, summarizer, hooks)) ??
             (await this.#promote(nodes, summarizer, hooks.signal)))
           : undefined;
       if (!summary) {

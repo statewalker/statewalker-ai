@@ -97,3 +97,13 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   own keys) or a session's start request (`limits`). Each level is counted in the DO that owns it,
   with no global counter; `TIME_ZONE` sets calendar periods and `USAGE_RETENTION_MONTHS` (13) how
   long usage records are kept.
+- **Rate limits are limits with short periods** (statewalker-root#158, #180): `period: second` or
+  `minute` with `on_exceed: delay`, where a request waits for its window up to `LIMITS_MAX_DELAY_MS`
+  (30 s), then is denied. The session API's messages, SSE streams and session starts count as
+  `api_requests`, per user in the User DO and per workspace in the Workspace DO (60 and 600 a minute
+  by default; a LIMITS entry for the level replaces its default); over the limit it answers `429`
+  with `Retry-After`. A deployment provider's `rate {rpm, tpm, share?, shares?}` holds each
+  workspace to its share of the key in its own DO; over it a request waits, then falls back to the
+  agent's next model like a provider's 429, and with no model left the turn ends incomplete with
+  `stop_reason: rate_limited`. A user's own keys are held to their own `user` limits on
+  `model_requests` and `model_tokens`.
