@@ -59,6 +59,11 @@ catalog:
   typescript: ^7.0.2
   vitest: ^5.0.3
 
+# Peer dependency ranges of the published packages (what consumers must provide).
+catalogs:
+  peers:
+    esbuild-wasm: ^0.28.0
+
 overrides:
   # @flue/runtime asks for pi-ai ^1.1.0; 1.5 breaks it (see the catalog).
   "@earendil-works/pi-ai": ~1.4.0

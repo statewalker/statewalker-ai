@@ -46,7 +46,7 @@
     "eslint-scope": "catalog:"
   },
   "peerDependencies": {
-    "esbuild-wasm": "^0.28.0"
+    "esbuild-wasm": "catalog:peers"
   },
   "devDependencies": {
     "@types/node": "catalog:",
