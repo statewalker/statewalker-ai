@@ -52,15 +52,45 @@ export async function startDeployment(
   projectDir: URL,
   vars: Record<string, string> = {},
 ): Promise<Deployment> {
+  const v = scenarioRates(vars);
   if (RUNTIME === "browser") {
     const { startBrowserDeployment } = await import("./browser-deployment.js");
-    return startBrowserDeployment(projectDir, vars);
+    return startBrowserDeployment(projectDir, v);
   }
   if (RUNTIME === "celld" || RUNTIME === "workerd") {
     const { startProcessDeployment } = await import("./process-deployment.js");
-    return startProcessDeployment(RUNTIME, projectDir, vars);
+    return startProcessDeployment(RUNTIME, projectDir, v);
   }
-  return startNodeDeployment(projectDir, vars);
+  return startNodeDeployment(projectDir, v);
+}
+
+/**
+ * The session API's rate limits for scenario deployments (statewalker/statewalker-root#180): one
+ * user runs many scenarios a minute, past the default 60 requests a minute per user and 600 per
+ * workspace, so a deployment whose LIMITS names no `api_requests` limit is given far higher ones.
+ * A deployment that names one (tests/rate-limits.test.ts) keeps the defaults and its own.
+ */
+export function scenarioRates(vars: Record<string, string>): Record<string, string> {
+  let list: unknown[] = [];
+  if (vars.LIMITS) {
+    try {
+      const parsed = JSON.parse(vars.LIMITS) as unknown;
+      const found = Array.isArray(parsed) ? parsed : (parsed as { limits?: unknown })?.limits;
+      if (!Array.isArray(found)) return vars;
+      list = found;
+    } catch {
+      return vars;
+    }
+  }
+  if (list.some((l) => (l as { meter?: unknown })?.meter === "api_requests")) return vars;
+  const rate = (level: string) => ({
+    meter: "api_requests",
+    level,
+    value: 1_000_000,
+    period: "minute",
+    on_exceed: "delay",
+  });
+  return { ...vars, LIMITS: JSON.stringify([...list, rate("user"), rate("workspace")]) };
 }
 
 /** Starts the Worker project on CellB Node, in this process. */

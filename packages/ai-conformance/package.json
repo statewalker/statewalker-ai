@@ -35,6 +35,7 @@
     "ai": "catalog:",
     "zod": "catalog:",
     "openai": "catalog:",
-    "@statewalker/ai-openai-compat": "workspace:^"
+    "@statewalker/ai-openai-compat": "workspace:^",
+    "@statewalker/ai-uhp": "workspace:^"
   }
 }

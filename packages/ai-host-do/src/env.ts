@@ -7,6 +7,7 @@ import {
   parseRules,
   verifyAccessToken,
 } from "@statewalker/ai-access";
+import type { SqlLike } from "@statewalker/ai-environment";
 import type { AgentSession } from "./agent-session-do.js";
 import type { Database } from "./database-do.js";
 import type { Issuer } from "./issuer-do.js";
@@ -158,6 +159,16 @@ export interface Env {
    * other levels without a target are defaults for every target of that level.
    */
   LIMITS?: string;
+  /**
+   * How long a request over a `delay` limit (a rate limit) waits for its window at most, in ms,
+   * before it is denied (30000) (statewalker/statewalker-root#180).
+   */
+  LIMITS_MAX_DELAY_MS?: string;
+  /**
+   * Test-only (read only with ADMIN_KEY set): the clock limits are counted by stands still at this
+   * instant (ms since the epoch), each DO's moving only when it waits on a delay or a test moves it.
+   */
+  TEST_CLOCK?: string;
   /** The deployment's time zone, for calendar days and months of limits (UTC). */
   TIME_ZONE?: string;
   /** How many months usage records are kept (13). */
@@ -253,5 +264,60 @@ export function ledgerOptions(env: Env): { timeZone: string; retentionMonths: nu
   return {
     timeZone: env.TIME_ZONE || "UTC",
     retentionMonths: Number.isFinite(months) && months > 0 ? months : 13,
+  };
+}
+
+/** The clock a DO counts limits by, and how it waits for a delay (statewalker/statewalker-root#180). */
+export interface LimitClock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+  /** Moves the clock `ms` forward (a test's, or a virtual wait); answers the total offset. */
+  advance(ms: number): number;
+}
+
+/**
+ * The DO's clock: the wall clock, moved forward by what a test asked (kept in the DO's
+ * `test_clock` table). With TEST_CLOCK (test deployments, behind ADMIN_KEY) it stands still at that
+ * instant, and waiting on a delay moves it instead of sleeping.
+ */
+export function clockOf(env: Env, sql: SqlLike): LimitClock {
+  const frozen = env.ADMIN_KEY && env.TEST_CLOCK ? Number(env.TEST_CLOCK) : Number.NaN;
+  const offset = (): number => {
+    try {
+      return Number(sql.exec("SELECT ms FROM test_clock").toArray()[0]?.ms ?? 0);
+    } catch {
+      return 0;
+    }
+  };
+  const advance = (ms: number): number => {
+    const total = offset() + ms;
+    sql.exec("CREATE TABLE IF NOT EXISTS test_clock (ms INTEGER NOT NULL)");
+    sql.exec("DELETE FROM test_clock");
+    sql.exec("INSERT INTO test_clock VALUES (?)", total);
+    return total;
+  };
+  const base = () => (Number.isFinite(frozen) ? frozen : Date.now());
+  return {
+    now: () => base() + offset(),
+    sleep: Number.isFinite(frozen)
+      ? async (ms) => {
+          advance(ms);
+        }
+      : (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    advance,
+  };
+}
+
+/** How a DO waits on a `delay` limit: up to LIMITS_MAX_DELAY_MS (30 s), on its clock. */
+export function delayOptions(
+  env: Env,
+  clock: LimitClock,
+): { maxDelayMs: number; now: () => number; sleep: (ms: number) => Promise<void> } {
+  const ms = Number(env.LIMITS_MAX_DELAY_MS);
+  return {
+    maxDelayMs:
+      env.LIMITS_MAX_DELAY_MS !== undefined && Number.isFinite(ms) && ms >= 0 ? ms : 30_000,
+    now: clock.now,
+    sleep: clock.sleep,
   };
 }

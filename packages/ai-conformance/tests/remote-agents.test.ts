@@ -33,7 +33,23 @@ const ADMIN_KEY = "conformance-admin-key";
 const TOKEN = "uhp-token-5e1f";
 const CLASSIFIER = "scripted/classifier";
 const TRANSPORTS = ["rest", "rpc"];
-const USERS = ["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kit", "lee"];
+const USERS = [
+  "ann",
+  "bob",
+  "cy",
+  "dee",
+  "eli",
+  "fay",
+  "gus",
+  "hal",
+  "ivy",
+  "jo",
+  "kit",
+  "lee",
+  "mia",
+  "ned",
+  "oli",
+];
 const USER_SECRET = "user-secret-value-9c3a";
 
 const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -385,6 +401,96 @@ describe.runIf(CAN.deploymentSecrets).each(transports)(
         else await fay.revokeSession(session.id);
         await until(() => uhp.cancels.includes(id), `UHP cancel on ${stop}`);
       }
+    });
+
+    it("archive and revoke during a task's first POST still send UHP cancel", async () => {
+      const oli = await as("oli");
+      for (const stop of ["archive", "revoke"] as const) {
+        const session = await oli.startSession({ project: "alpha", agent: "remote:hr/coder" });
+        const from = uhp.requests.length;
+        const release = uhp.hold();
+        let stopping: Promise<unknown> | undefined;
+        try {
+          await oli.postMessage(session.id, { content: "SLOW" });
+          await until(() => posts(from).length > 0, "the first POST");
+          stopping =
+            stop === "archive" ? oli.archiveSession(session.id) : oli.revokeSession(session.id);
+          // A revoke answers at once; an archive waits on the turn, which waits on the POST.
+          if (stop === "revoke") await stopping;
+          else await sleep(300);
+        } finally {
+          release();
+        }
+        await stopping;
+        const key = posts(from)[0]?.headers["idempotency-key"];
+        await until(() => uhp.tasks.size > 0 && !!key, "the task");
+        const id = [...uhp.tasks.values()].at(-1)?.id as string;
+        await until(() => uhp.cancels.includes(id), `UHP cancel on ${stop} during the POST`);
+      }
+    });
+
+    it("a rewind, a branch switch or an edit moves the remote continuation to the active path", async () => {
+      const mia = await as("mia");
+      const s = await mia.startSession({ project: "alpha", agent: "remote:hr/coder" });
+      const responseOf = (text: string) =>
+        [...uhp.tasks.values()].find((x) => JSON.stringify(x.final).includes(`REMOTE: ${text}`))
+          ?.id;
+      const next = async (send: () => Promise<Turn>) => {
+        const from = uhp.requests.length;
+        const turn = await send();
+        expect(turn.status).toBe("completed");
+        return posts(from)[0]?.json as Record<string, unknown>;
+      };
+      const a = await mia.sendMessage(s.id, { content: `one-${t}` });
+      const b = await mia.sendMessage(s.id, { content: `two-${t}` });
+      const ra = responseOf(`one-${t}`);
+      const rb = responseOf(`two-${t}`);
+      expect(ra).toBeTruthy();
+      expect(rb).toBeTruthy();
+      // Rewound to A: the next task chains on A's response, never on B's.
+      await mia.rewind(s.id, { to_turn: a.id });
+      const c = await next(() => mia.sendMessage(s.id, { content: `three-${t}` }));
+      expect(c.previous_response_id).toBe(ra);
+      expect(JSON.stringify(c.input)).not.toContain("input_file");
+      // Back on B's branch: B's response.
+      await mia.setHead(s.id, { turn: b.id });
+      const d = await next(() => mia.sendMessage(s.id, { content: `four-${t}` }));
+      expect(d.previous_response_id).toBe(rb);
+      // An edit of B is a rewind before B, then the edited message: A's response.
+      const e = await next(async () =>
+        mia.waitTurn(await mia.editTurn(b.id, { content: `five-${t}` })),
+      );
+      expect(e.previous_response_id).toBe(ra);
+      // Before the first turn: a fresh remote session, with the files copied in again.
+      await mia.rewind(s.id, { to_turn: null });
+      const f = await next(() => mia.sendMessage(s.id, { content: `six-${t}` }));
+      expect(f.previous_response_id).toBeUndefined();
+      expect(JSON.stringify(f.input)).toContain("readme.md");
+    });
+
+    it("a fork starts a fresh remote session, and leaves the source's continuation alone", async () => {
+      const ned = await as("ned");
+      const s = await ned.startSession({ project: "alpha", agent: "remote:hr/coder" });
+      const a = await ned.sendMessage(s.id, { content: `src-one-${t}` });
+      await ned.sendMessage(s.id, { content: `src-two-${t}` });
+      const rb = [...uhp.tasks.values()].find((x) =>
+        JSON.stringify(x.final).includes(`REMOTE: src-two-${t}`),
+      )?.id;
+      let from = uhp.requests.length;
+      const { session: fork, accepted } = await ned.forkSession(s.id, {
+        at_turn: a.id,
+        message: `forked-${t}`,
+      });
+      expect(fork.agent).toBe("remote:hr/coder");
+      const turn = await ned.waitTurn(accepted as NonNullable<typeof accepted>);
+      expect(texts(external(turn))).toContain(`REMOTE: forked-${t}`);
+      const [first] = posts(from);
+      expect(first?.json.previous_response_id).toBeUndefined();
+      expect(JSON.stringify(first?.json.input)).toContain("readme.md");
+      // The source still continues from its own head.
+      from = uhp.requests.length;
+      await ned.sendMessage(s.id, { content: `src-three-${t}` });
+      expect(posts(from)[0]?.json.previous_response_id).toBe(rb);
     });
 
     it("keeps the Idempotency-Key across retries and polls until the task ends", async () => {

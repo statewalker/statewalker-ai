@@ -77,6 +77,9 @@ describe("the agent session core for remote sessions", () => {
     expect(turn.status).toBe("completed");
     expect(runs[1]?.turn).toBe(accepted.turn_id);
     expect(turn.items.filter((i) => i.role === "user")).toHaveLength(1);
+    // Resumed, the turn keeps its place in the tree: never its own parent (statewalker/statewalker-ai#84).
+    expect(turn.parent_turn).toBeNull();
+    expect(runs[1]?.path).toEqual([accepted.turn_id]);
   });
 
   it("still fails a turn a restart cut short when it is not resumable", async () => {

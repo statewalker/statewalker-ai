@@ -247,6 +247,9 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
+      '@statewalker/ai-uhp':
+        specifier: workspace:^
+        version: link:../ai-uhp
       '@statewalker/cellb':
         specifier: 'catalog:'
         version: 0.8.8(esbuild@0.28.2)
@@ -442,6 +445,9 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
+      '@statewalker/ai-uhp':
+        specifier: workspace:^
+        version: link:../ai-uhp
       '@statewalker/ai-uhp-client':
         specifier: workspace:^
         version: link:../ai-uhp-client
@@ -601,6 +607,16 @@ importers:
         version: 5.0.3(@types/node@26.6.4)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/ai-uhp:
+    dependencies:
+      '@statewalker/ai-access':
+        specifier: workspace:^
+        version: link:../ai-access
+      '@statewalker/ai-openai-compat':
+        specifier: workspace:^
+        version: link:../ai-openai-compat
+      '@statewalker/ai-sessions':
+        specifier: workspace:^
+        version: link:../ai-sessions
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

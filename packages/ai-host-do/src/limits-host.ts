@@ -6,6 +6,7 @@
 import { codedError, DEFAULT_SYSTEM_FOLDER } from "@statewalker/ai-access";
 import {
   breachText,
+  type CatalogProvider,
   type Limit,
   LimitExceeded,
   LimitLedger,
@@ -15,12 +16,14 @@ import {
   type LimitWarning,
   limitsFor,
   parseLimits,
+  rateShare,
   type SqlLike,
   type UsageMeta,
   withDelay,
 } from "@statewalker/ai-environment";
+import type { ApiRequestKind } from "@statewalker/ai-sessions";
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
-import { type Env, ledgerOptions } from "./env.js";
+import { clockOf, delayOptions, type Env, type LimitClock, ledgerOptions } from "./env.js";
 
 /** The limits file in the workspace's and each project's system folder, and a user's profile. */
 export const LIMITS_FILE = "limits";
@@ -54,16 +57,72 @@ export const warningView = (w: LimitWarning): WarningView => ({
 
 const deploymentCache = new WeakMap<Env, Limit[]>();
 
-/** The deployment's limits, read once from LIMITS (problems are reported, those limits left out). */
+/**
+ * The session API's rate limits by default (statewalker/statewalker-root#180): 60 requests a
+ * minute per user and 600 per workspace, each request waiting up to the max delay for its window.
+ * A LIMITS entry on `api_requests` for the level, naming no target, replaces the level's default.
+ */
+export const RATE_DEFAULTS: readonly Limit[] = [
+  {
+    meter: "api_requests",
+    level: "user",
+    value: 60,
+    period: "minute",
+    on_exceed: "delay",
+    warn_at: 0.8,
+  },
+  {
+    meter: "api_requests",
+    level: "workspace",
+    value: 600,
+    period: "minute",
+    on_exceed: "delay",
+    warn_at: 0.8,
+  },
+];
+
+export type { ApiRequestKind };
+
+/**
+ * The deployment's limits, read once from LIMITS (problems are reported, those limits left out),
+ * with the session API's rate defaults for the levels LIMITS sets none for.
+ */
 export function deploymentLimits(env: Env): Limit[] {
   let found = deploymentCache.get(env);
   if (!found) {
     const { limits, problems } = parseLimits(env.LIMITS);
     if (problems.length) console.warn(`LIMITS: ${problems.join("; ")}`);
-    found = limits;
+    const defaults = RATE_DEFAULTS.filter(
+      (d) =>
+        !limits.some((l) => l.meter === d.meter && l.level === d.level && l.target === undefined),
+    );
+    found = [...limits, ...defaults];
     deploymentCache.set(env, found);
   }
   return found;
+}
+
+/**
+ * The counters of a workspace's share of a provider key (statewalker/statewalker-root#180): a
+ * `deployment` scope named after the provider, in the workspace's DO, whose limits delay.
+ */
+export function providerScope(provider: string, share: { rpm?: number; tpm?: number }): LimitScope {
+  const limit = (meter: Limit["meter"], value: number): Limit => ({
+    meter,
+    level: "deployment",
+    value,
+    period: "minute",
+    on_exceed: "delay",
+    warn_at: 1,
+  });
+  return {
+    level: "deployment",
+    target: `provider:${provider}`,
+    limits: [
+      ...(share.rpm ? [limit("model_requests", share.rpm)] : []),
+      ...(share.tpm ? [limit("model_tokens", share.tpm)] : []),
+    ],
+  };
 }
 
 /** Turns a refusal of the ledger into the coded error its meter answers with. */
@@ -83,6 +142,8 @@ export class WorkspaceLimits {
   readonly #env: Env;
   readonly #workspace: string;
   readonly #read: (path: string) => Promise<string | undefined>;
+  /** The clock this DO counts limits by, and waits on a delay with. */
+  readonly clock: LimitClock;
 
   constructor(
     sql: SqlLike,
@@ -90,7 +151,8 @@ export class WorkspaceLimits {
     workspace: string,
     read: (path: string) => Promise<string | undefined>,
   ) {
-    this.ledger = new LimitLedger(sql, ledgerOptions(env));
+    this.clock = clockOf(env, sql);
+    this.ledger = new LimitLedger(sql, { ...ledgerOptions(env), now: this.clock.now });
     this.#sql = sql;
     sql.exec(`CREATE TABLE IF NOT EXISTS limit_sessions (session TEXT PRIMARY KEY,
       user TEXT NOT NULL, project TEXT NOT NULL)`);
@@ -198,10 +260,94 @@ export class WorkspaceLimits {
   ): Promise<LimitWarning[]> {
     const scopes = await this.scopes(project, user);
     try {
-      return await withDelay(() => this.ledger.charge(scopes, amounts, meta, detail));
+      return await withDelay(() => this.ledger.charge(scopes, amounts, meta, detail), this.delay());
     } catch (e) {
       throw refusal(e);
     }
+  }
+
+  /**
+   * How a request waits on a `delay` limit here: up to the max delay, on this DO's clock, or to
+   * `deadline` (on this clock) when the request already waited elsewhere.
+   */
+  delay(deadline?: number) {
+    const options = delayOptions(this.#env, this.clock);
+    if (deadline === undefined) return options;
+    return { ...options, maxDelayMs: Math.max(0, deadline - this.clock.now()) };
+  }
+
+  /**
+   * Counts one session API request of a user against the workspace's and the member's rate limits
+   * (statewalker/statewalker-root#180), waiting on a `delay` limit; ELIMIT (429) past it. Counters
+   * only: a request is no usage record.
+   */
+  async admitRequest(user: string, kind: ApiRequestKind, maxDelayMs?: number): Promise<void> {
+    const scopes = (await this.scopes("", user)).filter((s) => s.level !== "project");
+    // What the request has left of its max delay, never more than this deployment's.
+    const own = this.delay();
+    const left =
+      typeof maxDelayMs === "number" && Number.isFinite(maxDelayMs)
+        ? Math.max(0, Math.min(own.maxDelayMs, maxDelayMs))
+        : own.maxDelayMs;
+    try {
+      await withDelay(
+        () =>
+          this.ledger.charge(
+            scopes,
+            { api_requests: 1 },
+            this.meta("", user),
+            { kind },
+            {
+              record: false,
+            },
+          ),
+        { ...own, maxDelayMs: left },
+      );
+    } catch (e) {
+      throw refusal(e);
+    }
+  }
+
+  /**
+   * Admits one request to a provider against this workspace's share of the provider key's rate
+   * limits (statewalker/statewalker-root#180): a request a minute, and while any of its tokens a
+   * minute are left (a request's tokens are counted once it is answered). Over the share it waits
+   * on the delay, then ELIMIT. Answers the reservation `settleProvider` ends; none for a provider
+   * with no rate limits, or the user's own (their buckets are in their User DO).
+   */
+  async admitProvider(
+    provider: CatalogProvider | undefined,
+    meta: UsageMeta,
+    deadline?: number,
+  ): Promise<string | undefined> {
+    if (!provider || provider.level === "user") return undefined;
+    const scope = providerScope(provider.id, rateShare(provider.rate, this.#workspace));
+    if (!scope.limits.length) return undefined;
+    try {
+      const { id } = await withDelay(
+        () => this.ledger.reserve([scope], { model_requests: 1, model_tokens: 1 }, meta),
+        this.delay(deadline),
+      );
+      return id;
+    } catch (e) {
+      throw refusal(e);
+    }
+  }
+
+  /** Ends a provider reservation: counts the request and the tokens it took, if it was sent. */
+  settleProvider(
+    id: string,
+    usage: { input_tokens: number; output_tokens: number; cached_tokens: number } | undefined,
+  ): void {
+    // A provider counts every token of the prompt against its rate, cached ones too.
+    const tokens = usage ? usage.input_tokens + usage.cached_tokens + usage.output_tokens : 0;
+    this.ledger.settle(
+      id,
+      usage ? { model_requests: 1, model_tokens: tokens } : {},
+      this.meta("", ""),
+      undefined,
+      { record: false },
+    );
   }
 
   /**
@@ -446,13 +592,61 @@ export class UserLimits {
     return true;
   }
 
+  /** The clock this DO counts limits by, and waits on a delay with. */
+  readonly clock: LimitClock;
+
   constructor(sql: SqlLike, env: Env, user: string, read: () => Promise<string | undefined>) {
-    this.ledger = new LimitLedger(sql, ledgerOptions(env));
+    this.clock = clockOf(env, sql);
+    this.ledger = new LimitLedger(sql, { ...ledgerOptions(env), now: this.clock.now });
     this.#sql = sql;
     sql.exec("CREATE TABLE IF NOT EXISTS limit_approvals_used (id TEXT PRIMARY KEY)");
     this.#env = env;
     this.#user = user;
     this.#read = read;
+  }
+
+  /** How a request waits on a `delay` limit here: up to the max delay, on this DO's clock. */
+  delay() {
+    return delayOptions(this.#env, this.clock);
+  }
+
+  /**
+   * Counts one session API request of the user, in any workspace, against the user's rate limits
+   * (statewalker/statewalker-root#180), waiting on a `delay` limit; ELIMIT (429) past it.
+   */
+  async admitRequest(meta: UsageMeta, kind: ApiRequestKind): Promise<void> {
+    const scopes = await this.scopes();
+    try {
+      await withDelay(
+        () => this.ledger.charge(scopes, { api_requests: 1 }, meta, { kind }, { record: false }),
+        delayOptions(this.#env, this.clock),
+      );
+    } catch (e) {
+      throw refusal(e);
+    }
+  }
+
+  /** Gives back a request a broader level (the workspace) refused after the user's admitted it. */
+  async refundRequest(meta: UsageMeta): Promise<void> {
+    this.ledger.add(await this.scopes(), { api_requests: -1 }, meta, undefined, { record: false });
+  }
+
+  /**
+   * Reserves the worst case of a request on the user's own keys against the user's limits: the
+   * user's own buckets (`model_requests`, `model_tokens` per minute, `delay`) wait for their window.
+   */
+  async reserve(amounts: Record<string, number>, meta: UsageMeta): Promise<string> {
+    const scopes = await this.scopes();
+    try {
+      return (
+        await withDelay(
+          () => this.ledger.reserve(scopes, amounts, meta),
+          delayOptions(this.#env, this.clock),
+        )
+      ).id;
+    } catch (e) {
+      throw refusal(e);
+    }
   }
 
   async scopes(): Promise<LimitScope[]> {

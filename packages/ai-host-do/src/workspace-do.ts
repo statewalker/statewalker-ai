@@ -57,6 +57,7 @@ import {
   type AgentDefinition,
   type Allow,
   buildPlugin,
+  catalogAgents,
   catalogMcpServers,
   catalogToolDefinitions,
   catalogTools,
@@ -149,6 +150,8 @@ import {
 } from "@statewalker/ai-memory";
 import type {
   AgentRun,
+  AgentsQuery,
+  AgentView,
   CreatedServiceAccount,
   DeleteSecretRequest,
   LimitsCall,
@@ -775,7 +778,8 @@ export class Workspace extends DurableObject<Env> {
         ...(typeof call.maxTokens === "number" ? { maxTokens: call.maxTokens } : {}),
       });
       const amounts = { model_tokens: e.input_tokens + e.max_tokens, model_spend: e.cost ?? 0 };
-      if (e.own_key) own ??= { model_tokens: 0 };
+      // A request on the user's own key counts one against their buckets (#180).
+      if (e.own_key) own ??= { model_tokens: 0, model_requests: 1 };
       for (const into of e.own_key && own ? [worst, own] : [worst])
         for (const [k, v] of Object.entries(amounts)) into[k] = Math.max(into[k] ?? 0, v);
     }
@@ -789,24 +793,38 @@ export class Workspace extends DurableObject<Env> {
    * charged to the user (their User DO), not here.
    */
   #modelMeter(project: string, user: string): ModelMeter {
+    // One max delay for the whole request, whichever limits and fallback models make it wait.
+    const deadline = this.#limits.clock.now() + this.#limits.delay().maxDelayMs;
     return {
-      admit: async (_model, meta, estimate) => {
-        if (estimate.own_key) return undefined;
+      admit: async (_model, meta, estimate, provider) => {
+        // The workspace's share of the provider key's rate limits first (#180): a request over it
+        // waits for the next minute, or is refused as the provider's 429 would be.
+        const rate = await this.#limits.admitProvider(
+          provider,
+          this.#modelUsageMeta(meta),
+          deadline,
+        );
+        if (estimate.own_key) return rate ? { rate } : undefined;
         const scopes = await this.#limits.scopes(project, user);
         const amounts = {
           model_tokens: estimate.input_tokens + estimate.max_tokens,
           ...(estimate.cost ? { model_spend: estimate.cost } : {}),
         };
         try {
-          return await withDelay(() =>
-            this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
+          const { id } = await withDelay(
+            () => this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
+            this.#limits.delay(deadline),
           );
+          return { id, ...(rate ? { rate } : {}) };
         } catch (e) {
+          if (rate) this.#limits.settleProvider(rate, undefined);
           throw refusal(e);
         }
       },
       record: (usage, meta, admitted) => {
         this.#models.record(usage, meta);
+        const rate = (admitted as { rate?: string } | undefined)?.rate;
+        if (rate) this.#limits.settleProvider(rate, usage);
         const id = (admitted as { id?: string } | undefined)?.id;
         if (!id) return [];
         return this.#limits.ledger
@@ -880,6 +898,73 @@ export class Workspace extends DurableObject<Env> {
       }
     }
     return views.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /**
+   * The agents a user may start sessions on (statewalker/statewalker-root#139): in one project
+   * (EACCES for a non-member) or in every project of the workspace they are a member of. The same
+   * agents `pinDefinitions` would start: in the project's catalog, allowed by `agents.use`, and a
+   * plugin agent whose core is remote only with that remote agent too.
+   */
+  async listAgents(userCapability: string, query: AgentsQuery): Promise<AgentView[]> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const store = await this.#store;
+    const projects: string[] = [];
+    if (query.project) projects.push(String(query.project));
+    else
+      for await (const entry of store.list("/"))
+        if (entry.kind === "directory" && !entry.name.startsWith(".")) projects.push(entry.name);
+    const views: AgentView[] = [];
+    for (const project of projects.sort()) {
+      const access = await this.#access(project, user).catch(() => undefined);
+      if (!access?.member) {
+        if (query.project) throw codedError("EACCES", `${user} is not a member of ${project}`);
+        continue;
+      }
+      const catalog = await this.#definitions.catalogOf(await this.#plugins(project));
+      const allow = this.#allow(access.grants);
+      let remotes: string[] | undefined;
+      let projectDefault: string | undefined;
+      try {
+        const settings = await tryReadText(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/settings`);
+        const named = settings ? JSON.parse(settings)?.agent : undefined;
+        projectDefault = typeof named === "string" ? named : undefined;
+      } catch {
+        // Settings that are not JSON name no default.
+      }
+      const modelCatalog = await this.#modelCatalog(project, user);
+      for (const id of await catalogAgents(catalog)) {
+        const agent = await findAgent(catalog, id);
+        if (!agent || !(await allow("agents", agent.id))) continue;
+        if (agent.remote) {
+          if (!remotes) {
+            remotes = [];
+            for (const r of remoteAgents(await this.#uhpServers()))
+              if (await allow("agents", r)) remotes.push(r);
+          }
+          if (!remotes.includes(remoteAgentId(agent.remote.server, agent.remote.harness))) continue;
+        }
+        let model: string | undefined;
+        try {
+          model = (
+            await pickSessionModel(modelCatalog, {
+              agentModels: agent.models,
+              right: this.#modelRight(access.grants),
+            })
+          ).model;
+        } catch {
+          // No model fits: the agent is listed without one.
+        }
+        views.push({
+          project,
+          id: agent.id,
+          ...(agent.description ? { description: agent.description } : {}),
+          ...(model ? { model } : {}),
+          ...(agent.id === projectDefault ? { default: true as const } : {}),
+        });
+      }
+    }
+    return views;
   }
 
   /** The user's own model configuration (user level) in this workspace. */
@@ -1571,6 +1656,9 @@ export class Workspace extends DurableObject<Env> {
         const key = String(call.idempotencyKey ?? "");
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(key))
           throw codedError("EINVAL", "a task needs an idempotency key");
+        // Taken before the POST: a revoke landing while it is out finds no task to cancel yet
+        // (statewalker/statewalker-ai#84), so the answer is checked against them below.
+        const revocations = await this.#authority.revocationIdsOf(agentCapability);
         const got = answer(
           await this.#uhpSend(facts, server, "POST", "/v1/responses", {
             body,
@@ -1579,7 +1667,7 @@ export class Workspace extends DurableObject<Env> {
           }),
         );
         const id = (got.json as { id?: unknown })?.id;
-        if (got.status >= 200 && got.status < 300 && isUhpId(id))
+        if (got.status >= 200 && got.status < 300 && isUhpId(id)) {
           sql.exec(
             "INSERT OR REPLACE INTO uhp_active VALUES (?, ?, ?, ?, ?, ?)",
             id,
@@ -1587,8 +1675,22 @@ export class Workspace extends DurableObject<Env> {
             facts.session,
             facts.project,
             facts.user,
-            JSON.stringify(await this.#authority.revocationIdsOf(agentCapability)),
+            JSON.stringify(revocations),
           );
+          // Revoked (or archived) while the POST was out: the task is cancelled here, where the
+          // token is, and the session is refused like at its next use.
+          if (this.#revokedAny(revocations)) {
+            done(id);
+            try {
+              await this.#uhpSend(facts, server, "POST", `/v1/responses/${id}/cancel`, {
+                uncharged: true,
+              });
+            } catch (e) {
+              console.warn(`UHP cancel of ${id}: ${String((e as Error)?.message ?? e)}`);
+            }
+            throw codedError("EACCES", "the capability was revoked");
+          }
+        }
         return got;
       }
       case "get": {
@@ -1627,6 +1729,19 @@ export class Workspace extends DurableObject<Env> {
       default:
         throw codedError("EINVAL", "no such UHP call");
     }
+  }
+
+  /** Whether any of these revocation ids is on the revocation list. */
+  #revokedAny(ids: readonly string[]): boolean {
+    return (
+      ids.length > 0 &&
+      this.ctx.storage.sql
+        .exec(
+          `SELECT 1 FROM revocations WHERE id IN (SELECT value FROM json_each(?)) LIMIT 1`,
+          JSON.stringify(ids),
+        )
+        .toArray().length > 0
+    );
   }
 
   /** Sends UHP cancel to every remote task a revoked block stopped. */
@@ -1794,6 +1909,26 @@ export class Workspace extends DurableObject<Env> {
   async holdStream(userCapability: string, id: string): Promise<void> {
     const user = await this.#authority.userOfUserCapability(userCapability);
     await this.#limits.holdStream(user, String(id));
+  }
+
+  /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): moves the clock this DO counts
+   * limits by `ms` forward.
+   */
+  async advanceClock(ms: number): Promise<number> {
+    if (!Number.isFinite(ms) || ms < 0) throw codedError("EINVAL", "ms must be a number >= 0");
+    return this.#limits.clock.advance(ms);
+  }
+
+  /**
+   * Counts one session API request of the user (a message, a stream opened, a session started)
+   * against the workspace's and the member's rate limits (statewalker/statewalker-root#180).
+   */
+  async admitRequest(userCapability: string, kind: string, maxDelayMs?: number): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    if (kind !== "message" && kind !== "stream" && kind !== "session")
+      throw codedError("EINVAL", "no such kind of request");
+    await this.#limits.admitRequest(user, kind, maxDelayMs);
   }
 
   /** Releases one of the user's streams. */

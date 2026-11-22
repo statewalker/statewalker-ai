@@ -127,7 +127,7 @@ An agent session's durable, numbered record of what happened in it (turns queued
 _Avoid_: event stream (a stream is one read of the log)
 
 **Projection**:
-Another API's view of the session API, read from the same event log and methods: the OpenAI projection (a Conversation is an agent session, a Response a turn, served at an agent's base URL), the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it).
+Another API's view of the session API, read from the same event log and methods: the OpenAI projection (a Conversation is an agent session, a Response a turn, served at an agent's base URL), the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it), the UHP projection (each agent the user may start a harness `<project>/<plugin>/<agent>`, a UHP session an agent session, a response a turn, an approval an `input_request`, served under `/uhp`).
 
 **Summary**:
 A compacted stand-in for a range of a session's items or lower summaries; the items themselves are kept.
@@ -155,6 +155,13 @@ The turn an agent session's next message continues from; none before the first t
 **Session table of contents**:
 A session's topics, each pointing at the items that cover it: a view of the session by subject rather than by time. It is written while the session is summarized, belongs to the session, and is not memory.
 _Avoid_: session memory, index
+
+**Topic**:
+One entry of a session table of contents: a title, a short body, and the items it covers. A later compaction extends a topic rather than repeating it; the newer version supersedes the older one.
+
+**Session search**:
+The harness tool `session_search`: an agent's search of its user's own earlier agent sessions in the same project, their topics first and their items after. Its results are data, never instructions.
+_Avoid_: recall, memory search
 
 **Trigger**:
 A stored instruction that starts agent turns without anyone at the keyboard, owned by a user or a service account and run with the owner's rights at the moment it fires.
@@ -219,6 +226,13 @@ _Avoid_: quota (as a separate concept), budget (except for model spend)
 
 **Reservation**:
 The worst case of a model request (its input plus `max_tokens`), held against every limit on its path before the model is asked and settled to the real cost after, so spend never overshoots a limit.
+
+**Rate limit**:
+A limit with a short period (a second or a minute) that delays: a request over it waits for the next window, up to the deployment's max delay (30 s), and only then is denied. Used on the session API and on provider keys.
+_Avoid_: throttle
+
+**Provider share**:
+The part of a deployment provider key's rate limits (requests and tokens a minute) one workspace is held to, in its own Workspace DO.
 
 **Increment**:
 What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.

@@ -29,6 +29,7 @@ import type {
   MemoryUsage,
   PrimedEntry,
 } from "@statewalker/ai-memory";
+import type { Topic } from "./context/topics.js";
 import { sessionOfTurn } from "./turns.js";
 
 export type {
@@ -107,6 +108,11 @@ export interface AgentSessionView {
   usage?: UsageTotals;
   /** A fork: the session and turn its history was copied from (statewalker/statewalker-root#190). */
   forked_from?: TurnRef;
+  /**
+   * The titles of the session's topics on its active path, from the session index
+   * (statewalker/statewalker-root#174); none before its first compaction wrote one.
+   */
+  topics?: string[];
 }
 
 /** A turn of a session, by both ids. */
@@ -390,8 +396,19 @@ export interface StopLimit {
  * `failed`, `incomplete`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
  */
 export interface StopReason {
-  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval" | "budget";
-  /** What went wrong, for `error`; which limit, for `budget`. */
+  type:
+    | "end_turn"
+    | "cancelled"
+    | "interrupted"
+    | "error"
+    | "restart"
+    | "approval"
+    | "budget"
+    | "rate_limited";
+  /**
+   * What went wrong, for `error`; which limit, for `budget`; for `rate_limited`, why no model
+   * could be asked within its rate limits (statewalker/statewalker-root#180).
+   */
   message?: string;
   /** The approvals a `waiting` turn waits on. */
   approval_ids?: string[];
@@ -477,6 +494,12 @@ export interface SendMessageRequest {
    * The projections' `previous_response_id` (OpenAI) and UHP's chaining without `branch`.
    */
   after_turn?: string;
+  /**
+   * Passes over the approvals the active path still waits on (statewalker/statewalker-root#139):
+   * they are cancelled (an answer is refused, they expire no more) before the message is queued,
+   * and listed in `voided_approvals`. UHP's rule for new input chained on a pending question.
+   */
+  void_approvals?: boolean;
 }
 
 /** A message the session accepted (REST: `202`). For `steer`, accepted is not yet applied. */
@@ -490,6 +513,8 @@ export interface MessageAccepted {
   offset: number;
   /** Fields of the request the API did not use. */
   ignored?: string[];
+  /** The approvals `void_approvals` passed over. */
+  voided_approvals?: string[];
 }
 
 /** Items, paged: `after` / `before` are item ids. */
@@ -505,6 +530,14 @@ export interface ItemsQuery {
    */
   branch?: string;
   /** Every item of the session, on every branch. */
+  all?: boolean;
+}
+
+/** Which topics of a session's table of contents (statewalker/statewalker-root#174, #159). */
+export interface TopicsQuery {
+  /** The topics on the path to this turn, instead of the active path. */
+  branch?: string;
+  /** Every branch's topics. */
   all?: boolean;
 }
 
@@ -638,6 +671,15 @@ export interface SessionHistory {
     through_turn: string;
     created: number;
   }[];
+  /** The table of contents on the path (statewalker/statewalker-root#174); refs as JSON. */
+  topics?: {
+    id: string;
+    title: string;
+    body: string;
+    refs: string;
+    through_turn: string;
+    updated_at: number;
+  }[];
   /** The source session's limits, which the fork keeps (counted afresh). */
   limits?: Limit[];
 }
@@ -726,6 +768,26 @@ export interface ModelView {
   allowed: boolean;
   /** Found through the provider's `/models` endpoint. */
   discovered?: true;
+}
+
+/**
+ * An agent the caller may start a session on, in one of their projects (statewalker/statewalker-root#139):
+ * the UHP projection lists each as a harness.
+ */
+export interface AgentView {
+  project: string;
+  /** `<plugin>/<agent>`. */
+  id: string;
+  description?: string;
+  /** The model a session of it would start on now, when one fits. */
+  model?: string;
+  /** The project's default agent (its `.system/settings`). */
+  default?: true;
+}
+
+/** The projects to list agents of: one, or (without it) every project the caller is a member of. */
+export interface AgentsQuery {
+  project?: string;
 }
 
 export interface ModelsQuery {
@@ -870,6 +932,11 @@ export interface SessionApi {
   regenerateTurn(turnId: string, req?: RegenerateRequest): Promise<EditAccepted>;
   /** The session's tree of turns. */
   listBranches(sessionId: string): Promise<BranchesView>;
+  /**
+   * The session's table of contents (statewalker/statewalker-root#174): its topics on the active
+   * path, a branch's (`branch`, a turn) or every branch's (`all`). None before it compacted.
+   */
+  listTopics(sessionId: string, query?: TopicsQuery): Promise<{ topics: Topic[] }>;
   /** Erases an inactive branch: the turn and every turn after it (never the active path). */
   eraseBranch(sessionId: string, turnId: string): Promise<{ erased: string[] }>;
   /**
@@ -935,6 +1002,11 @@ export interface SessionApi {
   deleteServiceAccount(name: string): Promise<{ deleted: true }>;
   /** A project's models as the caller sees them; `discover` asks each provider's `/models`. */
   listModels(query: ModelsQuery): Promise<{ models: ModelView[] }>;
+  /**
+   * The agents the caller may start a session on: in `project` (EACCES for a non-member), or in
+   * every project they are a member of (statewalker/statewalker-root#139).
+   */
+  listAgents(query?: AgentsQuery): Promise<{ agents: AgentView[] }>;
   /** The caller's own model configuration (user level) in the token's workspace. */
   getModelConfig(): Promise<ModelsConfig>;
   /** Replaces the caller's own model configuration: their providers (keys are user secrets). */
@@ -1118,8 +1190,19 @@ export interface SubAgentRequest {
   tools?: string[];
 }
 
+/**
+ * What a session API request is, for the session API's rate limits (statewalker/statewalker-root#180):
+ * a message (sent, an edit, a regeneration), a stream opened (SSE), a session started (or forked).
+ */
+export type ApiRequestKind = "message" | "stream" | "session";
+
 /** The caller's User DO's side of the API: everything that needs the token checked. */
 export interface UserPort {
+  /**
+   * Counts one request against the caller's rate limits (theirs, in their User DO) and their
+   * workspace's: a request over a `delay` limit waits up to the max delay, then ELIMIT (429).
+   */
+  admitRequest(token: string, kind: ApiRequestKind): Promise<void>;
   openUserSession(token: string): Promise<UserSessionView>;
   startAgentSession(
     token: string,
@@ -1165,6 +1248,7 @@ export interface UserPort {
   createServiceAccount(token: string, name: string): Promise<CreatedServiceAccount>;
   deleteServiceAccount(token: string, name: string): Promise<{ deleted: true }>;
   listModels(token: string, query: ModelsQuery): Promise<{ models: ModelView[] }>;
+  listAgents(token: string, query: AgentsQuery): Promise<{ agents: AgentView[] }>;
   getModelConfig(token: string): Promise<ModelsConfig>;
   /** The configuration is checked by the workspace (EINVAL). */
   setModelConfig(token: string, config: unknown): Promise<ModelsConfig>;
@@ -1192,6 +1276,8 @@ export interface AgentMessage {
   ignored: string[];
   /** The turn to chain the message on (`SendMessageRequest.after_turn`). */
   after_turn?: string;
+  /** Passes over the approvals the active path waits on (`SendMessageRequest.void_approvals`). */
+  void_approvals?: true;
   /**
    * "agent": written by another agent (a sub-agent's task from its parent), not by the user; auto
    * mode's risk classifier never takes it as the user's words.
@@ -1276,6 +1362,8 @@ export interface AgentPort {
   ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }>;
   branches(): Promise<BranchesView>;
   eraseBranch(turnId: string): Promise<{ erased: string[] }>;
+  /** The table of contents (statewalker/statewalker-root#174). */
+  topics(query?: TopicsQuery): Promise<{ topics: Topic[] }>;
   /** A turn and its ancestors with their items: what a fork copies. 409 while the turn runs. */
   exportPath(atTurn: string): Promise<SessionHistory>;
   /** Copies a history into this new session: its turns `copied`, the copy of `at_turn` the head. */
@@ -1407,6 +1495,14 @@ function modelsQuery(query: unknown): ModelsQuery {
   return { project, ...(discover === true || discover === "true" ? { discover: true } : {}) };
 }
 
+function agentsQuery(query: unknown): AgentsQuery {
+  const { project } = (query ?? {}) as Record<string, unknown>;
+  if (project === undefined || project === null || project === "") return {};
+  if (typeof project !== "string" || !NAME.test(project))
+    throw codedError("EINVAL", "project must be a project's name");
+  return { project };
+}
+
 function accountName(name: unknown): string {
   if (typeof name !== "string" || !name) throw codedError("EINVAL", "name is required");
   return name;
@@ -1423,13 +1519,13 @@ function approvalAnswer(answer: unknown): ApprovalAnswer {
   return { decision, scope: scope ?? "once", ...(message ? { message } : {}) };
 }
 
-const MESSAGE_FIELDS = ["content", "delivery", "model", "after_turn"];
+const MESSAGE_FIELDS = ["content", "delivery", "model", "after_turn", "void_approvals"];
 const DELIVERIES: readonly string[] = ["next", "steer", "interrupt"];
 
 /** A message request, checked; the fields it holds that the API does not use are reported. */
 function messageOf(req: unknown): AgentMessage {
   const body = (req ?? {}) as Record<string, unknown>;
-  const { content, delivery = "next", model, after_turn } = body;
+  const { content, delivery = "next", model, after_turn, void_approvals } = body;
   if (typeof content !== "string" || !content)
     throw codedError("EINVAL", "content must be a non-empty string");
   if (typeof delivery !== "string" || !DELIVERIES.includes(delivery))
@@ -1438,11 +1534,13 @@ function messageOf(req: unknown): AgentMessage {
     throw codedError("EINVAL", "model must be a model's name");
   if (after_turn !== undefined && (typeof after_turn !== "string" || !after_turn))
     throw codedError("EINVAL", "after_turn must be a turn's id");
+  const voids = optionalBoolean(void_approvals, "void_approvals");
   return {
     content,
     delivery: delivery as Delivery,
     ...(model ? { model: model as string } : {}),
     ...(after_turn ? { after_turn: after_turn as string } : {}),
+    ...(voids ? { void_approvals: true as const } : {}),
     ignored: Object.keys(body)
       .filter((k) => !MESSAGE_FIELDS.includes(k))
       .sort(),
@@ -1603,7 +1701,9 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
   return {
     me: () => ports.user.openUserSession(token),
     async startSession(req) {
-      const { session, config } = await ports.user.startAgentSession(token, startRequest(req));
+      const request = startRequest(req);
+      await ports.user.admitRequest(token, "session");
+      const { session, config } = await ports.user.startAgentSession(token, request);
       await ports.agent(session.id).start(config);
       return session;
     },
@@ -1648,6 +1748,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async sendMessage(sessionId, req) {
       const message = messageOf(req);
+      await ports.user.admitRequest(token, "message");
       const session = await own(sessionId);
       // Archiving revokes too: an archived session says so first (409, as before revocation).
       if (session.archived) throw codedError("EBUSY", "the agent session is archived");
@@ -1690,7 +1791,11 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const session = await own(sessionId);
       return ports.agent(session.id).events((query ?? {}) as EventsQuery);
     },
-    holdStream: () => ports.user.holdStream(token),
+    // An SSE stream opened counts against the rate limits; a long poll's cursor reads do not.
+    async holdStream() {
+      await ports.user.admitRequest(token, "stream");
+      return ports.user.holdStream(token);
+    },
     releaseStream: async (id) => ports.user.releaseStream(token, String(id)),
     async rewind(sessionId, req) {
       const r = rewindRequest(req);
@@ -1706,6 +1811,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async editTurn(turnId, req) {
       const r = editRequest(req);
+      await ports.user.admitRequest(token, "message");
       const session = open(await own(sessionOfTurn(String(turnId))));
       const accepted = await ports.agent(session.id).edit(String(turnId), r);
       await stopChildren(accepted.rewind);
@@ -1713,6 +1819,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async regenerateTurn(turnId, req) {
       const r = regenerateRequest(req);
+      await ports.user.admitRequest(token, "message");
       const session = open(await own(sessionOfTurn(String(turnId))));
       const accepted = await ports.agent(session.id).regenerate(String(turnId), r);
       await stopChildren(accepted.rewind);
@@ -1726,9 +1833,22 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       const session = await own(sessionId);
       return ports.agent(session.id).eraseBranch(String(turnId));
     },
+    async listTopics(sessionId, query) {
+      const q = (query ?? {}) as Record<string, unknown>;
+      if (q.branch !== undefined && typeof q.branch !== "string")
+        throw codedError("EINVAL", "branch is a turn id");
+      if (q.all !== undefined && q.all !== true && q.all !== false && q.all !== "true")
+        throw codedError("EINVAL", "all is a boolean");
+      const session = await own(sessionId);
+      return ports.agent(session.id).topics({
+        ...(q.branch ? { branch: q.branch as string } : {}),
+        ...(q.all === true || q.all === "true" ? { all: true } : {}),
+      });
+    },
     async forkSession(sessionId, req) {
       const r = forkRequest(req);
       const message = r.message === undefined ? undefined : messageOf({ content: r.message });
+      await ports.user.admitRequest(token, "session");
       const source = await own(sessionId);
       if (source.parent) throw codedError("EINVAL", "only a top-level session can be forked");
       const history = await ports.agent(source.id).exportPath(r.at_turn);
@@ -1802,6 +1922,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       ports.user.createServiceAccount(token, accountName(req?.name)),
     deleteServiceAccount: async (name) => ports.user.deleteServiceAccount(token, accountName(name)),
     listModels: async (query) => ports.user.listModels(token, modelsQuery(query)),
+    listAgents: async (query) => ports.user.listAgents(token, agentsQuery(query)),
     getModelConfig: () => ports.user.getModelConfig(token),
     setModelConfig: async (config) => ports.user.setModelConfig(token, config),
     listMemory: async (target) =>

@@ -9,6 +9,7 @@ import type { FilesRpcMethod, Limit } from "@statewalker/ai-environment";
 import { filesOverRpc, groupUsage, type UsageMeta } from "@statewalker/ai-environment";
 import { KeyedLock } from "@statewalker/ai-memory";
 import {
+  type AgentsQuery,
   type ApprovalAnswer,
   type ApprovalRequest,
   type DatabaseCall,
@@ -39,7 +40,13 @@ import {
   verifyToken,
   workspaceOf,
 } from "./env.js";
-import { editLimitsFile, LIMITS_FILE, refusal, UserLimits, warningView } from "./limits-host.js";
+import {
+  type ApiRequestKind,
+  editLimitsFile,
+  LIMITS_FILE,
+  UserLimits,
+  warningView,
+} from "./limits-host.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
@@ -81,6 +88,8 @@ export class User extends DurableObject<Env> {
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
           holdStream: (capability, id) => ws.holdStream(capability, id),
           releaseStream: (capability, id) => ws.releaseStream(capability, id),
+          admitRequest: (capability, kind, maxDelayMs) =>
+            ws.admitRequest(capability, kind, maxDelayMs),
           files: (capability, method, args) => ws.files(capability, method, args),
           listDatabases: (capability, project) => ws.listDatabases(capability, project),
           databaseCall: (capability, call) => ws.databaseCall(capability, call),
@@ -98,6 +107,7 @@ export class User extends DurableObject<Env> {
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
           listModels: (capability, query) => ws.listModels(capability, query),
+          listAgents: (capability, query) => ws.listAgents(capability, query),
           getModelConfig: (capability) => ws.getModelConfig(capability),
           setModelConfig: (capability, config) => ws.setModelConfig(capability, config),
           memory: (capability, call) => ws.memory(capability, call),
@@ -109,7 +119,8 @@ export class User extends DurableObject<Env> {
       modes: deploymentModes(env),
       approvalTtlMs: approvalTtlMs(env),
       memoryCaps: env.MEMORY_CAPS,
-      now: () => Date.now() + this.#clockOffset(),
+      // The User DO's one clock: approvals expire by it, and limits count by it.
+      now: () => this.#limits.clock.now(),
     });
   }
 
@@ -131,10 +142,32 @@ export class User extends DurableObject<Env> {
   async reserveOwnKey(meta: UsageMeta, amounts: Record<string, number>): Promise<string> {
     await this.#reachable();
     if (meta.user !== nameOf(this.ctx)) throw codedError("EACCES", "not this user's session");
+    return this.#limits.reserve(amounts, meta);
+  }
+
+  /**
+   * Counts one session API request (a message, a stream opened, a session started) against the
+   * user's rate limits here, across workspaces, then the token's workspace's
+   * (statewalker/statewalker-root#180): each waits on a `delay` limit, then answers 429.
+   */
+  async admitRequest(token: string, kind: ApiRequestKind) {
+    await this.#reachable();
+    if (!["message", "stream", "session"].includes(kind))
+      throw codedError("EINVAL", "no such kind of request");
+    const { user, workspace } = await this.#sessions.claims(token);
+    const meta = { workspace, project: "", user };
+    // One max delay for the request, whichever levels make it wait: the workspace gets what the
+    // user's level left of it.
+    const { maxDelayMs } = this.#limits.delay();
+    const started = this.#limits.clock.now();
+    await this.#limits.admitRequest(meta, kind);
+    const left = Math.max(0, maxDelayMs - (this.#limits.clock.now() - started));
     try {
-      return this.#limits.ledger.reserve(await this.#limits.scopes(), amounts, meta).id;
+      await this.#sessions.admitRequest(token, kind, left);
     } catch (e) {
-      throw refusal(e);
+      // A request the workspace refused is not counted against the user.
+      await this.#limits.refundRequest(meta).catch(() => {});
+      throw e;
     }
   }
 
@@ -240,16 +273,6 @@ export class User extends DurableObject<Env> {
     return this.#sessions.usageRecords(token, query);
   }
 
-  /** How far a test moved this User DO's clock forward (`advanceClock`); 0 otherwise. */
-  #clockOffset(): number {
-    try {
-      const row = this.ctx.storage.sql.exec("SELECT ms FROM test_clock").toArray()[0];
-      return Number(row?.ms ?? 0);
-    } catch {
-      return 0;
-    }
-  }
-
   /** Refuses every call once a test made this User DO unreachable. */
   async #reachable(): Promise<void> {
     if (await this.ctx.storage.get("unreachable"))
@@ -319,6 +342,18 @@ export class User extends DurableObject<Env> {
   async memory(token: string, call: MemoryCall) {
     await this.#reachable();
     return this.#sessions.memory(token, call);
+  }
+
+  /** Told by an agent session's DO: its topic titles on the active path (#174). */
+  async sessionTopics(session: string, capability: string, titles: string[]) {
+    await this.#reachable();
+    return this.#sessions.sessionTopics(session, capability, titles);
+  }
+
+  /** Asked by an agent session's DO: the sessions its session search reaches (#174). */
+  async searchScope(session: string, capability: string) {
+    await this.#reachable();
+    return this.#sessions.searchScope(session, capability);
   }
 
   /** Told by an agent session's DO: a memory tool call on its user memory or preferences. */
@@ -435,6 +470,11 @@ export class User extends DurableObject<Env> {
     return this.#sessions.listModels(token, query);
   }
 
+  async listAgents(token: string, query: AgentsQuery) {
+    await this.#reachable();
+    return this.#sessions.listAgents(token, query);
+  }
+
   async getModelConfig(token: string) {
     await this.#reachable();
     return this.#sessions.getModelConfig(token);
@@ -456,10 +496,6 @@ export class User extends DurableObject<Env> {
    */
   async advanceClock(ms: number): Promise<number> {
     if (!Number.isFinite(ms) || ms < 0) throw codedError("EINVAL", "ms must be a number >= 0");
-    const offset = this.#clockOffset() + ms;
-    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS test_clock (ms INTEGER NOT NULL)");
-    this.ctx.storage.sql.exec("DELETE FROM test_clock");
-    this.ctx.storage.sql.exec("INSERT INTO test_clock VALUES (?)", offset);
-    return offset;
+    return this.#limits.clock.advance(ms);
   }
 }
