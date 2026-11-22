@@ -610,17 +610,29 @@ export class Workspace extends DurableObject<Env> {
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
     const store = agent ? await this.#withDefinitions(raw, agent) : raw;
+    // Many actions at once (a folder's entries): the roles read once per project, the capability
+    // verified once (statewalker-ai#49).
+    const authorizeAll = async (checks: readonly [FileAction, string][]) => {
+      const byProject = new Map<string, { action: FileAction; path: string }[]>();
+      for (const [action, path] of checks) {
+        // An agent session acts in its project only; the user's own session in the path's.
+        const project = agent?.project ?? path.split("/")[1] ?? "";
+        if (!project) throw codedError("EACCES", `may not ${action} '${path}'`);
+        const list = byProject.get(project) ?? [];
+        list.push({ action, path });
+        byProject.set(project, list);
+      }
+      for (const [project, list] of byProject) {
+        const { grants } = await this.#access(project, user);
+        await this.#authority.authorizeMany(capability, { project, grants, checks: list });
+      }
+    };
     const options: GatedFilesOptions = {
       systemFolder: DEFAULT_SYSTEM_FOLDER,
       blockSize: blockSizeOf(this.env),
       visible: (project) => this.#member(project, user),
-      authorize: async (action, path) => {
-        // An agent session acts in its project only; the user's own session in the path's.
-        const project = agent?.project ?? path.split("/")[1] ?? "";
-        if (!project) throw codedError("EACCES", `may not ${action} '${path}'`);
-        const { grants } = await this.#access(project, user);
-        await this.#authority.authorize(capability, { action, path, project, grants });
-      },
+      authorize: (action, path) => authorizeAll([[action, path]]),
+      authorizeAll,
       ...(agent
         ? {
             ignoreRules: async (project: string) =>

@@ -26,6 +26,7 @@ export {
   type DatabaseRequest,
   type FileAction,
   type FileRequest,
+  type FileRequests,
   type StoredRootKey,
   type SubAgentGrant,
   type ToolGrant,

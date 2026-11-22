@@ -134,6 +134,17 @@ describe("auto mode", () => {
     expect(prompt.system).toMatch(/^You are the risk classifier/);
   });
 
+  it("decides the 10,000 entries of a folder's removal within a tight bound, broad allows set aside", () => {
+    const allow = [...Array.from({ length: 40 }, (_, i) => `files.delete:/area${i}/**`), "files.*"];
+    const layers = [{ source: "user", rules: { allow, deny: ["files.delete:/locked/**"] } }];
+    const started = performance.now();
+    for (let i = 0; i < 10_000; i++) auto(files("delete", `/build/d${i % 100}/f${i}.js`), layers);
+    expect(performance.now() - started).toBeLessThan(1_000);
+    expect(auto(files("delete", "/locked/a.js"), layers)).toMatchObject({ verdict: "deny" });
+    expect(auto(files("delete", "/area3/a.js"), layers)).toMatchObject({ verdict: "allow" });
+    expect(auto(files("delete", "/build/a.js"), layers)).toMatchObject({ step: "classifier" });
+  });
+
   it("reads the deployment's auto settings, with defaults", () => {
     expect(parseAutoMode(undefined).settings).toEqual({
       timeoutMs: 5000,

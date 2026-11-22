@@ -85,6 +85,24 @@ describe("modes", () => {
     expect(decideMode(req, { mode: modeOf("default"), layers: [allow] }).verdict).toBe("allow");
   });
 
+  it("decides the 10,000 entries of a folder's removal against several rule layers within a tight bound", () => {
+    const rules = (n: number, verb: string) =>
+      Array.from({ length: n }, (_, i) => `files.${verb}:/area${i}/**`);
+    const layers = [
+      { source: "deployment", rules: { deny: rules(20, "delete"), ask: rules(20, "write") } },
+      { source: "project", rules: { deny: ["files.delete:/locked/**"], allow: rules(20, "read") } },
+      { source: "user", rules: { allow: rules(20, "delete") } },
+    ];
+    const mode = modeOf("default");
+    const started = performance.now();
+    for (let i = 0; i < 10_000; i++)
+      decideMode(files("delete", `/build/d${i % 100}/f${i}.js`), { mode, layers });
+    // A Durable Object's default CPU limit is 30 s; deciding the entries takes a small part of it.
+    expect(performance.now() - started).toBeLessThan(1_000);
+    // Still decided per entry: a deny rule inside the folder applies.
+    expect(decideMode(files("delete", "/locked/a.js"), { mode, layers }).verdict).toBe("deny");
+  });
+
   it("matches tool rules by tool name", () => {
     const layers = [{ source: "project", rules: { deny: ["tool:bash"], allow: ["tool:grep"] } }];
     const call = (tool: string) => ({ area: "tools", action: "call", target: tool, tool });
