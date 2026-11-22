@@ -128,6 +128,7 @@ import {
   SecretStore,
   type StoredLevel,
   sessionSecrets,
+  turnTrace,
   USAGE_GROUPS,
   windowOf,
   withDelay,
@@ -211,6 +212,7 @@ import {
   warningView,
 } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
+import { telemetryConfigOf, telemetryOf } from "./telemetry-host.js";
 import { toolEsbuild } from "./tool-bundler.js";
 import { describeBundle, runBundle, ToolHost } from "./tool-executor.js";
 import { mountWorkspace } from "./workspace-store.js";
@@ -1099,7 +1101,20 @@ export class Workspace extends DurableObject<Env> {
    * a capability this workspace did not sign is refused (EACCES).
    */
   async files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
-    return this.#files.call(capability, method, args);
+    return this.#gateSpan("files", method, () => this.#files.call(capability, method, args));
+  }
+
+  /**
+   * One gate operation, as a sampled span (statewalker/statewalker-root#182): its area and
+   * operation, its outcome and the error code of a refusal, never its paths, rows or content.
+   */
+  #gateSpan<T>(area: string, op: string, run: () => Promise<T>): Promise<T> {
+    return telemetryOf(this.env, "workspace").span(
+      `gate.${area}`,
+      { "workspace.id": this.#name, "gate.area": area, "gate.op": op },
+      run,
+      { sample: telemetryConfigOf(this.env).gateSample },
+    );
   }
 
   /**
@@ -1349,7 +1364,9 @@ export class Workspace extends DurableObject<Env> {
    * plugin tool of one, or the user's own session), decided at the gate now.
    */
   async databaseCall(capability: string, call: DatabaseCall): Promise<unknown> {
-    return this.#databases.call(capability, call);
+    return this.#gateSpan("database", String(call?.method), () =>
+      this.#databases.call(capability, call),
+    );
   }
 
   /** Creates or drops a project's database (`db.admin`; for an agent, under the mode). */
@@ -2615,19 +2632,37 @@ export class Workspace extends DurableObject<Env> {
     );
     const detail = { tool: x.id };
     const timeout = Number(this.env.TOOL_TIMEOUT_MS);
-    const result = await runBundle(loader, {
-      code,
-      input: args,
-      host,
-      timeoutMs: timeout > 0 ? timeout : 30_000,
-      charge: async (ms) => {
-        await this.#limits.charge(facts.project, facts.user, { [meter]: ms }, meta, detail);
+    // An executor run, a span of its turn's trace (statewalker/statewalker-root#182).
+    const result = await telemetryOf(this.env, "workspace").span(
+      "executor.run",
+      {
+        "workspace.id": this.#name,
+        "project.id": facts.project,
+        "session.id": facts.session,
+        "turn.id": turn,
+        "executor.kind": "isolate",
+        "tool.name": x.name,
       },
-      record: async (ms) => {
-        const scopes = await this.#limits.scopes(facts.project, facts.user);
-        this.#limits.ledger.add(scopes, { [meter]: ms }, meta, detail);
+      async (span) => {
+        const r = await runBundle(loader, {
+          code,
+          input: args,
+          host,
+          timeoutMs: timeout > 0 ? timeout : 30_000,
+          charge: async (ms) => {
+            await this.#limits.charge(facts.project, facts.user, { [meter]: ms }, meta, detail);
+          },
+          record: async (ms) => {
+            const scopes = await this.#limits.scopes(facts.project, facts.user);
+            this.#limits.ledger.add(scopes, { [meter]: ms }, meta, detail);
+          },
+        });
+        span.set({ cpu_ms: r.ms });
+        if (r.isError) span.fail(r.output);
+        return r;
       },
-    });
+      turn ? { parent: turnTrace(turn) } : {},
+    );
     return { output: result.output, isError: result.isError, executor_cpu_ms: result.ms };
   }
 

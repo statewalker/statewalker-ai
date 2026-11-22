@@ -168,3 +168,33 @@ export {
   sessionSecrets,
 } from "./secrets.js";
 export type { SqlLike } from "./sql.js";
+export {
+  type Attributes,
+  type AttributeValue,
+  type CleanAttributes,
+  cleanAttributes,
+  codeOfError,
+  createTelemetry,
+  type LogRecord,
+  type MetricRecord,
+  NO_TELEMETRY,
+  type Severity,
+  type Span,
+  type SpanContext,
+  type SpanOptions,
+  type SpanRecord,
+  TELEMETRY_ATTRIBUTES,
+  type Telemetry,
+  type TelemetryBatch,
+  type TelemetryExporter,
+  type TelemetryOptions,
+  turnTrace,
+} from "./telemetry.js";
+export {
+  consoleExporter,
+  otlpBodies,
+  otlpExporter,
+  parseTelemetryConfig,
+  type TelemetryConfig,
+  telemetryExporter,
+} from "./telemetry-exporters.js";

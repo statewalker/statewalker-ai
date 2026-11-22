@@ -328,3 +328,62 @@ describe("limits", () => {
     expect(now - start).toBeLessThan(5_000);
   });
 });
+
+describe("telemetry of the meters (statewalker/statewalker-root#182)", () => {
+  it("counts usage per meter, denials per meter and level, and the waits of delayed requests", async () => {
+    const { createTelemetry } = await import("../src/telemetry.js");
+    const batches: import("../src/telemetry.js").TelemetryBatch[] = [];
+    let now = Date.UTC(2026, 0, 1, 0, 0, 45);
+    const telemetry = createTelemetry({
+      exporter: { export: async (b) => void batches.push(b) },
+      now: () => now,
+    });
+    const ledger = new LimitLedger(sqlite(), { now: () => now, telemetry, ledger: "workspace" });
+    const scopes: LimitScope[] = [
+      {
+        level: "workspace",
+        target: "w",
+        limits: parseLimits(
+          '[{"meter":"tool_calls","level":"workspace","value":3,"period":"day"},{"meter":"api_requests","level":"workspace","value":1,"period":"minute","on_exceed":"delay"}]',
+        ).limits,
+      },
+      { level: "project", target: "p", limits: [] },
+    ];
+    ledger.charge(scopes, { tool_calls: 2 }, META);
+    ledger.add(scopes, { tool_calls: 1, outbound_bytes: 300 }, META);
+    expect(() => ledger.charge(scopes, { tool_calls: 1 }, META)).toThrow(LimitExceeded);
+    const take = () =>
+      ledger.charge(scopes, { api_requests: 1 }, META, undefined, { record: false });
+    const opts = {
+      now: () => now,
+      sleep: async (ms: number) => {
+        now += ms;
+      },
+      telemetry,
+    };
+    await withDelay(take, opts);
+    await withDelay(take, opts);
+    await telemetry.flush();
+    const metrics = batches.flatMap((b) => b.metrics);
+    const sum = (name: string, meter: string) =>
+      metrics
+        .filter((m) => m.name === name && m.attributes.meter === meter && m.kind === "counter")
+        .reduce((n, m) => n + (m.kind === "counter" ? m.value : 0), 0);
+    // Usage is counted once per charge, whatever the number of levels it lands on.
+    expect(sum("harness.usage", "tool_calls")).toBe(3);
+    expect(sum("harness.usage", "outbound_bytes")).toBe(300);
+    expect(sum("harness.usage", "api_requests")).toBe(2);
+    expect(metrics.find((m) => m.name === "harness.usage")?.attributes.ledger).toBe("workspace");
+    expect(
+      metrics.find((m) => m.name === "harness.denials" && m.attributes.meter === "tool_calls")
+        ?.attributes,
+    ).toMatchObject({ "limit.level": "workspace", "error.code": "ELIMIT" });
+    const wait = metrics.find((m) => m.name === "harness.queue.wait");
+    expect(wait).toMatchObject({
+      kind: "histogram",
+      count: 1,
+      attributes: { meter: "api_requests" },
+    });
+    expect(wait?.kind === "histogram" && wait.sum).toBeGreaterThanOrEqual(15_000);
+  });
+});
