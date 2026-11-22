@@ -190,6 +190,14 @@ export interface ModelGatewayOptions {
   streamOf?: (api: string) => StreamFn | undefined;
 }
 
+/** The secret levels each provider level may be served by. */
+const SECRET_REACH: Record<CatalogProvider["level"], readonly string[]> = {
+  user: ["user"],
+  project: ["user", "project"],
+  workspace: ["user", "project", "workspace"],
+  deployment: ["user", "project", "workspace", "deployment"],
+};
+
 /** The key and headers of a provider, resolved through the secrets gateway's binding rules. */
 export async function providerAccess(
   provider: CatalogProvider,
@@ -198,10 +206,18 @@ export async function providerAccess(
   const KEY = "x-model-gateway-key";
   const headers: Record<string, string> = { ...(provider.headers ?? {}) };
   if (provider.secret) headers[KEY] = `{{secret:${provider.secret}}}`;
+  // A provider is served only by secrets of its own level or a more specific one: a user's own
+  // provider never borrows the workspace's or the deployment's key (nor a project's provider the
+  // workspace's), whatever host the key is bound to.
+  const reach = SECRET_REACH[provider.level];
+  const own: SecretLookup = async (name) => {
+    const found = await secrets(name);
+    return found && reach.includes(found.level) ? found : undefined;
+  };
   const resolved = await resolveSecrets(
     { url: provider.baseUrl, headers },
     MODEL_GATEWAY_PLUGIN,
-    secrets,
+    own,
   );
   if (!resolved.ok) throw new Error(resolved.error);
   const { [KEY]: apiKey, ...rest } = resolved.headers;
@@ -289,7 +305,30 @@ export class ModelGateway {
     const attempts: ModelAttempt[] = [];
     let message: ModelMessage = errorMessage(first, "no attempt");
     for (const [i, model] of chain.entries()) {
-      const attempt = await this.#attempt(catalog.providers[model.provider], model, call, meta);
+      let attempt: { message: ModelMessage; attempt: ModelAttempt };
+      try {
+        attempt = await this.#attempt(catalog.providers[model.provider], model, call, meta);
+      } catch (e) {
+        // Refused before the model was asked (a key, a limit): nothing was sent or metered. The
+        // first model's refusal is the request's; a fallback's is recorded with the attempts made.
+        if (i === 0) throw e;
+        const error = String((e as Error)?.message ?? e);
+        attempts.push({
+          usage: {
+            model: model.id,
+            provider: model.provider,
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_tokens: 0,
+            latency_ms: 0,
+            outcome: "error",
+            charged: false,
+          },
+          error,
+        });
+        message = errorMessage(model, error);
+        break;
+      }
       attempts.push(attempt.attempt);
       message = attempt.message;
       if (!(FALLBACK.includes(attempt.attempt.usage.outcome) && i < chain.length - 1)) break;

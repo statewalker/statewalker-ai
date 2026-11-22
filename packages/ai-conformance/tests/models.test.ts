@@ -45,6 +45,10 @@ const CATALOG = {
     "scripted/big",
     "scripted/small",
   ]),
+  "/core/dev.cellb.harness/agents/fallback-unbound.md": agent("fallback-unbound", [
+    "scripted/big",
+    "unbound/unbound-v1",
+  ]),
 };
 
 const TRANSPORTS = ["rest", "rpc"];
@@ -346,6 +350,23 @@ describe.each(transports)("the model gateway over %s", (name, connect) => {
     expect(lastModel()).toBe("big");
   });
 
+  it("records a fallback whose next model cannot be reached, and fails the turn", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `beta-${t}`, agent: "core/fallback-unbound" });
+    model.fail("big", 529);
+    try {
+      const turn = await ann.sendMessage(s.id, { content: "hello" });
+      expect(turn).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
+      expect(turn.items.find((i) => i.kind === "model_fallback")).toMatchObject({
+        from: "scripted/big",
+        to: "unbound/unbound-v1",
+        reason: "overloaded",
+      });
+    } finally {
+      model.heal("big");
+    }
+  });
+
   it("fails the turn on any other model error, without falling back", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project: `beta-${t}`, agent: "core/fallback" });
@@ -450,6 +471,22 @@ describe.each(transports)("the model gateway over %s", (name, connect) => {
     await expect(cus.startSession({ project: `beta-${t}`, model: "own" })).rejects.toMatchObject({
       status: 404,
     });
+    // The user's own provider never borrows a workspace's or the deployment's key, even one bound
+    // to the gateway and that host: only the user's own secrets serve it.
+    await ann.setModelConfig({
+      providers: [
+        { id: "borrow", api: "openai-completions", baseUrl: model.url, secret: "DEPLOY_MODEL_KEY" },
+      ],
+      models: [{ id: "borrow/borrowed-v1" }],
+    });
+    const borrowing = await ann.startSession({ project: `beta-${t}`, model: "borrow/borrowed-v1" });
+    const asked = model.requests.length;
+    expect(await ann.sendMessage(borrowing.id, { content: "hello" })).toMatchObject({
+      status: "failed",
+      error: expect.stringMatching(/ENOENT|EACCES/),
+    });
+    expect(model.requests.length).toBe(asked);
+    await ann.setModelConfig(config);
     // A malformed configuration is refused.
     await expect(
       ann.setModelConfig({ providers: [{ id: "x", api: "carrier-pigeon", baseUrl: "nope" }] }),
