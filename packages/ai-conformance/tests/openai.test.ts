@@ -76,6 +76,11 @@ beforeAll(async () => {
     ADMIN_KEY,
     CATALOG: JSON.stringify(CATALOG),
     SSE_KEEPALIVE_MS: "200",
+    // Each completion starts a session and sends a message: one user here runs past the session
+    // API's default of 60 requests a minute (tests/rate-limits.test.ts holds it).
+    LIMITS: JSON.stringify([
+      { meter: "api_requests", level: "user", value: 6000, period: "minute", on_exceed: "delay" },
+    ]),
   });
   await seed(deployment, ADMIN_KEY, fixtures());
 }, 120_000);
