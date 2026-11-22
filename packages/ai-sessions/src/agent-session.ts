@@ -10,8 +10,10 @@
 //   full turn;
 // - a change the mode asks about ends the turn `waiting` (statewalker/statewalker-root#124): the
 //   exact call is stored in an `approval` item, the user's User DO is told, and the user's answer
-//   continues the session as a turn that runs the stored call again (re-checked at the gate) or
-//   tells the model the denial.
+//   (or the approval's expiry, as a denial) queues an answer turn that runs the stored call again
+//   (re-checked at the gate) or records the refusal, and then the agent continues the work with
+//   the result, with no new user message (statewalker/statewalker-root#214); while other approvals
+//   of the waiting turn are unanswered, the answer turn waits on them and the last answer continues.
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 import { limitOfMessage } from "@statewalker/ai-environment";
 import type {
@@ -54,8 +56,14 @@ export interface TurnRun {
   config: AgentSessionConfig;
   /** The turn's id. */
   turn: string;
-  /** The user's message. */
+  /** The user's message (for a continuation, what the turn answers, never shown to the model). */
   content: string;
+  /**
+   * The turn continues the session after the user answered its approvals
+   * (statewalker/statewalker-root#214): no user message, the context already ends with the
+   * answered actions' results.
+   */
+  continues?: boolean;
   /**
    * The model context before the user's message: the session's top-level summaries and the items
    * no summary covers, with pins and tool-result trimming applied (statewalker/statewalker-root#131).
@@ -90,11 +98,14 @@ export interface ActionCall {
  */
 export type RunAction = (config: AgentSessionConfig, call: ActionCall) => Promise<unknown>;
 
-/** Tells the session's User DO the approvals a turn waits on. */
+/**
+ * Tells the session's User DO the approvals a turn waits on; answers, if it can, when each expires
+ * (`{id, expires}[]`): an approval no one answers by then continues its turn as a denial.
+ */
 export type RecordApprovals = (
   config: AgentSessionConfig,
   requests: ApprovalRequest[],
-) => Promise<void>;
+) => Promise<unknown>;
 
 const toBase64 = (bytes: Uint8Array) => {
   let bin = "";
@@ -231,6 +242,8 @@ const KINDS: readonly string[] = [
   "memory_primed",
 ];
 const MAX_PAGE = 1000;
+/** Why an approval no one answered in its time counts as denied. */
+const EXPIRED = "expired";
 const MAX_WAIT_MS = 60_000;
 
 function pageSize(limit: unknown, fallback: number): number {
@@ -246,6 +259,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   readonly #runTurn: RunTurn;
   readonly #runAction: RunAction;
   readonly #recordApprovals: RecordApprovals;
+  readonly #wake: ((at: number) => void) | undefined;
   readonly #shaper: ContextShaper;
   readonly #summarizer: Summarizer | undefined;
   #running: Running | undefined;
@@ -257,6 +271,11 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     runAction: RunAction;
     recordApprovals: RecordApprovals;
     /**
+     * Asks the host to call `expire()` at `at` (its DO alarm): an approval expires then
+     * (statewalker/statewalker-root#214).
+     */
+    wake?: (at: number) => void;
+    /**
      * Compaction: without a summarizer, nothing is compacted (the context is every earlier item,
      * long tool results outside the tail trimmed).
      */
@@ -266,6 +285,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     this.#runTurn = options.runTurn;
     this.#runAction = options.runAction;
     this.#recordApprovals = options.recordApprovals;
+    this.#wake = options.wake;
     this.#sql.exec(`
       CREATE TABLE IF NOT EXISTS agent_config (key TEXT PRIMARY KEY, value TEXT);
       CREATE TABLE IF NOT EXISTS agent_turns (id TEXT PRIMARY KEY, status TEXT NOT NULL,
@@ -279,6 +299,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       CREATE TABLE IF NOT EXISTS approval_answers (turn TEXT PRIMARY KEY, approval TEXT NOT NULL,
         decision TEXT NOT NULL, message TEXT);
       CREATE TABLE IF NOT EXISTS agent_origin_turns (turn TEXT PRIMARY KEY);
+      CREATE TABLE IF NOT EXISTS approval_expiry (turn TEXT NOT NULL, approval TEXT NOT NULL,
+        expires INTEGER NOT NULL, PRIMARY KEY (turn, approval));
       CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
         used TEXT NOT NULL, reason TEXT NOT NULL);`);
     this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
@@ -485,11 +507,45 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       row.id,
     );
     const pending: Pending = new Map();
+    /** Approvals asked earlier that the turn this one continues still waits on. */
+    let unanswered: string[] = [];
     let error: string | undefined;
     let outcome: TurnOutcome | undefined;
+    /** Runs the core with the context before item `before` (a continuation has no message). */
+    const runCore = async (before: number, continues: boolean) => {
+      const context = await this.#context(row.id, before, running.abort.signal);
+      return this.#runTurn(
+        {
+          config,
+          turn: row.id,
+          content: row.content,
+          ...(continues ? { continues: true } : {}),
+          context,
+          ...(row.model_requested ? { model: row.model_requested } : {}),
+          signal: running.abort.signal,
+          onSteer: (listener) => {
+            running.listeners.push(listener);
+            for (const steer of running.steers) listener(steer);
+          },
+          onApproval: (request, call) => {
+            if (!pending.has(request.id))
+              pending.set(request.id, { request, stored: storedOf(call) });
+          },
+          waiting: () => pending.size > 0,
+        },
+        (item) => {
+          if (item.steer) running.applied.add(item.steer);
+          this.#append(row.id, item);
+        },
+      );
+    };
     if (answer) {
       try {
-        await this.#answerTurn(config, row.id, answer, pending);
+        const answered = await this.#answerTurn(config, row.id, answer, pending);
+        unanswered = answered.unanswered;
+        // Every approval of the turn answered: the agent continues it with the results.
+        if (answered.continues && !unanswered.length && !pending.size && !running.endAs)
+          outcome = await runCore(this.#nextSeq(), true);
       } catch (e) {
         error = String((e as Error)?.message ?? e);
       }
@@ -503,30 +559,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         ...(byAgent ? { origin: "agent" as const } : {}),
       });
       try {
-        const context = await this.#context(row.id, prompt.seq, running.abort.signal);
-        outcome = await this.#runTurn(
-          {
-            config,
-            turn: row.id,
-            content: row.content,
-            context,
-            ...(row.model_requested ? { model: row.model_requested } : {}),
-            signal: running.abort.signal,
-            onSteer: (listener) => {
-              running.listeners.push(listener);
-              for (const steer of running.steers) listener(steer);
-            },
-            onApproval: (request, call) => {
-              if (!pending.has(request.id))
-                pending.set(request.id, { request, stored: storedOf(call) });
-            },
-            waiting: () => pending.size > 0,
-          },
-          (item) => {
-            if (item.steer) running.applied.add(item.steer);
-            this.#append(row.id, item);
-          },
-        );
+        outcome = await runCore(prompt.seq, false);
       } catch (e) {
         error = String((e as Error)?.message ?? e);
       }
@@ -555,10 +588,24 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       for (const { request, stored } of pending.values())
         this.#append(row.id, { kind: "approval", approval: request.id, request, stored });
       try {
-        await this.#recordApprovals(
+        const recorded = await this.#recordApprovals(
           config,
           [...pending.values()].map((p) => p.request),
         );
+        // When each expires: unanswered by then, it continues this turn as a denial.
+        for (const { id, expires } of (Array.isArray(recorded) ? recorded : []) as {
+          id: string;
+          expires: number;
+        }[])
+          if (pending.has(id) && Number.isFinite(expires))
+            this.#sql.exec(
+              "INSERT OR REPLACE INTO approval_expiry VALUES (?, ?, ?)",
+              row.id,
+              id,
+              Number(expires),
+            );
+        const next = this.nextExpiry();
+        if (next !== undefined) this.#wake?.(next);
       } catch (e) {
         error = `the approvals could not be recorded: ${String((e as Error)?.message ?? e)}`;
       }
@@ -589,11 +636,11 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         { type: "error", message: error },
         { error, ...(model ? { model } : {}) },
       );
-    else if (pending.size)
+    else if (pending.size || unanswered.length)
       this.#finish(
         row.id,
         "waiting",
-        { type: "approval", approval_ids: [...pending.keys()] },
+        { type: "approval", approval_ids: [...new Set([...unanswered, ...pending.keys()])] },
         model ? { model } : {},
       );
     else this.#finish(row.id, "completed", { type: "end_turn" }, model ? { model } : {});
@@ -618,16 +665,21 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   }
 
   /**
-   * A turn continuing the session with the user's answer to an approval: a denial is told as the
-   * call's result, with the user's message; an allow runs exactly the stored call again through
-   * the gate, which re-checks it against the current mode and roles.
+   * A turn continuing the session with the user's answer to an approval
+   * (statewalker/statewalker-root#214): a denial (or an approval that expired unanswered) is told
+   * as the action's result, with the user's message; an allow runs exactly the stored call again
+   * through the gate, which re-checks it against the current mode and roles. Then the agent
+   * continues the turn (`continues`) once every approval the turn waited on is answered: the
+   * approvals still `unanswered` leave this turn waiting on them, and the answer to the last one
+   * continues. A block of auto mode's classifier continues only when allowed: its turn already
+   * carried on with the refusal.
    */
   async #answerTurn(
     config: AgentSessionConfig,
     turn: string,
     answer: { approval: string; decision: string; message: string | null },
     pending: Pending,
-  ): Promise<void> {
+  ): Promise<{ continues: boolean; unanswered: string[] }> {
     const item = this.#rows<ItemRow>(
       "SELECT * FROM items WHERE kind IN ('approval', 'mode_decision') ORDER BY seq DESC",
     )
@@ -635,6 +687,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       .find((i) => i.approval === answer.approval && i.stored);
     if (!item?.stored || !item.request) throw codedError("ENOENT", "no such approval");
     const { method, path, target } = item.stored;
+    const label = `${method} ${path}${target ? ` ${target}` : ""}`;
+    const asked = item.kind === "approval";
+    const unanswered = asked ? this.#unanswered(item.turn, turn, answer.approval) : [];
     const result = (output: string, isError: boolean, denied = false) =>
       this.#append(turn, {
         kind: "tool_result",
@@ -643,9 +698,17 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         isError,
         ...(denied ? { denied: true as const } : {}),
       });
+    if (answer.decision === "expired") {
+      result(`${label}: denied: ${EXPIRED}`, true, true);
+      return { continues: asked, unanswered };
+    }
     if (answer.decision !== "allow") {
-      result(`denied by the user${answer.message ? `: ${answer.message}` : ""}`, true, true);
-      return;
+      result(
+        `${label}: denied by the user${answer.message ? `: ${answer.message}` : ""}`,
+        true,
+        true,
+      );
+      return { continues: asked, unanswered };
     }
     try {
       const done = await this.#runAction(config, callOf(item.stored));
@@ -671,10 +734,80 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       else if (method === "db" && done !== null && done !== undefined)
         // A database query's answer: its rows, as the tool would have answered them.
         result(`db ${path}: ${rowsText(done)}`, false);
-      else result(`${method} ${path}${target ? ` ${target}` : ""}: done`, false);
+      else result(`${label}: done`, false);
     } catch (e) {
       result(String((e as Error)?.message ?? e), true);
     }
+    return { continues: true, unanswered };
+  }
+
+  /**
+   * The approvals turn `origin` asked that no answer has continued yet, but `approval` (answered
+   * by turn `self`): an answer still queued counts as not yet given, so its own turn continues.
+   */
+  #unanswered(origin: string, self: string, approval: string): string[] {
+    const asked = new Set(
+      this.#rows<ItemRow>("SELECT * FROM items WHERE turn = ? AND kind = 'approval'", origin)
+        .map(itemOf)
+        .map((i) => String(i.approval ?? ""))
+        .filter((id) => id && id !== approval),
+    );
+    const since = Number(this.#turnRow(origin).created);
+    return [...asked].filter(
+      (id) =>
+        !this.#one(
+          `SELECT 1 FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+           WHERE a.approval = ? AND a.turn != ? AND t.created >= ? AND t.status != 'queued'`,
+          id,
+          self,
+          since,
+        ),
+    );
+  }
+
+  #nextSeq(): number {
+    return Number(this.#one<{ s: number }>("SELECT MAX(seq) AS s FROM items")?.s ?? 0) + 1;
+  }
+
+  /** When the next approval a turn waits on expires, if any does. */
+  nextExpiry(): number | undefined {
+    const row = this.#one<{ at: number | null }>("SELECT MIN(expires) AS at FROM approval_expiry");
+    return row?.at === null || row?.at === undefined ? undefined : Number(row.at);
+  }
+
+  /**
+   * Continues, as a denial with reason "expired", each turn waiting on an approval no one answered
+   * in its time (statewalker/statewalker-root#214): called from the host's alarm. Returns when the
+   * next one expires.
+   */
+  expire(now: number = Date.now()): number | undefined {
+    const config = this.config();
+    if (!config) return undefined;
+    for (const due of this.#rows<{ turn: string; approval: string }>(
+      "SELECT turn, approval FROM approval_expiry WHERE expires <= ? ORDER BY expires",
+      now,
+    )) {
+      this.#sql.exec(
+        "DELETE FROM approval_expiry WHERE turn = ? AND approval = ?",
+        due.turn,
+        due.approval,
+      );
+      const since = this.#one<{ created: number }>(
+        "SELECT created FROM agent_turns WHERE id = ?",
+        due.turn,
+      );
+      // Answered meanwhile (its answer turn queued after the turn that asked it): nothing to do.
+      const answered = this.#one(
+        `SELECT 1 FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+         WHERE a.approval = ? AND t.created >= ?`,
+        due.approval,
+        Number(since?.created ?? 0),
+      );
+      if (answered || !since || this.#archived()) continue;
+      this.#queueAnswer(config, due.approval, { decision: "expired", message: null });
+    }
+    this.#pump();
+    return this.nextExpiry();
   }
 
   /** Cuts the running turn short, and waits for it to end. */
@@ -757,19 +890,56 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       .map(itemOf)
       .some((i) => i.approval === approval && i.stored);
     if (!known) throw codedError("ENOENT", "no such approval");
-    const content = `${answer.decision === "allow" ? "allowed" : "denied"}: ${approval}`;
-    // The answer is stored before the turn is logged, so its queued event names the approval.
-    const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false, (turn) =>
-      this.#sql.exec(
-        "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
-        turn,
-        approval,
-        answer.decision,
-        answer.message ?? null,
-      ),
+    // Expired by the alarm while the User DO's answer was on its way: that expiry already
+    // continued the turn, so the late answer continues nothing more.
+    const asked = this.#one<{ turn: string }>(
+      `SELECT turn FROM items WHERE kind = 'approval' AND json_extract(body, '$.approval') = ?
+       ORDER BY seq DESC LIMIT 1`,
+      approval,
     );
+    const expired = asked
+      ? this.#one<{ turn: string }>(
+          `SELECT a.turn FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+           WHERE a.approval = ? AND a.decision = 'expired' AND t.created >= ?`,
+          approval,
+          Number(this.#turnRow(asked.turn).created),
+        )
+      : undefined;
+    if (expired) return { turn_id: expired.turn, session_id: config.id, delivery: "next", offset };
+    const id = this.#queueAnswer(config, approval, {
+      decision: answer.decision,
+      message: answer.message ?? null,
+    });
     this.#pump();
     return { turn_id: id, session_id: config.id, delivery: "next", offset };
+  }
+
+  /** Queues the turn that continues the session with an answer (`expired`: no one answered). */
+  #queueAnswer(
+    config: AgentSessionConfig,
+    approval: string,
+    answer: { decision: string; message: string | null },
+  ): string {
+    const said =
+      answer.decision === "allow"
+        ? "allowed"
+        : answer.decision === "expired"
+          ? "expired"
+          : "denied";
+    // The answer is stored before the turn is logged, so its queued event names the approval.
+    return this.#queue(
+      config,
+      { content: `${said}: ${approval}`, delivery: "next", ignored: [] },
+      false,
+      (turn) =>
+        this.#sql.exec(
+          "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
+          turn,
+          approval,
+          answer.decision,
+          answer.message,
+        ),
+    );
   }
 
   /**
@@ -964,7 +1134,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM turn_substitutions; DELETE FROM summaries;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

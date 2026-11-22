@@ -314,6 +314,8 @@ export interface Turn {
   model?: string;
   model_substitution?: { requested: string; used: string; reason: string };
   ignored?: string[];
+  /** The approval this turn continues the session with (an answer turn). */
+  answers?: string;
   items: Item[];
 }
 

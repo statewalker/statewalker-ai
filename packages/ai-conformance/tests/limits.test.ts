@@ -411,7 +411,10 @@ describe.each(transports)("limits over %s", (name, connect) => {
       status: "pending",
     });
     const { accepted } = await ann.answerApproval(id, { decision: "allow", scope: "once" });
-    expect(await ann.waitTurn(accepted)).toMatchObject({ status: "completed" });
+    const raised = await ann.waitTurn(accepted);
+    expect(raised).toMatchObject({ status: "completed" });
+    // The agent continues the turn once the limit is raised (statewalker/statewalker-root#214).
+    expect(raised.items.map((i) => i.kind)).toEqual(["tool_result", "message"]);
     // One increment: one more tool call, then it asks again.
     const third = await ann.sendMessage(s.id, { content: read });
     expect(third.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });

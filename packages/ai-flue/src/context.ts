@@ -113,8 +113,8 @@ export function contextMessages(context: ContextEntry[], model: ContextModel): C
         });
         assistant = undefined;
       } else {
-        // A result with no call before it (an approved action run again): told as a message.
-        user(`[Result of an approved action] ${item.output ?? ""}`);
+        // A result with no call before it (an answered approval's action): told as a message.
+        user(`[Result of ${item.denied ? "a denied" : "an approved"} action] ${item.output ?? ""}`);
       }
     }
     // Approval items are not part of the model context: the waiting call's result says it.
