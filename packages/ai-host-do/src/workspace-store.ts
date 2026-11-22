@@ -2,7 +2,7 @@
 // deployment's configuration (WORKSPACE_BACKEND), whose first-level folders are the projects.
 // - "sql" (the default): SqlFs (webrun-files-sqlite) on the Workspace DO's own SQLite;
 // - "memory": in memory, emptied when the Workspace DO restarts;
-// - "local": the local file system (CellB Node, CellD), under WORKSPACE_ROOT/<workspace>/;
+// - "local": the local file system (CellB Node only; CellD's node:fs has no host file system), under WORKSPACE_ROOT/<workspace>/;
 // - "s3": an S3 bucket (WORKSPACE_S3_BUCKET, optional WORKSPACE_S3_ENDPOINT, _REGION, _PREFIX),
 //   under <prefix>/<workspace>/, with the keys WORKSPACE_S3_ACCESS_KEY_ID and
 //   WORKSPACE_S3_SECRET_ACCESS_KEY (secrets, never vars).

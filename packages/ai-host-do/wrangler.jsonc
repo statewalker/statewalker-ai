@@ -35,8 +35,8 @@
     // workspace's SQL). Each project is answered by the first source that knows it.
     "ROLE_SOURCES": "file",
     // Each workspace's store, one FilesApi whose first-level folders are its projects: "sql" (SqlFs
-    // on the Workspace DO's SQLite), "memory", "local" (WORKSPACE_ROOT/<workspace>/, CellB Node and
-    // CellD only) or "s3" (WORKSPACE_S3_BUCKET, optional WORKSPACE_S3_ENDPOINT, WORKSPACE_S3_REGION,
+    // on the Workspace DO's SQLite), "memory", "local" (WORKSPACE_ROOT/<workspace>/, CellB Node only:
+    // CellD's node:fs has no host file system) or "s3" (WORKSPACE_S3_BUCKET, optional WORKSPACE_S3_ENDPOINT, WORKSPACE_S3_REGION,
     // WORKSPACE_S3_PREFIX; keys below).
     "WORKSPACE_BACKEND": "sql",
     // The workspace's default ignore rules (gitignore syntax, one pattern per line), hiding files

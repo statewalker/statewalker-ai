@@ -219,6 +219,7 @@ import {
   warningView,
 } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
+import { type HeldFilesCall, keepStreamEventsAlive } from "./stream-events.js";
 import { telemetryConfigOf, telemetryOf } from "./telemetry-host.js";
 import { toolEsbuild } from "./tool-bundler.js";
 import { describeBundle, runBundle, ToolHost } from "./tool-executor.js";
@@ -262,6 +263,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #store: Promise<FilesApi>;
   /** One files-RPC server per capability that holds a file view, so streams live across calls. */
   readonly #files: FilesRpcHost;
+  /** A files-RPC call on a holder's view, its write streams' opening events kept alive. */
+  readonly #filesCall: HeldFilesCall;
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
@@ -307,6 +310,10 @@ export class Workspace extends DurableObject<Env> {
     this.#store.catch(() => {});
     this.#files = new FilesRpcHost((holder) => this.#fileView(holder));
     this.#preImages = new PreImageLog(sql);
+    this.#filesCall = keepStreamEventsAlive(
+      (holder, method, args) => this.#files.call(holder, method, args),
+      (until) => this.ctx.waitUntil(until),
+    );
     sql.exec("CREATE TABLE IF NOT EXISTS ws_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
     // The tracer kept user and agent sessions here; they live in User DOs now. No release held
     // them, so their rows are dropped rather than migrated.
@@ -1135,7 +1142,7 @@ export class Workspace extends DurableObject<Env> {
       typeof turn === "string" && turn && !turn.includes(HOLDER_TURN)
         ? `${capability}${HOLDER_TURN}${turn}`
         : capability;
-    return this.#gateSpan("files", method, turn, () => this.#files.call(holder, method, args));
+    return this.#gateSpan("files", method, turn, () => this.#filesCall(holder, method, args));
   }
 
   /**

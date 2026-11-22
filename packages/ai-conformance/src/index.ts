@@ -14,9 +14,11 @@ export {
   toolDb,
 } from "./db-client.js";
 export {
+  CAN,
   type Deployment,
   LOCAL_MODELS,
   RUNTIME,
+  type Runtime,
   startDeployment,
   startNodeDeployment,
 } from "./deployment.js";
@@ -32,6 +34,7 @@ export {
   fakeCollector,
   type OtlpAttributes,
 } from "./otlp-collector.js";
+export { CELLD_IMAGE } from "./process-deployment.js";
 export { type FakeRest, fakeRest, type RestRequest } from "./rest-server.js";
 export { type RpcSessionClient, rpcClient } from "./rpc-client.js";
 export {

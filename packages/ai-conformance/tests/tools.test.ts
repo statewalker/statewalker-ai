@@ -9,6 +9,7 @@
 // and a fake REST server, over REST and RPC.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CAN,
   type Deployment,
   type FakeModel,
   type FakeRest,
@@ -16,7 +17,6 @@ import {
   fakeRest,
   login,
   type McpResponse,
-  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -281,7 +281,7 @@ describe.each(transports)("tools over %s", (name, connect) => {
     expect(JSON.stringify(doc)).not.toContain(KEY);
   });
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "rebuilds a REST call from its route and adds the deployment's key, which the model never sees",
     async () => {
       const ann = await as("ann");
@@ -324,7 +324,7 @@ describe.each(transports)("tools over %s", (name, connect) => {
     },
   );
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "an asking tool asks per call, and approving runs exactly that call",
     async () => {
       const mo = await as("mo");
@@ -382,7 +382,7 @@ describe.each(transports)("tools over %s", (name, connect) => {
     expect(rest.requests.length).toBe(from);
   });
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "runs read tools in parallel and other tools one at a time",
     async () => {
       const pat = await as("pat");

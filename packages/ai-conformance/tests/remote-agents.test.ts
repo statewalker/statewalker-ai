@@ -11,6 +11,7 @@ import type { FilesApi } from "@statewalker/webrun-files";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type ApprovalAnswer,
+  CAN,
   type Deployment,
   type FakeModel,
   type FakeUhp,
@@ -18,7 +19,6 @@ import {
   fakeUhp,
   type Item,
   login,
-  RUNTIME,
   restClient,
   restFiles,
   rpcClient,
@@ -106,7 +106,8 @@ let uhp: FakeUhp;
 let deployment: Deployment;
 
 beforeAll(async () => {
-  if (RUNTIME === "browser") return;
+  // The UHP servers' tokens are deployment secrets, which only some runtimes hold.
+  if (!CAN.deploymentSecrets) return;
   model = await fakeModel();
   uhp = await fakeUhp(TOKEN);
   deployment = await startDeployment(HOST, {
@@ -170,7 +171,7 @@ async function until(check: () => boolean | Promise<boolean>, what: string) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
-describe.skipIf(RUNTIME === "browser").each(transports)(
+describe.runIf(CAN.deploymentSecrets).each(transports)(
   "remote agent sessions over %s",
   (name, connect) => {
     const t = name.toLowerCase();

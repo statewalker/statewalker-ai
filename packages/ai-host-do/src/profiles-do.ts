@@ -17,10 +17,13 @@ import { newDoSqliteDb } from "@statewalker/db-sqlite-do";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { newFilesRpcServer } from "@statewalker/webrun-files-rpc";
 import { blockSizeOf, type Env } from "./env.js";
+import { type HeldFilesCall, keepStreamEventsAlive } from "./stream-events.js";
 
 export class Profiles extends DurableObject<Env> {
   readonly #files: Promise<FilesApi>;
   readonly #servers: FilesRpcHost;
+  /** A call on a user's server, its write streams' opening events kept alive (stream-events.ts). */
+  readonly #call: HeldFilesCall;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -35,12 +38,16 @@ export class Profiles extends DurableObject<Env> {
         }),
       ),
     );
+    this.#call = keepStreamEventsAlive(
+      (user, method, args) => this.#servers.call(user, method, args),
+      (until) => ctx.waitUntil(until),
+    );
   }
 
   /** One files-RPC call on a user's profile, rooted at their folder. */
   files(user: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
     profilePath(user);
-    return this.#servers.call(user, method, args);
+    return this.#call(user, method, args);
   }
 
   /** Erases a user's profile: their whole folder. */

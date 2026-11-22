@@ -44,6 +44,9 @@ catalog:
   "@types/node": ^26.6.4
   # The conformance suite on CellB in Chromium: the browser it drives, and the bundler of its host page.
   playwright: ^1.63.0
+  # The conformance suite on workerd: `wrangler dev` (local workerd through Miniflare). Exact: a
+  # new workerd can change what the suite sees.
+  wrangler: 4.158.0
   vite: ^8.3.2
   # The workbench's terminal (apps/workbench).
   "@xterm/addon-fit": ^0.11.0

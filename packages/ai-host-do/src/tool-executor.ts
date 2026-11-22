@@ -1,10 +1,19 @@
 // The `isolate` executor for native tool scripts (statewalker/statewalker-root#130, decided in #94):
 // each call loads the tool's bundle into a Worker Loader isolate of its own, with the network off
 // (`globalOutbound: null`) and nothing in its `env`; the script reaches files and its databases
-// only through the host object the call hands it, which answers only while the run lasts (the run
-// lease) and acts with the capability the Workspace DO gives it. The isolate's time is charged as
-// the run goes (`charge`), and the run is ended when a charge is refused or its timeout passes: the
-// lease is revoked, the script's signal aborts, and the call answers at once.
+// only through the host the call drives, which answers only while the run lasts (the run lease)
+// and acts with the capability the Workspace DO gives it. The isolate's time is charged as the run
+// goes (`charge`), and the run is ended when a charge is refused or its timeout passes: the lease
+// is revoked, the script's signal aborts, and the call answers at once.
+//
+// The script reaches the host through a stub handed to `run(input, host)`, where a stub crosses
+// into a loaded isolate (workerd, CellB). CellD's Worker Loader carries an RPC argument by
+// structured clone only (statewalker/statewalker-root#141), so there the host's calls cross as
+// plain values instead: the host starts the run (`start(input)`), each answer of the isolate is
+// either the run's end or the host calls the script waits on, and the host answers those
+// (`resume(answers)`) to get the next. Which form a runtime takes is probed once per isolate with
+// a loaded worker holding no tool code. (workerd would not take that second form: a promise of one
+// call settled by the next counts there as a hung request.) The script sees the same `ctx` either way.
 //
 // Inside the isolate, a wrapper module removes the host's reach from the realm before the bundle
 // is evaluated (the Node realm CellB runs isolates in has `process`; workerd's has `fetch`), then
@@ -27,12 +36,35 @@ export interface ToolHostCalls {
   dbExec(database: string, sql: string): Promise<void>;
 }
 
-/** The host object a run is handed: each call checks the run's lease first. */
+const HOST_METHODS = new Set<string>([
+  "read",
+  "write",
+  "mkdir",
+  "list",
+  "stats",
+  "exists",
+  "remove",
+  "move",
+  "copy",
+  "dbQuery",
+  "dbExec",
+]);
+
+/** The host a run drives: each call checks the run's lease first. */
 export class ToolHost extends RpcTarget {
   #calls: ToolHostCalls | undefined;
   constructor(calls: ToolHostCalls) {
     super();
     this.#calls = calls;
+  }
+  /** One call the script asked for, by name: only the host's own methods. */
+  invoke(method: string, args: unknown): Promise<unknown> {
+    if (!HOST_METHODS.has(method))
+      return Promise.reject(new Error(`ENOSYS: no host call '${method}'`));
+    const a = Array.isArray(args) ? args : [];
+    return Promise.resolve().then(() =>
+      (this as unknown as Record<string, (...x: unknown[]) => unknown>)[method]?.(...a),
+    );
   }
   /** Ends the lease: every later call is refused. */
   revoke(): void {
@@ -102,6 +134,34 @@ const logs = [];
 const text = (v) => { try { return typeof v === "string" ? v : JSON.stringify(v); } catch { return String(v); } };
 const log = (...args) => { if (logs.length < MAX_LOGS) logs.push(args.map(text).join(" ").slice(0, 2000)); };
 for (const level of ["debug", "info", "warn", "error"]) log[level] = log;
+
+// The host's calls: queued here as plain values, handed to the host by the answer of start() or
+// resume(), and settled by the next resume().
+let nextCall = 0;
+const queued = [];
+const waiting = new Map();
+let outcome;
+let wake;
+const notify = () => { const w = wake; wake = undefined; w?.(); };
+const host = new Proxy({}, {
+  get: (_, method) => (...args) => new Promise((resolve, reject) => {
+    const id = ++nextCall;
+    waiting.set(id, { resolve, reject });
+    queued.push({ id, method: String(method), args });
+    notify();
+  }),
+});
+/** The run's end, or the host calls queued since the last answer (several at once, when made together). */
+async function next() {
+  for (;;) {
+    if (outcome) return { done: outcome };
+    if (queued.length) {
+      await new Promise((r) => setTimeout(r, 0));
+      return { calls: queued.splice(0) };
+    }
+    await new Promise((r) => { wake = r; });
+  }
+}
 
 const filesOf = (host) => ({
   async *read(path, options) {
@@ -175,7 +235,24 @@ export default class extends WorkerEntrypoint {
       throw new Error("an OpenCode-style tool default-exports {description, args, execute}");
     return { description: String(m.description ?? ""), args: jsonSchemaOf(m.args) };
   }
-  async run(input, host) {
+  run(input, stub) {
+    return this.#run(input, stub);
+  }
+  start(input) {
+    void this.#run(input, host).then((r) => { outcome = r; notify(); });
+    return next();
+  }
+  resume(answers) {
+    for (const a of Array.isArray(answers) ? answers : []) {
+      const w = waiting.get(a?.id);
+      if (!w) continue;
+      waiting.delete(a.id);
+      if (a.ok) w.resolve(a.value);
+      else w.reject(new Error(String(a.error)));
+    }
+    return next();
+  }
+  async #run(input, host) {
     const m = tool.default;
     const execute = typeof m === "function" ? m : typeof m?.execute === "function" ? m.execute.bind(m) : undefined;
     if (!execute) return { ok: false, error: "the script exports no execute function", logs };
@@ -191,14 +268,110 @@ export default class extends WorkerEntrypoint {
 }
 `;
 
+type RunOutcome = { ok: boolean; output?: string; error?: string; logs?: string[] };
+type HostCall = { id: number; method: string; args: unknown[] };
+type HostAnswer =
+  | { id: number; ok: true; value: unknown }
+  | { id: number; ok: false; error: string };
+/** What the isolate answers start() and resume() with. */
+type RunStep = { done: RunOutcome } | { calls: HostCall[] };
+
 interface ToolEntrypoint {
   ready(): Promise<boolean>;
   abort(reason: string): Promise<void>;
   describe(): Promise<{ description: string; args: Record<string, unknown> }>;
-  run(
-    input: unknown,
-    host: ToolHost,
-  ): Promise<{ ok: boolean; output?: string; error?: string; logs?: string[] }>;
+  run(input: unknown, host: ToolHost): Promise<RunOutcome>;
+  start(input: unknown): Promise<RunStep>;
+  resume(answers: HostAnswer[]): Promise<RunStep>;
+}
+
+/** A loaded worker with no tool code in it: it only takes a stub, to see whether one crosses. */
+const PROBE = `
+import { WorkerEntrypoint } from "cloudflare:workers";
+export default class extends WorkerEntrypoint {
+  accepts(stub) { return true; }
+}
+`;
+
+/** A stub with nothing behind it, for the probe. */
+class ProbeTarget extends RpcTarget {}
+
+/**
+ * Whether this runtime's Worker Loader carries a stub into a loaded isolate, found once per
+ * isolate with the probe, never from a call a tool script runs in: a script controls its own
+ * result, and could make it fail as an unclonable value.
+ */
+let stubsCross: Promise<boolean> | undefined;
+
+/** A refusal to carry a stub into the loaded isolate (CellD). */
+const refusedStub = (e: unknown) =>
+  (e as Error)?.name === "DataCloneError" ||
+  /could not be cloned|Could not serialize|supports only Service Binding/.test(
+    String((e as Error)?.message ?? e),
+  );
+
+function probeStubs(loader: WorkerLoaderLike): Promise<boolean> {
+  stubsCross ??= (async () => {
+    const worker = loader.load({
+      compatibilityDate: COMPATIBILITY_DATE,
+      mainModule: "probe.js",
+      modules: { "probe.js": PROBE },
+      env: {},
+      globalOutbound: null,
+    });
+    try {
+      const entry = worker.getEntrypoint() as unknown as {
+        accepts(stub: unknown): Promise<boolean>;
+      };
+      return (await entry.accepts(new ProbeTarget())) === true;
+    } catch (e) {
+      if (refusedStub(e)) return false;
+      throw e;
+    } finally {
+      try {
+        worker.dispose?.();
+      } catch {}
+    }
+  })();
+  // A probe that failed otherwise (the loader itself) is tried again by the next run.
+  stubsCross.catch(() => {
+    stubsCross = undefined;
+  });
+  return stubsCross;
+}
+
+/** Runs the script with the host as a stub where stubs cross, else drives it call by call. */
+async function drive(
+  loader: WorkerLoaderLike,
+  entry: ToolEntrypoint,
+  input: unknown,
+  host: ToolHost,
+): Promise<RunOutcome> {
+  return (await probeStubs(loader)) ? entry.run(input, host) : driveByValues(entry, input, host);
+}
+
+/** Drives one run by plain values: answers the host calls the script waits on until it ends. */
+async function driveByValues(
+  entry: ToolEntrypoint,
+  input: unknown,
+  host: ToolHost,
+): Promise<RunOutcome> {
+  let step = await entry.start(input);
+  while (!("done" in step)) {
+    const answers = await Promise.all(
+      (Array.isArray(step.calls) ? step.calls : []).map(
+        async ({ id, method, args }): Promise<HostAnswer> => {
+          try {
+            return { id, ok: true, value: await host.invoke(String(method), args) };
+          } catch (e) {
+            return { id, ok: false, error: String((e as Error)?.message ?? e) };
+          }
+        },
+      ),
+    );
+    step = await entry.resume(answers);
+  }
+  return step.done;
 }
 
 const COMPATIBILITY_DATE = "2026-10-01";
@@ -316,7 +489,7 @@ async function runIn(
   });
   try {
     const outcome = await Promise.race([
-      entry.run(run.input, run.host).then((r) => ({ r })),
+      drive(loader, entry, run.input, run.host).then((r) => ({ r })),
       ended.then((killed) => ({ killed })),
     ]);
     if ("killed" in outcome) {

@@ -5,13 +5,13 @@
 // with the scripted model and a fake REST server, over REST and RPC.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  CAN,
   type Deployment,
   type FakeModel,
   type FakeRest,
   fakeModel,
   fakeRest,
   login,
-  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -138,7 +138,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
   const as = async (user: string) => connect(deployment, await login(deployment, u(user)));
   const binding = { plugins: ["fixture"], hosts: ["127.0.0.1"] };
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "lists a secret's name, level, bindings and update time, never its value",
     async () => {
       const ann = await as("ann");
@@ -173,7 +173,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
     },
   );
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "manages secrets only at a level the caller holds secrets.write for",
     async () => {
       const secret = (
@@ -292,7 +292,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
   const authOf = (got: { headers: Record<string, string> }[]) =>
     got.map((r) => r.headers.authorization);
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "the most specific level wins: user, then project, then workspace",
     async () => {
       const ann = await as("ann");
@@ -327,7 +327,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
     },
   );
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "a project plugin cannot send a shared secret to an unbound host or use one not bound to it",
     async () => {
       const ann = await as("ann");
@@ -426,7 +426,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
     expect(JSON.stringify([items, model.requests])).not.toContain("echoed-value-ab12");
   });
 
-  it.skipIf(RUNTIME === "browser")(
+  it.runIf(CAN.deploymentSecrets)(
     "a deployment secret reaches only its bound plugin and host",
     async () => {
       const ann = await as("ann");

@@ -491,11 +491,16 @@ export class AgentSession extends DurableObject<Env> {
             onApproval,
             waiting,
           };
-          return this.#remote.run(
+          const running = this.#remote.run(
             this.#remotePort(config, turn, emit),
             continues ? { ...run, continues: true } : run,
             emit,
           );
+          // The turn outlives the call that queued it, and waits on alarms and timers: its
+          // event stays alive until it ends, as Flue's turns' do (CellD drops the timers and
+          // continuations of an event that has ended; statewalker/statewalker-root#141).
+          this.ctx.waitUntil(running.catch(() => {}));
+          return running;
         }
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
