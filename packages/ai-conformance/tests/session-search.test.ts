@@ -260,6 +260,8 @@ describe.each(transports)("session search over %s", (name, connect) => {
     for (const args of [
       { query: "(", regex: true },
       { query: "(a+)+$", regex: true },
+      { query: "(a|a)*$", regex: true },
+      { query: "(\\w|\\s|.)*x", regex: true },
       { query: "x".repeat(201) },
       { query: "x", extra: 1 },
     ]) {

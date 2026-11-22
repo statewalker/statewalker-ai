@@ -13,6 +13,7 @@ import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { sealed, unsealed } from "./front-matter.js";
 import { capsOf, MEMORY_KINDS, type MemoryCaps, type MemoryKind, type Writer } from "./kinds.js";
+import { searchRegExp } from "./regex.js";
 import { scanText } from "./scan.js";
 import { ULID, ulid } from "./ulid.js";
 
@@ -650,12 +651,7 @@ export class MemoryService {
               throw codedError("EINVAL", `a query is 1-${MAX_QUERY} characters`);
             let test: (line: string) => boolean;
             if (action.regex === true) {
-              let re: RegExp;
-              try {
-                re = new RegExp(query, "i");
-              } catch (e) {
-                throw codedError("EINVAL", `not a regular expression: ${(e as Error).message}`);
-              }
+              const re = searchRegExp(query);
               test = (line) => re.test(line);
             } else {
               const q = query.toLowerCase();

@@ -9,6 +9,7 @@
 // Topics and items follow each session's active path by default; `all` reaches every branch
 // (statewalker/statewalker-root#159).
 import { codedError } from "@statewalker/ai-access";
+import { searchRegExp } from "@statewalker/ai-memory";
 
 /** A search of the user's sessions in the project. */
 export interface SessionSearchQuery {
@@ -128,31 +129,23 @@ export const MAX_SEARCH_LIMIT = 50;
 export const MAX_AROUND = 5;
 /** How much of one text a scan looks at, and how much of it a hit shows. */
 export const MAX_SCANNED_CHARS = 20_000;
+/** A regular expression looks at less of each text: even a pattern that passes the guard can be slow. */
+export const MAX_REGEX_SCANNED_CHARS = 4_000;
 const SNIPPET = 300;
-/** A group with a quantifier inside, quantified itself. */
-const NESTED_QUANTIFIER =
-  /\((?:[^()\\]|\\.)*(?:[+*]|\{\d+(?:,\d*)?\})(?:[^()\\]|\\.)*\)\s*(?:[+*]|\{\d+(?:,\d*)?\})/;
 
 /**
  * A matcher of a query: where in a text it matches (-1: nowhere). A regular expression is
- * case-insensitive; a malformed one or an overlong query is EINVAL. Texts are scanned up to
- * `MAX_SCANNED_CHARS`.
+ * case-insensitive; a malformed one, one that can backtrack for ever (`searchRegExp`) or an
+ * overlong query is EINVAL. Texts are scanned up to `MAX_SCANNED_CHARS` (a regular expression's up
+ * to `MAX_REGEX_SCANNED_CHARS`).
  */
 export function matcher(query: string, regex = false): (text: string) => number {
   if (typeof query !== "string" || !query || query.length > MAX_SEARCH_QUERY)
     throw codedError("EINVAL", `a query is 1-${MAX_SEARCH_QUERY} characters`);
   if (regex) {
-    // A quantified group that itself holds a quantifier (`(a+)+`, `(.*x){9}`) can backtrack for
-    // ever in the DO that scans: refused.
-    if (NESTED_QUANTIFIER.test(query))
-      throw codedError("EINVAL", "a quantified group holding a quantifier is not searched");
-    let re: RegExp;
-    try {
-      re = new RegExp(query, "i");
-    } catch (e) {
-      throw codedError("EINVAL", `not a regular expression: ${(e as Error).message}`);
-    }
-    return (text) => re.exec(text.slice(0, MAX_SCANNED_CHARS))?.index ?? -1;
+    // The same guard as memory's search: no pattern that can backtrack for ever.
+    const re = searchRegExp(query);
+    return (text) => re.exec(text.slice(0, MAX_REGEX_SCANNED_CHARS))?.index ?? -1;
   }
   const q = query.toLowerCase();
   return (text) => text.slice(0, MAX_SCANNED_CHARS).toLowerCase().indexOf(q);

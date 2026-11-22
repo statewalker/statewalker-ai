@@ -29,6 +29,7 @@ export {
   type Writer,
 } from "./kinds.js";
 export { type PrimedEntry, type Priming, primingOf, tokensOf } from "./priming.js";
+export { riskyPattern, searchRegExp } from "./regex.js";
 export { runMemoryCall } from "./run.js";
 export { scanText } from "./scan.js";
 export {
