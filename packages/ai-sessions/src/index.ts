@@ -14,6 +14,7 @@ export {
   type TurnRun,
 } from "./agent-session.js";
 export {
+  type AgentMemoryView,
   type AgentMessage,
   type AgentPort,
   type AgentRun,
@@ -38,6 +39,9 @@ export {
   type LimitWarningView,
   type McpMessage,
   type McpResponse,
+  type MemoryCall,
+  type MemoryPrimedView,
+  type MemoryTarget,
   type MessageAccepted,
   type Metadata,
   type ModelSubstitution,

@@ -80,6 +80,15 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     getModelConfig: () => api.getModelConfig().catch(refusal) as never,
     setModelConfig: (config) => api.setModelConfig(config as never).catch(refusal) as never,
     mcp: (id, message) => api.mcp(id, message as never).catch(refusal) as never,
+    listMemory: (target) => api.listMemory(target).catch(refusal) as never,
+    memoryEntry: (target, id) => api.memoryEntry(target, id).catch(refusal) as never,
+    memoryFile: (target, name) => api.memoryFile(target, name).catch(refusal) as never,
+    memoryBatch: (target, actions) =>
+      api.memoryBatch(target, actions as never).catch(refusal) as never,
+    eraseMemory: (target, which) => api.eraseMemory(target, which).catch(refusal) as never,
+    listAgentMemories: (project) => api.listAgentMemories(project).catch(refusal) as never,
+    exportProfile: async () => new Uint8Array(await api.exportProfile().catch(refusal)),
+    eraseProfile: () => api.eraseProfile().catch(refusal) as never,
     close: () => connection.close(),
   };
   return client;

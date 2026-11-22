@@ -11,9 +11,31 @@ import {
   type ModelUsage,
   parseLimits,
 } from "@statewalker/ai-environment";
+import type {
+  BatchResult,
+  EntryView,
+  FileView,
+  KindView,
+  MemoryAction,
+  MemoryCall,
+  MemorySnapshot,
+  MemoryUsage,
+  PrimedEntry,
+} from "@statewalker/ai-memory";
 import { sessionOfTurn } from "./turns.js";
 
-export type { ApprovalRequest, Limit, ModelsConfig, ModelUsage };
+export type {
+  ApprovalRequest,
+  BatchResult,
+  EntryView,
+  FileView,
+  KindView,
+  Limit,
+  MemoryAction,
+  MemoryCall,
+  ModelsConfig,
+  ModelUsage,
+};
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
@@ -125,8 +147,38 @@ export interface CreatedServiceAccount extends ServiceAccountView {
 /** A user's profile, as the session API shows it. */
 export interface ProfileView {
   user: string;
-  /** The projects the profile holds user memory of. */
-  projects: { workspace: string; project: string }[];
+  /** The user's preferences (their active entries). */
+  preferences: EntryView[];
+  /**
+   * The projects the profile holds user memory of, deleted and left ones included: `state` says
+   * whether the user is still a member, has left, or the project is gone (known for workspaces
+   * the user has a user session in).
+   */
+  projects: { workspace: string; project: string; state?: "member" | "left" | "gone" }[];
+}
+
+/**
+ * Which memory a memory API call names (statewalker/statewalker-root#157): `preferences` (no
+ * project), or a project's `user`, `project` or `agent:<plugin>/<agent>` memory.
+ */
+export interface MemoryTarget {
+  kind: string;
+  project?: string;
+}
+
+/** One agent's memory in a project, as `listAgentMemories` lists it. */
+export interface AgentMemoryView {
+  agent: string;
+  usage: MemoryUsage;
+}
+
+/** What a `memory_primed` item records: what the session was primed with (#157). */
+export interface MemoryPrimedView {
+  entries: PrimedEntry[];
+  /** Entries the scans at load blocked: flagged to the user, never shown to the agent. */
+  flagged: MemorySnapshot["flagged"];
+  /** Files changed outside the memory service: skipped and reported, never rewritten. */
+  skipped: MemorySnapshot["skipped"];
 }
 
 /** What a turn adds to its session, in order. */
@@ -138,7 +190,8 @@ export interface ItemInput {
     | "approval"
     | "model_fallback"
     | "mode_decision"
-    | "limit_warning";
+    | "limit_warning"
+    | "memory_primed";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -193,6 +246,11 @@ export interface ItemInput {
    * turn's usage crossed, `{meter, level, target, limit_level, period, used, value, warn_at}`.
    */
   warning?: LimitWarningView;
+  /**
+   * A `memory_primed` item (statewalker/statewalker-root#157): the memory the session was primed
+   * with at its start or after a compaction, each entry's kind, id, version and tokens.
+   */
+  memory?: MemoryPrimedView;
 }
 
 /** A limit whose warning share usage crossed (statewalker/statewalker-root#179). */
@@ -229,9 +287,10 @@ export interface GateDecisionInput {
 export interface StoredAction {
   /**
    * A file change, a database action (`db`: the path is the database), or a tool call (`tool`: the
-   * path is the tool's name, the content its arguments as JSON).
+   * path is the tool's name, the content its arguments as JSON), or a memory batch (`memory`: the
+   * path is the kind, the content its actions as JSON).
    */
-  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool" | "limit";
+  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool" | "limit" | "memory";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -619,6 +678,29 @@ export interface SessionApi {
   getModelConfig(): Promise<ModelsConfig>;
   /** Replaces the caller's own model configuration: their providers (keys are user secrets). */
   setModelConfig(config: ModelsConfig): Promise<ModelsConfig>;
+  /**
+   * One kind of memory (statewalker/statewalker-root#157), as a person sees it: its entries (the
+   * ones the scans block flagged), tombstones, attachments, usage and the files changed outside
+   * the memory service. A kind or project the caller cannot reach answers ENOENT.
+   */
+  listMemory(target: MemoryTarget): Promise<KindView>;
+  /** One entry with its earlier versions. */
+  memoryEntry(target: MemoryTarget, id: string): Promise<EntryView & { history: EntryView[] }>;
+  /** One attachment with its body. */
+  memoryFile(target: MemoryTarget, name: string): Promise<FileView>;
+  /** The memory tool's atomic batch, with the same rules, written by the caller. */
+  memoryBatch(target: MemoryTarget, actions: MemoryAction[]): Promise<BatchResult>;
+  /** Erases an entry (its history and tombstone too) or an attachment: only people erase. */
+  eraseMemory(
+    target: MemoryTarget,
+    which: { id?: string; name?: string },
+  ): Promise<{ erased: true }>;
+  /** A project's agent memories. */
+  listAgentMemories(project: string): Promise<{ agents: AgentMemoryView[] }>;
+  /** The caller's whole profile as a ZIP of its Markdown files. */
+  exportProfile(): Promise<Uint8Array>;
+  /** Erases the caller's profile: their preferences and their user memory of every project. */
+  eraseProfile(): Promise<{ erased: true }>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -709,6 +791,10 @@ export interface UserPort {
   setModelConfig(token: string, config: unknown): Promise<ModelsConfig>;
   holdStream(token: string): Promise<string>;
   releaseStream(token: string, id: string): Promise<void>;
+  /** One memory call of the caller, on the kind it names (statewalker/statewalker-root#157). */
+  memory(token: string, call: MemoryCall): Promise<unknown>;
+  exportProfile(token: string): Promise<Uint8Array>;
+  eraseProfile(token: string): Promise<{ erased: true }>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -1090,5 +1176,56 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     listModels: async (query) => ports.user.listModels(token, modelsQuery(query)),
     getModelConfig: () => ports.user.getModelConfig(token),
     setModelConfig: async (config) => ports.user.setModelConfig(token, config),
+    listMemory: async (target) =>
+      ports.user.memory(token, { op: "list", ...memoryTarget(target) }) as Promise<KindView>,
+    memoryEntry: async (target, id) =>
+      ports.user.memory(token, {
+        op: "entry",
+        ...memoryTarget(target),
+        id: String(id),
+      }) as Promise<EntryView & { history: EntryView[] }>,
+    memoryFile: async (target, name) =>
+      ports.user.memory(token, {
+        op: "file",
+        ...memoryTarget(target),
+        name: String(name),
+      }) as Promise<FileView>,
+    memoryBatch: async (target, actions) => {
+      if (!Array.isArray(actions) || actions.length === 0)
+        throw codedError("EINVAL", "actions is a non-empty list");
+      return ports.user.memory(token, {
+        op: "batch",
+        ...memoryTarget(target),
+        actions,
+      }) as Promise<BatchResult>;
+    },
+    eraseMemory: async (target, which) => {
+      const w = (which ?? {}) as { id?: unknown; name?: unknown };
+      if (typeof w.id !== "string" && typeof w.name !== "string")
+        throw codedError("EINVAL", "erase names an entry (id) or an attachment (name)");
+      return ports.user.memory(token, {
+        op: "erase",
+        ...memoryTarget(target),
+        ...(typeof w.id === "string" ? { id: w.id } : { name: String(w.name) }),
+      }) as Promise<{ erased: true }>;
+    },
+    listAgentMemories: async (project) => {
+      if (typeof project !== "string" || !project)
+        throw codedError("EINVAL", "project must be a project's name");
+      return ports.user.memory(token, { op: "agents", project }) as Promise<{
+        agents: AgentMemoryView[];
+      }>;
+    },
+    exportProfile: () => ports.user.exportProfile(token),
+    eraseProfile: () => ports.user.eraseProfile(token),
   };
+}
+
+/** A memory target as the API takes it (EINVAL otherwise). */
+function memoryTarget(target: unknown): MemoryTarget {
+  const t = (target ?? {}) as Record<string, unknown>;
+  if (typeof t.kind !== "string" || !t.kind) throw codedError("EINVAL", "kind is required");
+  if (t.project !== undefined && typeof t.project !== "string")
+    throw codedError("EINVAL", "project must be a project's name");
+  return { kind: t.kind, ...(typeof t.project === "string" ? { project: t.project } : {}) };
 }

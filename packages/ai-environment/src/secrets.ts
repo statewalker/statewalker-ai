@@ -220,6 +220,23 @@ export class SecretStore {
       .toArray()[0] as unknown as SecretRow | undefined;
   }
 
+  /**
+   * The values of one scope's secrets, opened now: only for the memory scan, which keeps any of
+   * them out of memory (statewalker/statewalker-root#157). A value that does not open is left out.
+   */
+  async values(level: StoredLevel, scope: string): Promise<string[]> {
+    const out: string[] = [];
+    for (const info of this.list(level, scope)) {
+      try {
+        const secret = await this.open(level, scope, info.name);
+        if (secret?.value) out.push(secret.value);
+      } catch {
+        // Sealed under another key: it cannot be matched, and nothing reads it.
+      }
+    }
+    return out;
+  }
+
   /** One secret's value, read and opened now; for the gateway only. */
   async open(level: StoredLevel, scope: string, name: string): Promise<ResolvedSecret | undefined> {
     const row = this.#row(level, scope, name);

@@ -106,12 +106,29 @@ import {
   parseModelsConfig,
   pickSessionModel,
   resolveModels,
+  rootedFiles,
   type SecretInfo,
   SecretStore,
   type StoredLevel,
   sessionSecrets,
   withDelay,
 } from "@statewalker/ai-environment";
+import {
+  DELETED_USER,
+  KeyedLock,
+  type MemoryCall,
+  type MemoryKind,
+  MemoryService,
+  memoryCall,
+  memoryFiles,
+  memoryRef,
+  parseMemoryCaps,
+  projectName,
+  runMemoryCall,
+  scanText,
+  type Writer,
+  writes,
+} from "@statewalker/ai-memory";
 import type {
   AgentRun,
   CreatedServiceAccount,
@@ -168,6 +185,10 @@ const MAX_TOOL_LIST = 10_000;
 
 /** The workspace's and each project's model configuration, in their system folders. */
 const MODELS_FILE = "models";
+/** A project's memory caps, beside its system folder's other settings (#157). */
+const MEMORY_CAPS_FILE = "memory-caps";
+/** Where a project's memory lives in its system folder (#157). */
+const MEMORY_FOLDER = "memory";
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
@@ -191,6 +212,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #databases: DatabaseGate;
   /** The workspace's, its projects' and its members' limits and counters (#179). */
   readonly #limits: WorkspaceLimits;
+  /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
+  readonly #memoryLock = new KeyedLock();
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -1864,6 +1887,293 @@ export class Workspace extends DurableObject<Env> {
   async deleteServiceAccount(userCapability: string, name: string): Promise<void> {
     await this.#admin(userCapability);
     await issuerOf(this.env).deleteServiceAccount(this.#name, String(name));
+  }
+
+  // ---- memory (statewalker/statewalker-root#157) ----------------------------------------------
+
+  /**
+   * Who holds a capability for memory: an agent session (its facts) or a user session. A
+   * capability narrowed for a plugin's tool never reaches memory: only the agent, through the
+   * memory tool, does.
+   */
+  async #memoryHolder(capability: string) {
+    const facts = await this.#authority.agentSessionOf(capability).catch(() => undefined);
+    if (facts?.tool) throw codedError("EACCES", "a tool's capability does not reach memory");
+    const user = facts?.user ?? (await this.#authority.userOfUserCapability(capability));
+    return { facts, user };
+  }
+
+  /** A project's memory caps: the deployment's, overridden by the project's `.system/memory-caps`. */
+  async #memoryCaps(project: string, store: FilesApi) {
+    return parseMemoryCaps(
+      this.env.MEMORY_CAPS,
+      await tryReadText(store, `/${project}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_CAPS_FILE}`),
+    );
+  }
+
+  /**
+   * The values of every secret stored for a user in a project: theirs, the project's, the
+   * workspace's and the deployment's. Only the memory scans read them, here.
+   */
+  async #secretValues(project: string | undefined, user: string): Promise<string[]> {
+    const values = [
+      ...(await this.#secrets.values("user", user)),
+      ...(project ? await this.#secrets.values("project", project) : []),
+      ...(await this.#secrets.values("workspace", "")),
+    ];
+    const deployment = this.#deploymentSecrets();
+    for (const info of deployment.info) {
+      const value = deployment.open(info.name)?.value;
+      if (value) values.push(value);
+    }
+    return values;
+  }
+
+  /**
+   * The memory service on a project's own memory and one agent's, in the project's system folder
+   * (never in any file view). Writes count against the project's storage limits and are refused
+   * over one before anything lands (#179).
+   */
+  async #memoryService(project: string, user: string, agent?: string): Promise<MemoryService> {
+    const store = await this.#store;
+    const metered = this.#meteredStore(store);
+    const base = `/${project}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_FOLDER}`;
+    const stores: Partial<Record<MemoryKind, FilesApi>> = {
+      project: rootedFiles(metered, `${base}/project`),
+    };
+    if (agent) stores.agent = rootedFiles(metered, `${base}/agents/${agent}`);
+    return new MemoryService({
+      files: memoryFiles(stores),
+      kinds: Object.keys(stores) as MemoryKind[],
+      caps: await this.#memoryCaps(project, store),
+      secretValues: () => this.#secretValues(project, user),
+      admit: (_kind, delta) =>
+        this.#limits.admitStorage(project, delta, store, () => this.#databases.storage()),
+      lock: this.#memoryLock,
+      lockKey: (kind) => `${project}/${kind === "agent" ? `agent:${agent}` : kind}`,
+    });
+  }
+
+  /**
+   * How the mode and the rules decide an agent session's memory write of a kind: plan denies it,
+   * a deny rule denies it, an ask waits on an approval of exactly that batch (unless `mayAsk` is
+   * false: preferences ask the user themselves, in every mode), and unattended asks deny.
+   */
+  async #memoryMode(
+    facts: AgentSessionFacts,
+    kind: MemoryKind,
+    content: string,
+    mayAsk: boolean,
+  ): Promise<void> {
+    const store = await this.#store;
+    const { mode } = await this.#modeState(facts, store);
+    const decideOne = await this.#decider(facts, store);
+    const decision = this.#settled(decideOne("memory", "write", kind), facts);
+    if (decision.verdict === "deny")
+      throw codedError(
+        "EACCES",
+        `may not write ${kind} memory in ${mode.name} mode: ${decision.reason}`,
+      );
+    if (decision.verdict === "allow" || !mayAsk) return;
+    const bytes = new TextEncoder().encode(content);
+    const id = await approvalId(facts.session, "memory", kind, bytes);
+    const request: ApprovalRequest = {
+      id,
+      session: facts.session,
+      project: facts.project,
+      action: { method: "memory", path: kind, size: bytes.length },
+      permission: `memory.write:${kind}`,
+      reason: decision.reason,
+    };
+    // A granted approval is used up before the classifier is asked: a block's retry passes.
+    if (this.#registry.consume(id, facts.session, facts.user)) return;
+    if (decision.verdict === "classify") {
+      // `auto`: the risk classifier judges the batch, as it judges file and database changes.
+      const c = await this.#classify(facts, store, request);
+      await this.#record(facts, {
+        action: request.action,
+        step: "classifier",
+        verdict: c.verdict,
+        reason: c.reason,
+        ...(c.model ? { model: c.model } : {}),
+        latency_ms: c.latency_ms,
+        ...(c.fallback ? { fallback: c.fallback } : {}),
+        ...(c.stop ? { stop: c.stop } : {}),
+        ...(c.verdict === "deny"
+          ? {
+              approval: id,
+              request: { ...request, reason: c.reason },
+              stored: { method: "memory", path: kind, content: bytes },
+            }
+          : {}),
+      });
+      if (c.verdict === "allow") return;
+      if (c.verdict === "deny")
+        throw codedError(
+          "EACCES",
+          `may not write ${kind} memory: the risk classifier denied it: ${c.reason} (blocked: the user may approve a retry, ${id})`,
+        );
+      throw approvalError({ ...request, reason: c.reason });
+    }
+    throw approvalError(request);
+  }
+
+  /**
+   * One memory call on project or agent memory (the memory tool's, with an agent session's
+   * capability; the memory API's, with a user session's). Every member reads both; writing takes
+   * `memory.write:project` or `memory.write:agent` (owners and editors), and an agent session's
+   * write also its mode. An agent session reaches its own project and its own agent's memory only;
+   * only a person erases. A project or kind the caller cannot reach answers ENOENT.
+   */
+  async memory(capability: string, raw: MemoryCall): Promise<unknown> {
+    const call = memoryCall(raw);
+    const { facts, user } = await this.#memoryHolder(capability);
+    const project = facts ? facts.project : projectName(call.project);
+    const access = await this.#access(project, user).catch(() => undefined);
+    if (!access?.member) throw codedError("ENOENT", "no such memory");
+    if (call.op === "agents") return { agents: await this.#agentMemories(project, user) };
+    if ((call.op as string) === "prime") {
+      if (!facts) throw codedError("EINVAL", "only agent sessions are primed");
+      return (await this.#memoryService(project, user, facts.agent)).prime(["project", "agent"]);
+    }
+    const ref = memoryRef(call.kind);
+    if (ref.kind !== "project" && ref.kind !== "agent")
+      throw codedError("ENOENT", "no such memory");
+    let agent = ref.agent;
+    if (ref.kind === "agent" && facts) {
+      if (agent && agent !== facts.agent) throw codedError("ENOENT", "no such memory");
+      agent = facts.agent;
+    }
+    if (ref.kind === "agent" && !agent) throw codedError("ENOENT", "no such memory");
+    if (writes(call)) {
+      if (facts && call.op === "erase") throw codedError("EACCES", "only a person erases memory");
+      // Only project roles: a workspace role never writes a project's memory.
+      const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+      if (!decide(grants, { area: "memory", action: "write", target: ref.kind }))
+        throw codedError("EACCES", `${user} may not write ${ref.kind} memory in ${project}`);
+      if (facts) await this.#memoryMode(facts, ref.kind, JSON.stringify(call.actions ?? []), true);
+    }
+    const writer: Writer = facts ? { user, agent: facts.agent, session: facts.session } : { user };
+    return runMemoryCall(await this.#memoryService(project, user, agent), ref.kind, call, writer);
+  }
+
+  /** A project's agent memories: one folder per agent, `<plugin>/<agent>`. */
+  async #agentMemories(project: string, user: string) {
+    const store = await this.#store;
+    const base = `/${project}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_FOLDER}/agents`;
+    const agents: { agent: string; usage: unknown }[] = [];
+    if (!(await store.exists(base))) return agents;
+    for await (const plugin of store.list(base)) {
+      if (plugin.kind !== "directory") continue;
+      for await (const a of store.list(plugin.path)) {
+        if (a.kind !== "directory") continue;
+        const agent = `${plugin.name}/${a.name}`;
+        const view = await (await this.#memoryService(project, user, agent)).list("agent");
+        agents.push({ agent, usage: view.usage });
+      }
+    }
+    return agents.sort((a, b) => a.agent.localeCompare(b.agent));
+  }
+
+  /**
+   * What a User DO asks before it reaches a profile kind (user memory, preferences): the
+   * capability verified, the membership (ENOENT for an agent session outside it), a sub-agent's
+   * limits (it writes neither), and the mode for a write (plan denies it; a rule's ask on user
+   * memory waits on an approval). It answers who writes and the project's caps.
+   */
+  async memoryAccess(
+    capability: string,
+    req: { kind: "user" | "preferences"; project?: string; write: boolean; content?: string },
+  ) {
+    const { facts, user } = await this.#memoryHolder(capability);
+    const kind: MemoryKind = req.kind === "preferences" ? "preferences" : "user";
+    const store = await this.#store;
+    if (facts) {
+      const access = await this.#access(facts.project, user).catch(() => undefined);
+      if (!access?.member) throw codedError("ENOENT", "no such memory");
+      if (req.write) {
+        if (facts.parent)
+          throw codedError(
+            "EACCES",
+            "a sub-agent writes only its own agent memory and the project memory",
+          );
+        await this.#memoryMode(facts, kind, String(req.content ?? ""), kind === "user");
+      }
+      return {
+        user,
+        project: facts.project,
+        member: true,
+        exists: true,
+        caps: await this.#memoryCaps(facts.project, store),
+        writer: { user, agent: facts.agent, session: facts.session },
+      };
+    }
+    if (kind === "preferences")
+      return {
+        user,
+        member: true,
+        exists: true,
+        caps: parseMemoryCaps(this.env.MEMORY_CAPS),
+        writer: { user },
+      };
+    const project = projectName(req.project);
+    const member = !!(await this.#access(project, user).catch(() => undefined))?.member;
+    return {
+      user,
+      project,
+      member,
+      exists: await store.exists(`/${project}`),
+      caps: member ? await this.#memoryCaps(project, store) : parseMemoryCaps(this.env.MEMORY_CAPS),
+      writer: { user },
+    };
+  }
+
+  /**
+   * The memory scans for a User DO's profile kinds, run here, where the secrets are: their values
+   * never leave this DO.
+   */
+  async scanMemory(
+    capability: string,
+    req: { project?: string; texts: string[] },
+  ): Promise<(string | undefined)[]> {
+    const { facts, user } = await this.#memoryHolder(capability);
+    const project = facts?.project ?? (req.project ? projectName(req.project) : undefined);
+    const values = await this.#secretValues(project, user);
+    return (Array.isArray(req.texts) ? req.texts : []).map((t) => scanText(String(t), values));
+  }
+
+  /**
+   * A user is being erased: their entries in every project's and agent's memory here stay, with
+   * `written_by` (and `forgotten_by`) set to the fixed "deleted user" id.
+   */
+  async replaceMemoryAuthor(userCapability: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const store = await this.#store;
+    for await (const p of store.list("/")) {
+      if (p.kind !== "directory") continue;
+      const base = `/${p.name}/${DEFAULT_SYSTEM_FOLDER}/${MEMORY_FOLDER}`;
+      if (!(await store.exists(base))) continue;
+      await (await this.#memoryService(p.name, user)).replaceAuthor("project", user, DELETED_USER);
+      const agents = `${base}/agents`;
+      if (!(await store.exists(agents))) continue;
+      for await (const plugin of store.list(agents))
+        if (plugin.kind === "directory")
+          for await (const a of store.list(plugin.path))
+            if (a.kind === "directory")
+              await (
+                await this.#memoryService(p.name, user, `${plugin.name}/${a.name}`)
+              ).replaceAuthor("agent", user, DELETED_USER);
+    }
+  }
+
+  /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): deletes a project, its system
+   * folder (so its project and agent memory) included. Its users' memory of it stays in their
+   * profiles, which then show it as gone.
+   */
+  async deleteProject(project: string): Promise<void> {
+    const name = projectName(project);
+    await (await this.#store).remove(`/${name}`);
   }
 
   /**
