@@ -40,6 +40,7 @@ function projectFiles(t: string): Record<string, string> {
       [`cid-${t}`]: "editor",
     }),
     [`/own-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner", [`kim-${t}`]: "editor" }),
+    [`/mgr-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner", [`dan-${t}`]: "editor" }),
     [`/rep-${t}/.system/limits`]: limits({
       meter: "turns",
       level: "project",
@@ -174,7 +175,10 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
     const own = await bob.usage({ period: "day" });
     expect(own).toMatchObject({ level: "user", target: u("bob"), period: "day" });
     expect(own.groups).toEqual([
-      expect.objectContaining({ key: {}, usage: expect.objectContaining({ turns: 1, model_spend: 3 }) }),
+      expect.objectContaining({
+        key: {},
+        usage: expect.objectContaining({ turns: 1, model_spend: 3 }),
+      }),
     ]);
     const byAgent = await bob.usage({ period: "day", group_by: ["agent", "model"] });
     expect(byAgent.groups).toContainEqual(
@@ -222,7 +226,11 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
     const ann = await as("ann");
     const s = await ann.startSession({ project: `use-${t}` });
     await ann.sendMessage(s.id, { content: "hello" });
-    const report = await boss.usage({ level: "workspace", period: "day", group_by: ["project", "user"] });
+    const report = await boss.usage({
+      level: "workspace",
+      period: "day",
+      group_by: ["project", "user"],
+    });
     expect(report).toMatchObject({ level: "workspace", target: "default" });
     expect(report.groups).toContainEqual(
       expect.objectContaining({
@@ -262,11 +270,132 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
       period: "day",
       group_by: ["user", "model"],
     });
-    expect(owner.groups).toContainEqual({ key: { user: u("kim"), model: "kims/own" }, own_key: true });
+    expect(owner.groups).toContainEqual({
+      key: { user: u("kim"), model: "kims/own" },
+      own_key: true,
+    });
     expect(owner.groups.some((g) => g.key.model === "kims/own" && g.usage)).toBe(false);
-    const admin = await (await as("boss")).usage({ level: "workspace", period: "day", group_by: ["user"] });
+    const admin = await (await as("boss")).usage({
+      level: "workspace",
+      period: "day",
+      group_by: ["user"],
+    });
     const kims = admin.groups.filter((g) => g.key.user === u("kim"));
     expect(kims).toContainEqual({ key: { user: u("kim") }, own_key: true });
     expect(kims.some((g) => g.usage?.model_spend)).toBe(false);
+  });
+
+  it("lets the workspace admin manage workspace, project and member limits, and no one else", async () => {
+    const boss = await as("boss");
+    const ann = await as("ann");
+    const dan = await as("dan");
+    const turns = (value: number) => [{ meter: "turns", value, period: "day" }];
+    expect(await boss.setLimits("member", u("dan"), { limits: turns(2) })).toMatchObject({
+      level: "member",
+      target: u("dan"),
+      limits: [expect.objectContaining({ meter: "turns", value: 2, level: "member" })],
+    });
+    expect(
+      (await dan.effectiveLimits({ project: `mgr-${t}` })).limits.find((l) => l.level === "member"),
+    ).toMatchObject({ meter: "turns", value: 2, target: u("dan") });
+    expect((await boss.getLimits("member", u("dan"))).limits).toHaveLength(1);
+    await expect(ann.setLimits("member", u("dan"), { limits: turns(50) })).rejects.toMatchObject({
+      status: 403,
+    });
+    await boss.deleteLimits("member", u("dan"));
+    expect(
+      (await dan.effectiveLimits({ project: `mgr-${t}` })).limits.some((l) => l.level === "member"),
+    ).toBe(false);
+    // A workspace limit, and a malformed one refused.
+    await boss.setLimits("workspace", "default", {
+      limits: [{ meter: "sessions", value: 10_000 }],
+    });
+    expect((await boss.getLimits("workspace", "default")).limits).toEqual([
+      expect.objectContaining({ meter: "sessions", value: 10_000 }),
+    ]);
+    await expect(
+      boss.setLimits("workspace", "default", { limits: [{ meter: "nope", value: 1 }] }),
+    ).rejects.toMatchObject({ status: 400 });
+    await expect(ann.getLimits("workspace", "default")).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("lets owners set project and session limits within the admin's, which they cannot lift", async () => {
+    const boss = await as("boss");
+    const ann = await as("ann");
+    const dan = await as("dan");
+    const p = `mgr-${t}`;
+    await boss.setLimits("project", p, { limits: [{ meter: "turns", value: 100, period: "day" }] });
+    await ann.setLimits("project", p, { limits: [{ meter: "turns", value: 50, period: "day" }] });
+    const values = async () =>
+      (await ann.effectiveLimits({ project: p })).limits
+        .filter((l) => l.level === "project" && l.meter === "turns")
+        .map((l) => l.value)
+        .sort((a, b) => a - b);
+    expect(await values()).toEqual([50, 100]);
+    // The owner removes their own limit, never the admin's.
+    await ann.deleteLimits("project", p);
+    expect(await values()).toEqual([100]);
+    // Session defaults of the project: every new session starts with them.
+    await ann.setLimits("session", p, {
+      limits: [{ meter: "tool_calls", value: 4, period: "total" }],
+    });
+    const s = await dan.startSession({ project: p });
+    expect(
+      (await dan.effectiveLimits({ session: s.id })).limits.find((l) => l.level === "session"),
+    ).toMatchObject({ meter: "tool_calls", value: 4, target: s.id });
+    // An editor manages neither.
+    await expect(
+      dan.setLimits("project", p, { limits: [{ meter: "turns", value: 1000, period: "day" }] }),
+    ).rejects.toMatchObject({ status: 403 });
+    await expect(dan.deleteLimits("session", p)).rejects.toMatchObject({ status: 403 });
+    await ann.deleteLimits("session", p);
+    await boss.deleteLimits("project", p);
+  });
+
+  it("lets users limit their own sessions and keys, without lifting the defaults they started with", async () => {
+    const ann = await as("ann");
+    const dan = await as("dan");
+    const p = `mgr-${t}`;
+    await ann.setLimits("session", p, {
+      limits: [{ meter: "tool_calls", value: 4, period: "total" }],
+    });
+    const s = await dan.startSession({ project: p });
+    await ann.deleteLimits("session", p);
+    await dan.setLimits("session", s.id, { limits: [{ meter: "turns", value: 1 }] });
+    const session = async () =>
+      (await dan.effectiveLimits({ session: s.id })).limits
+        .filter((l) => l.level === "session")
+        .map((l) => `${l.meter}:${l.value}`)
+        .sort();
+    expect(await session()).toEqual(["tool_calls:4", "turns:1"]);
+    expect((await dan.getLimits("session", s.id)).limits).toEqual([
+      expect.objectContaining({ meter: "turns", value: 1, level: "session" }),
+    ]);
+    await dan.sendMessage(s.id, { content: "hello" });
+    await expect(dan.postMessage(s.id, { content: "hello" })).rejects.toMatchObject({
+      status: 429,
+    });
+    // Removing their own limits leaves the defaults.
+    await dan.deleteLimits("session", s.id);
+    expect(await session()).toEqual(["tool_calls:4"]);
+    // Only the session's own user manages it.
+    await expect(
+      ann.setLimits("session", s.id, { limits: [{ meter: "turns", value: 1 }] }),
+    ).rejects.toMatchObject({ status: 404 });
+    // The user's own keys: their user limits, and no one else's.
+    await dan.setLimits("user", u("dan"), {
+      limits: [{ meter: "model_spend", value: 5, period: "month" }],
+    });
+    expect((await dan.effectiveLimits()).limits.find((l) => l.level === "user")).toMatchObject({
+      meter: "model_spend",
+      value: 5,
+      target: u("dan"),
+    });
+    expect((await dan.getLimits("user", u("dan"))).limits).toHaveLength(1);
+    await expect(
+      dan.setLimits("user", u("ann"), { limits: [{ meter: "model_spend", value: 5 }] }),
+    ).rejects.toMatchObject({ status: 403 });
+    await dan.deleteLimits("user", u("dan"));
+    expect((await dan.effectiveLimits()).limits.some((l) => l.level === "user")).toBe(false);
   });
 });

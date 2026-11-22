@@ -7,11 +7,14 @@ import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { filesOverRpc, groupUsage, type UsageMeta } from "@statewalker/ai-environment";
+import { KeyedLock } from "@statewalker/ai-memory";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
   type DatabaseCall,
   type DeleteSecretRequest,
+  type LimitsCall,
+  type LimitsView,
   type MemoryCall,
   type Metadata,
   type ModelsQuery,
@@ -23,7 +26,7 @@ import {
   type UsageReport,
   UserSessions,
 } from "@statewalker/ai-sessions";
-import { tryReadText } from "@statewalker/webrun-files";
+import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import {
   approvalTtlMs,
   blockSizeOf,
@@ -35,12 +38,15 @@ import {
   verifyToken,
   workspaceOf,
 } from "./env.js";
-import { LIMITS_FILE, refusal, UserLimits, warningView } from "./limits-host.js";
+import { editLimitsFile, LIMITS_FILE, refusal, UserLimits, warningView } from "./limits-host.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
   /** The user level's limits and counters: spend on the user's own keys (#179). */
   readonly #limits: UserLimits;
+  /** The user's profile: their own folder of the deployment's profiles file system. */
+  readonly #profile: FilesApi;
+  readonly #limitsLock = new KeyedLock();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -48,6 +54,7 @@ export class User extends DurableObject<Env> {
     const profile = filesOverRpc((method, args) => profilesOf(env).files(user, method, args), {
       blockSize: blockSizeOf(env),
     });
+    this.#profile = profile;
     this.#limits = new UserLimits(ctx.storage.sql, env, user, () =>
       tryReadText(profile, `/${LIMITS_FILE}`),
     );
@@ -83,6 +90,7 @@ export class User extends DurableObject<Env> {
           delegate: (capability, parent, grant) => ws.delegate(capability, parent, grant),
           effectiveLimits: (capability, query) => ws.effectiveLimits(capability, query),
           usage: (capability, query) => ws.usageReport(capability, query),
+          manageLimits: (capability, call) => ws.manageLimits(capability, call),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -187,13 +195,41 @@ export class User extends DurableObject<Env> {
       workspace,
       user: nameOf(this.ctx),
     });
-    const agents = this.#sessions.sessionAgents(rows.flatMap((r) => (r.session ? [r.session] : [])));
+    const agents = this.#sessions.sessionAgents(
+      rows.flatMap((r) => (r.session ? [r.session] : [])),
+    );
     const own = groupUsage(rows, report.group_by, {
       timeZone: ledgerOptions(this.env).timeZone,
       agentOf: (session) => agents.get(session) ?? "",
       ownKey: true,
     });
     return { ...report, groups: [...report.groups, ...own] };
+  }
+
+  /**
+   * One call on the limits the user manages (statewalker/statewalker-root#181): their own keys'
+   * (the `user` level, in their profile's `/limits`, which only they set) here; every other
+   * level at the token's workspace.
+   */
+  async manageLimits(token: string, call: LimitsCall): Promise<LimitsView> {
+    await this.#reachable();
+    if (call?.level !== "user") return this.#sessions.manageLimits(token, call);
+    const { user } = await this.#sessions.claims(token);
+    if (call.target !== user)
+      throw codedError("EACCES", `${user} may not manage ${String(call.target)}'s limits`);
+    const limits = await this.#limitsLock.run("user", () =>
+      editLimitsFile(
+        this.#profile,
+        `/${LIMITS_FILE}`,
+        (e) => e.level === "user",
+        call.op === "set"
+          ? (call.limits ?? []).map((l) => ({ ...l, level: "user" as const, target: user }))
+          : call.op === "delete"
+            ? []
+            : undefined,
+      ),
+    );
+    return { level: "user", target: user, limits };
   }
 
   /** Test-only: the user's own-key usage records after a seq. */

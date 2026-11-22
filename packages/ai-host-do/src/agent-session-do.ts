@@ -17,6 +17,8 @@ import {
   approvalOf,
   errorMessage,
   filesOverRpc,
+  isSessionMeter,
+  type Limit,
   limitOfMessage,
   type ModelCall,
   type ModelResponse,
@@ -692,6 +694,23 @@ export class AgentSession extends DurableObject<Env> {
 
   usage() {
     return this.#core.usage();
+  }
+
+  /**
+   * The session's own limits, which its user set (statewalker/statewalker-root#181): a list
+   * replaces them (the session level counts only its own meters: EINVAL for another).
+   */
+  ownLimits(limits?: Limit[]) {
+    const config = this.#core.config();
+    if (!config) throw codedError("ENOENT", "no such agent session");
+    if (limits !== undefined) {
+      const bad = limits.find((l) => !isSessionMeter(l.meter));
+      if (bad) throw codedError("EINVAL", `the session level does not count ${bad.meter}`);
+      this.#limits.setOwn(
+        limits.map((l) => ({ ...l, level: "session" as const, target: config.id })),
+      );
+    }
+    return this.#limits.own(config);
   }
 
   /** The session level's limits now (statewalker/statewalker-root#181). */

@@ -5,15 +5,17 @@ import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 
 import {
   type FilesRpcMethod,
+  LIMIT_LEVELS,
   type Limit,
+  type LimitLevel,
   type LimitState,
   type ModelLevel,
-  USAGE_GROUPS,
-  type UsageGroup,
-  type UsageGroupBy,
   type ModelsConfig,
   type ModelUsage,
   parseLimits,
+  USAGE_GROUPS,
+  type UsageGroup,
+  type UsageGroupBy,
 } from "@statewalker/ai-environment";
 import type {
   BatchResult,
@@ -37,11 +39,11 @@ export type {
   Limit,
   LimitState,
   MemoryAction,
-  UsageGroup,
-  UsageGroupBy,
   MemoryCall,
   ModelsConfig,
   ModelUsage,
+  UsageGroup,
+  UsageGroupBy,
 };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
@@ -735,6 +737,17 @@ export interface SessionApi {
    * agent, model or day. Usage under a user's own key shows its amounts to that user alone.
    */
   usage(query?: UsageQuery): Promise<UsageReport>;
+  /**
+   * The limits the caller manages at a level and target (statewalker/statewalker-root#181), with
+   * `limits.write:<level>`: the workspace admin the workspace's, projects' and members'; a
+   * project's owners its own and its sessions' defaults (target: the project); users their own
+   * sessions' (target: the session) and their own keys' (`user`, target: themselves). Each only
+   * adds to the broader levels': the tightest applies, and no one removes another's.
+   */
+  getLimits(level: string, target: string): Promise<LimitsView>;
+  /** Replaces the limits the caller manages there: `{limits: [{meter, value, period?, …}]}`. */
+  setLimits(level: string, target: string, req: { limits: unknown[] }): Promise<LimitsView>;
+  deleteLimits(level: string, target: string): Promise<{ deleted: true }>;
 }
 
 /** What a usage report is asked for (statewalker/statewalker-root#181). */
@@ -767,6 +780,26 @@ export interface UsageReport {
    * amounts for that user alone, without them for anyone else.
    */
   groups: UsageGroup[];
+}
+
+/** The limits one manager set at one level and target (statewalker/statewalker-root#181). */
+export interface LimitsView {
+  level: LimitLevel;
+  target: string;
+  limits: Limit[];
+}
+
+/**
+ * One call managing the limits at a level and target: the workspace's (`workspace`, its name),
+ * a project's (`project`; `session` for its sessions' defaults), a member's (`member`, the user)
+ * or the caller's own keys (`user`, themselves). `set` replaces what the caller manages there.
+ */
+export interface LimitsCall {
+  op: "get" | "set" | "delete";
+  level: LimitLevel;
+  target: string;
+  /** For `set`: each with that level and target. */
+  limits?: Limit[];
 }
 
 export interface EffectiveLimitsQuery {
@@ -802,9 +835,15 @@ export interface AgentSessionConfig {
   mode?: string;
   /**
    * The session's limits (statewalker/statewalker-root#179): the broader levels' session
-   * defaults and the start request's own, all counted in the agent session's DO.
+   * defaults (with a session started before #181, the start request's own too), all counted in
+   * the agent session's DO.
    */
   limits?: Limit[];
+  /**
+   * The session's own limits from its start request (statewalker/statewalker-root#181): its
+   * user replaces them later through the limits API, which leaves `limits` as they are.
+   */
+  ownLimits?: Limit[];
   /** Whether its models include the user's own provider: own-key spend is reserved with the user. */
   ownKeys?: boolean;
   /** No one answers approvals: a limit's ask denies. */
@@ -870,6 +909,8 @@ export interface UserPort {
   effectiveLimits(token: string, query: { project?: string }): Promise<{ limits: LimitState[] }>;
   /** A usage report the caller may see; their own-key usage with its amounts at user level. */
   usage(token: string, query: UsageQuery): Promise<UsageReport>;
+  /** One call on the limits the caller manages (a session's own are its agent session's). */
+  manageLimits(token: string, call: LimitsCall): Promise<LimitsView>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -947,6 +988,8 @@ export interface AgentPort {
   limits(): Promise<LimitState[]>;
   /** The session's model usage, totalled; none before its first request. */
   usage(): Promise<UsageTotals | undefined>;
+  /** The session's own limits, which its user set: undefined reads them, a list replaces them. */
+  ownLimits(limits?: Limit[]): Promise<Limit[]>;
 }
 
 export interface SessionApiPorts {
@@ -1014,6 +1057,29 @@ function sessionLimits(limits: unknown): Limit[] {
   const problem = parsed.problems.find((p) => !p.includes("its period is total"));
   if (problem) throw codedError("EINVAL", problem);
   return parsed.limits.map(({ target: _t, ...l }) => l);
+}
+
+/** Where limits are managed (EINVAL otherwise; the deployment's are its LIMITS, set by no one). */
+function limitsPlace(level: unknown, target: unknown): { level: LimitLevel; target: string } {
+  if (!(LIMIT_LEVELS as readonly unknown[]).includes(level))
+    throw codedError("EINVAL", `level is one of ${LIMIT_LEVELS.join(", ")}`);
+  if (level === "deployment")
+    throw codedError("EACCES", "the deployment's limits are its configuration (LIMITS)");
+  if (typeof target !== "string" || !NAME.test(target))
+    throw codedError("EINVAL", "target must be a name");
+  return { level: level as LimitLevel, target };
+}
+
+/** The limits of a `set`, each at the place's level and target (EINVAL names the first problem). */
+function limitsOfRequest(raw: unknown, place: { level: LimitLevel; target: string }): Limit[] {
+  if (!Array.isArray(raw) || raw.length > 32)
+    throw codedError("EINVAL", "limits is a list of at most 32 limits");
+  const parsed = parseLimits(
+    raw.map((l) => ({ ...((l ?? {}) as object), level: place.level, target: place.target })),
+  );
+  const problem = parsed.problems.find((p) => !p.includes("its period is total"));
+  if (problem) throw codedError("EINVAL", problem);
+  return parsed.limits;
 }
 
 /** A usage query as the API takes it (EINVAL otherwise); `group_by` may be a comma list. */
@@ -1130,6 +1196,16 @@ const streamUrl = (session: string, turn: string, offset: number) =>
 
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
   const own = (id: unknown) => ports.user.ownAgentSession(token, String(id));
+  /** A session's own limits are its agent session's; every other place is managed by the user's DO. */
+  const manage = async (call: LimitsCall): Promise<LimitsView> => {
+    if (call.level !== "session" || !call.target.startsWith("as-"))
+      return ports.user.manageLimits(token, call);
+    const session = await own(call.target);
+    const agent = ports.agent(session.id);
+    const limits =
+      call.op === "get" ? await agent.ownLimits() : await agent.ownLimits(call.limits ?? []);
+    return { level: "session", target: session.id, limits };
+  };
   const withStatus = async (session: AgentSessionView): Promise<AgentSessionView> => ({
     ...session,
     status: await ports.agent(session.id).status(),
@@ -1325,6 +1401,18 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     exportProfile: () => ports.user.exportProfile(token),
     eraseProfile: () => ports.user.eraseProfile(token),
     usage: async (query) => ports.user.usage(token, usageQuery(query)),
+    async getLimits(level, target) {
+      return manage({ op: "get", ...limitsPlace(level, target) });
+    },
+    async setLimits(level, target, req) {
+      const place = limitsPlace(level, target);
+      const raw = (req as { limits?: unknown } | undefined)?.limits;
+      return manage({ op: "set", ...place, limits: limitsOfRequest(raw, place) });
+    },
+    async deleteLimits(level, target) {
+      await manage({ op: "delete", ...limitsPlace(level, target) });
+      return { deleted: true as const };
+    },
     async effectiveLimits(query) {
       const q = (query ?? {}) as Record<string, unknown>;
       for (const k of ["project", "session"] as const)

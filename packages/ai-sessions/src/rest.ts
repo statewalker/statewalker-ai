@@ -77,6 +77,13 @@ export async function handleSessionRest(
         period: url.searchParams.get("period") ?? undefined,
         group_by: url.searchParams.get("group_by") ?? undefined,
       } as never);
+    if (parts[1] === "limits" && parts.length === 4 && parts[2] !== "effective") {
+      const [, , level, target] = parts as [string, string, string, string];
+      if (request.method === "GET") return api().getLimits(level, target);
+      if (request.method === "PUT")
+        return api().setLimits(level, target, (await bodyOf(request)) as never);
+      if (request.method === "DELETE") return api().deleteLimits(level, target);
+    }
     if (route === "GET /approvals") return api().listApprovals();
     if (request.method === "POST" && parts[1] === "approvals" && parts[2] && parts.length === 3)
       return api().answerApproval(parts[2], (await bodyOf(request)) as never);

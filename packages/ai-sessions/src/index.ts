@@ -38,6 +38,8 @@ export {
   type ItemsPage,
   type ItemsQuery,
   type LimitState,
+  type LimitsCall,
+  type LimitsView,
   type LimitWarningView,
   type McpMessage,
   type McpResponse,

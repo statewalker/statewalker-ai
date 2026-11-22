@@ -92,14 +92,11 @@ import {
   type GatewayResult,
   gatedFilesRpc,
   gatewayFetch,
+  groupUsage,
   IGNORE_FILE,
   ignoreRules,
-  groupUsage,
   type Limit,
   type LimitState,
-  type Period,
-  USAGE_GROUPS,
-  windowOf,
   lookupModel,
   type ModeGate,
   type ModelCall,
@@ -115,6 +112,7 @@ import {
   mayUse,
   normalise,
   type OutgoingRequest,
+  type Period,
   parseModelsConfig,
   pickSessionModel,
   resolveModels,
@@ -123,6 +121,8 @@ import {
   SecretStore,
   type StoredLevel,
   sessionSecrets,
+  USAGE_GROUPS,
+  windowOf,
   withDelay,
 } from "@statewalker/ai-environment";
 import {
@@ -145,6 +145,8 @@ import type {
   AgentRun,
   CreatedServiceAccount,
   DeleteSecretRequest,
+  LimitsCall,
+  LimitsView,
   ModelsQuery,
   ModelView,
   PinnedDefinitions,
@@ -174,6 +176,8 @@ import {
   verifyToken,
 } from "./env.js";
 import {
+  editLimitsFile,
+  LIMITS_FILE,
   meteredFiles,
   refusal,
   type WarningView,
@@ -234,6 +238,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #limits: WorkspaceLimits;
   /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
   readonly #memoryLock = new KeyedLock();
+  /** Edits of a limits file are serialized (#181). */
+  readonly #limitsLock = new KeyedLock();
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -1353,6 +1359,90 @@ export class Workspace extends DurableObject<Env> {
         ...groupUsage(own, groupBy, { ...options, ownKey: true }),
       ],
     };
+  }
+
+  /** The user's workspace roles' grants (a project's roles never reach the workspace). */
+  async #workspaceGrants(user: string): Promise<RoleGrant[]> {
+    const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+      Object.hasOwn(WORKSPACE_ROLES, r),
+    );
+    return resolveRoles(held, {}).grants;
+  }
+
+  /**
+   * One call on the limits a user manages here (statewalker/statewalker-root#181), each in the
+   * file its level is read from: the workspace admin's (`limits.write:workspace`, `:project`,
+   * `:member`) in `/.system/limits`; a project owner's (project roles granting
+   * `limits.write:project`, `:session`) in `<project>/.system/limits`. Each manager reads and
+   * replaces only their own entries: an owner never lifts the admin's limit on their project.
+   */
+  async manageLimits(userCapability: string, call: LimitsCall): Promise<LimitsView> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const level = call?.level;
+    const target = String(call?.target ?? "");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(target))
+      throw codedError("EINVAL", "target must be a name");
+    const writes = (grants: readonly RoleGrant[], what: string) =>
+      decide(grants, { area: "limits", action: "write", target: what });
+    const refuse = () =>
+      codedError("EACCES", `${user} may not manage ${level} limits of ${target}`);
+    const workspaceFile = `/${DEFAULT_SYSTEM_FOLDER}/${LIMITS_FILE}`;
+    const projectFile = `/${target}/${DEFAULT_SYSTEM_FOLDER}/${LIMITS_FILE}`;
+    const projectGrants = async () => {
+      const access = await this.#access(target, user);
+      return access.member
+        ? access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role))
+        : [];
+    };
+    let path: string;
+    let mine: (e: Record<string, unknown>) => boolean;
+    let stored = (l: Limit): Limit => l;
+    const ws = await this.#workspaceGrants(user);
+    switch (level) {
+      case "workspace":
+        if (!writes(ws, "workspace")) throw refuse();
+        if (target !== this.#name) throw codedError("ENOENT", `no workspace ${target} here`);
+        path = workspaceFile;
+        mine = (e) => e.level === "workspace";
+        break;
+      case "member":
+        if (!writes(ws, "member")) throw refuse();
+        path = workspaceFile;
+        mine = (e) => e.level === "member" && e.target === target;
+        break;
+      case "project":
+        if (writes(ws, "project")) {
+          path = workspaceFile;
+          mine = (e) => e.level === "project" && e.target === target;
+        } else if (writes(await projectGrants(), "project")) {
+          path = projectFile;
+          mine = (e) => e.level === "project";
+        } else throw refuse();
+        break;
+      case "session":
+        // A project's defaults for its new sessions (a session's own are its agent session's).
+        if (!writes(await projectGrants(), "session")) throw refuse();
+        path = projectFile;
+        mine = (e) => e.level === "session" && e.target === undefined;
+        stored = ({ target: _t, ...l }) => l;
+        break;
+      default:
+        throw codedError("EINVAL", `no ${String(level)} limits are managed here`);
+    }
+    const store = await this.#store;
+    const limits = await this.#limitsLock.run(path, () =>
+      editLimitsFile(
+        store,
+        path,
+        mine,
+        call.op === "set"
+          ? (call.limits ?? []).map((l) => stored({ ...l, level, target }))
+          : call.op === "delete"
+            ? []
+            : undefined,
+      ),
+    );
+    return { level, target, limits };
   }
 
   /** Test-only: the workspace's usage records after a seq. */

@@ -82,6 +82,7 @@ function sessionApi(env: Env, token: string) {
       eraseProfile: async (t) => (await user()).eraseProfile(t),
       effectiveLimits: async (t, q) => (await user()).effectiveLimits(t, q),
       usage: async (t, q) => (await user()).usage(t, q),
+      manageLimits: async (t, call) => (await user()).manageLimits(t, call),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -100,6 +101,7 @@ function sessionApi(env: Env, token: string) {
         mcp: (message) => agent.mcp(message),
         limits: () => agent.limits(),
         usage: () => agent.usage(),
+        ownLimits: (limits) => agent.ownLimits(limits),
       };
     },
   });

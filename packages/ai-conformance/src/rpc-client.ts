@@ -91,6 +91,10 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     eraseProfile: () => api.eraseProfile().catch(refusal) as never,
     effectiveLimits: (q) => api.effectiveLimits(q ?? {}).catch(refusal) as never,
     usage: (q) => api.usage((q ?? {}) as never).catch(refusal) as never,
+    getLimits: (level, target) => api.getLimits(level, target).catch(refusal) as never,
+    setLimits: (level, target, req) =>
+      api.setLimits(level, target, req as never).catch(refusal) as never,
+    deleteLimits: (level, target) => api.deleteLimits(level, target).catch(refusal) as never,
     close: () => connection.close(),
   };
   return client;

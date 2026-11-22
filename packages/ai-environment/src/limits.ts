@@ -830,7 +830,7 @@ export class LimitLedger {
       }));
   }
 
-    /**
+  /**
    * Usage between `from` and `until`, summed per project, user, session, model and meter in
    * quarter-hour buckets (every time zone's days start on one): the input of usage reports.
    */

@@ -255,7 +255,7 @@ function pageSize(limit: unknown, fallback: number): number {
 }
 
 /** The core is an agent session DO's side of the API, but for its MCP endpoint (the host's). */
-export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits"> {
+export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "ownLimits"> {
   readonly #sql: SqlLike;
   readonly #runTurn: RunTurn;
   readonly #runAction: RunAction;

@@ -522,6 +522,23 @@ export interface SessionClient {
   }): Promise<{ limits: LimitState[] }>;
   /** `GET /v1/usage?level&project&period&group_by`: usage totals the caller may see. */
   usage(query?: UsageQuery): Promise<UsageReport>;
+  /** `GET /v1/limits/{level}/{target}`: the limits the caller manages there. */
+  getLimits(level: string, target: string): Promise<LimitsView>;
+  /** `PUT /v1/limits/{level}/{target}`: replaces them. */
+  setLimits(
+    level: string,
+    target: string,
+    req: { limits: Record<string, unknown>[] },
+  ): Promise<LimitsView>;
+  /** `DELETE /v1/limits/{level}/{target}`: removes them. */
+  deleteLimits(level: string, target: string): Promise<{ deleted: true }>;
+}
+
+/** The limits one manager set at one level and target. */
+export interface LimitsView {
+  level: string;
+  target: string;
+  limits: (Record<string, unknown> & { meter: string; value: number; level: string })[];
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -635,6 +652,9 @@ const itemsSearch = (q: ItemsQuery = {}) => {
   const s = p.toString();
   return s ? `?${s}` : "";
 };
+
+const limitsPath = (level: string, target: string) =>
+  `/v1/limits/${encodeURIComponent(level)}/${encodeURIComponent(target)}`;
 
 /** A query string of the defined values. */
 const search = (q: Record<string, unknown>) => {
@@ -772,6 +792,9 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         "GET",
         `/v1/usage${search({ ...q, ...(group_by ? { group_by: group_by.join(",") } : {}) })}`,
       ),
+    getLimits: (level, target) => call("GET", limitsPath(level, target)),
+    setLimits: (level, target, req) => call("PUT", limitsPath(level, target), req),
+    deleteLimits: (level, target) => call("DELETE", limitsPath(level, target)),
     effectiveLimits: (q = {}) =>
       call("GET", `/v1/limits/effective${search(q as Record<string, unknown>)}`),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
