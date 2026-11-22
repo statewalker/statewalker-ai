@@ -22,6 +22,8 @@ export {
   type AgentRun,
   type AgentSessionConfig,
   type AgentSessionView,
+  type AgentsQuery,
+  type AgentView,
   type ApprovalAnswer,
   type ApprovalRequest,
   type ApprovalView,

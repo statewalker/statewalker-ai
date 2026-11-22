@@ -20,6 +20,7 @@ import {
   serveFilesRpc,
   serveSessionRpc,
 } from "@statewalker/ai-sessions";
+import { handleUhpRest } from "@statewalker/ai-uhp";
 import {
   agentOf,
   blockSizeOf,
@@ -77,6 +78,7 @@ function sessionApi(env: Env, token: string) {
       createServiceAccount: async (t, name) => (await user()).createServiceAccount(t, name),
       deleteServiceAccount: async (t, name) => (await user()).deleteServiceAccount(t, name),
       listModels: async (t, query) => (await user()).listModels(t, query),
+      listAgents: async (t, query) => (await user()).listAgents(t, query),
       getModelConfig: async (t) => (await user()).getModelConfig(t),
       setModelConfig: async (t, config) => (await user()).setModelConfig(t, config),
       holdStream: async (t) => (await user()).holdStream(t),
@@ -329,6 +331,11 @@ export default {
         keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
       });
       if (openai) return openai;
+      // The UHP projection, under /uhp (statewalker/statewalker-root#139).
+      const uhp = await handleUhpRest(request, (token) => sessionApi(env, token), {
+        keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
+      });
+      if (uhp) return uhp;
       const rest = await handleSessionRest(request, (token) => sessionApi(env, token), {
         keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
       });

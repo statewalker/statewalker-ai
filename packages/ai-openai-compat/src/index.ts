@@ -14,16 +14,26 @@ export {
 export {
   type AgentRoute,
   type ApprovalAnswerInput,
+  allItems,
   type CreatedResponse,
   conversationItems,
   conversationOf,
   createdResponse,
   createResponse,
   DEFAULT_AGENT,
+  EventEncoder,
   inputOf,
+  isTerminal,
   messageText,
   type OpenAiApi,
   responseEvents,
   responseOf,
+  textOf,
 } from "./responses.js";
-export { handleOpenAiRest, type OpenAiOptions, openAiError, openAiFetch } from "./routes.js";
+export {
+  handleOpenAiRest,
+  type OpenAiOptions,
+  openAiError,
+  openAiFetch,
+  sseResponse,
+} from "./routes.js";

@@ -63,7 +63,8 @@
     "@statewalker/webrun-bundler": "catalog:",
     "@statewalker/ai-memory": "workspace:^",
     "@statewalker/ai-openai-compat": "workspace:^",
-    "@statewalker/ai-uhp-client": "workspace:^"
+    "@statewalker/ai-uhp-client": "workspace:^",
+    "@statewalker/ai-uhp": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",
