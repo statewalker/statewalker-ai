@@ -61,11 +61,8 @@ export const CAN = {
    * POSIX programs answer ENOSYS.
    */
   python: RUNTIME === "node" || RUNTIME === "browser",
-  /**
-   * WASIX programs on a Wasmer engine, live over the session's files: CellB on Node (in a browser
-   * Wasmer needs a cross-origin isolated page, which the runner's page is not yet).
-   */
-  posix: RUNTIME === "node",
+  /** WASIX programs on a Wasmer engine, live over the session's files: CellB in a browser and on Node. */
+  posix: RUNTIME === "node" || RUNTIME === "browser",
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */

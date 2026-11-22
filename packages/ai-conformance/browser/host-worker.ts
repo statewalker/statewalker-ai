@@ -5,6 +5,7 @@
 import { installCodeEngines } from "@statewalker/ai-environment/code-engines";
 import { installLocalEngine } from "@statewalker/ai-environment/local-models";
 import { pyodideEngine, pyodideWorkerHost } from "@statewalker/ai-environment/pyodide";
+import { wasmerWorkerEngine } from "@statewalker/ai-environment/wasmer";
 import { loadProject } from "@statewalker/cellb/browser";
 
 type LoadedProject = Awaited<ReturnType<typeof loadProject>>;
@@ -41,6 +42,11 @@ installCodeEngines({
   pyodide: pyodideEngine(
     pyodideWorkerHost({ engineUrl: "/engines/pyodide-engine.mjs", indexURL: "/pyodide/" }),
   ),
+  // Wasmer in a module Worker: the page is cross-origin isolated for its shared memory.
+  wasmer: wasmerWorkerEngine({
+    engineUrl: "/engines/wasmer-engine.mjs",
+    sdkUrl: "/wasmer/sdk/dist/index.js",
+  }),
 });
 
 let project: LoadedProject | undefined;

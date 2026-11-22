@@ -19,13 +19,17 @@
 //
 // The SDK's `storageHost(mount)` (an embedder file system as /workspace) is experimental and not in
 // its public options: each sandbox is built through the core builder, with the run id as the mount.
-// Ported from statewalker-sandbox apps/flue-capfs-do/src/wasmer/engine.mjs (Node only).
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
-
-const send = (m) => process.send?.(m);
-process.on("disconnect", () => process.exit(0));
+// In a browser (src/wasmer.ts, wasmerWorkerHost) it is a module Worker: the sandbox's file
+// operations are the SDK's own blocking bridge messages, forwarded to the host and answered in
+// place (shared memory), so the page must be cross-origin isolated.
+// Ported from statewalker-sandbox apps/flue-capfs-do/src/wasmer/engine.mjs.
+const IN_NODE =
+  typeof process !== "undefined" &&
+  !!process.versions?.node &&
+  typeof window === "undefined" &&
+  typeof WorkerGlobalScope === "undefined";
+const send = IN_NODE ? (m) => process.send?.(m) : (m) => self.postMessage(m);
+if (IN_NODE) process.on("disconnect", () => process.exit(0));
 
 let sdk;
 let core;
@@ -40,7 +44,59 @@ let allowed = [];
 const noNetwork = () =>
   Promise.reject(new TypeError("fetch: the Wasmer engine has no network after start"));
 
-async function init(m) {
+const BROWSER_WORKER = /\/browser-worker\.js(\?|$)/;
+/** Browser: what an SDK worker runs instead of browser-worker.js (the same, without fetch). */
+const sealedWorker = (url) =>
+  URL.createObjectURL(
+    new Blob(
+      [
+        `import ${JSON.stringify(url)};
+const refuse = () => Promise.reject(new TypeError("fetch: the Wasmer engine has no network"));
+globalThis.fetch = refuse;
+const W = globalThis.Worker;
+if (W) globalThis.Worker = class extends W {
+  constructor(u, o) { super(${BROWSER_WORKER}.test(String(u)) ? import.meta.url : u, o); }
+};
+`,
+      ],
+      { type: "text/javascript" },
+    ),
+  );
+
+async function initBrowser(m) {
+  const base = new URL(m.sdk, self.location.href);
+  sdk = await import(base.href);
+  core = await import(new URL("../pkg/wasmer_sdk_js.js", base).href);
+  const bridge = await import(new URL("./host-filesystem.js", base).href);
+  // This worker's own calls block here, answered in place by the host (its parent).
+  bridge.installHostFileSystemWorkerBridge();
+  // Calls from the SDK's workers arrive here as messages: forward them to the host.
+  const NativeWorker = self.Worker;
+  let sealed;
+  self.Worker = class extends NativeWorker {
+    constructor(url, opts) {
+      let u = url;
+      // SDK workers run without fetch (see above).
+      if (BROWSER_WORKER.test(String(u)) && opts?.type === "module") {
+        sealed ??= sealedWorker(String(u));
+        u = sealed;
+      }
+      super(u, opts);
+      this.addEventListener("message", (e) => {
+        if (bridge.isHostFileSystemRequest(e.data)) {
+          e.stopImmediatePropagation();
+          self.postMessage(e.data);
+        }
+      });
+    }
+  };
+  wasmer = new sdk.Wasmer();
+}
+
+async function initNode(m) {
+  const { join } = await import("node:path");
+  const { pathToFileURL } = await import("node:url");
+  const { Worker } = await import("node:worker_threads");
   const dist = m.sdk;
   sdk = await import(pathToFileURL(join(dist, "node.js")).href);
   core = await import(pathToFileURL(join(dist, "../pkg/wasmer_sdk_js.js")).href);
@@ -65,6 +121,11 @@ async function init(m) {
     return emit.call(this, event, data, ...rest);
   };
   wasmer = new sdk.Wasmer({ cache: m.cache ? { directory: m.cache } : false });
+}
+
+async function init(m) {
+  if (IN_NODE) await initNode(m);
+  else await initBrowser(m);
   // Every sandbox built from here gets the host's file system (mount nextMount) as /workspace.
   const start = core.SandboxBuilderCore.prototype.start;
   core.SandboxBuilderCore.prototype.start = function () {
@@ -135,4 +196,5 @@ async function handle(m) {
   }
 }
 
-process.on("message", (m) => void handle(m));
+if (IN_NODE) process.on("message", (m) => void handle(m));
+else self.onmessage = ({ data }) => void handle(data);

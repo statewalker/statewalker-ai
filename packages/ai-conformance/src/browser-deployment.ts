@@ -23,6 +23,11 @@ const PYODIDE_DIR = fileURLToPath(new URL(".", import.meta.resolve("pyodide/pyod
 const PYODIDE_ENGINE = fileURLToPath(
   import.meta.resolve("@statewalker/ai-environment/engines/pyodide-engine.mjs"),
 );
+/** The Wasmer engine script and the SDK's package folder (`dist/`, `pkg/`), served likewise. */
+const WASMER_ENGINE = fileURLToPath(
+  import.meta.resolve("@statewalker/ai-environment/engines/wasmer-engine.mjs"),
+);
+const WASMER_SDK = join(fileURLToPath(new URL(".", import.meta.resolve("@wasmer/sdk"))), "..");
 
 const TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -89,7 +94,9 @@ async function launch(): Promise<Browser> {
   const { chromium } = await import("playwright");
   // The deployment's outbound requests (the scripted model, the fake REST and S3 servers) go to
   // other local ports: cross-origin for the page, so same-origin checks are off in this browser.
-  const args = ["--disable-web-security"];
+  // Same-origin checks off also turns cross-origin isolation off: shared memory, which the Wasmer
+  // engine's bridge needs (a real page gets it by COOP/COEP), is turned on by its own flag.
+  const args = ["--disable-web-security", "--enable-features=SharedArrayBuffer"];
   const executablePath = process.env.CONFORMANCE_CHROMIUM || undefined;
   try {
     return await chromium.launch({ executablePath, args });
@@ -125,7 +132,10 @@ function startShared(): Promise<Shared> {
           "content-security-policy",
           "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'",
         );
-      } else file = join(b.page, normalize(path === "/" ? "/index.html" : path));
+      } else if (path === "/engines/wasmer-engine.mjs") file = WASMER_ENGINE;
+      else if (path.startsWith("/wasmer/sdk/"))
+        file = join(WASMER_SDK, normalize(`/${path.slice("/wasmer/sdk/".length)}`));
+      else file = join(b.page, normalize(path === "/" ? "/index.html" : path));
       try {
         const body = readFileSync(String(file));
         res.writeHead(200, {

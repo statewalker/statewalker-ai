@@ -7,9 +7,17 @@
 // CellB on Node: one child process per agent session (`engines/wasmer-engine.mjs`) under Node's
 // permission model (it reads files, writes only the package cache, starts worker threads, starts no
 // process), the SDK (`@wasmer/sdk`, the host's, not a dependency of this package) loaded from
-// `sdkDist`. Each run is a sandbox of its own, closed when the run ends.
+// `sdkDist`. CellB in a browser: one module Worker per agent session, its file operations the SDK's
+// blocking bridge messages answered in place (shared memory: the page must be cross-origin
+// isolated). Each run is a sandbox of its own, closed when the run ends.
 import type { CodeEngine, EngineFiles, EngineInstance, EngineRun } from "./code-engines.js";
-import { decodeWire, encodeWire, type HostFsReply, viewHostFs } from "./wasmer-fs.js";
+import {
+  decodeWire,
+  encodeWire,
+  type HostFsReply,
+  respondInPlace,
+  viewHostFs,
+} from "./wasmer-fs.js";
 
 export const DEFAULT_WASMER_PACKAGES = [
   "wasmer/bash",
@@ -103,6 +111,144 @@ export function wasmerEngine(options: {
   };
 }
 
+/** How an engine process or Worker is reached. */
+interface Channel {
+  post(m: unknown): void;
+  kill(): void;
+}
+
+/** One engine for one agent session, over its channel; `fs` answers its file requests. */
+function engineControl(files: EngineFiles) {
+  let dead: string | undefined;
+  const waiting = new Map<string, (m: Record<string, unknown>) => void>();
+  let mount: ReturnType<typeof viewHostFs> | undefined;
+  let mountId = 0;
+  const die = (why: string) => {
+    dead ??= why;
+    for (const w of waiting.values())
+      w({ type: "error", error: `EIO: the Wasmer engine stopped: ${why}` });
+    waiting.clear();
+  };
+  const wait = (key: string) =>
+    new Promise<Record<string, unknown>>((resolve) => {
+      if (dead) resolve({ type: "error", error: `EIO: the Wasmer engine stopped: ${dead}` });
+      else waiting.set(key, resolve);
+    });
+  const onMessage = (raw: unknown) => {
+    const m = raw as Record<string, unknown>;
+    const key =
+      m.type === "ready" || m.type === "failed"
+        ? "init"
+        : m.type === "opened" || m.req === undefined
+          ? `open:${m.run}`
+          : `exec:${m.run}:${m.req}`;
+    const w = waiting.get(key);
+    if (!w) return;
+    waiting.delete(key);
+    w(m);
+  };
+  /** One file request of the engine, answered with the current run's mount (one at a time). */
+  let chain: Promise<unknown> = Promise.resolve();
+  const fs = (req: { mount: number; method: string; args: unknown[] }): Promise<HostFsReply> => {
+    const run = async (): Promise<HostFsReply> => {
+      const h = req.mount === mountId ? mount : undefined;
+      if (!h) return { error: { code: "EACCES", message: "EACCES: the run is over" } };
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<HostFsReply>((resolve) => {
+        timer = setTimeout(
+          () =>
+            resolve({
+              error: {
+                code: "ETIMEDOUT",
+                message: `${req.method}: no answer in ${FS_DEADLINE_MS} ms`,
+              },
+            }),
+          FS_DEADLINE_MS,
+        );
+      });
+      return Promise.race([h.handle(req.method, req.args), late]).finally(() =>
+        clearTimeout(timer),
+      );
+    };
+    const answer = chain.then(run, run);
+    chain = answer.catch(() => {});
+    return answer;
+  };
+
+  async function start(channel: Channel, init: Record<string, unknown>): Promise<EngineInstance> {
+    const ready = wait("init");
+    channel.post({ type: "init", ...init });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const started = await Promise.race([
+      ready,
+      new Promise<Record<string, unknown>>((resolve) => {
+        timer = setTimeout(
+          () => resolve({ type: "failed", error: "it did not start in time" }),
+          START_MS,
+        );
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (started.type !== "ready") {
+      channel.kill();
+      throw new Error(`EIO: the Wasmer engine failed to start: ${started.error}`);
+    }
+    let queue: Promise<unknown> = Promise.resolve();
+    let req = 0;
+    const runOne = async (run: EngineRun, signal: AbortSignal) => {
+      if (dead) throw new Error(`EIO: the Wasmer engine stopped: ${dead}`);
+      const id = ++mountId;
+      mount = viewHostFs(files);
+      const onAbort = () => {
+        // An aborted run's engine is killed: nothing it left reaches a later run.
+        channel.kill();
+        die("the run was ended");
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        const opened = wait(`open:${id}`);
+        channel.post({ type: "open", run: id, env: run.env ?? {} });
+        const o1 = await opened;
+        if (o1.type === "error") throw new Error(String(o1.error));
+        const n = ++req;
+        const done = wait(`exec:${id}:${n}`);
+        channel.post({
+          type: "exec",
+          run: id,
+          req: n,
+          script: scriptOf(run),
+          cwd: guestPath(run.cwd),
+          env: run.env,
+          outputBytes: run.maxOutput,
+        });
+        const r = await done;
+        if (r.type === "error") throw new Error(String(r.error));
+        return {
+          stdout: String(r.stdout ?? ""),
+          stderr: String(r.stderr ?? ""),
+          exitCode: Number(r.exitCode) || 0,
+        };
+      } finally {
+        signal.removeEventListener("abort", onAbort);
+        mount?.close();
+        mount = undefined;
+        channel.post({ type: "close", run: id });
+      }
+    };
+    return {
+      run(run, signal) {
+        const result = queue.then(() => runOne(run, signal));
+        queue = result.catch(() => {});
+        return result;
+      },
+      close() {
+        die("closed");
+        channel.kill();
+      },
+    };
+  }
+  return { onMessage, die, fs, start };
+}
+
 async function openNode(
   files: EngineFiles,
   o: { sdkDist: string; packages: string[]; cache?: string; memoryMb?: number },
@@ -129,79 +275,32 @@ async function openNode(
     stdio: ["ignore", "ignore", "pipe", "ipc", "pipe", "pipe"],
     serialization: "json",
   });
-  let dead: string | undefined;
+  const control = engineControl(files);
   let stderr = "";
-  const waiting = new Map<string, (m: Record<string, unknown>) => void>();
-  const die = (why: string) => {
-    dead ??= why;
-    for (const w of waiting.values())
-      w({ type: "error", error: `EIO: the Wasmer engine stopped: ${why}` });
-    waiting.clear();
-  };
   child.stderr?.on("data", (d) => {
     stderr = (stderr + d.toString()).slice(-4000);
   });
   child.on("exit", (code, signal) =>
-    die(`exit ${code ?? signal}${stderr ? `: ${stderr.trim()}` : ""}`),
+    control.die(`exit ${code ?? signal}${stderr ? `: ${stderr.trim()}` : ""}`),
   );
-  child.on("error", (e) => die(String((e as Error)?.message ?? e)));
-  const wait = (key: string) =>
-    new Promise<Record<string, unknown>>((resolve) => {
-      if (dead) resolve({ type: "error", error: `EIO: the Wasmer engine stopped: ${dead}` });
-      else waiting.set(key, resolve);
-    });
-  child.on("message", (raw) => {
-    const m = raw as Record<string, unknown>;
-    const key =
-      m.type === "ready" || m.type === "failed"
-        ? "init"
-        : m.type === "opened" || m.req === undefined
-          ? `open:${m.run}`
-          : `exec:${m.run}:${m.req}`;
-    const w = waiting.get(key);
-    if (!w) return;
-    waiting.delete(key);
-    w(m);
-  });
-  // The file channel: one request at a time, answered with the current run's mount.
-  let mount: ReturnType<typeof viewHostFs> | undefined;
-  let mountId = 0;
+  child.on("error", (e) => control.die(String((e as Error)?.message ?? e)));
+  child.on("message", (m) => control.onMessage(m));
   const requests = child.stdio[4] as Readable;
   const replies = child.stdio[5] as Writable;
   const broken = (e: Error) => {
     child.kill("SIGKILL");
-    die(`file channel: ${e.message}`);
+    control.die(`file channel: ${e.message}`);
   };
   (requests as unknown as Writable).on("error", broken);
   replies.on("error", broken);
   requests.setEncoding("utf8");
   let buffered = "";
-  let chain: Promise<unknown> = Promise.resolve();
+  let replying: Promise<unknown> = Promise.resolve();
   const answer = async (line: string): Promise<string> => {
     let r: HostFsReply;
     try {
       const req = JSON.parse(line) as { mount: number; method: string; args: unknown[] };
-      const h = req.mount === mountId ? mount : undefined;
-      if (!h) r = { error: { code: "EACCES", message: "EACCES: the run is over" } };
-      else {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const late = new Promise<HostFsReply>((resolve) => {
-          timer = setTimeout(
-            () =>
-              resolve({
-                error: {
-                  code: "ETIMEDOUT",
-                  message: `${req.method}: no answer in ${FS_DEADLINE_MS} ms`,
-                },
-              }),
-            FS_DEADLINE_MS,
-          );
-        });
-        r = await Promise.race([
-          h.handle(req.method, decodeWire(req.args) as unknown[]),
-          late,
-        ]).finally(() => clearTimeout(timer));
-      }
+      r = await control.fs({ ...req, args: decodeWire(req.args) as unknown[] });
     } catch (e) {
       r = { error: { code: "EIO", message: String((e as Error)?.message ?? e) } };
     }
@@ -213,86 +312,77 @@ async function openNode(
     while (nl >= 0) {
       const line = buffered.slice(0, nl);
       buffered = buffered.slice(nl + 1);
-      chain = chain.then(async () => replies.write(`${await answer(line)}\n`));
+      replying = replying.then(async () => replies.write(`${await answer(line)}\n`));
       nl = buffered.indexOf("\n");
     }
   });
-  const post = (m: unknown) => {
-    if (child.connected) child.send(m);
-  };
-  const ready = wait("init");
-  post({
-    type: "init",
-    packages: o.packages,
-    sdk: o.sdkDist,
-    ...(o.cache ? { cache: o.cache } : {}),
-  });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const started = await Promise.race([
-    ready,
-    new Promise<Record<string, unknown>>((resolve) => {
-      timer = setTimeout(
-        () => resolve({ type: "failed", error: "it did not start in time" }),
-        START_MS,
-      );
-    }),
-  ]).finally(() => clearTimeout(timer));
-  if (started.type !== "ready") {
-    child.kill("SIGKILL");
-    throw new Error(`EIO: the Wasmer engine failed to start: ${started.error}`);
-  }
-
-  let queue: Promise<unknown> = Promise.resolve();
-  let req = 0;
-  const runOne = async (run: EngineRun, signal: AbortSignal) => {
-    if (dead) throw new Error(`EIO: the Wasmer engine stopped: ${dead}`);
-    const id = ++mountId;
-    mount = viewHostFs(files);
-    const onAbort = () => {
-      // An aborted run's engine is killed: nothing it left reaches a later run.
-      child.kill("SIGKILL");
-      die("the run was ended");
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    try {
-      const opened = wait(`open:${id}`);
-      post({ type: "open", run: id, env: run.env ?? {} });
-      const o1 = await opened;
-      if (o1.type === "error") throw new Error(String(o1.error));
-      const n = ++req;
-      const done = wait(`exec:${id}:${n}`);
-      post({
-        type: "exec",
-        run: id,
-        req: n,
-        script: scriptOf(run),
-        cwd: guestPath(run.cwd),
-        env: run.env,
-        outputBytes: run.maxOutput,
-      });
-      const r = await done;
-      if (r.type === "error") throw new Error(String(r.error));
-      return {
-        stdout: String(r.stdout ?? ""),
-        stderr: String(r.stderr ?? ""),
-        exitCode: Number(r.exitCode) || 0,
-      };
-    } finally {
-      signal.removeEventListener("abort", onAbort);
-      mount?.close();
-      mount = undefined;
-      post({ type: "close", run: id });
-    }
-  };
-  return {
-    run(run, signal) {
-      const result = queue.then(() => runOne(run, signal));
-      queue = result.catch(() => {});
-      return result;
+  return control.start(
+    {
+      post: (m) => {
+        if (child.connected) child.send(m);
+      },
+      kill: () => {
+        child.kill("SIGKILL");
+      },
     },
-    close() {
-      die("closed");
-      child.kill("SIGKILL");
+    { packages: o.packages, sdk: o.sdkDist, ...(o.cache ? { cache: o.cache } : {}) },
+  );
+}
+
+type WorkerLike = {
+  postMessage(m: unknown): void;
+  terminate(): void;
+  addEventListener(type: string, fn: (e: { data?: unknown; message?: string }) => void): void;
+};
+
+/**
+ * The Wasmer engine in a module Worker (CellB in a browser): `engineUrl` serves
+ * `engines/wasmer-engine.mjs`, `sdkUrl` the SDK's `dist/index.js`. The page must be cross-origin
+ * isolated (the SDK's bridge blocks on shared memory); without it the engine answers ENOSYS.
+ */
+export function wasmerWorkerEngine(options: {
+  engineUrl: string | URL;
+  sdkUrl: string | URL;
+  packages?: string[];
+}): CodeEngine {
+  const packages = [...new Set(["wasmer/bash", ...(options.packages ?? DEFAULT_WASMER_PACKAGES)])];
+  return {
+    programs: ["bash", "sh"],
+    async open({ files }) {
+      const g = globalThis as unknown as {
+        crossOriginIsolated?: boolean;
+        location?: { href: string };
+        Worker: new (url: string | URL, o: { type: "module"; name: string }) => WorkerLike;
+      };
+      if (!g.crossOriginIsolated && typeof SharedArrayBuffer !== "function")
+        throw new Error("ENOSYS: Wasmer needs a cross-origin isolated page (SharedArrayBuffer)");
+      const worker = new g.Worker(options.engineUrl, { type: "module", name: "wasmer-engine" });
+      const control = engineControl(files);
+      worker.addEventListener("message", (e) => {
+        const m = e.data as {
+          type?: string;
+          mount: number;
+          method: string;
+          args: unknown[];
+          response: SharedArrayBuffer;
+          binary?: boolean;
+        };
+        if (m?.type === "wasmer-filesystem-rpc")
+          void control
+            .fs(m)
+            .catch(
+              (err): HostFsReply => ({
+                error: { code: "EIO", message: String((err as Error)?.message ?? err) },
+              }),
+            )
+            .then((r) => respondInPlace(m, r));
+        else control.onMessage(m);
+      });
+      worker.addEventListener("error", (e) => control.die(e.message || "worker error"));
+      return control.start(
+        { post: (m) => worker.postMessage(m), kill: () => worker.terminate() },
+        { packages, sdk: new URL(options.sdkUrl, g.location?.href).href },
+      );
     },
   };
 }

@@ -9,7 +9,7 @@ tool: on Node in a child process under Node's permission model, in a browser in 
 the session's project is copied in and each change written back through the session's file view,
 authorized again; no network.
 
-The Wasmer code engine on Node (statewalker/statewalker-root#142): `@statewalker/ai-environment/wasmer`
-(`wasmerEngine`) and its engine scripts `engines/wasmer-*.mjs`: WASIX programs the deployment lists
+The Wasmer code engine on Node and in a page (statewalker/statewalker-root#142): `@statewalker/ai-environment/wasmer`
+(`wasmerEngine`, `wasmerWorkerEngine`) and its engine scripts `engines/wasmer-*.mjs`: WASIX programs the deployment lists
 run in a Wasmer sandbox whose `/workspace` is the session's file view, every file operation
 forwarded live to the gate; no network.

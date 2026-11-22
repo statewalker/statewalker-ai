@@ -304,3 +304,36 @@ export function decodeWire(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(decodeWire);
   return v;
 }
+
+/** The reply buffer's header: [status (1 JSON, 2 bytes), length], then the reply. */
+const HEADER_BYTES = 8;
+const encoder = new TextEncoder();
+
+/**
+ * Answers a request of the SDK's worker bridge in place (a browser engine shares memory with its
+ * host): writes the reply into the request's SharedArrayBuffer and wakes the waiting thread, in the
+ * SDK's format (`respondToHostFileSystem`).
+ */
+export function respondInPlace(
+  request: { response: SharedArrayBuffer; binary?: boolean },
+  reply: HostFsReply,
+) {
+  const control = new Int32Array(request.response, 0, 2);
+  const value = "value" in reply ? reply.value : undefined;
+  let binary = request.binary === true && value instanceof Uint8Array;
+  let bytes = binary
+    ? (value as Uint8Array)
+    : encoder.encode(
+        JSON.stringify(value instanceof Uint8Array ? { value: Array.from(value) } : reply),
+      );
+  if (bytes.length > request.response.byteLength - HEADER_BYTES) {
+    binary = false;
+    bytes = encoder.encode(
+      JSON.stringify({ error: { code: "EIO", message: "reply exceeds the bridge's buffer" } }),
+    );
+  }
+  new Uint8Array(request.response, HEADER_BYTES, bytes.length).set(bytes);
+  control[1] = bytes.length;
+  Atomics.store(control, 0, binary ? 2 : 1);
+  Atomics.notify(control, 0);
+}
