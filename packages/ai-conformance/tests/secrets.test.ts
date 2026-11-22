@@ -11,12 +11,15 @@ import {
   fakeModel,
   fakeRest,
   login,
+  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
   seed,
   startDeployment,
 } from "../src/index.js";
+
+// A browser page holds no deployment-held key (SECRETS_KEY, DEPLOYMENT_SECRETS): tests/browser.test.ts.
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
@@ -135,91 +138,102 @@ describe.each(transports)("secrets over %s", (name, connect) => {
   const as = async (user: string) => connect(deployment, await login(deployment, u(user)));
   const binding = { plugins: ["fixture"], hosts: ["127.0.0.1"] };
 
-  it("lists a secret's name, level, bindings and update time, never its value", async () => {
-    const ann = await as("ann");
-    const before = Date.now();
-    const set = await ann.setSecret({
-      level: "user",
-      name: "API_TOKEN",
-      value: "user-value-41d2",
-      bindings: binding,
-    });
-    expect(set).toEqual({
-      name: "API_TOKEN",
-      level: "user",
-      bindings: binding,
-      updated: expect.any(Number),
-    });
-    expect(set.updated).toBeGreaterThanOrEqual(before);
-    await ann.setSecret({
-      level: "project",
-      project: "alpha",
-      name: "PROJECT_KEY",
-      value: "project-value-88aa",
-      bindings: binding,
-    });
-    const users = await ann.listSecrets({ level: "user" });
-    const projects = await ann.listSecrets({ level: "project", project: "alpha" });
-    expect(users.secrets).toEqual([set]);
-    expect(projects.secrets).toEqual([
-      expect.objectContaining({ name: "PROJECT_KEY", level: "project", project: "alpha" }),
-    ]);
-    expect(JSON.stringify([set, users, projects])).not.toMatch(/value-|"value"/);
-  });
+  it.skipIf(RUNTIME === "browser")(
+    "lists a secret's name, level, bindings and update time, never its value",
+    async () => {
+      const ann = await as("ann");
+      const before = Date.now();
+      const set = await ann.setSecret({
+        level: "user",
+        name: "API_TOKEN",
+        value: "user-value-41d2",
+        bindings: binding,
+      });
+      expect(set).toEqual({
+        name: "API_TOKEN",
+        level: "user",
+        bindings: binding,
+        updated: expect.any(Number),
+      });
+      expect(set.updated).toBeGreaterThanOrEqual(before);
+      await ann.setSecret({
+        level: "project",
+        project: "alpha",
+        name: "PROJECT_KEY",
+        value: "project-value-88aa",
+        bindings: binding,
+      });
+      const users = await ann.listSecrets({ level: "user" });
+      const projects = await ann.listSecrets({ level: "project", project: "alpha" });
+      expect(users.secrets).toEqual([set]);
+      expect(projects.secrets).toEqual([
+        expect.objectContaining({ name: "PROJECT_KEY", level: "project", project: "alpha" }),
+      ]);
+      expect(JSON.stringify([set, users, projects])).not.toMatch(/value-|"value"/);
+    },
+  );
 
-  it("manages secrets only at a level the caller holds secrets.write for", async () => {
-    const secret = (level: "user" | "project" | "workspace" | "deployment", project?: string) => ({
-      level,
-      project,
-      name: "SCOPED",
-      value: "scoped-value-19ce",
-      bindings: binding,
-    });
-    const ann = await as("ann");
-    const bob = await as("bob");
-    const wendy = await as("wendy");
-    // Project secrets: the project's owner only (bob is an editor of alpha, an owner of beta).
-    await expect(bob.setSecret(secret("project", "alpha"))).rejects.toMatchObject({ status: 403 });
-    await expect(bob.listSecrets({ level: "project", project: "alpha" })).rejects.toMatchObject({
-      status: 403,
-    });
-    await expect(bob.setSecret(secret("project", "beta"))).resolves.toMatchObject({
-      project: "beta",
-    });
-    await expect(
-      ann.deleteSecret({ level: "project", project: "beta", name: "SCOPED" }),
-    ).resolves.toEqual({
-      deleted: true,
-    });
-    // Workspace secrets: the workspace admin only.
-    await expect(ann.setSecret(secret("workspace"))).rejects.toMatchObject({ status: 403 });
-    // A project's custom role cannot grant a workspace-level permission.
-    const cara = await as("cara");
-    await expect(cara.setSecret(secret("workspace"))).rejects.toMatchObject({ status: 403 });
-    await expect(ann.listSecrets({ level: "workspace" })).rejects.toMatchObject({ status: 403 });
-    await expect(wendy.setSecret(secret("workspace"))).resolves.toMatchObject({
-      level: "workspace",
-    });
-    await expect(wendy.listSecrets({ level: "workspace" })).resolves.toMatchObject({
-      secrets: [expect.objectContaining({ name: "SCOPED" })],
-    });
-    await wendy.deleteSecret({ level: "workspace", name: "SCOPED" });
-    // Deployment secrets are the runtime's: listed to the admin, written by nobody.
-    await expect(wendy.setSecret(secret("deployment"))).rejects.toMatchObject({ status: 403 });
-    await expect(wendy.listSecrets({ level: "deployment" })).resolves.toEqual({
-      secrets: [{ name: "DEPLOY_TOKEN", level: "deployment", bindings: binding, updated: 0 }],
-    });
-    await expect(ann.listSecrets({ level: "deployment" })).rejects.toMatchObject({ status: 403 });
-    // User secrets: each user their own, and no one else's.
-    await bob.setSecret(secret("user"));
-    expect((await ann.listSecrets({ level: "user" })).secrets.map((s) => s.name)).not.toContain(
-      "SCOPED",
-    );
-    await expect(ann.deleteSecret({ level: "user", name: "SCOPED" })).rejects.toMatchObject({
-      status: 404,
-    });
-    await bob.deleteSecret({ level: "user", name: "SCOPED" });
-  });
+  it.skipIf(RUNTIME === "browser")(
+    "manages secrets only at a level the caller holds secrets.write for",
+    async () => {
+      const secret = (
+        level: "user" | "project" | "workspace" | "deployment",
+        project?: string,
+      ) => ({
+        level,
+        project,
+        name: "SCOPED",
+        value: "scoped-value-19ce",
+        bindings: binding,
+      });
+      const ann = await as("ann");
+      const bob = await as("bob");
+      const wendy = await as("wendy");
+      // Project secrets: the project's owner only (bob is an editor of alpha, an owner of beta).
+      await expect(bob.setSecret(secret("project", "alpha"))).rejects.toMatchObject({
+        status: 403,
+      });
+      await expect(bob.listSecrets({ level: "project", project: "alpha" })).rejects.toMatchObject({
+        status: 403,
+      });
+      await expect(bob.setSecret(secret("project", "beta"))).resolves.toMatchObject({
+        project: "beta",
+      });
+      await expect(
+        ann.deleteSecret({ level: "project", project: "beta", name: "SCOPED" }),
+      ).resolves.toEqual({
+        deleted: true,
+      });
+      // Workspace secrets: the workspace admin only.
+      await expect(ann.setSecret(secret("workspace"))).rejects.toMatchObject({ status: 403 });
+      // A project's custom role cannot grant a workspace-level permission.
+      const cara = await as("cara");
+      await expect(cara.setSecret(secret("workspace"))).rejects.toMatchObject({ status: 403 });
+      await expect(ann.listSecrets({ level: "workspace" })).rejects.toMatchObject({ status: 403 });
+      await expect(wendy.setSecret(secret("workspace"))).resolves.toMatchObject({
+        level: "workspace",
+      });
+      await expect(wendy.listSecrets({ level: "workspace" })).resolves.toMatchObject({
+        secrets: [expect.objectContaining({ name: "SCOPED" })],
+      });
+      await wendy.deleteSecret({ level: "workspace", name: "SCOPED" });
+      // Deployment secrets are the runtime's: listed to the admin, written by nobody.
+      await expect(wendy.setSecret(secret("deployment"))).rejects.toMatchObject({ status: 403 });
+      await expect(wendy.listSecrets({ level: "deployment" })).resolves.toEqual({
+        secrets: [{ name: "DEPLOY_TOKEN", level: "deployment", bindings: binding, updated: 0 }],
+      });
+      await expect(ann.listSecrets({ level: "deployment" })).rejects.toMatchObject({ status: 403 });
+      // User secrets: each user their own, and no one else's.
+      await bob.setSecret(secret("user"));
+      expect((await ann.listSecrets({ level: "user" })).secrets.map((s) => s.name)).not.toContain(
+        "SCOPED",
+      );
+      await expect(ann.deleteSecret({ level: "user", name: "SCOPED" })).rejects.toMatchObject({
+        status: 404,
+      });
+      await bob.deleteSecret({ level: "user", name: "SCOPED" });
+    },
+  );
 
   it("refuses a malformed secret or binding", async () => {
     const ann = await as("ann");
@@ -278,77 +292,85 @@ describe.each(transports)("secrets over %s", (name, connect) => {
   const authOf = (got: { headers: Record<string, string> }[]) =>
     got.map((r) => r.headers.authorization);
 
-  it("the most specific level wins: user, then project, then workspace", async () => {
-    const ann = await as("ann");
-    const wendy = await as("wendy");
-    const session = await ann.startSession({ project: "alpha" });
-    const call = () => ann.sendMessage(session.id, { content: "CALL fixture__call {}" });
-    await wendy.setSecret({
-      level: "workspace",
-      name: "API_TOKEN",
-      value: "ws-level-value",
-      bindings: binding,
-    });
-    await ann.setSecret({
-      level: "project",
-      project: "alpha",
-      name: "API_TOKEN",
-      value: "project-level-value",
-      bindings: binding,
-    });
-    await ann.setSecret({
-      level: "user",
-      name: "API_TOKEN",
-      value: "user-level-value",
-      bindings: binding,
-    });
-    expect(authOf(await received(call))).toEqual(["Bearer user-level-value"]);
-    await ann.deleteSecret({ level: "user", name: "API_TOKEN" });
-    expect(authOf(await received(call))).toEqual(["Bearer project-level-value"]);
-    await ann.deleteSecret({ level: "project", project: "alpha", name: "API_TOKEN" });
-    expect(authOf(await received(call))).toEqual(["Bearer ws-level-value"]);
-    await wendy.deleteSecret({ level: "workspace", name: "API_TOKEN" });
-  });
-
-  it("a project plugin cannot send a shared secret to an unbound host or use one not bound to it", async () => {
-    const ann = await as("ann");
-    const wendy = await as("wendy");
-    await ann.deleteSecret({ level: "user", name: "API_TOKEN" }).catch(() => {});
-    await wendy.setSecret({
-      level: "workspace",
-      name: "API_TOKEN",
-      value: "shared-key-c0ffee",
-      bindings: binding,
-    });
-    try {
+  it.skipIf(RUNTIME === "browser")(
+    "the most specific level wins: user, then project, then workspace",
+    async () => {
+      const ann = await as("ann");
+      const wendy = await as("wendy");
       const session = await ann.startSession({ project: "alpha" });
-      for (const tool of ["fixture__elsewhere", "other__call"]) {
-        let turn!: Awaited<ReturnType<SessionClient["sendMessage"]>>;
-        const got = await received(async () => {
-          turn = await ann.sendMessage(session.id, { content: `CALL ${tool} {}` });
-        });
-        expect(got).toEqual([]);
-        expect(toolResults(turn)).toEqual([
-          expect.objectContaining({
-            isError: true,
-            secrets: ["API_TOKEN"],
-            output: expect.stringMatching(/secret API_TOKEN is not bound/),
-          }),
-        ]);
-      }
-      // The model cannot name a secret through its input either: it reaches the host encoded.
-      const got = await received(() =>
-        ann.sendMessage(session.id, {
-          content: `CALL fixture__search ${JSON.stringify({ q: "{{secret:API_TOKEN}}" })}`,
-        }),
-      );
-      expect(got.map((r) => decodeURIComponent(r.url))).toEqual(["/search?q={{secret:API_TOKEN}}"]);
-      const { items } = await ann.listItems(session.id);
-      expect(JSON.stringify([items, rest.requests])).not.toContain("shared-key-c0ffee");
-    } finally {
+      const call = () => ann.sendMessage(session.id, { content: "CALL fixture__call {}" });
+      await wendy.setSecret({
+        level: "workspace",
+        name: "API_TOKEN",
+        value: "ws-level-value",
+        bindings: binding,
+      });
+      await ann.setSecret({
+        level: "project",
+        project: "alpha",
+        name: "API_TOKEN",
+        value: "project-level-value",
+        bindings: binding,
+      });
+      await ann.setSecret({
+        level: "user",
+        name: "API_TOKEN",
+        value: "user-level-value",
+        bindings: binding,
+      });
+      expect(authOf(await received(call))).toEqual(["Bearer user-level-value"]);
+      await ann.deleteSecret({ level: "user", name: "API_TOKEN" });
+      expect(authOf(await received(call))).toEqual(["Bearer project-level-value"]);
+      await ann.deleteSecret({ level: "project", project: "alpha", name: "API_TOKEN" });
+      expect(authOf(await received(call))).toEqual(["Bearer ws-level-value"]);
       await wendy.deleteSecret({ level: "workspace", name: "API_TOKEN" });
-    }
-  });
+    },
+  );
+
+  it.skipIf(RUNTIME === "browser")(
+    "a project plugin cannot send a shared secret to an unbound host or use one not bound to it",
+    async () => {
+      const ann = await as("ann");
+      const wendy = await as("wendy");
+      await ann.deleteSecret({ level: "user", name: "API_TOKEN" }).catch(() => {});
+      await wendy.setSecret({
+        level: "workspace",
+        name: "API_TOKEN",
+        value: "shared-key-c0ffee",
+        bindings: binding,
+      });
+      try {
+        const session = await ann.startSession({ project: "alpha" });
+        for (const tool of ["fixture__elsewhere", "other__call"]) {
+          let turn!: Awaited<ReturnType<SessionClient["sendMessage"]>>;
+          const got = await received(async () => {
+            turn = await ann.sendMessage(session.id, { content: `CALL ${tool} {}` });
+          });
+          expect(got).toEqual([]);
+          expect(toolResults(turn)).toEqual([
+            expect.objectContaining({
+              isError: true,
+              secrets: ["API_TOKEN"],
+              output: expect.stringMatching(/secret API_TOKEN is not bound/),
+            }),
+          ]);
+        }
+        // The model cannot name a secret through its input either: it reaches the host encoded.
+        const got = await received(() =>
+          ann.sendMessage(session.id, {
+            content: `CALL fixture__search ${JSON.stringify({ q: "{{secret:API_TOKEN}}" })}`,
+          }),
+        );
+        expect(got.map((r) => decodeURIComponent(r.url))).toEqual([
+          "/search?q={{secret:API_TOKEN}}",
+        ]);
+        const { items } = await ann.listItems(session.id);
+        expect(JSON.stringify([items, rest.requests])).not.toContain("shared-key-c0ffee");
+      } finally {
+        await wendy.deleteSecret({ level: "workspace", name: "API_TOKEN" });
+      }
+    },
+  );
 
   it("a replaced secret applies to the next call; a deleted one fails the call by name", async () => {
     const ann = await as("ann");
@@ -404,17 +426,20 @@ describe.each(transports)("secrets over %s", (name, connect) => {
     expect(JSON.stringify([items, model.requests])).not.toContain("echoed-value-ab12");
   });
 
-  it("a deployment secret reaches only its bound plugin and host", async () => {
-    const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha" });
-    const got = await received(() =>
-      ann.sendMessage(session.id, { content: "CALL fixture__deploy {}" }),
-    );
-    expect(authOf(got)).toEqual([`Bearer ${DEPLOY_VALUE}`]);
-    const { items } = await ann.listItems(session.id);
-    expect(items.find((i) => i.kind === "tool_result")?.secrets).toEqual(["DEPLOY_TOKEN"]);
-    expect(JSON.stringify(items)).not.toContain(DEPLOY_VALUE);
-  });
+  it.skipIf(RUNTIME === "browser")(
+    "a deployment secret reaches only its bound plugin and host",
+    async () => {
+      const ann = await as("ann");
+      const session = await ann.startSession({ project: "alpha" });
+      const got = await received(() =>
+        ann.sendMessage(session.id, { content: "CALL fixture__deploy {}" }),
+      );
+      expect(authOf(got)).toEqual([`Bearer ${DEPLOY_VALUE}`]);
+      const { items } = await ann.listItems(session.id);
+      expect(items.find((i) => i.kind === "tool_result")?.secrets).toEqual(["DEPLOY_TOKEN"]);
+      expect(JSON.stringify(items)).not.toContain(DEPLOY_VALUE);
+    },
+  );
 
   it("erasing a user erases their own secrets", async () => {
     const dora = await as("dora");
