@@ -881,6 +881,22 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       .map(itemOf)
       .some((i) => i.approval === approval && i.stored);
     if (!known) throw codedError("ENOENT", "no such approval");
+    // Expired by the alarm while the User DO's answer was on its way: that expiry already
+    // continued the turn, so the late answer continues nothing more.
+    const asked = this.#one<{ turn: string }>(
+      `SELECT turn FROM items WHERE kind = 'approval' AND json_extract(body, '$.approval') = ?
+       ORDER BY seq DESC LIMIT 1`,
+      approval,
+    );
+    const expired = asked
+      ? this.#one<{ turn: string }>(
+          `SELECT a.turn FROM approval_answers a JOIN agent_turns t ON t.id = a.turn
+           WHERE a.approval = ? AND a.decision = 'expired' AND t.created >= ?`,
+          approval,
+          Number(this.#turnRow(asked.turn).created),
+        )
+      : undefined;
+    if (expired) return { turn_id: expired.turn, session_id: config.id, delivery: "next", offset };
     const id = this.#queueAnswer(config, approval, {
       decision: answer.decision,
       message: answer.message ?? null,

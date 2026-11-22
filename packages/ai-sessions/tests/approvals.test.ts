@@ -164,6 +164,19 @@ describe("approvals resume the turn", () => {
     expect(h.runs).toHaveLength(2);
   });
 
+  it("an answer reaching the session after the approval expired continues nothing more", async () => {
+    const h = await harness(["ap-1"], 1000);
+    h.core.expire(2_000);
+    const { items } = await h.core.items({ types: ["tool_result"] });
+    const expired = items.find((i) => i.approval === "ap-1");
+    await h.core.waitTurn(String(expired?.turn));
+    // The User DO took the answer just before it expired; it arrives after the alarm ran.
+    const late = await h.core.answer("ap-1", { decision: "allow", scope: "once" });
+    expect(late.turn_id).toBe(expired?.turn);
+    expect(h.ran).toEqual([]);
+    expect(h.runs).toHaveLength(2);
+  });
+
   it("an approval answered in time does not expire", async () => {
     const h = await harness(["ap-1"], 1000);
     const a = await h.core.answer("ap-1", { decision: "allow", scope: "once" });
