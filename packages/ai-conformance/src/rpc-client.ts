@@ -120,6 +120,35 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     setLimits: (level, target, req) =>
       api.setLimits(level, target, req as never).catch(refusal) as never,
     deleteLimits: (level, target) => api.deleteLimits(level, target).catch(refusal) as never,
+    // The task API (statewalker/statewalker-root#206).
+    publish: (p, t) => api.publish(p, t).catch(refusal) as never,
+    listTasks: (p, o) => api.listTasks(p, o).catch(refusal) as never,
+    subscribe: (p, sub) => api.subscribe(p, sub).catch(refusal) as never,
+    listSubscriptions: (p) => api.listSubscriptions(p).catch(refusal) as never,
+    getSubscription: (p, n) => api.getSubscription(p, n).catch(refusal) as never,
+    unsubscribe: (p, n) => api.unsubscribe(p, n).catch(refusal) as never,
+    peek: (p, n, o) => api.peek(p, n, o).catch(refusal) as never,
+    take: (p, n, o) => api.take(p, n, o).catch(refusal) as never,
+    claim: (p, n, o) => api.claim(p, n, o).catch(refusal) as never,
+    deadLetters: (p, n) => api.deadLetters(p, n).catch(refusal) as never,
+    changes: (p, n, o) => api.changes(p, n, o).catch(refusal) as never,
+    createInbox: (p) => api.createInbox(p).catch(refusal) as never,
+    reply: (p, t, r) => api.reply(p, t, r).catch(refusal) as never,
+    ack: (l) => api.ack(l).catch(refusal) as never,
+    release: (l, o) => api.release(l, o).catch(refusal) as never,
+    renew: (l, o) => api.renew(l, o).catch(refusal) as never,
+    job: (p, id) => api.job(p, id).catch(refusal) as never,
+    async taskEvents(p, n, count, waitMs = 30_000) {
+      const seqs: number[] = [];
+      let seq = (await api.changes(p, n, { wait_ms: 0 }).catch(refusal)).seq;
+      seqs.push(seq);
+      while (seqs.length < count) {
+        const next = (await api.changes(p, n, { after: seq, wait_ms: waitMs }).catch(refusal)).seq;
+        if (next > seq) seqs.push(next);
+        seq = next;
+      }
+      return seqs;
+    },
     async usageRecords(q = {}) {
       // Page by page, after the last record's seq.
       const all: never[] = [];

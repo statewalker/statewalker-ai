@@ -94,6 +94,8 @@ export type ApprovalMethod =
   | "tool"
   | "limit"
   | "memory"
+  // Publishing a task or a reply (statewalker/statewalker-root#206): the path is the subject.
+  | "tasks"
   // A remote agent session's actions (statewalker/statewalker-root#144): starting its task,
   // answering its harness's question, writing its artifacts back.
   | "remote"
@@ -420,6 +422,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a limit is raised by the DO that counts it");
       case "memory":
         throw codedError("EINVAL", "a memory batch runs through the memory service");
+      case "tasks":
+        throw codedError("EINVAL", "a task is published through the task queue");
       default:
         throw codedError("EINVAL", `a ${call.method} action runs through its remote agent session`);
     }

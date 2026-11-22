@@ -2,7 +2,7 @@
 // derived from it (EAUTH 401, EACCES 403, ENOENT 404, EINVAL 400).
 import { codedError, retryAfterOf, statusOf } from "@statewalker/ai-access";
 import type { MemoryTarget, SessionApi, SessionsQuery } from "./api.js";
-import { eventStream } from "./sse.js";
+import { eventStream, taskEventStream } from "./sse.js";
 import { chatPlan, resumePlan, uiMessageStreamResponse } from "./ui-stream.js";
 
 const json = (value: unknown, status = 200) =>
@@ -136,6 +136,8 @@ export async function handleSessionRest(
         },
       });
     if (route === "DELETE /me/profile") return api().eraseProfile();
+    const tasks = await taskRoute(request, url, parts, api, options);
+    if (tasks !== NOT_A_ROUTE) return tasks;
     const memory = memoryRoute(parts);
     if (memory) {
       const { target, rest } = memory;
@@ -293,6 +295,87 @@ export async function handleSessionRest(
   } catch (e) {
     return errorResponse(e);
   }
+}
+
+const created = (value: unknown) =>
+  new Response(JSON.stringify(value), {
+    status: 201,
+    headers: { "content-type": "application/json" },
+  });
+
+const numberParam = (url: URL, name: string): number | undefined => {
+  const v = url.searchParams.get(name);
+  return v === null || v === "" ? undefined : Number(v);
+};
+
+/**
+ * The task API's routes (statewalker/statewalker-root#206): `/v1/projects/{p}/tasks[/{id}/reply]`,
+ * `/v1/projects/{p}/inboxes`, `/v1/projects/{p}/jobs/{id}`, `/v1/projects/{p}/subscriptions[/{name}
+ * [/peek|take|claim|dead-letters|events|changes]]` and `/v1/leases/{id}/ack|release|renew`.
+ */
+async function taskRoute(
+  request: Request,
+  url: URL,
+  parts: string[],
+  api: () => SessionApi,
+  options: { keepAliveMs?: number },
+): Promise<unknown> {
+  const m = request.method;
+  if (parts[1] === "leases" && parts[2] && parts.length === 4 && m === "POST") {
+    const lease = parts[2];
+    const body = await bodyOf(request);
+    if (parts[3] === "ack") return api().ack(lease);
+    if (parts[3] === "release") return api().release(lease, body as never);
+    if (parts[3] === "renew") return api().renew(lease, body as never);
+    return NOT_A_ROUTE;
+  }
+  if (parts[1] !== "projects" || !parts[2] || !parts[3]) return NOT_A_ROUTE;
+  const project = parts[2];
+  const [what, id, sub] = parts.slice(3);
+  const limit = numberParam(url, "limit");
+  if (what === "tasks") {
+    if (parts.length === 4 && m === "POST")
+      return created(await api().publish(project, (await bodyOf(request)) as never));
+    if (parts.length === 4 && m === "GET")
+      return api().listTasks(project, limit === undefined ? {} : { limit });
+    if (parts.length === 6 && id && sub === "reply" && m === "POST")
+      return created(await api().reply(project, id, (await bodyOf(request)) as never));
+    return NOT_A_ROUTE;
+  }
+  if (what === "inboxes" && parts.length === 4 && m === "POST")
+    return created(await api().createInbox(project));
+  if (what === "jobs" && id && parts.length === 5 && m === "GET") return api().job(project, id);
+  if (what !== "subscriptions") return NOT_A_ROUTE;
+  if (parts.length === 4) {
+    if (m === "POST")
+      return created(await api().subscribe(project, (await bodyOf(request)) as never));
+    if (m === "GET") return api().listSubscriptions(project);
+    return NOT_A_ROUTE;
+  }
+  if (!id) return NOT_A_ROUTE;
+  if (parts.length === 5) {
+    if (m === "GET") return api().getSubscription(project, id);
+    if (m === "DELETE") return api().unsubscribe(project, id);
+    return NOT_A_ROUTE;
+  }
+  if (parts.length !== 6) return NOT_A_ROUTE;
+  if (sub === "peek" && m === "GET")
+    return api().peek(project, id, limit === undefined ? {} : { limit });
+  if (sub === "take" && m === "POST")
+    return api().take(project, id, (await bodyOf(request)) as never);
+  if (sub === "claim" && m === "POST")
+    return api().claim(project, id, (await bodyOf(request)) as never);
+  if (sub === "dead-letters" && m === "GET") return api().deadLetters(project, id);
+  if (sub === "changes" && m === "GET")
+    return api().changes(project, id, {
+      ...(numberParam(url, "after") !== undefined ? { after: numberParam(url, "after") } : {}),
+      ...(numberParam(url, "wait_ms") !== undefined
+        ? { wait_ms: numberParam(url, "wait_ms") }
+        : {}),
+    });
+  if (sub === "events" && m === "GET")
+    return taskEventStream(api(), project, id, { keepAliveMs: options.keepAliveMs });
+  return NOT_A_ROUTE;
 }
 
 /**

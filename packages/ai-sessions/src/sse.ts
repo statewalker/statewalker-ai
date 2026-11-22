@@ -128,3 +128,77 @@ export async function eventStream(
     },
   });
 }
+
+/**
+ * A subscription's change notifications as Server-Sent Events (statewalker/statewalker-root#206):
+ * `changed` events carrying a counter, never tasks; receivers pull. The first event is sent at
+ * once, so a receiver that was down pulls everything still waiting; then one whenever the
+ * subscription's tasks may have changed, and a keep-alive comment while nothing did. Every wait
+ * goes through the caller's User DO, which checks the token again; a refusal ends the stream with
+ * an `error` event.
+ */
+export async function taskEventStream(
+  api: SessionApi,
+  project: string,
+  subscription: string,
+  options: { keepAliveMs?: number } = {},
+): Promise<Response> {
+  const keepAliveMs = options.keepAliveMs || DEFAULT_KEEP_ALIVE_MS;
+  // Read before answering, so a refusal keeps its status.
+  const first = await api.changes(project, subscription, { wait_ms: 0 });
+  const held = await api.holdStream();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    void api.releaseStream(held).catch(() => {});
+  };
+  const encoder = new TextEncoder();
+  let stopped = false;
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const write = (text: string) => {
+        if (!stopped) controller.enqueue(encoder.encode(text));
+      };
+      let seq = first.seq;
+      write(`id: ${seq}\nevent: changed\ndata: ${JSON.stringify({ seq })}\n\n`);
+      try {
+        while (!stopped) {
+          const next = await api.changes(project, subscription, {
+            after: seq,
+            wait_ms: keepAliveMs,
+          });
+          if (next.seq > seq) {
+            seq = next.seq;
+            write(`id: ${seq}\nevent: changed\ndata: ${JSON.stringify({ seq })}\n\n`);
+          } else write(": keep-alive\n\n");
+        }
+      } catch (e) {
+        write(
+          marker("error", {
+            error: String((e as Error)?.message ?? e),
+            code: codeOf(e),
+            status: statusOf(e),
+          }),
+        );
+        release();
+        if (!stopped) {
+          stopped = true;
+          controller.close();
+        }
+      }
+    },
+    cancel() {
+      stopped = true;
+      release();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache",
+      "x-accel-buffering": "no",
+    },
+  });
+}

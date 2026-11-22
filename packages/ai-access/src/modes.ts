@@ -106,7 +106,8 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
   plan: {
     rules: {
       allow: [...READS, "files.write:{folders}", "files.delete:{folders}"],
-      deny: MEMORY,
+      // Publishing a task hands work to others (statewalker/statewalker-root#160): plan denies it.
+      deny: [...MEMORY, "tasks.publish"],
     },
     folders: ["/plans"],
     otherwise: "ask",

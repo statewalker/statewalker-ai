@@ -171,6 +171,7 @@ import type {
   SecretView,
   ServiceAccountView,
   SetSecretRequest,
+  TasksCall,
   UsageQuery,
   UsageRecordsPage,
   UsageRecordsQuery,
@@ -220,6 +221,7 @@ import {
 } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { type HeldFilesCall, keepStreamEventsAlive } from "./stream-events.js";
+import { TasksHost, tasksOptions } from "./tasks-host.js";
 import { telemetryConfigOf, telemetryOf } from "./telemetry-host.js";
 import { toolEsbuild } from "./tool-bundler.js";
 import { describeBundle, runBundle, ToolHost } from "./tool-executor.js";
@@ -282,6 +284,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #databases: DatabaseGate;
   /** The workspace's, its projects' and its members' limits and counters (#179). */
   readonly #limits: WorkspaceLimits;
+  /** The projects' task queues (statewalker/statewalker-root#206). */
+  readonly #tasks: TasksHost;
   /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
   readonly #memoryLock = new KeyedLock();
   /** Edits of a limits file are serialized (#181). */
@@ -346,6 +350,21 @@ export class Workspace extends DurableObject<Env> {
     this.#limits = new WorkspaceLimits(sql, env, this.#name, async (path) =>
       tryReadText(await this.#store, path),
     );
+    // The task queues run on the limits clock, so a test clock moves leases and expiry too.
+    this.#tasks = new TasksHost({
+      sql,
+      now: () => this.#limits.clock.now(),
+      options: tasksOptions(env.TASKS),
+      access: (project, user) => this.#access(project, user),
+      publishMode: (facts, subject, call) => this.#tasksMode(facts, subject, call),
+      admitBytes: async (project, delta) =>
+        this.#limits.admitStorage(project, delta, await this.#store, () =>
+          this.#databases.storage(),
+        ),
+      adjustBytes: async (project, user, delta) =>
+        this.#limits.adjustStorage(project, user, delta, await this.#store, "queue"),
+      arm: (at) => this.#armTasks(at),
+    });
     const files = fileRoleSource(
       async (path) => tryReadText(await this.#store, path),
       DEFAULT_SYSTEM_FOLDER,
@@ -1578,6 +1597,92 @@ export class Workspace extends DurableObject<Env> {
     return this.#authority.forTool(agentCapability, tool);
   }
 
+  // --- the task queue (statewalker/statewalker-root#206) ---------------------------------------
+
+  /**
+   * One task API call: a person's (their user capability, through their User DO) or an agent
+   * session's (its capability, through its tools), with the caller's rights now (tasks-host.ts).
+   */
+  async tasks(capability: string, call: TasksCall): Promise<unknown> {
+    const facts = await this.#authority.agentSessionOf(capability).catch(() => undefined);
+    const user = facts?.user ?? (await this.#authority.userOfUserCapability(capability));
+    return this.#tasks.call(facts ? { user, facts } : { user }, call);
+  }
+
+  /**
+   * An agent session's publishing (a task or a reply) under its mode (#160): `plan` denies it,
+   * `default` asks, `auto` has the risk classifier judge it, an unattended session's ask denies.
+   * An approval is of exactly this call (stored as method `tasks`, path the subject).
+   */
+  async #tasksMode(facts: AgentSessionFacts, subject: string, call: TasksCall): Promise<void> {
+    const store = await this.#store;
+    const { mode } = await this.#modeState(facts, store);
+    const decideOne = await this.#decider(facts, store);
+    const decision = this.#settled(decideOne("tasks", "publish", subject), facts);
+    if (decision.verdict === "deny")
+      throw codedError(
+        "EACCES",
+        `may not publish to '${subject}' in ${mode.name} mode: ${decision.reason}`,
+      );
+    if (decision.verdict === "allow") return;
+    const bytes = new TextEncoder().encode(JSON.stringify(call));
+    const id = await approvalId(facts.session, "tasks", subject, bytes);
+    const request: ApprovalRequest = {
+      id,
+      session: facts.session,
+      project: facts.project,
+      action: { method: "tasks", path: subject, size: bytes.length },
+      permission: `tasks.publish:${subject}`,
+      reason: decision.reason,
+    };
+    // A granted approval is used up before the classifier is asked: a block's retry passes.
+    if (this.#registry.consume(id, facts.session, facts.user)) return;
+    if (decision.verdict === "classify") {
+      const c = await this.#classify(facts, store, request);
+      await this.#record(facts, {
+        action: request.action,
+        step: "classifier",
+        verdict: c.verdict,
+        reason: c.reason,
+        ...(c.model ? { model: c.model } : {}),
+        latency_ms: c.latency_ms,
+        ...(c.fallback ? { fallback: c.fallback } : {}),
+        ...(c.stop ? { stop: c.stop } : {}),
+        ...(c.verdict === "deny"
+          ? {
+              approval: id,
+              request: { ...request, reason: c.reason },
+              stored: { method: "tasks", path: subject, content: bytes },
+            }
+          : {}),
+      });
+      if (c.verdict === "allow") return;
+      if (c.verdict === "deny")
+        throw codedError(
+          "EACCES",
+          `may not publish to '${subject}': the risk classifier denied it: ${c.reason} (blocked: the user may approve a retry, ${id})`,
+        );
+      throw approvalError({ ...request, reason: c.reason });
+    }
+    throw approvalError(request);
+  }
+
+  /**
+   * Arms the DO's alarm for the queues' next due task, lease or dead letter (a time of the queue's
+   * clock, which a test clock may move away from the wall clock), unless one is set sooner.
+   */
+  async #armTasks(at: number | undefined): Promise<void> {
+    if (at === undefined) return;
+    const wall = Date.now() + Math.max(1_000, at - this.#limits.clock.now());
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > wall) await this.ctx.storage.setAlarm(wall);
+  }
+
+  /** The DO's alarm: the queues' due work, so subscriptions hear of lapsed leases. */
+  async alarm(): Promise<void> {
+    await this.#tasks.sweepDue();
+  }
+
   // --- remote agent sessions (statewalker/statewalker-root#109, #144) --------------------------
 
   /** The UHP servers this workspace may use: the deployment's, then the workspace's own. */
@@ -2108,7 +2213,7 @@ export class Workspace extends DurableObject<Env> {
    */
   async admitRequest(userCapability: string, kind: string, maxDelayMs?: number): Promise<void> {
     const user = await this.#authority.userOfUserCapability(userCapability);
-    if (kind !== "message" && kind !== "stream" && kind !== "session")
+    if (kind !== "message" && kind !== "stream" && kind !== "session" && kind !== "task")
       throw codedError("EINVAL", "no such kind of request");
     await this.#limits.admitRequest(user, kind, maxDelayMs);
   }
@@ -3414,6 +3519,7 @@ export class Workspace extends DurableObject<Env> {
     await (await this.#store).remove(`/${name}`);
     // The pre-images of its files go with it (#191).
     this.#preImages.drop({ project: name });
+    await this.#tasks.dropProject(name);
   }
 
   /**

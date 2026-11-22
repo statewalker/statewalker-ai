@@ -72,6 +72,7 @@ import { MEMORY_TOOL, memoryHost, memoryTool, runStoredMemoryCall } from "./memo
 import { SESSION_SEARCH_TOOL, sessionSearchOf, sessionSearchTool } from "./session-search-tool.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
 import { AGENT_START, agentStartTool, outcomeOf, type SubAgentHost } from "./sub-agents.js";
+import { runStoredTasksCall, TASKS_TOOLS, tasksPort, tasksTools } from "./tasks-tool.js";
 import { telemetryOf } from "./telemetry-host.js";
 
 type OnApproval = TurnRun["onApproval"];
@@ -233,6 +234,7 @@ export class AgentSession extends DurableObject<Env> {
       ...DB_TOOLS,
       MEMORY_TOOL,
       SESSION_SEARCH_TOOL,
+      ...TASKS_TOOLS,
       ...(delegates ? [AGENT_START] : []),
     ].filter(within);
     const set = (await workspace.sessionTools(config.capability, named)) as unknown as {
@@ -250,6 +252,8 @@ export class AgentSession extends DurableObject<Env> {
       ...databaseTools(databaseHost(env, config, config.capability), onApproval),
       // Memory across sessions, the agent's only way to it (#157).
       memoryTool(memoryHost(env, config), onApproval),
+      // The project's task queue (#206).
+      ...tasksTools(tasksPort(env, config), config.project, onApproval),
       // The user's own earlier sessions in the project (#174).
       sessionSearchTool(sessionSearchOf(env, config)),
       agentStartTool(
@@ -577,6 +581,7 @@ export class AgentSession extends DurableObject<Env> {
             throw e;
           }
         if (call.method === "memory") return runStoredMemoryCall(memoryHost(env, config), call);
+        if (call.method === "tasks") return runStoredTasksCall(tasksPort(env, config), call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));

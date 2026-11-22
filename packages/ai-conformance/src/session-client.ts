@@ -12,6 +12,7 @@ import type {
   StopReason,
   UIMessageChunk,
 } from "@statewalker/ai-sessions";
+import type { TasksApi } from "@statewalker/ai-tasks";
 import { DefaultChatTransport } from "ai";
 import type { Deployment } from "./deployment.js";
 
@@ -490,7 +491,21 @@ export interface McpResponse {
   error?: { code: number; message: string; data?: unknown };
 }
 
-export interface SessionClient {
+/**
+ * The session API as a client sees it; the task API (statewalker/statewalker-root#206) is part of
+ * it: REST `/v1/projects/{p}/tasks`, `/v1/projects/{p}/subscriptions`, `/v1/leases/{id}`, or RPC.
+ */
+export interface SessionClient extends TasksApi {
+  /**
+   * The first `count` change counters of a subscription's notifications: REST reads its SSE
+   * `events` (`changed` events), RPC waits on `changes`. Each wait ends after `waitMs`.
+   */
+  taskEvents(
+    project: string,
+    subscription: string,
+    count: number,
+    waitMs?: number,
+  ): Promise<number[]>;
   me(): Promise<UserSession>;
   startSession(req: {
     project: string;
@@ -871,6 +886,9 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     return sseFrames(res.body as ReadableStream<Uint8Array>);
   };
   const s = (id: string) => `/v1/sessions/${encodeURIComponent(id)}`;
+  const pp = (project: string) => `/v1/projects/${encodeURIComponent(project)}`;
+  const sub = (project: string, name: string) =>
+    `${pp(project)}/subscriptions/${encodeURIComponent(name)}`;
   const client: SessionClient = {
     openai: (project, agent) => ({
       baseURL: openAiBaseUrl(project, agent),
@@ -983,6 +1001,47 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     getLimits: (level, target) => call("GET", limitsPath(level, target)),
     setLimits: (level, target, req) => call("PUT", limitsPath(level, target), req),
     deleteLimits: (level, target) => call("DELETE", limitsPath(level, target)),
+    // The task API (statewalker/statewalker-root#206).
+    publish: (project, task) => call("POST", `${pp(project)}/tasks`, task),
+    listTasks: (project, o = {}) =>
+      call("GET", `${pp(project)}/tasks${search(o as Record<string, unknown>)}`),
+    subscribe: (project, sub) => call("POST", `${pp(project)}/subscriptions`, sub),
+    listSubscriptions: (project) => call("GET", `${pp(project)}/subscriptions`),
+    getSubscription: (project, name) => call("GET", sub(project, name)),
+    unsubscribe: (project, name) => call("DELETE", sub(project, name)),
+    peek: (project, name, o = {}) =>
+      call("GET", `${sub(project, name)}/peek${search(o as Record<string, unknown>)}`),
+    take: (project, name, o = {}) => call("POST", `${sub(project, name)}/take`, o),
+    claim: (project, name, o = {}) => call("POST", `${sub(project, name)}/claim`, o),
+    deadLetters: (project, name) => call("GET", `${sub(project, name)}/dead-letters`),
+    changes: (project, name, o = {}) =>
+      call("GET", `${sub(project, name)}/changes${search(o as Record<string, unknown>)}`),
+    createInbox: (project) => call("POST", `${pp(project)}/inboxes`),
+    reply: (project, task, body) =>
+      call("POST", `${pp(project)}/tasks/${encodeURIComponent(task)}/reply`, body),
+    ack: (lease) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/ack`),
+    release: (lease, o = {}) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/release`, o),
+    renew: (lease, o = {}) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/renew`, o),
+    job: (project, id) => call("GET", `${pp(project)}/jobs/${encodeURIComponent(id)}`),
+    async taskEvents(project, name, count) {
+      const seqs: number[] = [];
+      const res = await deployment.fetch(`${sub(project, name)}/events`, { headers });
+      if (!res.ok || !res.body) await answer(res);
+      const frames = sseFrames(res.body as ReadableStream<Uint8Array>);
+      try {
+        for (;;) {
+          const { value, done } = await frames.next();
+          if (done) break;
+          if (value.event === "error") throw new ApiError(500, String(value.data));
+          if (value.event === "changed")
+            seqs.push((JSON.parse(String(value.data)) as { seq: number }).seq);
+          if (seqs.length >= count) break;
+        }
+      } finally {
+        await frames.return?.(undefined);
+      }
+      return seqs;
+    },
     effectiveLimits: (q = {}) =>
       call("GET", `/v1/limits/effective${search(q as Record<string, unknown>)}`),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),

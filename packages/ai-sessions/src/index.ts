@@ -101,6 +101,8 @@ export {
   type StopReason,
   type StoredAction,
   type SubAgentRequest,
+  TASKS_METHODS,
+  type TasksCall,
   TERMINAL_TURN_STATUSES,
   type TopicsQuery,
   type TurnEffect,
