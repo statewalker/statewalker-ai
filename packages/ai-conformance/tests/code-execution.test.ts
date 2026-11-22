@@ -52,6 +52,9 @@ const transports: [string, Connect][] = [
   ],
 ];
 
+/** A file larger than the runner's Pyodide engine copies in (its `maxBytes`, 256 KiB). */
+const BIG = "x".repeat(300 * 1024);
+
 let model: FakeModel;
 let deployment: Deployment;
 
@@ -80,7 +83,9 @@ const vars = (extra: Record<string, string> = {}) => ({
   OPERATOR_KEY,
   CATALOG: JSON.stringify(CATALOG),
   DEFAULT_AGENT: "code/default",
-  EXEC_TIMEOUT_MS: "3000",
+  EXEC_TIMEOUT_MS: "6000",
+  // WASIX programs the `bash` tool routes to the posix executor.
+  EXECUTORS: JSON.stringify({ programs: ["rg", "tee"] }),
   ...extra,
 });
 
@@ -132,8 +137,24 @@ beforeAll(async () => {
       });
       files[`/${p}/doc.txt`] = "one two three four";
       for (const [name, text] of Object.entries(SCRIPTS)) files[`/${p}/${name}`] = text;
+      files[`/${p}/todo.txt`] = "one TODO\ntwo\nthree TODO\n";
       files[`/${p}/hello.py`] = "import sys\nprint('hello from python', *sys.argv[1:])\n";
+      files[`/${p}/count.py`] = [
+        "import os",
+        "words = len(open('doc.txt').read().split())",
+        "os.makedirs('pyout', exist_ok=True)",
+        "open('pyout/count.txt', 'w').write(str(words))",
+        "print('projects:', sorted(os.listdir('/')))",
+        "try:",
+        "    import urllib.request",
+        "    urllib.request.urlopen('https://example.com/', timeout=5)",
+        "    print('reached the network')",
+        "except Exception as e:",
+        "    print('no network:', type(e).__name__)",
+      ].join("\n");
     }
+    files[`/big-${t}/.system/access`] = JSON.stringify({ [`ann-${t}`]: "owner" });
+    files[`/big-${t}/big.log`] = BIG;
     files[`/other-${t}/.system/access`] = JSON.stringify({ [`ann-${t}`]: "owner" });
     files[`/other-${t}/secret.txt`] = "not yours";
     files[`/meter-${t}/.system/limits`] = JSON.stringify([
@@ -217,6 +238,104 @@ describe.each(transports)("code execution over %s", (name, connect) => {
       expect(outputOf(turn)).toMatch(/python: ENOSYS/);
       expect(outputOf(turn)).toContain("exited with code 127");
     }
+  });
+
+  it("runs python on a copy of the project's files, writes changes back through the capability, with no network", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const turn = await ann.sendMessage(s.id, { content: bash("python count.py") });
+    if (!CAN.python) {
+      expect(outputOf(turn)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(outputOf(turn)).toContain(`projects: ['${project}'`);
+    expect(outputOf(turn)).not.toContain(`other-${t}`);
+    expect(outputOf(turn)).toContain("no network:");
+    const read = await ann.sendMessage(s.id, {
+      content: call("read", { path: `/${project}/pyout/count.txt` }),
+    });
+    expect(outputOf(read)).toContain("4");
+  });
+
+  it("starts each python run from a fresh interpreter state: an edited module is imported anew", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const write = (path: string, content: string) =>
+      ann.sendMessage(s.id, { content: call("write", { path: `/${project}/${path}`, content }) });
+    await write("pyfresh/helper.py", "X = 1\n");
+    await write(
+      "pyfresh/main.py",
+      "import os, helper\nprint('x', helper.X, os.environ.get('LEAK'))\nos.environ['LEAK'] = 'yes'\n",
+    );
+    const first = await ann.sendMessage(s.id, { content: bash("python pyfresh/main.py") });
+    if (!CAN.python) {
+      expect(outputOf(first)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(outputOf(first)).toContain("x 1 None");
+    await write("pyfresh/helper.py", "X = 2\n");
+    const second = await ann.sendMessage(s.id, { content: bash("python pyfresh/main.py") });
+    expect(outputOf(second)).toContain("x 2 None");
+  });
+
+  it("never writes back over a file python was not given a copy of", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `big-${t}` });
+    const turn = await ann.sendMessage(s.id, {
+      content: bash(`python -c "open('big.log', 'a').write('appended')"`),
+    });
+    if (!CAN.python) {
+      expect(outputOf(turn)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(outputOf(turn)).toMatch(/not written back: write \/big-\w+\/big\.log: .*not copied in/);
+    const read = await ann.sendMessage(s.id, {
+      content: call("bash", { command: "wc -c big.log" }),
+    });
+    expect(outputOf(read)).toContain(String(BIG.length));
+  });
+
+  it("authorizes python's write-back again: a change the mode asks about is not written", async () => {
+    const bea = await as("bea", "default");
+    const s = await bea.startSession({ project });
+    const turn = await bea.sendMessage(s.id, {
+      content: bash(`python -c "open('denied.txt', 'w').write('no')"`),
+    });
+    if (!CAN.python) {
+      // Nothing to decide: there is no executor to run it on.
+      expect(outputOf(turn)).toMatch(/python: ENOSYS/);
+      return;
+    }
+    expect(turn.status).toBe("waiting");
+    const id = String(turn.stop_reason?.approval_ids?.[0]);
+    const { accepted } = await bea.answerApproval(id, { decision: "allow", scope: "once" });
+    const done = await bea.waitTurn(accepted);
+    expect(outputOf(done)).toMatch(/not written back: write \/code-\w+\/denied\.txt: EACCES/);
+    const read = await bea.sendMessage(s.id, {
+      content: call("read", { path: `/${project}/denied.txt` }),
+    });
+    expect(results(read).at(-1)).toMatchObject({ isError: true });
+  });
+
+  it("runs WASIX programs on a Wasmer engine, live over the session's files, and answers ENOSYS where there is none", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const turn = await ann.sendMessage(s.id, { content: bash("rg -c TODO todo.txt") });
+    if (!CAN.posix) {
+      expect(outputOf(turn)).toMatch(/rg: ENOSYS/);
+      return;
+    }
+    expect(outputOf(turn)).toMatch(/^2\b/);
+    const wrote = await ann.sendMessage(s.id, { content: bash("echo from wasmer | tee teed.txt") });
+    expect(outputOf(wrote)).toContain("from wasmer");
+    const read = await ann.sendMessage(s.id, {
+      content: call("read", { path: `/${project}/teed.txt` }),
+    });
+    expect(outputOf(read)).toContain("from wasmer");
+    const other = await ann.sendMessage(s.id, {
+      content: bash(`rg -c yours /other-${t}/secret.txt`),
+    });
+    expect(outputOf(other)).not.toMatch(/^1\b/);
   });
 
   it("checks an agent's requires when its session starts", async () => {

@@ -18,6 +18,17 @@ import type { Deployment } from "./deployment.js";
 const run = promisify(execFile);
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const PACKAGE = join(HERE, "..");
+/** Pyodide and the engine script, served to the page's Python engine (statewalker/statewalker-root#142). */
+const PYODIDE_DIR = fileURLToPath(new URL(".", import.meta.resolve("pyodide/pyodide.mjs")));
+/** The engine scripts sit in `engines/` beside the package's modules (src/ or dist/). */
+const engineScript = (name: string) =>
+  fileURLToPath(
+    new URL(`../engines/${name}`, import.meta.resolve("@statewalker/ai-environment/pyodide")),
+  );
+const PYODIDE_ENGINE = engineScript("pyodide-engine.mjs");
+/** The Wasmer engine script and the SDK's package folder (`dist/`, `pkg/`), served likewise. */
+const WASMER_ENGINE = engineScript("wasmer-engine.mjs");
+const WASMER_SDK = join(fileURLToPath(new URL(".", import.meta.resolve("@wasmer/sdk"))), "..");
 
 const TYPES: Record<string, string> = {
   ".html": "text/html",
@@ -84,7 +95,9 @@ async function launch(): Promise<Browser> {
   const { chromium } = await import("playwright");
   // The deployment's outbound requests (the scripted model, the fake REST and S3 servers) go to
   // other local ports: cross-origin for the page, so same-origin checks are off in this browser.
-  const args = ["--disable-web-security"];
+  // Same-origin checks off also turns cross-origin isolation off: shared memory, which the Wasmer
+  // engine's bridge needs (a real page gets it by COOP/COEP), is turned on by its own flag.
+  const args = ["--disable-web-security", "--enable-features=SharedArrayBuffer"];
   const executablePath = process.env.CONFORMANCE_CHROMIUM || undefined;
   try {
     return await chromium.launch({ executablePath, args });
@@ -111,7 +124,19 @@ function startShared(): Promise<Shared> {
           return;
         }
         if (d) file = join(d.folder, normalize(`/${m[2]}`));
-      } else file = join(b.page, normalize(path === "/" ? "/index.html" : path));
+      } else if (path.startsWith("/pyodide/"))
+        file = join(PYODIDE_DIR, normalize(`/${path.slice("/pyodide/".length)}`));
+      else if (path === "/engines/pyodide-engine.mjs") {
+        file = PYODIDE_ENGINE;
+        // The engine's Worker: no eval, no other origin (its network is gone after Pyodide loads).
+        res.setHeader(
+          "content-security-policy",
+          "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; connect-src 'self'",
+        );
+      } else if (path === "/engines/wasmer-engine.mjs") file = WASMER_ENGINE;
+      else if (path.startsWith("/wasmer/sdk/"))
+        file = join(WASMER_SDK, normalize(`/${path.slice("/wasmer/sdk/".length)}`));
+      else file = join(b.page, normalize(path === "/" ? "/index.html" : path));
       try {
         const body = readFileSync(String(file));
         res.writeHead(200, {
