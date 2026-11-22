@@ -61,7 +61,7 @@ export function toUhpError(
     case "EAUTH":
       return uhpError(401, "invalid_credential", message);
     case "EACCES":
-      return uhpError(403, "insufficient_scope", message);
+    // Outside the caller's scope: 404, never 403 (Architecture §5).
     case "ENOENT":
       return uhpError(404, context.notFound ?? "statewalker_not_found", message);
     case "EINVAL":

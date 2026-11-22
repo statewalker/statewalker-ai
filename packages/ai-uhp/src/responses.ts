@@ -34,6 +34,7 @@ export type UhpApi = Pick<
   SessionApi,
   | "startSession"
   | "getSession"
+  | "deleteSession"
   | "sendMessage"
   | "getTurn"
   | "cancelTurn"
@@ -547,11 +548,18 @@ export async function createTask(api: UhpApi, body: Record<string, unknown>): Pr
   const session = await api.startSession({ project: agent.project, agent: agent.id }).catch((e) => {
     throw toUhpError(e, { notFound: "harness_not_found" });
   });
-  const accepted = await api.sendMessage(session.id, {
-    content: input.content as string,
-    ...(model ? { model } : {}),
-    ...marks,
-  } as never);
+  let accepted: { turn_id: string; offset: number };
+  try {
+    accepted = await api.sendMessage(session.id, {
+      content: input.content as string,
+      ...(model ? { model } : {}),
+      ...marks,
+    } as never);
+  } catch (e) {
+    // A refused first message leaves no empty session behind.
+    await api.deleteSession(session.id).catch(() => {});
+    throw toUhpError(e);
+  }
   return {
     session,
     turn: accepted.turn_id,
