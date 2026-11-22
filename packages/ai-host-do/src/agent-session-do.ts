@@ -377,13 +377,19 @@ export class AgentSession extends DurableObject<Env> {
         if (call.method === "tool") {
           // An approved tool call runs again at the workspace, re-checked against the current set.
           try {
-            const { executor_cpu_ms: _ms, ...result } = await workspace.callTool(
-              config.capability,
-              {
+            const run = () =>
+              workspace.callTool(config.capability, {
                 name: call.path,
                 args: JSON.parse(new TextDecoder().decode(call.content ?? new Uint8Array())),
-              },
+              });
+            // Held to the session's own limits as a direct call is (#outbound): outbound requests,
+            // a native tool's isolate time.
+            const definition = (await this.#tools(config, () => {})).definitions.find(
+              (d) => d[TOOL_EXTENSION]?.name === call.path,
             );
+            if (definition)
+              return await this.#outbound(config, definition, undefined, undefined, run);
+            const { executor_cpu_ms: _ms, warnings: _w, ...result } = await run();
             return result;
           } catch (e) {
             const request = approvalOf(e);

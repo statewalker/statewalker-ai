@@ -346,6 +346,21 @@ describe.each(transports)("native tools over %s", (name, connect) => {
     expect(outputOf(after)).toMatch(/ELIMIT/);
   });
 
+  it("holds an approved call to the session's own limit on isolate time", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({
+      project,
+      limits: [{ meter: "executor_cpu_ms:isolate", value: 1, period: "total" }],
+    });
+    // The asking tool's approved run counts at the session level...
+    const first = await approved(ann, s.id, call("oc__shout", { text: "once" }));
+    expect(first).toMatchObject({ isError: false, output: "ONCE!" });
+    // ...so the next call is refused before it runs (or asks).
+    const second = await ann.sendMessage(s.id, { content: call("oc__shout", { text: "twice" }) });
+    expect(results(second)).toEqual([expect.objectContaining({ isError: true })]);
+    expect(outputOf(second)).toMatch(/ELIMIT/);
+  });
+
   it("runs a deployment catalog bundle only once it is approved by hash", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project });
