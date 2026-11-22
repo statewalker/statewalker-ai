@@ -1,6 +1,7 @@
 // The scripted model: an OpenAI-compatible chat-completions endpoint (streaming or not) whose
 // replies follow commands in the last user message, so scenarios are deterministic and offline.
-//   CALL <tool> <json args>   one tool call, then "RESULT: <tool output>"
+//   CALL <tool> <json args>   one tool call, then "RESULT: <tool output>"; several CALL lines are
+//                             one answer of several tool calls
 //   FAIL                      the model refuses the request (HTTP 400): the turn fails
 //   HOLD <name>               "OK", once the scenario releases <name> (a turn that stays running)
 //   BIG <name>                "OK", reporting 140000 prompt tokens (a context near a large window)
@@ -207,11 +208,20 @@ export async function fakeModel(): Promise<FakeModel> {
       message = { role: "assistant", content: `RESULT: ${results.join(" | ")}` };
       finish = "stop";
     } else if (call) {
-      const id = `call_${requests.length}`;
-      const fn = { name: call[1], arguments: call[2] || "{}" };
+      const lines = lastUserText.split("\n");
+      const several =
+        lines.length > 1 && lines.every((l) => /^CALL\s+\S+\s*\{.*\}\s*$/.test(l.trim()));
+      const calls = several
+        ? lines.map((l) => /^CALL\s+(\S+)\s*([\s\S]*)$/.exec(l.trim()) as RegExpExecArray)
+        : [call];
       message = {
         role: "assistant",
-        tool_calls: [{ index: 0, id, type: "function", function: fn }],
+        tool_calls: calls.map((c, index) => ({
+          index,
+          id: `call_${requests.length}_${index}`,
+          type: "function",
+          function: { name: c[1], arguments: c[2] || "{}" },
+        })),
       };
       finish = "tool_calls";
     } else {

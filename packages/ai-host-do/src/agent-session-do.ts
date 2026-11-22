@@ -11,18 +11,22 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { approvalId, codeOf, settleAsk } from "@statewalker/ai-access";
+import { TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
 import {
   approvalAware,
+  approvalOf,
   errorMessage,
   filesOverRpc,
   limitOfMessage,
   type ModelCall,
   type ModelResponse,
   runStoredCall,
+  type StoredCall,
 } from "@statewalker/ai-environment";
 import {
   completeWith,
   FlueSession,
+  type HostTool,
   type ModelPort,
   purgeFlue,
   TRACER_TOOLS,
@@ -38,6 +42,7 @@ import {
   type GateDecisionInput,
   type ItemInput,
   type ItemsQuery,
+  type McpMessage,
   parseCompaction,
   type TurnRun,
 } from "@statewalker/ai-sessions";
@@ -50,7 +55,7 @@ import {
 } from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
 import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
-import { restTools } from "./rest-tools.js";
+import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
 
 type OnApproval = TurnRun["onApproval"];
@@ -119,6 +124,138 @@ export class AgentSession extends DurableObject<Env> {
     return this.#flue;
   }
 
+  /**
+   * The session's tool set now (statewalker/statewalker-root#129): Flue's tools over its sandbox,
+   * the harness's own and the plugin tools the Workspace DO offers it (its agent's request, its
+   * user's role and the mode), a sub-agent's within its parent's. The model is offered exactly
+   * these, and the MCP endpoint lists the same documents.
+   */
+  async #tools(
+    config: AgentSessionConfig,
+    onApproval: (request: ApprovalRequest, call: StoredCall) => void,
+    turn?: string,
+    emit?: (item: ItemInput) => void,
+  ) {
+    const env = this.env;
+    const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+    const within = (name: string) => !config.tools || config.tools.includes(name);
+    // `agent.start` only for an agent whose definition lists sub-agents the user may use.
+    const delegates = (config.run?.agents ?? []).length > 0;
+    const named = [...DB_TOOLS, ...(delegates ? [AGENT_START] : [])].filter(within);
+    const set = (await workspace.sessionTools(config.capability, named)) as unknown as {
+      harness: string[];
+      tools: ToolDefinition[];
+    };
+    const plugins = set.tools.filter((d) => within(d[TOOL_EXTENSION].name));
+    const offered = [
+      ...TRACER_TOOLS.filter(within),
+      ...set.harness,
+      ...plugins.map((d) => d[TOOL_EXTENSION].name),
+    ];
+    // The project's databases, at the gate with the session's capability (#136).
+    const harness: HostTool[] = [
+      ...databaseTools(databaseHost(env, config, config.capability), onApproval),
+      agentStartTool(offered, {
+        startSubAgent: (req) =>
+          userOf(env, config.user).startSubAgent(config.id, config.capability, req),
+        run: (child, message, signal) => runChild(env, child, message, signal),
+      }),
+    ]
+      .filter((t) => set.harness.includes(t.name))
+      .map((t) => ({ ...t, executionMode: executionModeOf(harnessDefinition(t)) }));
+    let waitingOn: ApprovalRequest | undefined;
+    const pluginTools = plugins.map((d) =>
+      pluginHostTool(
+        d,
+        (args) =>
+          this.#outbound(config, d, turn, emit, () =>
+            workspace.callTool(config.capability, {
+              name: d[TOOL_EXTENSION].name,
+              args,
+              ...(turn ? { turn } : {}),
+            }),
+          ),
+        {
+          onApproval,
+          waitingOn: () => waitingOn,
+          wait: (request) => {
+            waitingOn = request;
+          },
+        },
+      ),
+    );
+    const hostTools = [...harness, ...pluginTools];
+    return {
+      offered,
+      hostTools,
+      definitions: [...harness.map(harnessDefinition), ...plugins],
+    };
+  }
+
+  /**
+   * A plugin tool's call, held to the session's own limits on outbound requests when it sends one
+   * (a REST tool, #179): refused before it reaches the workspace, counted here after. The
+   * workspace counts its own levels; the warnings it crossed become items of the turn.
+   */
+  async #outbound(
+    config: AgentSessionConfig,
+    definition: ToolDefinition,
+    turn: string | undefined,
+    emit: ((item: ItemInput) => void) | undefined,
+    call: () => Promise<{
+      output: string;
+      isError: boolean;
+      secrets?: string[];
+      warnings?: WarningView[];
+    }>,
+  ) {
+    const outbound = definition[TOOL_EXTENSION].route.kind === "rest";
+    const scopes = this.#limits.scopes(config);
+    if (outbound)
+      try {
+        this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+      } catch (e) {
+        return { output: String((refusal(e) as Error).message), isError: true };
+      }
+    const { warnings, ...result } = await call();
+    for (const warning of warnings ?? []) emit?.({ kind: "limit_warning", warning });
+    if (outbound)
+      for (const warning of this.#limits.ledger.add(
+        scopes,
+        { outbound_requests: 1 },
+        this.#limits.meta(config, turn),
+      ))
+        emit?.({ kind: "limit_warning", warning: warningView(warning) });
+    return result;
+  }
+
+  /**
+   * The session's own MCP endpoint (`/v1/sessions/{id}/mcp`, statewalker/statewalker-root#129): it
+   * lists and calls exactly the tools the session's model is offered, re-read at every message.
+   * A call the mode asks about is refused with the approval it waits on.
+   */
+  async mcp(message: McpMessage) {
+    const config = this.#core.config();
+    if (!config) throw new Error("ENOENT: no such agent session");
+    const set = () => this.#tools(config, () => {});
+    return answerMcp(message, {
+      tools: async () => (await set()).definitions,
+      call: async (d, args) => {
+        const tool = (await set()).hostTools.find((t) => t.name === d[TOOL_EXTENSION].name);
+        if (!tool)
+          throw new Error(
+            `EACCES: the tool '${d[TOOL_EXTENSION].name}' is not offered to this session`,
+          );
+        const r = await tool.execute(args);
+        return {
+          output: r.output,
+          isError: !!r.isError,
+          ...(r.secrets?.length ? { secrets: r.secrets } : {}),
+        };
+      },
+    });
+  }
+
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#limits = new SessionLimits(ctx.storage.sql, env);
@@ -170,49 +307,13 @@ export class AgentSession extends DurableObject<Env> {
         }),
         options: compaction.options,
       },
-      runTurn: (
+      runTurn: async (
         { config, turn, content, model, context, signal, onSteer, onApproval, waiting },
         emit,
       ) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
-        const rest = restTools(env.REST_TOOLS, async (call) => {
-          // The session's own limits on outbound requests, counted here (#179); the workspace
-          // counts its levels in gatewayFetch.
-          const scopes = this.#limits.scopes(config);
-          try {
-            this.#limits.ledger.check(scopes, { outbound_requests: 1 });
-          } catch (e) {
-            return { ok: false, error: String((refusal(e) as Error).message), secrets: [] };
-          }
-          const { warnings, ...result } = await workspace.gatewayFetch(config.capability, {
-            ...call,
-            turn,
-          });
-          for (const warning of warnings ?? []) emit({ kind: "limit_warning", warning });
-          for (const warning of this.#limits.ledger.add(
-            scopes,
-            { outbound_requests: 1 },
-            this.#limits.meta(config, turn),
-          ))
-            emit({ kind: "limit_warning", warning: warningView(warning) });
-          return result;
-        });
-        // The tools this session is offered: a sub-agent's are within its parent's.
-        // `agent.start` only for an agent whose definition lists sub-agents the user may use.
-        const delegates = (config.run?.agents ?? []).length > 0;
-        // The project's databases, at the gate with the session's capability (#136).
-        const databases = databaseTools(databaseHost(env, config, config.capability), onApproval);
-        const offered = [
-          ...TRACER_TOOLS,
-          ...DB_TOOLS,
-          ...rest.map((t) => t.name),
-          ...(delegates ? [AGENT_START] : []),
-        ].filter((name) => !config.tools || config.tools.includes(name));
-        const agentStart = agentStartTool(offered, {
-          startSubAgent: (req) =>
-            userOf(env, config.user).startSubAgent(config.id, config.capability, req),
-          run: (child, message, signal) => runChild(env, child, message, signal),
-        });
+        // The session's tool set now: exactly what its MCP endpoint lists (#129).
+        const set = await this.#tools(config, onApproval, turn, emit);
         return this.#flueOf(config.id).run(
           {
             id: config.id,
@@ -234,8 +335,8 @@ export class AgentSession extends DurableObject<Env> {
             waiting,
             signal,
             onSteer,
-            tools: [...databases, ...rest, agentStart],
-            allowTools: offered,
+            tools: set.hostTools,
+            allowTools: set.offered,
             // Every tool call counts against the limits on tool calls (#179): a refused call is
             // not run, and the agent carries on with the refusal.
             admitTool: async (name) => {
@@ -252,11 +353,24 @@ export class AgentSession extends DurableObject<Env> {
           emit,
         );
       },
-      runAction: (config, call) => {
+      runAction: async (config, call) => {
         if (call.method === "limit") return this.#raise(config, call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+        if (call.method === "tool") {
+          // An approved tool call runs again at the workspace, re-checked against the current set.
+          try {
+            return await workspace.callTool(config.capability, {
+              name: call.path,
+              args: JSON.parse(new TextDecoder().decode(call.content ?? new Uint8Array())),
+            });
+          } catch (e) {
+            const request = approvalOf(e);
+            if (request) return { $approval: request };
+            throw e;
+          }
+        }
         const files = filesOverRpc(
           (method, args) => workspace.files(config.capability, method, args),
           { blockSize: blockSizeOf(env) },

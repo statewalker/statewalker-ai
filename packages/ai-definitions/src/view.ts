@@ -3,11 +3,11 @@
 //
 //   skills/<plugin>/<skill>/SKILL.md             registered with Flue by the harness, by name
 //   agents/<plugin>__<agent>.md
-//   tools/<plugin>__<operationId>.openapi.json   one document per tool
+//   tools/<plugin>__<operationId>.openapi.json   one document per tool, in the restricted profile
 //
 // Each entry shows only while the user's `skills.use` / `agents.use` / `tools.use` permission for
-// it holds, decided at every call, so a demotion reaches an open view. An agent session's view
-// shows only the skills its agent asks for.
+// it holds (for a read tool, `tools.read` too), decided at every call, so a demotion reaches an
+// open view. An agent session's view shows only the skills its agent asks for.
 import { codedError } from "@statewalker/ai-access";
 import { type FilesApi, readFile } from "@statewalker/webrun-files";
 import { FilteredFilesApi } from "@statewalker/webrun-files-composite";
@@ -15,6 +15,7 @@ import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import type { Allow, NarrowedAgent } from "./agents.js";
 import { catalogAgents, catalogSkills, catalogTools } from "./catalog.js";
 import { EXTENSION } from "./loader.js";
+import { TOOL_EXTENSION, type ToolAction, type ToolDefinition } from "./tools.js";
 
 const enc = new TextEncoder();
 
@@ -24,21 +25,26 @@ const enc = new TextEncoder();
  */
 function itemOf(
   path: string,
-): { area: "skills" | "agents" | "tools"; id: string } | { plugin: string } | undefined {
+  tools: ReadonlyMap<string, ToolDefinition>,
+):
+  | { area: "skills" | "agents"; id: string }
+  | { area: "tools"; id: string; action: ToolAction }
+  | { plugin: string }
+  | undefined {
   const [, top, entry, rest] = path.split("/");
   if (!entry) return undefined;
   if (top === "skills")
     return rest ? { area: "skills", id: `${entry}/${rest}` } : { plugin: entry };
-  const qualified =
-    top === "agents"
-      ? entry.replace(/\.md$/, "")
-      : top === "tools"
-        ? entry.replace(/\.openapi\.json$/, "")
-        : undefined;
+  if (top === "tools") {
+    // Tool files are named by the projected name, which may be cut and hashed: looked up.
+    const x = tools.get(entry)?.[TOOL_EXTENSION];
+    return x ? { area: "tools", id: x.id, action: x.action } : { area: "skills", id: "" };
+  }
+  const qualified = top === "agents" ? entry.replace(/\.md$/, "") : undefined;
   const at = qualified?.indexOf("__") ?? -1;
   if (!qualified || at < 1) return { area: "skills", id: "" };
   const id = `${qualified.slice(0, at)}/${qualified.slice(at + 2)}`;
-  return { area: top as "agents" | "tools", id };
+  return { area: "agents", id };
 }
 
 /** Every mutating call refused: the definitions are the catalog's, never a session's. */
@@ -60,7 +66,9 @@ function readOnly(fs: FilesApi): FilesApi {
 }
 
 /** The whole tree of a catalog, under qualified names, before any permission. */
-async function treeOf(catalog: FilesApi): Promise<MemFilesApi> {
+async function treeOf(
+  catalog: FilesApi,
+): Promise<{ tree: MemFilesApi; tools: Map<string, ToolDefinition> }> {
   const tree = new MemFilesApi();
   for (const dir of ["skills", "agents", "tools"]) await tree.mkdir(`/${dir}`);
   for (const id of await catalogSkills(catalog)) {
@@ -78,17 +86,13 @@ async function treeOf(catalog: FilesApi): Promise<MemFilesApi> {
       await readFile(catalog, `/${plugin}/${EXTENSION}/agents/${agent}.md`),
     ]);
   }
-  for (const tool of await catalogTools(catalog)) {
-    const doc = {
-      openapi: "3.1.0",
-      info: { title: `${tool.plugin}__${tool.operationId}`, version: "1" },
-      paths: { [`/tools/${tool.plugin}/${tool.operationId}`]: { post: tool.operation } },
-    };
-    await tree.write(`/tools/${tool.plugin}__${tool.operationId}.openapi.json`, [
-      enc.encode(`${JSON.stringify(doc, null, 2)}\n`),
-    ]);
+  const tools = new Map<string, ToolDefinition>();
+  for (const { definition } of await catalogTools(catalog)) {
+    const file = `${definition[TOOL_EXTENSION].name}.openapi.json`;
+    tools.set(file, definition);
+    await tree.write(`/tools/${file}`, [enc.encode(`${JSON.stringify(definition, null, 2)}\n`)]);
   }
-  return tree;
+  return { tree, tools };
 }
 
 export interface DefinitionsViewOptions {
@@ -103,17 +107,17 @@ export async function definitionsView(
   catalog: FilesApi,
   options: DefinitionsViewOptions,
 ): Promise<FilesApi> {
-  const tree = await treeOf(catalog);
+  const { tree, tools } = await treeOf(catalog);
   const skills = options.agent ? new Set(options.agent.skills) : undefined;
   const all = await catalogSkills(catalog);
-  const shows = async (area: "skills" | "agents" | "tools", id: string) => {
+  const shows = async (area: "skills" | "agents" | "tools", id: string, action?: ToolAction) => {
     if (!id) return false;
     if (area === "skills" && skills && !skills.has(id)) return false;
-    return options.allow(area, id);
+    return options.allow(area, id, action);
   };
   return readOnly(
     new FilteredFilesApi(tree, async (path) => {
-      const item = itemOf(path);
+      const item = itemOf(path, tools);
       if (!item) return true;
       // A plugin's skills folder shows while one of its skills does.
       if ("plugin" in item) {
@@ -121,7 +125,7 @@ export async function definitionsView(
           if (id.startsWith(`${item.plugin}/`) && (await shows("skills", id))) return true;
         return false;
       }
-      return shows(item.area, item.id);
+      return shows(item.area, item.id, "action" in item ? item.action : undefined);
     }),
   );
 }

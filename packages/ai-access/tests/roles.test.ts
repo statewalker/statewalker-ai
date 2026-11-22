@@ -84,6 +84,10 @@ describe("built-in roles", () => {
     expect(can(resolveRoles(["reader"], {}).grants, "tools", "use", "notes/word_count")).toBe(
       false,
     );
+    // Readers run agents with read-only tools (#80, #129): `tools.read` offers only read tools.
+    expect(can(resolveRoles(["reader"], {}).grants, "tools", "read", "notes/word_count")).toBe(
+      true,
+    );
     // The workspace admin is no project role: no plugin items.
     expect(can(resolveRoles(["admin"], {}).grants, "agents", "use", "notes/writer")).toBe(false);
     // `*.*` in a custom role never reaches agents: they are granted by name.

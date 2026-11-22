@@ -140,7 +140,22 @@ beforeAll(async () => {
   model = await fakeModel();
   rest = await fakeRest();
   deployment = await startDeployment(HOST, {
-    REST_TOOLS: JSON.stringify([{ plugin: "fixture", name: "call", url: `${rest.url}/call` }]),
+    // One REST tool, `fixture__call`, imported from an OpenAPI spec (#129).
+    CATALOG: JSON.stringify({
+      "/fixture/plugin.json": JSON.stringify({
+        $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+        name: "fixture",
+      }),
+      "/fixture/dev.cellb.harness/agents/default.md":
+        "---\nname: default\ntools: [fixture/*]\n---\n",
+      "/fixture/dev.cellb.harness/tools/rest/api.json": JSON.stringify({
+        openapi: "3.1.0",
+        info: { title: "fixture", version: "1" },
+        servers: [{ url: rest.url }],
+        paths: { "/call": { get: { operationId: "call" } } },
+      }),
+    }),
+    DEFAULT_AGENT: "fixture/default",
     DEV_LOGIN: "true",
     ADMIN_KEY,
     SECRETS_KEY: "conformance-secrets-key",

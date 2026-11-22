@@ -225,12 +225,15 @@ export interface GateDecisionInput {
 
 /** The exact file call an approval runs, as the agent session stores it in its items. */
 export interface StoredAction {
-  /** A file change, or a database action (`db`: the path is the database). */
-  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "limit";
+  /**
+   * A file change, a database action (`db`: the path is the database), or a tool call (`tool`: the
+   * path is the tool's name, the content its arguments as JSON).
+   */
+  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool" | "limit";
   path: string;
   /** A copy's or move's target. */
   target?: string;
-  /** A write's content, or a database action's (its encoded statement), base64. */
+  /** A write's content, a database action's (its encoded statement) or a tool's arguments, base64. */
   content?: string;
 }
 
@@ -552,6 +555,11 @@ export interface SessionApi {
   getItem(sessionId: string, itemId: string): Promise<Item>;
   /** A cursor read of the session's event log. */
   readEvents(sessionId: string, query?: EventsQuery): Promise<EventsPage>;
+  /**
+   * One JSON-RPC message to the session's own MCP endpoint (statewalker/statewalker-root#129): it
+   * lists and calls exactly the tools the session's model is offered. Null for a notification.
+   */
+  mcp(sessionId: string, message: McpMessage): Promise<McpResponse | null>;
   /** The caller's profile. */
   profile(): Promise<ProfileView>;
   /** Erases the caller: their profile and everything their User DO holds. */
@@ -712,6 +720,43 @@ export interface AgentMessage {
   origin?: "agent";
 }
 
+/** A JSON-RPC 2.0 message to an MCP endpoint: a request (with an id) or a notification. */
+export interface McpMessage {
+  jsonrpc: "2.0";
+  id?: number | string | null;
+  method: string;
+  params?: Record<string, unknown>;
+}
+
+/** A JSON-RPC 2.0 response of an MCP endpoint. */
+export interface McpResponse {
+  jsonrpc: "2.0";
+  id: number | string | null;
+  result?: unknown;
+  error?: { code: number; message: string };
+}
+
+/** A message as the MCP endpoint takes it: a JSON-RPC 2.0 envelope (EINVAL otherwise). */
+export function mcpMessage(value: unknown): McpMessage {
+  const m = (value ?? {}) as Record<string, unknown>;
+  const id = m.id;
+  if (
+    m.jsonrpc !== "2.0" ||
+    typeof m.method !== "string" ||
+    !m.method ||
+    (id !== undefined && id !== null && typeof id !== "string" && typeof id !== "number") ||
+    (m.params !== undefined &&
+      (m.params === null || typeof m.params !== "object" || Array.isArray(m.params)))
+  )
+    throw codedError("EINVAL", "an MCP message is a JSON-RPC 2.0 request or notification");
+  return {
+    jsonrpc: "2.0",
+    ...(id !== undefined ? { id: id as McpMessage["id"] } : {}),
+    method: m.method,
+    ...(m.params !== undefined ? { params: m.params as Record<string, unknown> } : {}),
+  };
+}
+
 /** One agent session DO's side of the API. */
 export interface AgentPort {
   start(config: AgentSessionConfig): Promise<void>;
@@ -731,6 +776,8 @@ export interface AgentPort {
    * stored action again (re-checked at the gate), or tells the model the denial.
    */
   answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
+  /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
+  mcp(message: McpMessage): Promise<McpResponse | null>;
 }
 
 export interface SessionApiPorts {
@@ -992,6 +1039,13 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     holdStream: () => ports.user.holdStream(token),
     releaseStream: async (id) => ports.user.releaseStream(token, String(id)),
+    async mcp(sessionId, message) {
+      const checked = mcpMessage(message);
+      const session = await own(sessionId);
+      if (session.archived) throw codedError("EBUSY", "the agent session is archived");
+      if (session.revoked) throw codedError("EACCES", "the agent session is revoked");
+      return ports.agent(session.id).mcp(checked);
+    },
     profile: () => ports.user.profile(token),
     eraseUser: () => ports.user.eraseUser(token),
     setMode(req) {

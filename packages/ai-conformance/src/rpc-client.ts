@@ -68,6 +68,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     listModels: (q) => api.listModels(q).catch(refusal) as never,
     getModelConfig: () => api.getModelConfig().catch(refusal) as never,
     setModelConfig: (config) => api.setModelConfig(config as never).catch(refusal) as never,
+    mcp: (id, message) => api.mcp(id, message as never).catch(refusal) as never,
     close: () => connection.close(),
   };
   return client;

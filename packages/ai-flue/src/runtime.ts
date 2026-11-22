@@ -81,6 +81,11 @@ export interface HostTool {
   description: string;
   /** A closed JSON Schema object for the tool's input. */
   parameters: Record<string, unknown>;
+  /**
+   * Read tools may run in parallel with others of a batch; any other tool makes its batch run one
+   * call at a time (pi-agent-core's `executionMode`; default sequential).
+   */
+  executionMode?: "parallel" | "sequential";
   execute(
     args: Record<string, unknown>,
     signal?: AbortSignal,
@@ -586,6 +591,7 @@ function toolsFor(session: string, sandbox: unknown): AgentTool[] {
           label: tool.name,
           description: tool.description,
           parameters: tool.parameters,
+          executionMode: tool.executionMode ?? "sequential",
           async execute(toolCallId: string, params: unknown, signal?: AbortSignal) {
             const result = await tool.execute((params ?? {}) as Record<string, unknown>, signal);
             if (result.secrets?.length) live.secrets.set(toolCallId, result.secrets);
