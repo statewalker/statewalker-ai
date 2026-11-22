@@ -4,7 +4,7 @@
 // Ported from statewalker-sandbox apps/harness-proto-sessions/src/agent-session.ts.
 import { Agent } from "@earendil-works/pi-agent-core";
 import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions";
-import { registerApiProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import { completeSimple, registerApiProvider, streamSimple } from "@earendil-works/pi-ai/compat";
 import {
   createBashTool,
   createEditTool,
@@ -14,9 +14,16 @@ import {
   createWriteTool,
   bash as flueBash,
 } from "@flue/runtime";
-import type { ItemInput, Steer, TurnOutcome } from "@statewalker/ai-sessions";
+import type {
+  Complete,
+  ContextEntry,
+  ItemInput,
+  Steer,
+  TurnOutcome,
+} from "@statewalker/ai-sessions";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
+import { contextMessages } from "./context.js";
 import { FilesFs } from "./files-fs.js";
 
 /** An OpenAI-compatible chat-completions model (the gateway comes in a later ticket). */
@@ -56,6 +63,11 @@ export interface FlueTurn {
   model: ModelConfig;
   /** The user's message. */
   content: string;
+  /**
+   * The model context before the user's message, as the harness shaped it (summaries and the
+   * items they leave); the loop starts from it. The harness compacts: Flue's own compaction is off.
+   */
+  context?: ContextEntry[];
   /**
    * Whether a file call of this turn waits on the user's approval: the turn then ends at the
    * pending call, Flue's approval-gate pattern (a tool result with `terminate`).
@@ -217,7 +229,11 @@ export async function runFlueTurn(
         .join("\n\n"),
       model: piModel(turn.model) as never,
       tools: tools as never,
-      messages: [],
+      messages: contextMessages(turn.context ?? [], {
+        api: "openai-completions",
+        provider: "deployment",
+        id: turn.model.model,
+      }) as never,
     },
     // A call waiting on an approval ends the turn: the model is not asked again until the user
     // answers, and the answer continues the session.
@@ -259,4 +275,29 @@ export async function runFlueTurn(
   }
   if (failure && !turn.signal?.aborted) throw new Error(failure);
   return outcome;
+}
+
+/**
+ * One model call with no tools, for the harness's summarizer: the reply's text. A refusal or an
+ * error is thrown.
+ */
+export function completeWith(model: ModelConfig): Complete {
+  return async ({ system, prompt, maxOutputTokens, signal }) => {
+    const reply = await completeSimple(
+      piModel(model) as never,
+      {
+        systemPrompt: system,
+        messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
+      },
+      { maxTokens: maxOutputTokens, apiKey: model.apiKey ?? "none", ...(signal ? { signal } : {}) },
+    );
+    if (reply.stopReason === "error" || reply.stopReason === "aborted")
+      throw new Error(
+        `EIO: the summarizer's model failed: ${reply.errorMessage ?? reply.stopReason}`,
+      );
+    return reply.content
+      .filter((p) => p.type === "text")
+      .map((p) => (p as { text: string }).text)
+      .join("");
+  };
 }

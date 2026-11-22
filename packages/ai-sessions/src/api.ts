@@ -101,6 +101,8 @@ export interface ItemInput {
   steer?: string;
   /** Cut short: the partial assistant message of a cancelled or interrupted turn. */
   incomplete?: true;
+  /** Pinned: never compacted into a summary nor trimmed in the model context. */
+  pinned?: true;
 }
 
 /** The exact file call an approval runs, as the agent session stores it in its items. */
