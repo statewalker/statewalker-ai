@@ -33,10 +33,13 @@ export {
   type EventsQuery,
   eventOf,
   expectUiStream,
+  exportUsage,
   flueStorage,
   type Item,
   type ItemsPage,
   type ItemsQuery,
+  type LimitState,
+  type LimitsView,
   login,
   type McpMessage,
   type McpResponse,
@@ -82,6 +85,11 @@ export {
   TERMINAL_EVENTS,
   type Turn,
   type UIMessageChunk,
+  type UsageGroup,
+  type UsageQuery,
+  type UsageRecordView,
+  type UsageReport,
+  type UsageTotals,
   type UserSession,
   uiChunks,
 } from "./session-client.js";
@@ -91,3 +99,4 @@ export {
   parseThreatTable,
   type ThreatRow,
 } from "./threat-table.js";
+export { type FakeUhp, fakeUhp, type UhpRequest } from "./uhp-server.js";

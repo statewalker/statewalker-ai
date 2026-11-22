@@ -34,6 +34,7 @@ packages/
 `ai-access`, `ai-environment`, `ai-definitions`, `ai-sessions`, `ai-flue` and `ai-host-do` are
 published (the first usable release, statewalker/statewalker-root#132), and `ai-memory`
 (statewalker/statewalker-root#173), which `ai-sessions` and `ai-host-do` depend on, and
+`ai-uhp-client` (statewalker/statewalker-root#144), which `ai-host-do` depends on, and
 `ai-openai-compat` (statewalker/statewalker-root#138), which `ai-host-do` routes; the others are private
 skeletons until their tickets give them content. A package's first version is published once, by a
 human, and later releases go through CI (statewalker-root's release rules). In the workspace the
@@ -82,6 +83,11 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   `ai-memory` is their only writer, run in the DO that holds each kind so writes serialize there;
   agents reach it through the memory tool, people through the memory API. Caps come from the
   deployment's `MEMORY_CAPS` and a project's `.system/memory-caps`.
+- **Remote agents work on copies** (statewalker/statewalker-root#109, #144). A remote agent session's
+  core is an external harness behind a UHP server (`UHP_SERVERS`, a workspace's
+  `/.system/uhp-servers`): it gets copies of the files its capability can read, and its artifacts
+  return through the capability as one change set under the mode. Only the server's own token (a
+  secret bound to its host) crosses; its items are `external`, never shown to the risk classifier.
 - **Limits live where their counters do** (statewalker-root#158, #179). A limit
   `{meter, level, target?, value, period, on_exceed, warn_at?, increment?}` is set in the
   deployment's `LIMITS` var (a `deployment` limit is a ceiling each workspace and each user is held

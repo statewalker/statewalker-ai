@@ -42,10 +42,23 @@ export interface Item {
     | "mode_decision"
     | "limit_warning"
     | "rewind"
-    | "memory_primed";
+    | "memory_primed"
+    | "question";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
+  /** Produced by a remote agent session's external harness: untrusted, never classified. */
+  external?: true;
+  /** A `tool_result` answering an approval the user denied. */
+  denied?: true;
+  /** An `approval` or `question` item's request (`input`: a remote harness's question). */
+  request?: {
+    id: string;
+    action: { method: string; path: string };
+    permission: string;
+    reason: string;
+    input?: { kind: string; prompt: string; options?: { id: string; label?: string }[] };
+  };
   name?: string;
   args?: unknown;
   output?: string;
@@ -239,6 +252,8 @@ export interface AgentSession {
   parent?: string;
   /** The root of its tree: the session the user started. */
   root?: string;
+  /** The session's model usage, totalled over its turns (single-session reads). */
+  usage?: UsageTotals;
   /** A fork's source: the session and turn its history was copied from. */
   forked_from?: { session: string; turn: string };
 }
@@ -318,6 +333,50 @@ export interface ModelsConfig {
   default?: string;
 }
 
+/** One limit as it applies to the caller's context now (statewalker/statewalker-root#181). */
+export interface LimitState {
+  meter: string;
+  level: string;
+  target: string;
+  /** The limit's own level: a deployment ceiling held by a workspace says `deployment`. */
+  limit_level: string;
+  period: string;
+  on_exceed: string;
+  warn_at: number;
+  value: number;
+  used: number;
+  reserved: number;
+  remaining: number;
+  /** When the window resets (ms since the epoch); none for a total. */
+  reset?: number;
+}
+
+/** What a usage report is asked for (statewalker/statewalker-root#181). */
+export interface UsageQuery {
+  level?: "user" | "project" | "workspace";
+  project?: string;
+  period?: "hour" | "day" | "month" | "total";
+  group_by?: ("project" | "user" | "agent" | "model" | "day")[];
+}
+
+/** Usage totals of one group: what it is keyed by, and each meter's amount. */
+export interface UsageGroup {
+  key: { project?: string; user?: string; agent?: string; model?: string; day?: string };
+  /** None for usage under a user's own key seen by anyone but that user. */
+  usage?: Record<string, number>;
+  own_key?: true;
+}
+
+export interface UsageReport {
+  level: string;
+  target: string;
+  period: string;
+  start: number;
+  end?: number;
+  group_by: string[];
+  groups: UsageGroup[];
+}
+
 /** One request to a model, as the workspace's budget recorded it (test-only admin route). */
 export interface ModelUsageRecord {
   session: string;
@@ -347,11 +406,22 @@ export interface Turn {
   ignored?: string[];
   /** The approval this turn continues the session with (an answer turn). */
   answers?: string;
+  /** The turn's model usage, totalled over its requests. */
+  usage?: UsageTotals;
   /** The turn it follows in the session's tree (null: a first turn). */
   parent_turn: string | null;
   origin: "run" | "imported" | "copied";
   copied_from?: { session: string; turn: string };
   items: Item[];
+}
+
+/** Model usage totalled over requests (statewalker/statewalker-root#181). */
+export interface UsageTotals {
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cached_tokens: number;
+  cost: number;
 }
 
 export interface ItemsPage {
@@ -526,6 +596,46 @@ export interface SessionClient {
   exportProfile(): Promise<Uint8Array>;
   /** `DELETE /v1/me/profile`. */
   eraseProfile(): Promise<{ erased: true }>;
+  /** `GET /v1/limits/effective`: each limit of the caller's context, with what is left. */
+  effectiveLimits(query?: {
+    project?: string;
+    session?: string;
+  }): Promise<{ limits: LimitState[] }>;
+  /** `GET /v1/usage?level&project&period&group_by`: usage totals the caller may see. */
+  usage(query?: UsageQuery): Promise<UsageReport>;
+  /** `GET /v1/limits/{level}/{target}`: the limits the caller manages there. */
+  getLimits(level: string, target: string): Promise<LimitsView>;
+  /** `PUT /v1/limits/{level}/{target}`: replaces them. */
+  setLimits(
+    level: string,
+    target: string,
+    req: { limits: Record<string, unknown>[] },
+  ): Promise<LimitsView>;
+  /** `GET /v1/usage/records?since` (NDJSON): the workspace's usage records, for its admin. */
+  usageRecords(query?: { since?: number }): Promise<UsageRecordView[]>;
+  /** `DELETE /v1/limits/{level}/{target}`: removes them. */
+  deleteLimits(level: string, target: string): Promise<{ deleted: true }>;
+}
+
+/** One usage record, as the export has it. */
+export interface UsageRecordView {
+  seq: number;
+  workspace: string;
+  project: string;
+  user: string;
+  session?: string;
+  turn?: string;
+  meter: string;
+  amount: number;
+  detail?: Record<string, unknown>;
+  created: number;
+}
+
+/** The limits one manager set at one level and target. */
+export interface LimitsView {
+  level: string;
+  target: string;
+  limits: (Record<string, unknown> & { meter: string; value: number; level: string })[];
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -638,6 +748,17 @@ const itemsSearch = (q: ItemsQuery = {}) => {
   for (const t of q.types ?? []) p.append("types[]", t);
   if (q.branch) p.set("branch", q.branch);
   if (q.all) p.set("all", "true");
+  const s = p.toString();
+  return s ? `?${s}` : "";
+};
+
+const limitsPath = (level: string, target: string) =>
+  `/v1/limits/${encodeURIComponent(level)}/${encodeURIComponent(target)}`;
+
+/** A query string of the defined values. */
+const search = (q: Record<string, unknown>) => {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) if (v !== undefined) p.set(k, String(v));
   const s = p.toString();
   return s ? `?${s}` : "";
 };
@@ -787,6 +908,24 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         `/v1/models?${new URLSearchParams({ project, ...(discover ? { discover: "true" } : {}) })}`,
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
+    usage: ({ group_by, ...q } = {}) =>
+      call(
+        "GET",
+        `/v1/usage${search({ ...q, ...(group_by ? { group_by: group_by.join(",") } : {}) })}`,
+      ),
+    async usageRecords(q = {}) {
+      const res = await deployment.fetch(`/v1/usage/records${search(q)}`, { headers });
+      if (!res.ok) await answer(res);
+      return (await res.text())
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as UsageRecordView);
+    },
+    getLimits: (level, target) => call("GET", limitsPath(level, target)),
+    setLimits: (level, target, req) => call("PUT", limitsPath(level, target), req),
+    deleteLimits: (level, target) => call("DELETE", limitsPath(level, target)),
+    effectiveLimits: (q = {}) =>
+      call("GET", `/v1/limits/effective${search(q as Record<string, unknown>)}`),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
     rewind: (id, req) => call("POST", `${s(id)}/rewind`, req),
     setHead: (id, req) => call("PUT", `${s(id)}/head`, req),
@@ -987,6 +1126,25 @@ export async function sendPastUser(
   return admin(deployment, adminKey, `/admin/sessions/${encodeURIComponent(sessionId)}/messages`, {
     content,
   });
+}
+
+/**
+ * The operator's export of usage records (`GET /v1/usage/records` with the operator token): every
+ * workspace's, or one's, created at or after `since`.
+ */
+export async function exportUsage(
+  deployment: Deployment,
+  operatorKey: string,
+  query: { since?: number; workspace?: string } = {},
+): Promise<UsageRecordView[]> {
+  const res = await deployment.fetch(`/v1/usage/records${search(query)}`, {
+    headers: { authorization: `Bearer ${operatorKey}` },
+  });
+  if (!res.ok) await answer(res);
+  return (await res.text())
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as UsageRecordView);
 }
 
 /**

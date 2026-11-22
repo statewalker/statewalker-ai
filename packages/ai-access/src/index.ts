@@ -4,6 +4,7 @@
 export { fromBase64, type Keypair, toBase64 } from "@statewalker/webrun-biscuit";
 export {
   type ApprovalGrant,
+  type ApprovalInput,
   ApprovalRegistry,
   type ApprovalRequest,
   approvalId,
@@ -80,7 +81,9 @@ export {
   parsePermissions,
   permissionsToDatalog,
   permits,
+  REMOTE_AGENT_PREFIX,
   type RoleGrant,
+  remoteAgentRequest,
   type TargetKind,
   targetRegex,
 } from "./permissions.js";

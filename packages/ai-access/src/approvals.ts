@@ -34,6 +34,21 @@ export interface ApprovalRequest {
   /** The permission asked for, with its target relative to the project. */
   permission: string;
   reason: string;
+  /**
+   * A remote harness's question (statewalker/statewalker-root#144): an approval answered with
+   * `message` as the answer (an option's id for `choice` and `confirm`, any text for `free_text`
+   * and `secret`); a `secret` answer goes straight to the UHP server and is never kept.
+   */
+  input?: ApprovalInput;
+}
+
+/** A UHP `input_request`, as an approval carries it. */
+export interface ApprovalInput {
+  kind: "choice" | "confirm" | "free_text" | "secret";
+  prompt: string;
+  options?: { id: string; label?: string }[];
+  /** When the server stops taking an answer (epoch ms). */
+  expires?: number;
 }
 
 /** An approval a user granted, as their User DO pushes it to the gate. */

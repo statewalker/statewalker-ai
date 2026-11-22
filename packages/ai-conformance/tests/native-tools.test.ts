@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type Deployment,
+  exportUsage,
   type FakeModel,
   fakeModel,
   login,
@@ -26,6 +27,7 @@ import {
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
+const OPERATOR_KEY = "conformance-operator-key";
 const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
 const TOOLS = "dev.cellb.harness/tools";
 
@@ -156,6 +158,7 @@ const vars = (model: FakeModel, extra: Record<string, string> = {}) => ({
   MODELS: model.deploymentModels(),
   DEV_LOGIN: "true",
   ADMIN_KEY,
+  OPERATOR_KEY,
   CATALOG: JSON.stringify(CATALOG),
   DEFAULT_AGENT: "calc/default",
   TOOL_TIMEOUT_MS: "1500",
@@ -196,12 +199,7 @@ const results = (turn: Turn) => turn.items.filter((i) => i.kind === "tool_result
 const outputOf = (turn: Turn) => String(results(turn)[0]?.output);
 
 async function usageRecords(d: Deployment): Promise<Record<string, unknown>[]> {
-  const res = await d.fetch("/admin/workspaces/default/usage-records", {
-    method: "POST",
-    headers: { authorization: `Bearer ${ADMIN_KEY}`, "content-type": "application/json" },
-    body: "{}",
-  });
-  return ((await res.json()) as { records: Record<string, unknown>[] }).records;
+  return (await exportUsage(d, OPERATOR_KEY, { workspace: "default" })) as never;
 }
 
 describe.each(transports)("native tools over %s", (name, connect) => {
