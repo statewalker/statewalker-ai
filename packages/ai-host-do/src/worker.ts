@@ -56,6 +56,7 @@ function sessionApi(env: Env, token: string) {
       updateAgentSession: async (t, id, m) => (await user()).updateAgentSession(t, id, m),
       archiveAgentSession: async (t, id) => (await user()).archiveAgentSession(t, id),
       subtree: async (t, id) => (await user()).subtree(t, id),
+      forkAgentSession: async (t, from, req) => (await user()).forkAgentSession(t, from, req),
       deleteAgentSession: async (t, id) => (await user()).deleteAgentSession(t, id),
       profile: async (t) => (await user()).profile(t),
       eraseUser: async (t) => (await user()).eraseUser(t),
@@ -104,6 +105,14 @@ function sessionApi(env: Env, token: string) {
         limits: () => agent.limits(),
         usage: () => agent.usage(),
         ownLimits: (limits) => agent.ownLimits(limits),
+        rewind: (req) => agent.rewind(req),
+        setHead: (turn) => agent.setHead(turn),
+        edit: (turnId, req) => agent.edit(turnId, req),
+        regenerate: (turnId, req) => agent.regenerate(turnId, req),
+        branches: () => agent.branches(),
+        eraseBranch: (turnId) => agent.eraseBranch(turnId),
+        exportPath: (atTurn) => agent.exportPath(atTurn),
+        importHistory: (history) => agent.importHistory(history),
       };
     },
   });

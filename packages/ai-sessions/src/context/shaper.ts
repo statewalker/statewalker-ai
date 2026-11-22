@@ -14,9 +14,13 @@
 // covering a pinned item is opened to its children. The tail (the most recent messages, counted
 // by messages or by tokens) is never compacted nor trimmed.
 //
-// Forward compatibility: each summary records `through_turn` (the turn of its last item), so the
-// turn tree (statewalker/statewalker-root#190) can use only summaries on the active path; and its
-// `sections` (with refs to the ids they draw from) seed the session's table of contents (#174).
+// The turn tree (statewalker/statewalker-root#190): items of every branch share the one log, so a
+// context and a compaction are scoped to a path of turns (the root-to-head path). Only that path's
+// items count, and only summaries whose `through_turn` (the turn of their last item) is on it: a
+// summary drawn from a path runs through its last turn, so the turns it drew from are exactly the
+// path up to that turn. A summary whose parent is off the path stands at the top itself (it is
+// never promoted again: a row's `parent_id` is set once). Each summary's `sections` (with refs to
+// the ids they draw from) seed the session's table of contents (#174).
 import type { Item } from "../api.js";
 import { type ItemRow, itemOf } from "../items.js";
 import type { SqlLike } from "../sql.js";
@@ -81,6 +85,17 @@ interface Segment {
 }
 type Node = { type: "summary"; summary: Summary } | Segment;
 
+/** What a context or compaction sees: a path's turns, and its top-level summaries. */
+interface Scope {
+  /** The path's turn ids as a JSON array; null: every item (no tree). */
+  turns: string | null;
+  /** The ids of the top-level summaries on the path, as a JSON array. */
+  top: string;
+}
+
+/** Item rows on the scope's path (`?` twice: the scope's turns). */
+const ON_PATH = "(? IS NULL OR turn IN (SELECT value FROM json_each(?)))";
+
 interface SummaryRow {
   id: string;
   depth: number;
@@ -136,27 +151,52 @@ export class ContextShaper {
     );
   }
 
-  /** The ids of the items before `before` that are pinned. */
-  #pins(before: number): Set<string> {
+  /**
+   * The scope of a context before `before` on `path`: its top-level summaries are the summaries
+   * on the path whose parent is not (validity passes down: a summary's children ran through
+   * turns on its own path).
+   */
+  #scope(before: number, path?: readonly string[]): Scope {
+    const all = this.#rows<SummaryRow>(
+      "SELECT id, parent_id, through_turn FROM summaries WHERE from_seq < ?",
+      before,
+    );
+    const on = path ? new Set(path) : undefined;
+    const valid = new Set(all.filter((s) => !on || on.has(s.through_turn)).map((s) => s.id));
+    const top = all.filter((s) => valid.has(s.id) && !(s.parent_id && valid.has(s.parent_id)));
+    return {
+      turns: path ? JSON.stringify(path) : null,
+      top: JSON.stringify(top.map((s) => s.id)),
+    };
+  }
+
+  /** The ids of the items before `before` on the scope's path that are pinned. */
+  #pins(before: number, scope: Scope): Set<string> {
     const pins = new Set<string>();
     for (const row of this.#rows<ItemRow>(
-      "SELECT * FROM items WHERE seq < ? AND json_extract(body, '$.pinned') = 1",
+      `SELECT * FROM items WHERE seq < ? AND ${ON_PATH} AND json_extract(body, '$.pinned') = 1`,
       before,
+      scope.turns,
+      scope.turns,
     ))
       pins.add(row.id);
     for (const tool of this.#options.pinTools) {
       const call = this.#rows<ItemRow>(
-        "SELECT * FROM items WHERE seq < ? AND kind = 'tool_call' AND json_extract(body, '$.name') = ? ORDER BY seq DESC LIMIT 1",
+        `SELECT * FROM items WHERE seq < ? AND ${ON_PATH} AND kind = 'tool_call' AND json_extract(body, '$.name') = ? ORDER BY seq DESC LIMIT 1`,
         before,
+        scope.turns,
+        scope.turns,
         tool,
       ).map(itemOf)[0];
       if (!call) continue;
       pins.add(call.id);
       if (call.callId)
         for (const row of this.#rows<ItemRow>(
-          "SELECT * FROM items WHERE seq > ? AND seq < ? AND kind = 'tool_result' AND json_extract(body, '$.callId') = ?",
+          `SELECT * FROM items WHERE seq > ? AND seq < ? AND ${ON_PATH} AND kind = 'tool_result' AND json_extract(body, '$.callId') = ?`,
           call.seq,
           before,
+          scope.turns,
+          scope.turns,
           call.callId,
         ))
           pins.add(row.id);
@@ -186,31 +226,40 @@ export class ContextShaper {
     return nodes;
   }
 
-  /** The session's top level before `before`: top-level summaries and the items they leave. */
-  #top(before: number, pins: ReadonlySet<string>): Node[] {
+  /**
+   * The session's top level before `before` on the scope's path: its top-level summaries and the
+   * path's items they leave.
+   */
+  #top(before: number, pins: ReadonlySet<string>, scope: Scope): Node[] {
     const summaries = this.#rows<SummaryRow>(
-      "SELECT * FROM summaries WHERE parent_id IS NULL AND from_seq < ? ORDER BY from_seq",
-      before,
+      "SELECT * FROM summaries WHERE id IN (SELECT value FROM json_each(?)) ORDER BY from_seq",
+      scope.top,
     ).map(summaryOf);
     const items = this.#rows<ItemRow>(
-      `SELECT * FROM items WHERE seq < ? AND NOT EXISTS (SELECT 1 FROM summaries s
-        WHERE s.parent_id IS NULL AND items.seq BETWEEN s.from_seq AND s.to_seq) ORDER BY seq`,
+      `SELECT * FROM items WHERE seq < ? AND ${ON_PATH} AND NOT EXISTS (SELECT 1 FROM summaries s
+        WHERE s.id IN (SELECT value FROM json_each(?)) AND items.seq BETWEEN s.from_seq AND s.to_seq)
+        ORDER BY seq`,
       before,
+      scope.turns,
+      scope.turns,
+      scope.top,
     ).map(itemOf);
     return this.#nodes(summaries, items, pins);
   }
 
-  /** The children of a summary: its lower summaries and the items they leave. */
-  #children(summary: Summary, pins: ReadonlySet<string>): Node[] {
+  /** The children of a summary: its lower summaries and the path's items they leave. */
+  #children(summary: Summary, pins: ReadonlySet<string>, scope: Scope): Node[] {
     const summaries = this.#rows<SummaryRow>(
       "SELECT * FROM summaries WHERE parent_id = ? ORDER BY from_seq",
       summary.id,
     ).map(summaryOf);
     const items = this.#rows<ItemRow>(
-      `SELECT * FROM items WHERE seq BETWEEN ? AND ? AND NOT EXISTS (SELECT 1 FROM summaries c
-        WHERE c.parent_id = ? AND items.seq BETWEEN c.from_seq AND c.to_seq) ORDER BY seq`,
+      `SELECT * FROM items WHERE seq BETWEEN ? AND ? AND ${ON_PATH} AND NOT EXISTS (SELECT 1 FROM
+        summaries c WHERE c.parent_id = ? AND items.seq BETWEEN c.from_seq AND c.to_seq) ORDER BY seq`,
       summary.from_seq,
       summary.to_seq,
+      scope.turns,
+      scope.turns,
       summary.id,
     ).map(itemOf);
     return this.#nodes(summaries, items, pins);
@@ -338,8 +387,10 @@ export class ContextShaper {
     let best: Summary[] = [];
     let run: Summary[] = [];
     for (const node of nodes) {
-      if (node.type === "summary" && run[0]?.depth === node.summary.depth) run.push(node.summary);
-      else run = node.type === "summary" ? [node.summary] : [];
+      // A summary with a parent (off the path) stays under it: a row's parent is set once.
+      const free = node.type === "summary" && !node.summary.parent_id;
+      if (free && run[0]?.depth === node.summary.depth) run.push(node.summary);
+      else run = free ? [node.summary] : [];
       if (run.length > best.length) best = [...run];
     }
     const first = best[0];
@@ -369,12 +420,15 @@ export class ContextShaper {
       signal?: AbortSignal;
       onSummary?(summary: Summary): void;
       onThrash?(info: { budget: number; estimated: number }): void;
+      /** The path of turns the context is on (statewalker/statewalker-root#190); none: every item. */
+      path?: readonly string[];
     } = {},
   ): Promise<Summary[]> {
     const budget = this.#options.budgetTokens;
-    const pins = this.#pins(before);
+    let scope = this.#scope(before, hooks.path);
+    const pins = this.#pins(before, scope);
     const made: Summary[] = [];
-    let nodes = this.#top(before, pins);
+    let nodes = this.#top(before, pins, scope);
     let tailStart = this.#tailStart(nodes);
     if (this.#estimate(nodes, tailStart, false, pins) <= budget) return made;
     for (let pass = 0; ; pass++) {
@@ -391,21 +445,26 @@ export class ContextShaper {
       }
       made.push(summary);
       hooks.onSummary?.(summary);
-      nodes = this.#top(before, pins);
+      scope = this.#scope(before, hooks.path);
+      nodes = this.#top(before, pins, scope);
       tailStart = this.#tailStart(nodes);
     }
   }
 
-  /** The model context of a turn whose first item is `before`. */
-  context(before: number): ContextEntry[] {
-    const pins = this.#pins(before);
+  /**
+   * The model context of a turn whose first item is `before`, on the path of turns `path`
+   * (statewalker/statewalker-root#190; none: every item).
+   */
+  context(before: number, path?: readonly string[]): ContextEntry[] {
+    const scope = this.#scope(before, path);
+    const pins = this.#pins(before, scope);
     const pinned = pins.size
       ? this.#rows<ItemRow>(
           `SELECT * FROM items WHERE id IN (${[...pins].map(() => "?").join(", ")})`,
           ...pins,
         ).map(itemOf)
       : [];
-    const nodes = this.#top(before, pins);
+    const nodes = this.#top(before, pins, scope);
     const tailStart = this.#tailStart(nodes);
     const out: ContextEntry[] = [];
     const calls = new Map<string, Item>();
@@ -413,7 +472,7 @@ export class ContextShaper {
       list.forEach((node, i) => {
         if (node.type === "summary") {
           if (this.#covers(node.summary, pins, pinned))
-            walk(this.#children(node.summary, pins), Number.POSITIVE_INFINITY);
+            walk(this.#children(node.summary, pins, scope), Number.POSITIVE_INFINITY);
           else out.push({ type: "summary", summary: node.summary });
           return;
         }
