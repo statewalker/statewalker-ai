@@ -66,6 +66,15 @@ describe("auto mode", () => {
     expect(auto(files("write", "/src/package.json"), [], named)).toMatchObject({ step: "safe" });
   });
 
+  it("sends memory writes to the classifier unless a rule settles them", () => {
+    const memory = { area: "memory", action: "write", target: "project" };
+    expect(auto(memory as never).step).toBe("classifier");
+    const denied = auto(memory as never, [
+      { source: "project", rules: { deny: ["memory.write:project"] } },
+    ]);
+    expect(denied).toMatchObject({ step: "rule", verdict: "deny" });
+  });
+
   it("lets read tools through as a safe class and sends other tools to the classifier", () => {
     const read = toolRequest({ id: "w/forecast", name: "w__forecast", action: "read" });
     const write = toolRequest({ id: "w/report", name: "w__report", action: "write" });

@@ -300,7 +300,7 @@ describe.each(transports)("the turn tree over %s", (name, connect) => {
     expect((await ivy.sendMessage(s.id, { content: "on" })).status).toBe("completed");
   });
 
-  it("lists the database changes of rewound turns, which it does not revert", async () => {
+  it("lists the memory writes and database changes of rewound turns, which it does not revert", async () => {
     const jo = await as("jo");
     await jo.setMode({ mode: "bypassPermissions" });
     const s = await jo.startSession({ project });
@@ -310,7 +310,19 @@ describe.each(transports)("the turn tree over %s", (name, connect) => {
       content: call("db_exec", { database: "notes", sql }),
     });
     expect(changed.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });
+    const remembered = await jo.sendMessage(s.id, {
+      content: call("memory", {
+        kind: "project",
+        actions: [{ op: "add", body: `kept note ${t}`, title: `kept-${t}` }],
+      }),
+    });
+    expect(remembered.items.find((i) => i.kind === "tool_result")).toMatchObject({
+      isError: false,
+    });
     const result = await jo.rewind(s.id, { to_turn: a.id });
+    expect(result.memory_writes).toEqual([
+      expect.objectContaining({ turn: remembered.id, name: "memory" }),
+    ]);
     expect(result.database_changes).toEqual([
       expect.objectContaining({
         turn: changed.id,
@@ -318,9 +330,9 @@ describe.each(transports)("the turn tree over %s", (name, connect) => {
         args: { database: "notes", sql },
       }),
     ]);
-    expect(result.memory_writes).toEqual([]);
     expect(result.irreversible_effects).toEqual([]);
     const next = await jo.sendMessage(s.id, { content: "after" });
+    expect(next.items[0]?.text).toContain("memory writes (memory)");
     expect(next.items[0]?.text).toContain("database changes (db_exec)");
   });
 });
@@ -359,7 +371,13 @@ describe.each(transports)("forks over %s", (name, connect) => {
       parent_turn: tree.turns[0]?.id,
     });
     const { items } = await ann.listItems(fork.id);
-    expect(items.map((i) => i.text)).toEqual(["alpha", "OK", "beta", "OK"]);
+    // Messages (the project's memory may have primed the source too: copied as history).
+    expect(items.filter((i) => i.kind === "message").map((i) => i.text)).toEqual([
+      "alpha",
+      "OK",
+      "beta",
+      "OK",
+    ]);
     expect(items.some((i) => i.turn.startsWith(s.id))).toBe(false);
     expect((await ann.getSession(fork.id)).status).toBe("idle");
   });
@@ -396,7 +414,9 @@ describe.each(transports)("forks over %s", (name, connect) => {
     expect((await ann.listSessions()).sessions.length).toBe(before);
     // Without a message nothing is charged: copying history is no turn.
     const { session } = await ann.forkSession(s.id, { at_turn: a.id });
-    expect((await ann.listItems(session.id)).items.length).toBe(2);
+    expect((await ann.listItems(session.id)).items.filter((i) => i.kind === "message").length).toBe(
+      2,
+    );
   });
 
   it("gives a fork its own session limits, counted afresh", async () => {
@@ -449,7 +469,8 @@ describe.each(transports)("forks over %s", (name, connect) => {
     const { session: fork } = await dee.forkSession(s.id, { at_turn: a.id });
     await dee.deleteSession(s.id);
     await expect(dee.getSession(s.id)).rejects.toMatchObject({ status: 404 });
-    expect((await dee.listItems(fork.id)).items.map((i) => i.text)).toEqual(["lasting", "OK"]);
+    const kept = (await dee.listItems(fork.id)).items.filter((i) => i.kind === "message");
+    expect(kept.map((i) => i.text)).toEqual(["lasting", "OK"]);
     const next = await dee.sendMessage(fork.id, { content: "still here" });
     expect(next.status).toBe("completed");
   });

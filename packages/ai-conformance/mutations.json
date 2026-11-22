@@ -3,7 +3,9 @@
   "suites": {
     "access": "pnpm --filter @statewalker/ai-access exec vitest run",
     "environment": "pnpm --filter @statewalker/ai-environment exec vitest run",
-    "gate-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/file-view.test.ts tests/modes.test.ts tests/tenancy.test.ts tests/roles.test.ts tests/user-do.test.ts"
+    "gate-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/file-view.test.ts tests/modes.test.ts tests/tenancy.test.ts tests/roles.test.ts tests/user-do.test.ts",
+    "memory": "pnpm --filter @statewalker/ai-memory exec vitest run",
+    "memory-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/memory.test.ts"
   },
   "mutations": [
     {
@@ -165,6 +167,38 @@
       "find": "if (v?.verdict !== \"allow\")",
       "replace": "if (v?.verdict === \"deny\")",
       "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "memory-roles-ignored",
+      "why": "a member without memory.write writes project or agent memory",
+      "file": "packages/ai-host-do/src/workspace-do.ts",
+      "find": "if (!decide(grants, { area: \"memory\", action: \"write\", target: ref.kind }))",
+      "replace": "if (false)",
+      "suites": ["memory-conformance"]
+    },
+    {
+      "id": "memory-preferences-unapproved",
+      "why": "an agent changes the user's preferences without their approval",
+      "file": "packages/ai-sessions/src/user-sessions.ts",
+      "find": "if (!claimed) {",
+      "replace": "if (false) {",
+      "suites": ["memory-conformance"]
+    },
+    {
+      "id": "memory-scan-skipped",
+      "why": "a write the memory scans refuse is written",
+      "file": "packages/ai-memory/src/service.ts",
+      "find": "if (reasons[i]) throw codedError(\"EINVAL\", `${s.what}: ${reasons[i]}`);",
+      "replace": "",
+      "suites": ["memory", "memory-conformance"]
+    },
+    {
+      "id": "memory-digest-ignored",
+      "why": "a file changed outside the memory service is loaded",
+      "file": "packages/ai-memory/src/front-matter.ts",
+      "find": "if ((await digestOf(fm.data, fm.body)) !== fm.data[DIGEST])",
+      "replace": "if (false)",
+      "suites": ["memory", "memory-conformance"]
     }
   ]
 }
