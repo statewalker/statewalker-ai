@@ -20,7 +20,7 @@ export interface SubAgentHost {
   run(config: AgentSessionConfig, message: string, signal?: AbortSignal): Promise<TurnView>;
 }
 
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$/;
+const NAME = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}$/;
 
 /** What the child's turn hands back to the parent's model. */
 function answerOf(session: string, turn: TurnView): { output: string; isError: boolean } {

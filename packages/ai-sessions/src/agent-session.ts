@@ -149,7 +149,8 @@ function callOf(stored: StoredAction): ActionCall {
     ...(stored.method === "write" ||
     stored.method === "db" ||
     stored.method === "tool" ||
-    stored.method === "memory"
+    stored.method === "memory" ||
+    stored.method === "changeset"
       ? { content: fromBase64(stored.content ?? "") }
       : {}),
   };
@@ -271,6 +272,7 @@ const KINDS: readonly string[] = [
   "limit_warning",
   "rewind",
   "memory_primed",
+  "question",
 ];
 const MAX_PAGE = 1000;
 /** Where the head is kept in `agent_config` ("" before the first turn). */
@@ -296,6 +298,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   readonly #runAction: RunAction;
   readonly #recordApprovals: RecordApprovals;
   readonly #wake: ((at: number) => void) | undefined;
+  readonly #resumable: ((turn: string) => boolean) | undefined;
+  readonly #compacts: ((config: AgentSessionConfig) => boolean) | undefined;
   readonly #cancelApprovals: CancelApprovals | undefined;
   readonly #effectOf: EffectOf | undefined;
   readonly #shaper: ContextShaper;
@@ -320,6 +324,14 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     /** Picks out the tool calls whose effects a rewind lists (memory, database, outside). */
     effectOf?: EffectOf;
     /**
+     * Whether a turn a host restart left running still runs elsewhere (a remote agent session's
+     * task, statewalker/statewalker-root#144): it is then queued first and run again (its core picks
+     * the task up), instead of failing.
+     */
+    resumable?: (turn: string) => boolean;
+    /** Whether the session's context is compacted (default: yes); a remote session's never is. */
+    compacts?: (config: AgentSessionConfig) => boolean;
+    /**
      * Compaction: without a summarizer, nothing is compacted (the context is every earlier item,
      * long tool results outside the tail trimmed).
      */
@@ -330,6 +342,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     this.#runAction = options.runAction;
     this.#recordApprovals = options.recordApprovals;
     this.#wake = options.wake;
+    this.#resumable = options.resumable;
+    this.#compacts = options.compacts;
     this.#cancelApprovals = options.cancelApprovals;
     this.#effectOf = options.effectOf;
     this.#sql.exec(`
@@ -522,7 +536,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
    */
   #pendingOnPath(approval: string, path: string[]): boolean {
     const asked = this.#one<{ turn: string }>(
-      `SELECT turn FROM items WHERE kind IN ('approval', 'mode_decision')
+      `SELECT turn FROM items WHERE kind IN ('approval', 'question', 'mode_decision')
         AND json_extract(body, '$.approval') = ? AND turn IN (SELECT value FROM json_each(?))
         ORDER BY seq DESC LIMIT 1`,
       approval,
@@ -617,8 +631,19 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   #recover(): void {
     for (const row of this.#rows<TurnRow>(
       "SELECT * FROM agent_turns WHERE status = 'running' ORDER BY created",
-    ))
-      this.#finish(row.id, "failed", { type: "restart" }, { error: "the host restarted" });
+    )) {
+      if (this.#resumable?.(row.id)) {
+        const edge = this.#one<{ lo: number | null }>(
+          "SELECT MIN(pos) AS lo FROM agent_turns WHERE status = 'queued'",
+        );
+        this.#sql.exec(
+          "UPDATE agent_turns SET status = 'queued', pos = ? WHERE id = ?",
+          Number(edge?.lo ?? 1) - 1,
+          row.id,
+        );
+        this.#log("turn.resumed", row.id, { id: row.id });
+      } else this.#finish(row.id, "failed", { type: "restart" }, { error: "the host restarted" });
+    }
     queueMicrotask(() => this.#pump());
   }
 
@@ -697,7 +722,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     let outcome: TurnOutcome | undefined;
     /** Runs the core with the context before item `before` (a continuation has no message). */
     const runCore = async (before: number, continues: boolean) => {
-      const context = await this.#context(row.id, before, running.abort.signal);
+      const context = await this.#context(config, row.id, before, running.abort.signal);
       return this.#runTurn(
         {
           config,
@@ -745,12 +770,19 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       }
       // A message another agent wrote (a sub-agent's task) is marked so: never the user's words.
       const byAgent = !!this.#one("SELECT 1 FROM agent_origin_turns WHERE turn = ?", row.id);
-      const prompt = this.#append(row.id, {
-        kind: "message",
-        role: "user",
-        text: row.content,
-        ...(byAgent ? { origin: "agent" as const } : {}),
-      });
+      // A turn resumed after a restart already holds its message.
+      const held = this.#one<ItemRow>(
+        "SELECT * FROM items WHERE turn = ? AND kind = 'message' AND json_extract(body, '$.role') = 'user' ORDER BY seq LIMIT 1",
+        row.id,
+      );
+      const prompt = held
+        ? itemOf(held)
+        : this.#append(row.id, {
+            kind: "message",
+            role: "user",
+            text: row.content,
+            ...(byAgent ? { origin: "agent" as const } : {}),
+          });
       try {
         outcome = await runCore(prompt.seq, false);
       } catch (e) {
@@ -779,7 +811,13 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     // the turn ends, so the turn's terminal event and the user's approvals agree.
     if (!running.endAs && !error && pending.size) {
       for (const { request, stored } of pending.values())
-        this.#append(row.id, { kind: "approval", approval: request.id, request, stored });
+        this.#append(row.id, {
+          // A remote harness's free-text question is a question (statewalker/statewalker-root#144).
+          kind: request.input?.kind === "free_text" ? "question" : "approval",
+          approval: request.id,
+          request,
+          stored,
+        });
       try {
         const recorded = await this.#recordApprovals(
           config,
@@ -840,8 +878,13 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
   }
 
   /** The model context of a turn whose user message is item `before`. */
-  async #context(turn: string, before: number, signal: AbortSignal): Promise<ContextEntry[]> {
-    if (this.#summarizer) {
+  async #context(
+    config: AgentSessionConfig,
+    turn: string,
+    before: number,
+    signal: AbortSignal,
+  ): Promise<ContextEntry[]> {
+    if (this.#summarizer && (this.#compacts?.(config) ?? true)) {
       try {
         await this.#shaper.compact(before, this.#summarizer, {
           path: this.#pathTo(turn),
@@ -875,14 +918,14 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     pending: Pending,
   ): Promise<{ continues: boolean; unanswered: string[] }> {
     const item = this.#rows<ItemRow>(
-      "SELECT * FROM items WHERE kind IN ('approval', 'mode_decision') ORDER BY seq DESC",
+      "SELECT * FROM items WHERE kind IN ('approval', 'question', 'mode_decision') ORDER BY seq DESC",
     )
       .map(itemOf)
       .find((i) => i.approval === answer.approval && i.stored);
     if (!item?.stored || !item.request) throw codedError("ENOENT", "no such approval");
     const { method, path, target } = item.stored;
     const label = `${method} ${path}${target ? ` ${target}` : ""}`;
-    const asked = item.kind === "approval";
+    const asked = item.kind === "approval" || item.kind === "question";
     const unanswered = asked ? this.#unanswered(item.turn, turn, answer.approval) : [];
     const result = (output: string, isError: boolean, denied = false) =>
       this.#append(turn, {
@@ -941,7 +984,10 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
    */
   #unanswered(origin: string, self: string, approval: string): string[] {
     const asked = new Set(
-      this.#rows<ItemRow>("SELECT * FROM items WHERE turn = ? AND kind = 'approval'", origin)
+      this.#rows<ItemRow>(
+        "SELECT * FROM items WHERE turn = ? AND kind IN ('approval', 'question')",
+        origin,
+      )
         .map(itemOf)
         .map((i) => String(i.approval ?? ""))
         .filter((id) => id && id !== approval),
@@ -1079,7 +1125,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     const offset = this.#offset();
     // An approval a turn waits on, or a block of auto mode's classifier (a retry).
     const known = this.#rows<ItemRow>(
-      "SELECT * FROM items WHERE kind IN ('approval', 'mode_decision')",
+      "SELECT * FROM items WHERE kind IN ('approval', 'question', 'mode_decision')",
     )
       .map(itemOf)
       .some((i) => i.approval === approval && i.stored);
@@ -1088,7 +1134,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     // a fork copies no pending approval (statewalker/statewalker-root#190).
     const of = this.#one<{ turn: string; origin: string | null }>(
       `SELECT i.turn, t.origin FROM items i JOIN agent_turns t ON t.id = i.turn
-        WHERE i.kind IN ('approval', 'mode_decision') AND json_extract(i.body, '$.approval') = ?
+        WHERE i.kind IN ('approval', 'question', 'mode_decision') AND json_extract(i.body, '$.approval') = ?
         ORDER BY i.seq DESC LIMIT 1`,
       approval,
     );
@@ -1101,7 +1147,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     // Expired by the alarm while the User DO's answer was on its way: that expiry already
     // continued the turn, so the late answer continues nothing more.
     const asked = this.#one<{ turn: string }>(
-      `SELECT turn FROM items WHERE kind = 'approval' AND json_extract(body, '$.approval') = ?
+      `SELECT turn FROM items WHERE kind IN ('approval', 'question') AND json_extract(body, '$.approval') = ?
        ORDER BY seq DESC LIMIT 1`,
       approval,
     );
@@ -1191,6 +1237,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
       )
         .map(itemOf)
         .reverse()
+        // A remote harness's items are untrusted output: never shown (statewalker/statewalker-root#144).
+        .filter((i) => !i.external)
         // The user's own messages only: a message another agent wrote (a sub-agent's task) may carry
         // text that agent read, so it is never shown as the user's.
         .filter((i) => i.kind === "tool_call" || (i.role === "user" && i.origin !== "agent"))
@@ -1513,7 +1561,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     if (!turns.length) return [];
     const ids: string[] = [];
     for (const item of this.#rows<ItemRow>(
-      `SELECT * FROM items WHERE kind = 'approval' AND turn IN (SELECT value FROM json_each(?))
+      `SELECT * FROM items WHERE kind IN ('approval', 'question') AND turn IN (SELECT value FROM json_each(?))
         ORDER BY seq`,
       JSON.stringify(turns),
     ).map(itemOf)) {

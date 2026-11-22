@@ -44,6 +44,8 @@ export function agentRun(agent: NarrowedAgent): AgentRun {
     agents: agent.agents,
     ...(agent.mode ? { mode: agent.mode } : {}),
     ...(agent.requires !== undefined ? { requires: agent.requires } : {}),
+    ...(agent.remote ? { remote: agent.remote } : {}),
+    ...(agent.inputs ? { inputs: agent.inputs } : {}),
   };
 }
 

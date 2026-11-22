@@ -42,10 +42,23 @@ export interface Item {
     | "mode_decision"
     | "limit_warning"
     | "rewind"
-    | "memory_primed";
+    | "memory_primed"
+    | "question";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
+  /** Produced by a remote agent session's external harness: untrusted, never classified. */
+  external?: true;
+  /** A `tool_result` answering an approval the user denied. */
+  denied?: true;
+  /** An `approval` or `question` item's request (`input`: a remote harness's question). */
+  request?: {
+    id: string;
+    action: { method: string; path: string };
+    permission: string;
+    reason: string;
+    input?: { kind: string; prompt: string; options?: { id: string; label?: string }[] };
+  };
   name?: string;
   args?: unknown;
   output?: string;

@@ -214,8 +214,15 @@ export interface ItemInput {
     | "mode_decision"
     | "limit_warning"
     | "rewind"
-    | "memory_primed";
+    | "memory_primed"
+    /** A remote harness's free-text question, answered through /v1/approvals like an approval. */
+    | "question";
   role?: "user" | "assistant";
+  /**
+   * Produced by a remote agent session's external harness (statewalker/statewalker-root#144):
+   * untrusted output, never shown to the risk classifier.
+   */
+  external?: true;
   text?: string;
   callId?: string;
   name?: string;
@@ -318,7 +325,22 @@ export interface StoredAction {
    * path is the tool's name, the content its arguments as JSON), or a memory batch (`memory`: the
    * path is the kind, the content its actions as JSON).
    */
-  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool" | "limit" | "memory";
+  method:
+    | "write"
+    | "mkdir"
+    | "remove"
+    | "copy"
+    | "move"
+    | "db"
+    | "tool"
+    | "limit"
+    | "memory"
+    /** Starting a remote agent session's task (the path is `<server>/<harness>`, #144). */
+    | "remote"
+    /** Answering a remote harness's question (the path is the `input_request` id). */
+    | "input"
+    /** A remote session's write-back, one change set (the target names it; content its digest). */
+    | "changeset";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -718,6 +740,13 @@ export interface AgentRun {
   /** A mode it asks for, which may only be stricter than the session's. */
   mode?: string;
   requires?: unknown;
+  /**
+   * A remote agent's core (statewalker/statewalker-root#144): the UHP server and harness, both as
+   * the deployment or workspace registered them.
+   */
+  remote?: { server: string; harness: string };
+  /** The project paths copied in to a remote agent at start (patterns; default every file). */
+  inputs?: string[];
 }
 
 /** What starting an agent session pinned: the agent it runs (none: the generic agent). */
@@ -1269,7 +1298,9 @@ export function metadataOf(value: unknown): Metadata {
 }
 
 /** `<plugin>/<agent>`: a plugin name, then an agent name (ai-definitions). */
-const AGENT_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+// `<plugin>/<agent>`, or a remote agent `remote:<server>/<harness>` (statewalker/statewalker-root#144).
+const AGENT_ID =
+  /^(?:remote:)?[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9_-]{0,62}[a-z0-9])?$/;
 
 function modelName(model: unknown): string {
   if (typeof model !== "string" || !model || model.length > 320)
@@ -1285,7 +1316,7 @@ function startRequest(req: unknown): StartSessionRequest {
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (agent !== undefined && (typeof agent !== "string" || !AGENT_ID.test(agent)))
-    throw codedError("EINVAL", "agent must be '<plugin>/<agent>'");
+    throw codedError("EINVAL", "agent must be '<plugin>/<agent>' or 'remote:<server>/<harness>'");
   if (unattended !== undefined && typeof unattended !== "boolean")
     throw codedError("EINVAL", "unattended is true or false");
   return {

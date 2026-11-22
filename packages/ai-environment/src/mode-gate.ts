@@ -93,7 +93,12 @@ export type ApprovalMethod =
   | "db"
   | "tool"
   | "limit"
-  | "memory";
+  | "memory"
+  // A remote agent session's actions (statewalker/statewalker-root#144): starting its task,
+  // answering its harness's question, writing its artifacts back.
+  | "remote"
+  | "input"
+  | "changeset";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -407,6 +412,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a limit is raised by the DO that counts it");
       case "memory":
         throw codedError("EINVAL", "a memory batch runs through the memory service");
+      default:
+        throw codedError("EINVAL", `a ${call.method} action runs through its remote agent session`);
     }
   } catch (e) {
     const request = approvalOf(e);

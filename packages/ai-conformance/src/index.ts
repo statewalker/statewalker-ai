@@ -97,3 +97,4 @@ export {
   parseThreatTable,
   type ThreatRow,
 } from "./threat-table.js";
+export { type FakeUhp, fakeUhp, type UhpRequest } from "./uhp-server.js";
