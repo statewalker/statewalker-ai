@@ -585,14 +585,19 @@ const sessionsSearch = (q: SessionsQuery = {}) => {
  * `/v1/projects/{p}/memory/{kind}` (an agent's kind `agent:<plugin>/<agent>` as two segments).
  */
 function memoryPath(target: MemoryTarget): string {
-  if (target.kind === "preferences" && target.project === undefined)
-    return "/v1/me/preferences/entries";
+  if (target.kind === "preferences" && target.project === undefined) return "/v1/me/preferences";
   const kind = target.kind
     .split("/")
     .map((part) => encodeURIComponent(part))
     .join("/");
   return `/v1/projects/${encodeURIComponent(target.project ?? "")}/memory/${kind}`;
 }
+
+/** Where a kind's entries are listed and batched: preferences at `/v1/me/preferences/entries`. */
+const memoryCollection = (target: MemoryTarget): string =>
+  target.kind === "preferences" && target.project === undefined
+    ? "/v1/me/preferences/entries"
+    : memoryPath(target);
 
 export function restClient(deployment: Deployment, token: string): SessionClient {
   const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
@@ -691,12 +696,12 @@ export function restClient(deployment: Deployment, token: string): SessionClient
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
-    listMemory: (target) => call("GET", memoryPath(target)),
+    listMemory: (target) => call("GET", memoryCollection(target)),
     memoryEntry: (target, id) =>
       call("GET", `${memoryPath(target)}/entries/${encodeURIComponent(id)}`),
     memoryFile: (target, name) =>
       call("GET", `${memoryPath(target)}/files/${encodeURIComponent(name)}`),
-    memoryBatch: (target, actions) => call("POST", memoryPath(target), { actions }),
+    memoryBatch: (target, actions) => call("POST", memoryCollection(target), { actions }),
     eraseMemory: (target, which) =>
       call(
         "DELETE",

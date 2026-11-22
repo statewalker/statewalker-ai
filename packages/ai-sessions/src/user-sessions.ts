@@ -307,7 +307,9 @@ export class UserSessions implements UserPort {
       request TEXT NOT NULL, status TEXT NOT NULL, created INTEGER NOT NULL,
       expires INTEGER NOT NULL, PRIMARY KEY (workspace, id))`);
     // statewalker/statewalker-root#157: an approval of a preference change is used once.
-    this.#o.sql.exec("CREATE TABLE IF NOT EXISTS memory_approvals_used (id TEXT PRIMARY KEY)");
+    // Keyed by the approval and when it was asked: the same batch asked again is a new approval.
+    this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS memory_approvals_used (
+      id TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (id, created))`);
     // statewalker/statewalker-root#125: metadata and archiving, beside the index.
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_session_meta (
       id TEXT PRIMARY KEY, metadata TEXT NOT NULL, archived INTEGER)`);
@@ -948,6 +950,7 @@ export class UserSessions implements UserPort {
       );
     const content = JSON.stringify(call.actions ?? []);
     const access = await ws.memoryAccess(capability, { kind: ref.kind, write, content });
+    let claimed: (() => void) | undefined;
     if (write && ref.kind === "preferences") {
       const id = await approvalId(
         row.id,
@@ -955,7 +958,8 @@ export class UserSessions implements UserPort {
         "preferences",
         new TextEncoder().encode(content),
       );
-      if (!this.approvalAllowed(row.id, id) || !this.#useMemoryApproval(id)) {
+      claimed = this.#claimMemoryApproval(row.id, id);
+      if (!claimed) {
         if (row.unattended)
           throw codedError(
             "EACCES",
@@ -971,19 +975,41 @@ export class UserSessions implements UserPort {
         });
       }
     }
-    return runMemoryCall(
-      this.#profileMemory(row.workspace, row.project, capability, access.caps),
-      ref.kind,
-      call,
-      access.writer,
-    );
+    try {
+      return await runMemoryCall(
+        this.#profileMemory(row.workspace, row.project, capability, access.caps),
+        ref.kind,
+        call,
+        access.writer,
+      );
+    } catch (e) {
+      // A refused batch does not use its approval: the same batch may run once it fits.
+      claimed?.();
+      throw e;
+    }
   }
 
-  /** Uses an allowed approval of a preference change once: false when it was used already. */
-  #useMemoryApproval(id: string): boolean {
-    if (this.#one("SELECT id FROM memory_approvals_used WHERE id = ?", id)) return false;
-    this.#o.sql.exec("INSERT INTO memory_approvals_used VALUES (?)", id);
-    return true;
+  /**
+   * Claims the user's allowed approval of a preference change for one run: undefined when it is
+   * not allowed or was used already; otherwise a function that gives it back (the batch failed).
+   */
+  #claimMemoryApproval(session: string, id: string): (() => void) | undefined {
+    const approval = this.#one<{ created: number }>(
+      "SELECT created FROM approvals WHERE session = ? AND id = ? AND status = 'allowed'",
+      session,
+      id,
+    );
+    if (!approval) return undefined;
+    const created = Number(approval.created);
+    if (this.#one("SELECT id FROM memory_approvals_used WHERE id = ? AND created = ?", id, created))
+      return undefined;
+    this.#o.sql.exec("INSERT INTO memory_approvals_used VALUES (?, ?)", id, created);
+    return () =>
+      this.#o.sql.exec(
+        "DELETE FROM memory_approvals_used WHERE id = ? AND created = ?",
+        id,
+        created,
+      );
   }
 
   /** The caller's whole profile, a ZIP of its Markdown files (#157). */

@@ -180,7 +180,7 @@
       "id": "memory-preferences-unapproved",
       "why": "an agent changes the user's preferences without their approval",
       "file": "packages/ai-sessions/src/user-sessions.ts",
-      "find": "if (!this.approvalAllowed(row.id, id) || !this.#useMemoryApproval(id)) {",
+      "find": "if (!claimed) {",
       "replace": "if (false) {",
       "suites": ["memory-conformance"]
     },

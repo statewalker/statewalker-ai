@@ -74,7 +74,7 @@ export async function handleSessionRest(
         project: url.searchParams.get("project") ?? undefined,
       } as never);
     if (route === "GET /me/profile/export")
-      return new Response(await api().exportProfile(), {
+      return new Response((await api().exportProfile()) as Uint8Array<ArrayBuffer>, {
         headers: {
           "content-type": "application/zip",
           "content-disposition": 'attachment; filename="profile.zip"',

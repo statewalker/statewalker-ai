@@ -285,6 +285,28 @@ describe.each(transports)("memory over %s", (name, connect) => {
     await sam.setMode({ mode: "default" });
   });
 
+  it("asks again for the same preference change made twice in one session, and runs it once per approval", async () => {
+    const sam = await as("sam");
+    const s = await sam.startSession({ project: p });
+    const change = memory("preferences", { op: "add", body: "Sam wants dark mode." });
+    const approveOnce = async () => {
+      const waiting = await sam.sendMessage(s.id, { content: change });
+      expect(waiting.status).toBe("waiting");
+      const id = String(waiting.stop_reason?.approval_ids?.[0]);
+      const answered = await sam.answerApproval(id, { decision: "allow", scope: "once" });
+      expect((await sam.waitTurn(answered.accepted)).status).toBe("completed");
+    };
+    const mine = async () =>
+      (await sam.listMemory({ kind: "preferences" })).entries.filter(
+        (e) => e.body === "Sam wants dark mode.",
+      );
+    await approveOnce();
+    const [first] = await mine();
+    await sam.eraseMemory({ kind: "preferences" }, { id: String(first?.id) });
+    await approveOnce();
+    expect(await mine()).toHaveLength(1);
+  });
+
   it("lets a sub-agent write only its own agent memory and the project memory", async () => {
     const liz = await as("liz");
     const s = await liz.startSession({ project: p, agent: "team/lead" });
