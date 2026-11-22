@@ -1,8 +1,8 @@
 // Modes and permission rules (statewalker/statewalker-root#124, decided in #79): a mode is a named
 // bundle of allow/ask/deny rules with a verdict for actions no rule matches; rules come from the
 // deployment, the project, the user, the agent session and the mode; deny beats ask, and ask beats
-// allow. The built-in modes follow Claude Code's identifiers. `auto` is `default` until the risk
-// classifier (#137).
+// allow. The built-in modes follow Claude Code's identifiers. Where no risk classifier runs, `auto`
+// asks as `default` does (the classifier is in auto.test.ts).
 
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
@@ -65,7 +65,7 @@ describe("modes", () => {
     );
   });
 
-  it("treats auto as default until the risk classifier", () => {
+  it("without the classifier, auto asks as default does", () => {
     for (const req of [files("read", "/a"), files("write", "/a"), files("delete", "/a")])
       expect(verdict("auto", req)).toBe(verdict("default", req));
   });

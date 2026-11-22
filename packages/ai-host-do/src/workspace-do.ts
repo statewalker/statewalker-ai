@@ -10,12 +10,18 @@ import {
   type AgentSessionFacts,
   type ApprovalGrant,
   ApprovalRegistry,
+  type ApprovalRequest,
+  type AutoSettings,
   accessOf,
   chainRoleSources,
+  classifierPrompt,
+  classifierTranscript,
   codedError,
   DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
+  DenialCounter,
   decide,
+  decideAuto,
   decideMode,
   type FileAction,
   fileRoleSource,
@@ -24,7 +30,10 @@ import {
   modeOf,
   PERMISSION_RULES_FILE,
   type PermissionRules,
+  parseAutoMode,
+  parseClassifierAnswer,
   parseRules,
+  type ResolvedMode,
   type RoleEntries,
   type RoleGrant,
   type RoleSource,
@@ -46,6 +55,7 @@ import {
 } from "@statewalker/ai-definitions";
 import {
   type CatalogModel,
+  type ClassifiedVerdict,
   checkModelsConfig,
   checkUserProvider,
   deploymentSecrets,
@@ -66,6 +76,7 @@ import {
   type ModelResponse,
   type ModelRight,
   type ModelsConfig,
+  type ModeVerdict,
   mayUse,
   normalise,
   type OutgoingRequest,
@@ -94,6 +105,7 @@ import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { agentRun, DefinitionsStore } from "./definitions-store.js";
 import {
+  agentOf,
   blockSizeOf,
   deploymentModes,
   deploymentRules,
@@ -105,8 +117,11 @@ import {
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { mountWorkspace } from "./workspace-store.js";
 
-/** How strict a verdict is: of two, the stricter one wins. */
-const STRICTNESS = { allow: 0, ask: 1, deny: 2 } as const;
+/** How strict a verdict is: of two, the stricter one wins ("classify" may still deny). */
+const STRICTNESS = { allow: 0, classify: 1, ask: 2, deny: 3 } as const;
+
+/** The project's instructions for agents, which auto mode's risk classifier is shown. */
+const AGENTS_FILE = "AGENTS.md";
 
 /** The definitions mount's folder in each project of an agent session's file view. */
 const DEFINITIONS_FOLDER = ".agents";
@@ -123,6 +138,9 @@ export class Workspace extends DurableObject<Env> {
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
   readonly #registry: ApprovalRegistry;
+  /** Auto mode's risk classifier: the deployment's settings, and each session's denials. */
+  readonly #auto: AutoSettings;
+  readonly #denials: DenialCounter;
   readonly #modes: Record<string, ModeDefinition>;
   readonly #deploymentRules: PermissionRules;
   readonly #secrets: SecretStore;
@@ -181,6 +199,10 @@ export class Workspace extends DurableObject<Env> {
     }
     this.#roles = chainRoleSources(sources);
     this.#registry = new ApprovalRegistry(sql);
+    const auto = parseAutoMode(env.AUTO_MODE);
+    if (auto.problems.length) console.warn(`AUTO_MODE: ${auto.problems.join("; ")}`);
+    this.#auto = auto.settings;
+    this.#denials = new DenialCounter(sql);
     this.#modes = deploymentModes(env);
     this.#deploymentRules = deploymentRules(env);
     // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
@@ -598,8 +620,15 @@ export class Workspace extends DurableObject<Env> {
     return this.#files.call(capability, method, args);
   }
 
-  /** The mode and the rules of one agent session, as the gate decides them at every call. */
+  /**
+   * The mode and the rules of one agent session, as the gate decides them at every call. In a
+   * classifier mode (`auto`, statewalker/statewalker-root#137) the rules come first (broad allow
+   * rules set aside), then the safe classes; what they leave goes to the risk classifier, and every
+   * decision on a change is kept as an item of the session. After too many classifier denials the
+   * session falls back to `default` for good.
+   */
   #modeGate(facts: AgentSessionFacts, store: FilesApi): ModeGate {
+    const auto = this.#auto;
     return {
       session: facts.session,
       project: facts.project,
@@ -607,8 +636,12 @@ export class Workspace extends DurableObject<Env> {
         const root = `/${facts.project}`;
         // Read once per operation: the user session's mode and rules, and the project's rules.
         const state = this.#registry.userSession(facts.user);
+        const fallen = this.#denials.fallenBack(facts.session);
+        // A classifier mode the session fell back from is `default`.
+        const effective = (m: ResolvedMode) =>
+          m.classifier && fallen ? modeOf(DEFAULT_MODE, this.#modes) : m;
         const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
-        const mode = modeOf(name, this.#modes);
+        const mode = effective(modeOf(name, this.#modes));
         const projectRules = parseRules(
           await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
         );
@@ -622,35 +655,177 @@ export class Workspace extends DurableObject<Env> {
         // session's, and the strictest verdict wins: a child is never looser than its parent. A
         // mode the deployment no longer knows denies.
         const extra = (facts.modes ?? []).map((m) =>
-          isMode(m, this.#modes) ? modeOf(m, this.#modes) : undefined,
+          isMode(m, this.#modes) ? effective(modeOf(m, this.#modes)) : undefined,
         );
-        const decideOne = (action: FileAction, target: string) => {
-          let decision = decideMode({ area: "files", action, target }, { mode, layers });
+        // Decisions carry their step (and so become items) while the session runs a classifier
+        // mode, or fell back from one.
+        const recorded = !!mode.classifier || (fallen && name !== DEFAULT_MODE);
+        const decideIn = (m: ResolvedMode, action: FileAction, target: string): ModeVerdict => {
+          const req = { area: "files", action, target };
+          if (m.classifier) {
+            const d = decideAuto(req, { mode: m, layers, protectedPaths: auto.protectedPaths });
+            return d.step === "classifier"
+              ? { verdict: "classify", reason: d.reason, step: "classifier" }
+              : { verdict: d.verdict, reason: d.reason, step: d.step };
+          }
+          const d = decideMode(req, { mode: m, layers });
+          return {
+            verdict: d.verdict,
+            reason: d.reason,
+            step: d.source === "mode" ? "mode" : "rule",
+          };
+        };
+        const decideOne = (action: FileAction, target: string): ModeVerdict => {
+          let decision = decideIn(mode, action, target);
           for (const m of extra) {
-            const other = m
-              ? decideMode({ area: "files", action, target }, { mode: m, layers })
-              : { verdict: "deny" as const, source: "mode", reason: "an unknown sub-agent mode" };
+            const other: ModeVerdict = m
+              ? decideIn(m, action, target)
+              : { verdict: "deny", reason: "an unknown sub-agent mode", step: "mode" };
             if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
+          }
+          if (!recorded) {
+            const { step: _step, ...plain } = decision;
+            return plain;
           }
           return decision;
         };
         const definitions = `${root}/${DEFINITIONS_FOLDER}`.toLowerCase();
-        return checks.map(([action, path]) =>
+        return checks.map(([action, path]): ModeVerdict => {
           // Outside the project nothing is decided here: the roles and the capability refuse it.
-          path !== root && !path.startsWith(`${root}/`)
-            ? { verdict: "allow" as const, reason: "outside the project" }
-            : // The definitions mount is read-only in every mode: no change there ever asks.
-              action !== "read" &&
-                action !== "list" &&
-                (path.toLowerCase() === definitions ||
-                  path.toLowerCase().startsWith(`${definitions}/`))
-              ? { verdict: "deny" as const, reason: "the definitions mount is read-only" }
-              : // An unattended session has nobody to ask: its asks are denies with a reason
-                // (statewalker/statewalker-root#127), and the agent carries on.
-                settleAsk(decideOne(action, path === root ? "/" : path.slice(root.length)), facts),
-        );
+          if (path !== root && !path.startsWith(`${root}/`))
+            return { verdict: "allow", reason: "outside the project" };
+          // The definitions mount is read-only in every mode: no change there ever asks.
+          if (
+            action !== "read" &&
+            action !== "list" &&
+            (path.toLowerCase() === definitions || path.toLowerCase().startsWith(`${definitions}/`))
+          )
+            return { verdict: "deny", reason: "the definitions mount is read-only" };
+          const decision = decideOne(action, path === root ? "/" : path.slice(root.length));
+          // An unattended session has nobody to ask: its asks are denies with a reason
+          // (statewalker/statewalker-root#127), and the agent carries on.
+          return decision.verdict === "classify"
+            ? decision
+            : (settleAsk(
+                decision as ModeVerdict & { verdict: "allow" | "ask" | "deny" },
+                facts,
+              ) as ModeVerdict);
+        });
       },
       consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
+      classify: (request) => this.#classify(facts, store, request),
+      record: async (decision) => {
+        try {
+          await agentOf(this.env, facts.session).gateDecision(decision);
+        } catch (e) {
+          // The decision stands; only its item is missing.
+          console.warn(`decision item of ${facts.session}: ${String((e as Error)?.message ?? e)}`);
+        }
+      },
+    };
+  }
+
+  /**
+   * Auto mode's risk classifier on one change (statewalker/statewalker-root#96): the deployment's
+   * model, through the model gateway within the user's model rights and metered in the workspace's
+   * budget (not a turn's), shown the user's messages, the agent's non-read tool calls, the pending
+   * action, the agent's instructions and the project's AGENTS.md, never tool results or file
+   * contents. A missing model, an error, a slow answer (AUTO_MODE timeout) or an unparseable one is
+   * a deny. Its denials are counted: too many and the session falls back to `default`.
+   */
+  async #classify(
+    facts: AgentSessionFacts,
+    store: FilesApi,
+    request: ApprovalRequest,
+  ): Promise<ClassifiedVerdict> {
+    const auto = this.#auto;
+    const started = Date.now();
+    const answer = await (async (): Promise<{
+      verdict: "allow" | "ask" | "deny";
+      reason: string;
+      model?: string;
+    }> => {
+      if (!auto.model) return { verdict: "deny", reason: "no risk classifier model is configured" };
+      const deny = (why: string) => ({
+        verdict: "deny" as const,
+        reason: `the risk classifier ${why}`,
+        model: auto.model,
+      });
+      try {
+        const access = await this.#access(facts.project, facts.user);
+        const found = this.#models.pinned(facts.session);
+        if (!access.member || !found || found.user !== facts.user)
+          return deny("cannot run for this session");
+        const items = await agentOf(this.env, facts.session).classifierItems();
+        const definitions = await this.#definitions.session(facts.session);
+        const agentsMd = await tryReadText(store, `/${facts.project}/${AGENTS_FILE}`);
+        const prompt = classifierPrompt({
+          transcript: classifierTranscript(items),
+          action: { ...request.action, permission: request.permission },
+          ...(definitions?.run?.instructions ? { instructions: definitions.run.instructions } : {}),
+          ...(agentsMd ? { agentsMd } : {}),
+        });
+        const gateway = new ModelGateway({
+          secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
+          meter: { record: (usage, meta) => this.#models.record(usage, meta) },
+        });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<"timeout">((ok) => {
+          timer = setTimeout(() => ok("timeout"), auto.timeoutMs);
+        });
+        const asked = gateway.request(
+          // The deployment's model alone: no substitution, no fallback to the agent's models.
+          { catalog: found.pinned.catalog, model: auto.model as string, fallbacks: [] },
+          {
+            // pi-ai's normalized context: the system prompt as its leading message.
+            context: {
+              messages: [
+                { role: "system", content: prompt.system, timestamp: 0 },
+                { role: "user", content: prompt.user, timestamp: Date.now() },
+              ],
+            },
+            maxTokens: auto.maxTokens,
+          },
+          this.#modelRight(access.grants),
+          { session: facts.session, user: facts.user, project: facts.project },
+        );
+        asked.catch(() => {});
+        const response = await Promise.race([asked, timeout]).finally(() => clearTimeout(timer));
+        if (response === "timeout") return deny(`did not answer within ${auto.timeoutMs} ms`);
+        const reply = response.message;
+        const model = response.attempts.at(-1)?.usage.model ?? response.model;
+        if (reply.stopReason === "error" || reply.stopReason === "aborted")
+          return { ...deny(`failed: ${reply.errorMessage ?? reply.stopReason}`), model };
+        const text = (reply.content as { type?: string; text?: string }[])
+          .filter((p) => p.type === "text")
+          .map((p) => p.text ?? "")
+          .join("");
+        const parsed = parseClassifierAnswer(text);
+        if (!parsed) return { ...deny("gave an unparseable answer"), model };
+        return {
+          verdict: parsed.verdict,
+          reason: parsed.reason || `the risk classifier says ${parsed.verdict}`,
+          model,
+        };
+      } catch (e) {
+        return deny(`failed: ${String((e as Error)?.message ?? e)}`);
+      }
+    })();
+    const latency_ms = Date.now() - started;
+    const fell = this.#denials.count(facts.session, answer.verdict, auto);
+    // An unattended session's ask is a deny (statewalker/statewalker-root#127).
+    const settled = settleAsk(answer, facts);
+    return {
+      verdict: settled.verdict,
+      reason: settled.reason,
+      ...(answer.model ? { model: answer.model } : {}),
+      latency_ms,
+      ...(fell ? { fallback: DEFAULT_MODE } : {}),
+      ...(fell && facts.unattended
+        ? {
+            stop: `auto mode fell back to ${DEFAULT_MODE} after too many denials; the session is unattended, so its turn stops`,
+          }
+        : {}),
     };
   }
 

@@ -18,6 +18,7 @@ import {
   type ApprovalRequest,
   createModelSummarizer,
   type EventsQuery,
+  type GateDecisionInput,
   type ItemsQuery,
   parseCompaction,
 } from "@statewalker/ai-sessions";
@@ -204,6 +205,23 @@ export class AgentSession extends DurableObject<Env> {
   /** Told by a sub-agent's DO: the approvals its turn waits on, for this root's events stream. */
   subAgentApprovals(session: string, requests: ApprovalRequest[]) {
     return this.#core.subAgentApprovals(session, requests);
+  }
+
+  /**
+   * Told by the Workspace DO's gate: one decision of auto mode (statewalker/statewalker-root#137),
+   * kept as an item; a block of the risk classifier is also recorded with the user's User DO, for
+   * /v1/me and a retry.
+   */
+  async gateDecision(decision: GateDecisionInput): Promise<void> {
+    await this.#core.gateDecision(decision);
+    const config = this.#core.config();
+    if (config && decision.request && decision.verdict === "deny" && decision.step === "classifier")
+      await userOf(this.env, config.user).recordBlocked(config.id, decision.request);
+  }
+
+  /** Told by the Workspace DO's gate: what auto mode's risk classifier may see of the session. */
+  classifierItems() {
+    return this.#core.classifierItems();
   }
 
   answer(approval: string, answer: ApprovalAnswer) {

@@ -17,7 +17,8 @@ export type { ApprovalRequest, ModelsConfig, ModelUsage };
 export interface ApprovalView extends ApprovalRequest {
   workspace: string;
   /** An unanswered approval past its time counts as denied: "expired". */
-  status: "pending" | "allowed" | "denied" | "expired";
+  /** "blocked": auto mode's risk classifier denied it; approving it retries exactly that action. */
+  status: "pending" | "allowed" | "denied" | "expired" | "blocked";
   created: number;
   expires: number;
 }
@@ -40,6 +41,11 @@ export interface UserSessionView {
   created: number;
   /** The pending approvals of the user's agent sessions in this workspace. */
   approvals: ApprovalView[];
+  /**
+   * What auto mode's risk classifier blocked recently (until the approval time-out), each to be
+   * approved for a retry through the approvals API.
+   */
+  blocked: ApprovalView[];
 }
 
 export interface AgentSessionView {
@@ -86,7 +92,7 @@ export interface ProfileView {
 
 /** What a turn adds to its session, in order. */
 export interface ItemInput {
-  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback";
+  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback" | "mode_decision";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -118,6 +124,37 @@ export interface ItemInput {
   reason?: string;
   /** Pinned: never compacted into a summary nor trimmed in the model context. */
   pinned?: true;
+  /**
+   * A `mode_decision` item (auto mode, statewalker/statewalker-root#137): the step that decided an
+   * action (a rule, a safe class, the risk classifier, the user's approval, or the mode itself),
+   * its verdict and reason (`reason`); a block also holds `approval`, `request` and `stored`.
+   */
+  step?: "rule" | "safe" | "classifier" | "approval" | "mode";
+  verdict?: "allow" | "ask" | "deny";
+  /** A `mode_decision` item's action: the file method, its path (and target, a write's size). */
+  action?: ApprovalRequest["action"];
+  /** A classifier decision's model and latency. */
+  model?: string;
+  latency_ms?: number;
+  /** Set on the denial after which the session fell back to this mode. */
+  fallback?: string;
+}
+
+/** One decision of auto mode on a change, as the gate reports it to the agent session. */
+export interface GateDecisionInput {
+  action: ApprovalRequest["action"];
+  step: NonNullable<ItemInput["step"]>;
+  verdict: "allow" | "ask" | "deny";
+  reason: string;
+  model?: string;
+  latency_ms?: number;
+  fallback?: string;
+  /** Why the running turn stops with this decision (an unattended session that fell back). */
+  stop?: string;
+  approval?: string;
+  request?: ApprovalRequest;
+  /** The exact call of a block (a write's content as bytes). */
+  stored?: { method: StoredAction["method"]; path: string; target?: string; content?: Uint8Array };
 }
 
 /** The exact file call an approval runs, as the agent session stores it in its items. */
