@@ -40,6 +40,9 @@ catalog:
   aws4fetch: ^1.0.20
   "@statewalker/webrun-rpc": ^0.16.0
   "@types/node": ^26.6.4
+  # The conformance suite on CellB in Chromium: the browser it drives, and the bundler of its host page.
+  playwright: ^1.63.0
+  vite: ^8.3.2
   esbuild: ^0.28.2
   # Property-based tests (the spec names it for ai-access).
   fast-check: 4.10.2

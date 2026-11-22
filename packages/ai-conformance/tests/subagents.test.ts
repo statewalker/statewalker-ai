@@ -12,6 +12,7 @@ import {
   type FakeModel,
   fakeModel,
   login,
+  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -311,7 +312,9 @@ describe.each(transports)("sub-agents over %s", (name, connect) => {
   });
 
   it("agents keep working after the user's access token expires; a new token resumes the same user session", async () => {
-    const token = await login(deployment, u("hal"), { ttlMs: 1500 });
+    // Long enough for the calls before the expiry, on the slowest runtime.
+    const ttlMs = RUNTIME === "browser" ? 6000 : 1500;
+    const token = await login(deployment, u("hal"), { ttlMs });
     const hal = await connect(deployment, token);
     await hal.setMode({ mode: "bypassPermissions" });
     const before = await hal.me();
@@ -324,7 +327,7 @@ describe.each(transports)("sub-agents over %s", (name, connect) => {
       content: start({ agent: "team/late", message: write(path, "after\n") }),
     });
     await model.held(`expiry-${t}`);
-    await sleep(1600);
+    await sleep(ttlMs + 100);
     await expect(hal.listSessions()).rejects.toMatchObject({ status: 401 });
     model.release(`expiry-${t}`);
     const fresh = await connect(deployment, await login(deployment, u("hal")));

@@ -12,6 +12,7 @@ import {
   type Item,
   login,
   modelUsage,
+  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -19,6 +20,8 @@ import {
   startDeployment,
   type Turn,
 } from "../src/index.js";
+
+// A browser page holds no deployment-held key (SECRETS_KEY, DEPLOYMENT_SECRETS): tests/browser.test.ts.
 
 const HOST = new URL("../../ai-host-do/", import.meta.url);
 const ADMIN_KEY = "conformance-admin-key";
@@ -350,22 +353,25 @@ describe.each(transports)("the model gateway over %s", (name, connect) => {
     expect(lastModel()).toBe("big");
   });
 
-  it("records a fallback whose next model cannot be reached, and fails the turn", async () => {
-    const ann = await as("ann");
-    const s = await ann.startSession({ project: `beta-${t}`, agent: "core/fallback-unbound" });
-    model.fail("big", 529);
-    try {
-      const turn = await ann.sendMessage(s.id, { content: "hello" });
-      expect(turn).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
-      expect(turn.items.find((i) => i.kind === "model_fallback")).toMatchObject({
-        from: "scripted/big",
-        to: "unbound/unbound-v1",
-        reason: "overloaded",
-      });
-    } finally {
-      model.heal("big");
-    }
-  });
+  it.skipIf(RUNTIME === "browser")(
+    "records a fallback whose next model cannot be reached, and fails the turn",
+    async () => {
+      const ann = await as("ann");
+      const s = await ann.startSession({ project: `beta-${t}`, agent: "core/fallback-unbound" });
+      model.fail("big", 529);
+      try {
+        const turn = await ann.sendMessage(s.id, { content: "hello" });
+        expect(turn).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
+        expect(turn.items.find((i) => i.kind === "model_fallback")).toMatchObject({
+          from: "scripted/big",
+          to: "unbound/unbound-v1",
+          reason: "overloaded",
+        });
+      } finally {
+        model.heal("big");
+      }
+    },
+  );
 
   it("fails the turn on any other model error, without falling back", async () => {
     const ann = await as("ann");
@@ -410,30 +416,33 @@ describe.each(transports)("the model gateway over %s", (name, connect) => {
     ]);
   });
 
-  it("injects the provider's key through the secrets gateway, and never shows it", async () => {
-    const ann = await as("ann");
-    const s = await ann.startSession({ project: `beta-${t}`, model: "keyed/keyed-v1" });
-    const turn = await ann.sendMessage(s.id, { content: "hello" });
-    expect(turn.status).toBe("completed");
-    expect(model.requests.at(-1)).toMatchObject({
-      model: "keyed-v1",
-      authorization: `Bearer ${DEPLOY_KEY}`,
-    });
-    // A provider without a key sends none.
-    await ann.sendMessage((await ann.startSession({ project: `beta-${t}` })).id, {
-      content: "hello",
-    });
-    expect(model.requests.at(-1)?.authorization).not.toContain(DEPLOY_KEY);
-    // A secret bound to another plugin is never sent to a model: the turn fails.
-    const unbound = await ann.startSession({ project: `beta-${t}`, model: "unbound/unbound-v1" });
-    const before = model.requests.length;
-    const failed = await ann.sendMessage(unbound.id, { content: "hello" });
-    expect(failed).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
-    expect(model.requests.length).toBe(before);
-    const items = await ann.listItems(s.id);
-    const events = await ann.readEvents(s.id);
-    expect(JSON.stringify([turn, failed, items, events])).not.toContain(DEPLOY_KEY);
-  });
+  it.skipIf(RUNTIME === "browser")(
+    "injects the provider's key through the secrets gateway, and never shows it",
+    async () => {
+      const ann = await as("ann");
+      const s = await ann.startSession({ project: `beta-${t}`, model: "keyed/keyed-v1" });
+      const turn = await ann.sendMessage(s.id, { content: "hello" });
+      expect(turn.status).toBe("completed");
+      expect(model.requests.at(-1)).toMatchObject({
+        model: "keyed-v1",
+        authorization: `Bearer ${DEPLOY_KEY}`,
+      });
+      // A provider without a key sends none.
+      await ann.sendMessage((await ann.startSession({ project: `beta-${t}` })).id, {
+        content: "hello",
+      });
+      expect(model.requests.at(-1)?.authorization).not.toContain(DEPLOY_KEY);
+      // A secret bound to another plugin is never sent to a model: the turn fails.
+      const unbound = await ann.startSession({ project: `beta-${t}`, model: "unbound/unbound-v1" });
+      const before = model.requests.length;
+      const failed = await ann.sendMessage(unbound.id, { content: "hello" });
+      expect(failed).toMatchObject({ status: "failed", error: expect.stringMatching(/EACCES/) });
+      expect(model.requests.length).toBe(before);
+      const items = await ann.listItems(s.id);
+      const events = await ann.readEvents(s.id);
+      expect(JSON.stringify([turn, failed, items, events])).not.toContain(DEPLOY_KEY);
+    },
+  );
 
   it("meters the user's own provider without charging the workspace", async () => {
     const ann = await as("ann");
