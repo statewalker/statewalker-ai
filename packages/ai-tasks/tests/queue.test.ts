@@ -244,4 +244,28 @@ describe("task queue", () => {
     expect(queue.listSubscriptions(P)).toEqual([]);
     expect(queue.bytes(P)).toBe(0);
   });
+
+  it("matches sender filters in linear time, whatever their stars", () => {
+    const { queue } = setup();
+    const cpu = () => {
+      const u = process.threadCpuUsage?.() ?? process.cpuUsage();
+      return (u.user + u.system) / 1000;
+    };
+    queue.subscribe(
+      P,
+      { name: "stars", filter: { subject: ">", sender: `${"*".repeat(200)}Z` } },
+      "user:ann",
+    );
+    queue.subscribe(P, { name: "glob", filter: { subject: ">", sender: "user:*n*" } }, "user:ann");
+    const start = cpu();
+    for (let i = 0; i < 20; i++)
+      queue.publish(P, { subject: "a.b" }, `session:${"0123456789abcdef".repeat(4)}`);
+    expect(cpu() - start).toBeLessThan(2000);
+    expect(queue.peek(P, "stars", ann)).toEqual([]);
+    queue.publish(P, { subject: "a.b" }, "user:ann");
+    expect(queue.peek(P, "glob", ann).map((t) => t.sender)).toEqual(["user:ann"]);
+    expect(queue.peek(P, "stars", ann)).toEqual([]);
+    queue.publish(P, { subject: "a.b" }, "user:bobZ");
+    expect(queue.peek(P, "stars", ann).map((t) => t.sender)).toEqual(["user:bobZ"]);
+  });
 });

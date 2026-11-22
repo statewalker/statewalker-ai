@@ -83,12 +83,30 @@ export function taskError(code: string, message: string): Error & { code: string
 
 const utf8 = new TextEncoder();
 
-function globMatches(pattern: string, text: string): boolean {
-  const re = pattern
-    .split("*")
-    .map((s) => s.replace(/[.+?^${}()|[\]\\/]/g, "\\$&"))
-    .join("[\\s\\S]*");
-  return new RegExp(`^${re}$`).test(text);
+/**
+ * Whether `text` matches `pattern`, where `*` is any run of characters: a linear two-pointer match
+ * (back to the last star on a mismatch), never a regular expression, so no filter can make a
+ * publish backtrack for ever.
+ */
+export function globMatches(pattern: string, text: string): boolean {
+  let p = 0;
+  let t = 0;
+  let star = -1;
+  let mark = 0;
+  while (t < text.length) {
+    if (p < pattern.length && pattern[p] !== "*" && pattern[p] === text[t]) {
+      p++;
+      t++;
+    } else if (p < pattern.length && pattern[p] === "*") {
+      star = p++;
+      mark = t;
+    } else if (star >= 0) {
+      p = star + 1;
+      t = ++mark;
+    } else return false;
+  }
+  while (p < pattern.length && pattern[p] === "*") p++;
+  return p === pattern.length;
 }
 
 interface TaskRow {
