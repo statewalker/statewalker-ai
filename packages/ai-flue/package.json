@@ -1,12 +1,34 @@
 {
   "name": "@statewalker/ai-flue",
   "version": "0.0.0",
-  "private": true,
   "license": "MIT",
   "description": "The execution core adapter: Flue running on the harness's environment.",
+  "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-flue#readme",
+  "bugs": {
+    "url": "https://github.com/statewalker/statewalker-ai/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/statewalker/statewalker-ai.git",
+    "directory": "packages/ai-flue"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+        "default": "./dist/index.js"
+      }
+    }
   },
   "scripts": {
     "build": "tsdown",
@@ -26,5 +48,8 @@
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }
