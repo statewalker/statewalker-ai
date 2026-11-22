@@ -132,7 +132,36 @@ function scopeOf(options: GatedFilesOptions) {
   };
 }
 
-export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesApi {
+/** A FilesApi that appends: what the gated view is, and what a store may be. */
+export interface AppendingFilesApi extends FilesApi {
+  /** Appends to a file (made when missing), as one change no other append interleaves with. */
+  append(path: string, content: Iterable<Uint8Array> | AsyncIterable<Uint8Array>): Promise<void>;
+}
+
+/**
+ * Appends in progress, by normalised path: one at a time per file, whichever holder appends. Each
+ * holder has a view of its own over the workspace's one store (wrapped per holder), so the views
+ * share this; files of other workspaces in the same isolate with the same path only wait their
+ * turn.
+ */
+const appending = new Map<string, Promise<void>>();
+
+/** Runs `run` after every append to the same file already waiting. */
+function oneAtATime(path: string, run: () => Promise<void>): Promise<void> {
+  const done = (appending.get(path) ?? Promise.resolve()).then(run);
+  const settled = done.catch(() => {});
+  appending.set(path, settled);
+  void settled.then(() => {
+    if (appending.get(path) === settled) appending.delete(path);
+  });
+  return done;
+}
+
+/** Whether a store appends itself. */
+const appends = (store: FilesApi): store is AppendingFilesApi =>
+  typeof (store as Partial<AppendingFilesApi>).append === "function";
+
+export function gatedFiles(store: FilesApi, options: GatedFilesOptions): AppendingFilesApi {
   const blockSize = options.blockSize ?? DEFAULT_BLOCK_SIZE;
   const { authorize } = options;
   const authorizeAll =
@@ -206,6 +235,27 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
         }
       }
       await store.write(path, checked());
+    },
+
+    async append(raw, content): Promise<void> {
+      const path = normalise(raw);
+      if (await scope().hidden(path)) throw enoent(raw);
+      await authorize("write", path);
+      const added: Uint8Array[] = [];
+      let first = true;
+      for await (const block of content) {
+        if (!first) await authorize("write", path);
+        first = false;
+        added.push(block);
+      }
+      await oneAtATime(path, async () => {
+        if ((await store.stats(path))?.kind === "directory")
+          throw codedError("EINVAL", `cannot append to a directory, '${raw}'`);
+        if (appends(store)) return store.append(path, added);
+        // Read whole before the write starts: a store may empty a file when a write begins.
+        const before = await collect(store.read(path));
+        await store.write(path, [...before, ...added]);
+      });
     },
 
     async mkdir(raw: string): Promise<void> {

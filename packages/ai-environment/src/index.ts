@@ -57,6 +57,7 @@ export {
   gatedFilesRpc,
 } from "./files-rpc.js";
 export {
+  type AppendingFilesApi,
   DEFAULT_BLOCK_SIZE,
   type FileAction,
   type GatedFilesOptions,

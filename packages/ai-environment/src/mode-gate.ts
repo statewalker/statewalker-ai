@@ -16,6 +16,7 @@ import {
   type FileAction,
 } from "@statewalker/ai-access";
 import type { FileInfo, FilesApi } from "@statewalker/webrun-files";
+import type { AppendingFilesApi } from "./gated-files.js";
 import { normalise } from "./paths.js";
 
 export interface ModeVerdict {
@@ -86,6 +87,8 @@ export interface ModeGate {
 /** `limit`: raising a limit that asks (statewalker/statewalker-root#179). */
 export type ApprovalMethod =
   | "write"
+  // Appending to a file (statewalker/statewalker-root#146): the content is what is appended.
+  | "append"
   | "mkdir"
   | "remove"
   | "copy"
@@ -135,6 +138,23 @@ export class ApprovalPending extends Error {
   }
 }
 
+/**
+ * Appends through the view's own `append` (the gate's, one change no other append interleaves
+ * with); a view without one is read and written again.
+ */
+async function appendTo(
+  files: FilesApi & Partial<Pick<AppendingFilesApi, "append">>,
+  path: string,
+  bytes: Uint8Array,
+): Promise<void> {
+  if (files.append) return files.append(path, [bytes]);
+  const before = (await files.exists(path)) ? await bytesOf(files.read(path)) : new Uint8Array();
+  const all = new Uint8Array(before.length + bytes.length);
+  all.set(before);
+  all.set(bytes, before.length);
+  await files.write(path, [all]);
+}
+
 async function bytesOf(content: Iterable<Uint8Array> | AsyncIterable<Uint8Array>) {
   const parts: Uint8Array[] = [];
   for await (const part of content) parts.push(part);
@@ -150,7 +170,7 @@ async function bytesOf(content: Iterable<Uint8Array> | AsyncIterable<Uint8Array>
 const RANK = { allow: 0, classify: 1, ask: 2, deny: 3 } as const;
 
 /** The gate's side: the agent session's gated view, with every operation decided by the mode. */
-export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
+export function modeGated(view: AppendingFilesApi, gate: ModeGate): AppendingFilesApi {
   const relative = (path: string) => {
     const root = `/${gate.project}`;
     return path === root ? "/" : path.startsWith(`${root}/`) ? path.slice(root.length) : path;
@@ -299,6 +319,13 @@ export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
       await settle([["write", path]], "write", path, { content: read });
       await view.write(raw, bytes ? [bytes] : content);
     },
+    async append(raw, content) {
+      const path = normalise(raw);
+      changeable(path);
+      const bytes = await bytesOf(content);
+      await settle([["write", path]], "append", path, { content: async () => bytes });
+      await view.append(raw, [bytes]);
+    },
     async mkdir(raw) {
       const path = normalise(raw);
       // Nothing changes: no decision to make, never an ask.
@@ -351,7 +378,7 @@ export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
  * which would ask about a folder nobody asked to create).
  */
 export function approvalAware(
-  files: FilesApi,
+  files: FilesApi & Partial<Pick<AppendingFilesApi, "append">>,
   onApproval: (request: ApprovalRequest, call: StoredCall) => void,
   /**
    * An approval the turn waits on that another of its actions asked (a run of code from the
@@ -359,7 +386,7 @@ export function approvalAware(
    * command line changes nothing before the user answers.
    */
   held?: () => ApprovalRequest | undefined,
-): FilesApi {
+): AppendingFilesApi {
   let waitingOn: ApprovalRequest | undefined;
   /** The approval each change asked waits on: a change tried again names its own. */
   const asked = new Map<string, ApprovalRequest>();
@@ -388,6 +415,10 @@ export function approvalAware(
       const bytes = await bytesOf(content);
       await change({ method: "write", path, content: bytes }, () => files.write(path, [bytes]));
     },
+    async append(path, content) {
+      const bytes = await bytesOf(content);
+      await change({ method: "append", path, content: bytes }, () => appendTo(files, path, bytes));
+    },
     mkdir: (path) => change({ method: "mkdir", path }, () => files.mkdir(path)),
     remove: (path) => change({ method: "remove", path }, () => files.remove(path)),
     copy: (path, target) =>
@@ -409,11 +440,17 @@ export interface StoredCall {
  * Runs a stored change again through a file view (the gate re-checks it against the current mode
  * and roles): its answer, or `{$approval}` when the gate still asks.
  */
-export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<unknown> {
+export async function runStoredCall(
+  files: FilesApi & Partial<Pick<AppendingFilesApi, "append">>,
+  call: StoredCall,
+): Promise<unknown> {
   try {
     switch (call.method) {
       case "write":
         await files.write(call.path, [call.content ?? new Uint8Array()]);
+        return null;
+      case "append":
+        await appendTo(files, call.path, call.content ?? new Uint8Array());
         return null;
       case "mkdir":
         await files.mkdir(call.path);
