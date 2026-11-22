@@ -196,10 +196,18 @@ describe.each(transports)("the AI SDK UI message stream over %s", (name, connect
       status: "denied",
     });
     const items = (await cy.listItems(s.id)).items;
-    expect(items.at(-1)).toMatchObject({
-      kind: "tool_result",
+    expect(
+      items.find((i) => i.kind === "tool_result" && i.approval === approval?.id),
+    ).toMatchObject({
       output: expect.stringMatching(/not there/),
     });
+    // The agent continues with the refusal, in the same assistant message
+    // (statewalker/statewalker-root#214).
+    expect(items.at(-1)).toMatchObject({ kind: "message", role: "assistant", text: "OK" });
+    expect(second.message?.parts.filter((p) => p.type === "text").at(-1)).toMatchObject({
+      text: "OK",
+    });
+    expect(second.chunks.at(-1)).toMatchObject({ type: "finish", finishReason: "stop" });
   });
 
   it("runs the approved call once when the user approves from the UI", async () => {

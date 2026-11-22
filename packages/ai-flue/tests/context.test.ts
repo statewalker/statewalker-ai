@@ -67,4 +67,25 @@ describe("context messages", () => {
     // A result with no call before it (an approved action run again) is told as a message.
     expect(messages[4]).toMatchObject({ content: "[Result of an approved action] write /a: done" });
   });
+
+  it("tells a denied action's result as a denial, with its reason", () => {
+    const messages = contextMessages(
+      [
+        item(1, {
+          kind: "tool_result",
+          approval: "ap-1",
+          output: "write /a: denied by the user: not there",
+          isError: true,
+          denied: true,
+        }),
+      ],
+      MODEL,
+    );
+    expect(messages).toMatchObject([
+      {
+        role: "user",
+        content: "[Result of a denied action] write /a: denied by the user: not there",
+      },
+    ]);
+  });
 });
