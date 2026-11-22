@@ -227,6 +227,13 @@ _Avoid_: quota (as a separate concept), budget (except for model spend)
 **Reservation**:
 The worst case of a model request (its input plus `max_tokens`), held against every limit on its path before the model is asked and settled to the real cost after, so spend never overshoots a limit.
 
+**Rate limit**:
+A limit with a short period (a second or a minute) that delays: a request over it waits for the next window, up to the deployment's max delay (30 s), and only then is denied. Used on the session API and on provider keys.
+_Avoid_: throttle
+
+**Provider share**:
+The part of a deployment provider key's rate limits (requests and tokens a minute) one workspace is held to, in its own Workspace DO.
+
 **Increment**:
 What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.
 

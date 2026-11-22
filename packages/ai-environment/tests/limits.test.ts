@@ -12,6 +12,7 @@ import {
   parseLimits,
   type SqlLike,
   windowOf,
+  withDelay,
 } from "../src/index.js";
 
 const sqlite = (): SqlLike => {
@@ -254,5 +255,76 @@ describe("limits", () => {
     );
     expect(e.input_tokens).toBeGreaterThanOrEqual(new TextEncoder().encode(text).length);
     expect(e.cost).toBeGreaterThanOrEqual(text.length);
+  });
+
+  it("delays a request over a rate limit until its window resets, up to the max delay, then denies", async () => {
+    // A virtual clock: sleeping moves it, so no test waits on the wall clock.
+    let now = Date.UTC(2026, 0, 1, 0, 0, 45);
+    const sleep = async (ms: number) => {
+      now += ms;
+    };
+    const ledger = new LimitLedger(sqlite(), { now: () => now });
+    const scopes: LimitScope[] = [
+      {
+        level: "user",
+        target: "u",
+        limits: parseLimits(
+          '[{"meter":"api_requests","level":"user","value":2,"period":"minute","on_exceed":"delay"}]',
+        ).limits,
+      },
+    ];
+    const take = () =>
+      ledger.charge(scopes, { api_requests: 1 }, META, undefined, { record: false });
+    const opts = { now: () => now, sleep, maxDelayMs: 30_000 };
+    await withDelay(take, opts);
+    await withDelay(take, opts);
+    // 15 s left in the minute: the third waits for the next window, and is admitted there.
+    const before = now;
+    await withDelay(take, opts);
+    expect(now - before).toBeGreaterThanOrEqual(15_000);
+    expect(now - before).toBeLessThan(16_000);
+    await withDelay(take, opts);
+    // Now ~60 s to the next window: more than the max delay, so it is denied at once.
+    const at = now;
+    await expect(withDelay(take, opts)).rejects.toMatchObject({
+      verdict: "delay",
+      message: expect.stringMatching(/retry after (59|60) s/),
+    });
+    expect(now).toBe(at);
+    // A shorter max delay denies what the default would wait for.
+    now = Date.UTC(2026, 0, 1, 0, 2, 50);
+    await withDelay(take, opts);
+    await withDelay(take, opts);
+    await expect(withDelay(take, { ...opts, maxDelayMs: 5_000 })).rejects.toBeInstanceOf(
+      LimitExceeded,
+    );
+    // Usage records are not kept for counters charged with record: false.
+    expect(ledger.records()).toEqual([]);
+  });
+
+  it("keeps waiting while other requests take each freed window, until the max delay", async () => {
+    let now = Date.UTC(2026, 0, 1, 0, 0, 0, 500);
+    const ledger = new LimitLedger(sqlite(), { now: () => now });
+    const scopes: LimitScope[] = [
+      {
+        level: "workspace",
+        target: "w",
+        limits: parseLimits(
+          '[{"meter":"api_requests","level":"workspace","value":1,"period":"second","on_exceed":"delay"}]',
+        ).limits,
+      },
+    ];
+    const take = () => ledger.charge(scopes, { api_requests: 1 }, META);
+    take();
+    // Each time this request wakes, another took the new window first, three times over.
+    let stolen = 0;
+    const sleep = async (ms: number) => {
+      now += ms;
+      if (stolen++ < 3) take();
+    };
+    const start = now;
+    await withDelay(take, { now: () => now, sleep, maxDelayMs: 30_000 });
+    expect(now - start).toBeGreaterThan(3_000);
+    expect(now - start).toBeLessThan(5_000);
   });
 });

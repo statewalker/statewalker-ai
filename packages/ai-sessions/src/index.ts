@@ -25,6 +25,7 @@ export {
   type AgentSessionView,
   type AgentsQuery,
   type AgentView,
+  type ApiRequestKind,
   type ApprovalAnswer,
   type ApprovalRequest,
   type ApprovalView,

@@ -187,7 +187,7 @@ const rowsText = (rows: unknown): string =>
 function budgetOf(error: string): StopLimit | undefined {
   if (!error.includes("ELIMIT")) return undefined;
   const limit = limitOfMessage(error);
-  if (!limit || !/^model_(spend|tokens)$/.test(String(limit.meter))) return undefined;
+  if (!limit || !/^model_(spend|tokens|requests)$/.test(String(limit.meter))) return undefined;
   return {
     meter: String(limit.meter),
     level: String(limit.level),
@@ -196,6 +196,20 @@ function budgetOf(error: string): StopLimit | undefined {
     period: String(limit.period),
     used: Number(limit.used),
   };
+}
+
+/**
+ * Whether a turn's error is a rate limit's (statewalker/statewalker-root#180): every model left
+ * answered 429 or was over its share (`ERATELIMITED`), or a limit that delays could not wait.
+ */
+function rateLimitedOf(error: string): boolean {
+  if (/\bERATELIMITED\b/.test(error)) return true;
+  const limit = limitOfMessage(error);
+  return (
+    error.includes("ELIMIT") &&
+    limit?.verdict === "delay" &&
+    (limit.period === "second" || limit.period === "minute")
+  );
 }
 
 type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;
@@ -898,7 +912,18 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         { type: running.endAs, ...(running.endReason ? { message: running.endReason } : {}) },
         model ? { model } : {},
       );
-    else if (error && budgetOf(error))
+    else if (error && rateLimitedOf(error)) {
+      // No model could be asked within its rate limits: the turn ends incomplete, and may be
+      // sent again once the window resets.
+      const at = error.search(/ERATELIMITED|ELIMIT/);
+      const limit = budgetOf(error);
+      this.#finish(
+        row.id,
+        "incomplete",
+        { type: "rate_limited", message: error.slice(at), ...(limit ? { limit } : {}) },
+        model ? { model } : {},
+      );
+    } else if (error && budgetOf(error))
       // A limit on model spend refused a request: the turn ends incomplete, naming the limit.
       this.#finish(
         row.id,

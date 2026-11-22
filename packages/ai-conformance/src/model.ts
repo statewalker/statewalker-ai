@@ -56,7 +56,16 @@ export interface FakeModel {
    * The deployment's model configuration (the MODELS var) for this server: one provider,
    * "scripted", and its models (`scripted/default` unless others are given), the first the default.
    */
-  deploymentModels(config?: { models?: Record<string, unknown>[]; default?: string }): string;
+  /**
+   * The MODELS var of a deployment served by this model: the `scripted` provider (with `provider`'s
+   * fields added, e.g. its `rate`), any further `providers` (each served here too), and `models`.
+   */
+  deploymentModels(config?: {
+    models?: Record<string, unknown>[];
+    default?: string;
+    provider?: Record<string, unknown>;
+    providers?: Record<string, unknown>[];
+  }): string;
   close(): Promise<void>;
 }
 
@@ -294,7 +303,14 @@ export async function fakeModel(): Promise<FakeModel> {
     deploymentModels: (config = {}) => {
       const models = config.models ?? [{ id: "scripted/default", alias: "default" }];
       return JSON.stringify({
-        providers: [{ id: "scripted", api: "openai-completions", baseUrl: url }],
+        providers: [
+          { id: "scripted", api: "openai-completions", baseUrl: url, ...config.provider },
+          ...(config.providers ?? []).map((p) => ({
+            api: "openai-completions",
+            baseUrl: url,
+            ...p,
+          })),
+        ],
         models,
         default: config.default ?? String(models[0]?.id),
       });

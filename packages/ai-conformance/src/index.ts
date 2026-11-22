@@ -27,6 +27,7 @@ export {
   type Approval,
   type ApprovalAnswer,
   advanceUserClock,
+  advanceWorkspaceClock,
   type ChatTransportLike,
   deleteProject,
   type EventsPage,
