@@ -543,6 +543,8 @@ export class AgentSession extends DurableObject<Env> {
           return running;
         }
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+        // `node`, `python` and the deployment's programs in the `bash` tool (#142).
+        const code = this.#codePort(config, turn, onApproval, emit);
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
         const set = await this.#tools(config, onApproval, turn, emit);
         // Memory, primed at the session's start and after each compaction (#157).
@@ -564,6 +566,8 @@ export class AgentSession extends DurableObject<Env> {
                 { blockSize: blockSizeOf(env) },
               ),
               onApproval,
+              // A run of code waiting on the user stops the rest of its command line (#142).
+              () => code.held,
             ),
             models: gateway(config, turn, emit, onApproval),
             ...(config.model ? { model: config.model } : {}),
@@ -576,8 +580,7 @@ export class AgentSession extends DurableObject<Env> {
             onSteer,
             tools: set.hostTools,
             allowTools: set.offered,
-            // `node`, `python` and the deployment's programs in the `bash` tool (#142).
-            exec: this.#codePort(config, turn, onApproval, emit),
+            exec: code.port,
             // Every tool call counts against the limits on tool calls (#179): a refused call is
             // not run, and the agent carries on with the refusal.
             telemetry: telemetryOf(env, "agent"),
@@ -896,15 +899,21 @@ export class AgentSession extends DurableObject<Env> {
     turn: string,
     onApproval: (request: ApprovalRequest, call: StoredCall) => void,
     emit: (item: ItemInput) => void,
-  ): CodePort {
-    return {
+  ): { port: CodePort; readonly held: ApprovalRequest | undefined } {
+    // The approval a run of this turn waits on: from then on nothing more of the command line
+    // runs code or changes a file (the shell goes on, but only to print), so the user answers
+    // before anything after it happens.
+    let held: ApprovalRequest | undefined;
+    const port: CodePort = {
       commands: routedCommands(this.#executors()),
       run: async (run) => {
+        if (held) throw new ApprovalPending(held);
         try {
           return await this.#runCode(config, turn, run, emit);
         } catch (e) {
           const request = approvalOf(e);
           if (!request) throw e;
+          held = request;
           onApproval(request, {
             method: "run",
             path: request.action.path,
@@ -912,6 +921,12 @@ export class AgentSession extends DurableObject<Env> {
           });
           throw new ApprovalPending(request);
         }
+      },
+    };
+    return {
+      port,
+      get held() {
+        return held;
       },
     };
   }

@@ -202,6 +202,20 @@ describe.each(transports)("code execution over %s", (name, connect) => {
     expect(again.status).toBe("waiting");
   });
 
+  it("runs nothing more of the command line while a run waits on the user's approval", async () => {
+    const bea = await as("bea", "acceptEdits");
+    const s = await bea.startSession({ project });
+    const after = `/${project}/after-${t}.txt`;
+    const turn = await bea.sendMessage(s.id, {
+      content: bash(
+        `node hello.mjs x; echo after > ${after}; node hello.mjs y || echo failed > ${after}`,
+      ),
+    });
+    expect(turn.status).toBe("waiting");
+    const read = await bea.sendMessage(s.id, { content: call("read", { path: after }) });
+    expect(results(read).at(-1)).toMatchObject({ isError: true });
+  });
+
   it("charges a run's time as executor_cpu_ms:isolate, and kills it when a limit refuses more", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project: `meter-${t}` });
