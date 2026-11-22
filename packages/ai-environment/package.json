@@ -14,7 +14,9 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./local-models": "./src/local-models.ts",
+    "./webllm": "./src/webllm.ts"
   },
   "files": [
     "dist",
@@ -27,6 +29,16 @@
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
         "default": "./dist/index.js"
+      },
+      "./local-models": {
+        "types": "./dist/local-models.d.ts",
+        "import": "./dist/local-models.js",
+        "default": "./dist/local-models.js"
+      },
+      "./webllm": {
+        "types": "./dist/webllm.d.ts",
+        "import": "./dist/webllm.js",
+        "default": "./dist/webllm.js"
       }
     }
   },

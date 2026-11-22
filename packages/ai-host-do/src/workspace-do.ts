@@ -102,6 +102,7 @@ import {
   ignoreRules,
   type Limit,
   type LimitState,
+  localEngine,
   lookupModel,
   type ModeGate,
   type ModelCall,
@@ -720,6 +721,8 @@ export class Workspace extends DurableObject<Env> {
         : undefined;
     const gateway = new ModelGateway({
       secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
+      // The runtime's local model engine, where its host declared one (a browser page, #143).
+      local: localEngine(),
       // The budget records every request; limits reserve its worst case in `admit` and settle it
       // in `record` (#179).
       meter: this.#modelMeter(facts.project, facts.user),
@@ -1279,6 +1282,7 @@ export class Workspace extends DurableObject<Env> {
         });
         const gateway = new ModelGateway({
           secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
+          local: localEngine(),
           // The classifier spends the workspace's budget like any request (#179).
           meter: this.#modelMeter(facts.project, facts.user),
         });

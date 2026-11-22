@@ -1,14 +1,21 @@
 // The page's side of the harness in this page (harness-worker.ts): a `fetch` onto it, streamed.
 import type { DeploymentFetch } from "./client.js";
+import type { LocalModels } from "./commands.js";
 
 interface Pending {
   resolve(res: Response): void;
   reject(e: Error): void;
   body?: ReadableStreamDefaultController<Uint8Array>;
+  progress?: (report: { progress: number; text: string }) => void;
 }
 
-/** Starts the harness in a Dedicated Worker; resolves once it answers. */
-export async function startInPageHarness(vars: Record<string, string>): Promise<DeploymentFetch> {
+/**
+ * Starts the harness in a Dedicated Worker; resolves once it answers, with a `fetch` onto it and
+ * the worker's local model engine.
+ */
+export async function startInPageHarness(
+  vars: Record<string, string>,
+): Promise<{ fetch: DeploymentFetch; local: LocalModels }> {
   const worker = new Worker(new URL("./harness-worker.ts", import.meta.url), { type: "module" });
   const pending = new Map<number, Pending>();
   let next = 0;
@@ -45,6 +52,10 @@ export async function startInPageHarness(vars: Record<string, string>): Promise<
           headers: msg.headers,
         }),
       );
+    } else if (msg.type === "local-progress") entry.progress?.(msg);
+    else if (msg.type === "local-done") {
+      pending.delete(msg.id);
+      entry.resolve(msg.value);
     } else if (msg.type === "chunk") entry.body?.enqueue(msg.chunk);
     else if (msg.type === "end") {
       pending.delete(msg.id);
@@ -56,7 +67,19 @@ export async function startInPageHarness(vars: Record<string, string>): Promise<
   const url = new URL("./harness/", document.baseURI).href;
   worker.postMessage({ type: "start", id: 0, url, vars });
   await started;
-  return async (path, init) => {
+  const ask = <T>(message: Record<string, unknown>, progress?: Pending["progress"]): Promise<T> => {
+    const id = ++next;
+    const answer = new Promise<T>((resolve, reject) =>
+      pending.set(id, { resolve: resolve as never, reject, ...(progress ? { progress } : {}) }),
+    );
+    worker.postMessage({ ...message, id });
+    return answer;
+  };
+  const local: LocalModels = {
+    has: (model) => ask<boolean>({ type: "local-has", model }),
+    download: (model, onProgress) => ask<void>({ type: "local-download", model }, onProgress),
+  };
+  const fetch: DeploymentFetch = async (path, init) => {
     const req = new Request(new URL(path, "http://harness.local"), init);
     const body =
       req.method === "GET" || req.method === "HEAD" ? undefined : await req.arrayBuffer();
@@ -68,4 +91,5 @@ export async function startInPageHarness(vars: Record<string, string>): Promise<
     );
     return answer;
   };
+  return { fetch, local };
 }

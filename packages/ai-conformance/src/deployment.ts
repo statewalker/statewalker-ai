@@ -10,6 +10,12 @@ export interface Deployment {
   /** A request to the deployment; `path` is resolved against its origin. */
   fetch(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
+  /**
+   * The page's local model engine, where the runtime has one (a browser): `download` is the
+   * user's action that puts a model's weights in the browser's cache. The runner's engine is a
+   * stand-in whose "weights" answer through the scripted model at `scripted` (its /v1 URL).
+   */
+  localModels?: { download(model: string, scripted: string): Promise<void> };
 }
 
 /** JSONC → JSON: line and block comments outside strings, and trailing commas. */
@@ -35,6 +41,9 @@ function stripJsonc(source: string): string {
 /** The runtime deployments start on: `CONFORMANCE_RUNTIME`, "node" (default) or "browser". */
 export const RUNTIME: "node" | "browser" =
   process.env.CONFORMANCE_RUNTIME === "browser" ? "browser" : "node";
+
+/** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
+export const LOCAL_MODELS = RUNTIME === "browser";
 
 /** Starts the Worker project on the run's runtime (`RUNTIME`), with `vars` over its configuration. */
 export async function startDeployment(

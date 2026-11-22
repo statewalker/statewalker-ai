@@ -76,6 +76,7 @@ export {
   windowOf,
   withDelay,
 } from "./limits.js";
+export { installLocalEngine, type LocalEngine, localEngine } from "./local-models.js";
 export {
   type ApprovalMethod,
   ApprovalPending,
