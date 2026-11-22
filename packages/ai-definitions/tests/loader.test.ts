@@ -3,7 +3,7 @@
 import { readText, writeText } from "@statewalker/webrun-files";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 import { describe, expect, it } from "vitest";
-import { AGENT_PLUGINS_SCHEMA, loadPlugins } from "../src/index.js";
+import { AGENT_PLUGINS_SCHEMA, loadPlugins, readPlugin } from "../src/index.js";
 
 async function filesOf(fs: MemFilesApi, dir = "/"): Promise<string[]> {
   const out: string[] = [];
@@ -164,5 +164,19 @@ describe("the plugin loader", () => {
     expect(plugins.map((p) => p.name)).toEqual(["outside", "sneaky"]);
     expect(problems.filter((p) => p.startsWith("sneaky:"))).toHaveLength(4);
     expect(await filesOf(catalog, "/sneaky")).toEqual(["/sneaky/plugin.json"]);
+  });
+
+  it("never scans a plugin's parent folder: a skill at the plugin's root stays the plugin's own", async () => {
+    const src = await sources({
+      "/evil/.claude-plugin/plugin.json": JSON.stringify({ name: "evil", skills: ["./"] }),
+      "/evil/SKILL.md": SKILL,
+      "/other/SKILL.md": SKILL,
+      "/other/data.txt": "sibling data",
+    });
+    const read = await readPlugin(src, "/evil");
+    expect([...(read.plugin?.files.keys() ?? [])].sort()).toEqual([
+      "plugin.json",
+      "skills/evil/SKILL.md",
+    ]);
   });
 });

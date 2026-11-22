@@ -196,14 +196,19 @@ async function readJson(fs: FilesApi, path: string): Promise<Record<string, unkn
 async function addSkills(fs: FilesApi, dir: string, b: Builder) {
   for (const skill of await children(fs, dir, "directory")) {
     const root = join(dir, skill);
-    if (!(await isFile(fs, join(root, "SKILL.md")))) continue;
-    if (!isItemName(skill)) {
-      b.problem(`skill '${skill}' is not a valid name; skipped`);
-      continue;
-    }
-    for (const rel of await filesUnder(fs, root))
-      b.add(`skills/${skill}/${rel}`, await bytesOf(fs, join(root, rel)));
+    if (await isFile(fs, join(root, "SKILL.md"))) await addSkill(fs, root, skill, b);
   }
+}
+
+/** Copies one skill folder under `skills/<name>/` (a plugin's own folders excepted). */
+async function addSkill(fs: FilesApi, root: string, name: string, b: Builder) {
+  if (!isItemName(name)) {
+    b.problem(`skill '${name}' is not a valid name; skipped`);
+    return;
+  }
+  for (const rel of await filesUnder(fs, root))
+    if (!rel.startsWith(".claude-plugin/"))
+      b.add(`skills/${name}/${rel}`, await bytesOf(fs, join(root, rel)));
 }
 
 /** `mcp.json` in the standard form; Claude Code's `http` transport is Streamable HTTP. */
@@ -325,8 +330,10 @@ async function readClaudePlugin(
   for (const rel of listOf(manifest.skills)) {
     const path = inside(dir, rel, b);
     if (!path) continue;
+    // A folder holding a SKILL.md is one skill (the plugin's root: named after the plugin); any
+    // other is a folder of skills. Nothing above the plugin's root is ever scanned.
     if (await isFile(fs, join(path, "SKILL.md")))
-      await addSkills(fs, path.slice(0, path.lastIndexOf("/")) || "/", b);
+      await addSkill(fs, path, path === dir ? b.name : (path.split("/").pop() ?? ""), b);
     else await addSkills(fs, path, b);
   }
   // Agents: the manifest's files or folders replace `agents/`.

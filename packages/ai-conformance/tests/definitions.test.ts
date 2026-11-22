@@ -85,6 +85,8 @@ function projectFiles(t: string): Record<string, string> {
       name: "core",
     }),
     [`/${alpha}/.system/plugins/fake-core/skills/evil/SKILL.md`]: skill("evil"),
+    // A project whose name has capitals.
+    [`/Gamma-${t}/.system/access`]: JSON.stringify({ [`eve-${t}`]: "editor" }),
     [`/${beta}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "reader" }),
   };
 }
@@ -246,5 +248,17 @@ describe.each(transports)("definitions over %s", (name, connect) => {
       "proj__house-style",
       "team__standup",
     ]);
+  });
+
+  it("refuses changes to the mount without asking, in a project whose name has capitals", async () => {
+    const eve = await as("eve");
+    const project = `Gamma-${t}`;
+    const s = await eve.startSession({ project });
+    const turn = await eve.sendMessage(s.id, {
+      content: call("write", { path: `/${project}/.agents/skills/x/SKILL.md`, content: "x" }),
+    });
+    expect(turn.status).toBe("completed");
+    expect(toolResult(turn)).toMatchObject({ isError: true });
+    expect(toolResult(turn)?.output).toMatch(/read-only/);
   });
 });

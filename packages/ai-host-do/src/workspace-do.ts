@@ -383,7 +383,7 @@ export class Workspace extends DurableObject<Env> {
           { source: "user", rules: state?.rules ?? {} },
           this.#registry.sessionLayer(facts.session, facts.user),
         ];
-        const definitions = `${root}/${DEFINITIONS_FOLDER}`;
+        const definitions = `${root}/${DEFINITIONS_FOLDER}`.toLowerCase();
         return checks.map(([action, path]) =>
           // Outside the project nothing is decided here: the roles and the capability refuse it.
           path !== root && !path.startsWith(`${root}/`)
