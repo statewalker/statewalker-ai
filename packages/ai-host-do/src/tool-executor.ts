@@ -1,0 +1,351 @@
+// The `isolate` executor for native tool scripts (statewalker/statewalker-root#130, decided in #94):
+// each call loads the tool's bundle into a Worker Loader isolate of its own, with the network off
+// (`globalOutbound: null`) and nothing in its `env`; the script reaches files and its databases
+// only through the host object the call hands it, which answers only while the run lasts (the run
+// lease) and acts with the capability the Workspace DO gives it. The isolate's time is charged as
+// the run goes (`charge`), and the run is ended when a charge is refused or its timeout passes: the
+// lease is revoked, the script's signal aborts, and the call answers at once.
+//
+// Inside the isolate, a wrapper module removes the host's reach from the realm before the bundle
+// is evaluated (the Node realm CellB runs isolates in has `process`; workerd's has `fetch`), then
+// calls the script's `execute(input, ctx)` with `ctx = {files, db, signal, log}`.
+import { RpcTarget } from "cloudflare:workers";
+import type { WorkerLoaderLike } from "./env.js";
+
+/** What a script reaches through `ctx`, acted on by the host with the tool's capability. */
+export interface ToolHostCalls {
+  read(path: string, start?: number, length?: number): Promise<Uint8Array>;
+  write(path: string, data: Uint8Array): Promise<void>;
+  mkdir(path: string): Promise<void>;
+  list(path: string, recursive: boolean): Promise<unknown[]>;
+  stats(path: string): Promise<unknown>;
+  exists(path: string): Promise<boolean>;
+  remove(path: string): Promise<boolean>;
+  move(source: string, target: string): Promise<boolean>;
+  copy(source: string, target: string): Promise<boolean>;
+  dbQuery(database: string, sql: string, params: unknown[]): Promise<unknown>;
+  dbExec(database: string, sql: string): Promise<void>;
+}
+
+/** The host object a run is handed: each call checks the run's lease first. */
+export class ToolHost extends RpcTarget {
+  #calls: ToolHostCalls | undefined;
+  constructor(calls: ToolHostCalls) {
+    super();
+    this.#calls = calls;
+  }
+  /** Ends the lease: every later call is refused. */
+  revoke(): void {
+    this.#calls = undefined;
+  }
+  #live(): ToolHostCalls {
+    if (!this.#calls) throw new Error("EACCES: the tool's run has ended");
+    return this.#calls;
+  }
+  read(path: string, start?: number, length?: number) {
+    return this.#live().read(String(path), start, length);
+  }
+  write(path: string, data: Uint8Array) {
+    return this.#live().write(String(path), data);
+  }
+  mkdir(path: string) {
+    return this.#live().mkdir(String(path));
+  }
+  list(path: string, recursive: boolean) {
+    return this.#live().list(String(path), !!recursive);
+  }
+  stats(path: string) {
+    return this.#live().stats(String(path));
+  }
+  exists(path: string) {
+    return this.#live().exists(String(path));
+  }
+  remove(path: string) {
+    return this.#live().remove(String(path));
+  }
+  move(source: string, target: string) {
+    return this.#live().move(String(source), String(target));
+  }
+  copy(source: string, target: string) {
+    return this.#live().copy(String(source), String(target));
+  }
+  dbQuery(database: string, sql: string, params: unknown[]) {
+    return this.#live().dbQuery(String(database), String(sql), Array.isArray(params) ? params : []);
+  }
+  dbExec(database: string, sql: string) {
+    return this.#live().dbExec(String(database), String(sql));
+  }
+}
+
+/** Removes the host's reach from the isolate's realm, before the bundle is evaluated. */
+const HARDEN = `
+for (const name of ["process", "require", "module", "exports", "Buffer", "global", "fetch",
+  "connect", "caches", "WebAssembly", "eval", "importScripts", "Worker", "SharedWorker",
+  "XMLHttpRequest", "WebSocket", "EventSource", "Deno", "Bun"]) {
+  try { delete globalThis[name]; } catch {}
+  try { if (name in globalThis) Object.defineProperty(globalThis, name, { value: undefined }); } catch {}
+}
+// Every kind of function's constructor compiles code from text: none is reachable.
+for (const f of [function () {}, async function () {}, function* () {}, async function* () {}])
+  Object.defineProperty(Object.getPrototypeOf(f), "constructor", { value: undefined });
+`;
+
+/** The isolate's main module: the entrypoint the host calls. */
+const MAIN = `
+import { WorkerEntrypoint } from "cloudflare:workers";
+import "./harden.js";
+import * as tool from "./tool.js";
+
+const controller = new AbortController();
+const MAX_LOGS = 100;
+const logs = [];
+const text = (v) => { try { return typeof v === "string" ? v : JSON.stringify(v); } catch { return String(v); } };
+const log = (...args) => { if (logs.length < MAX_LOGS) logs.push(args.map(text).join(" ").slice(0, 2000)); };
+for (const level of ["debug", "info", "warn", "error"]) log[level] = log;
+
+const filesOf = (host) => ({
+  async *read(path, options) {
+    const data = await host.read(path, options?.start, options?.length);
+    if (data && data.byteLength) yield new Uint8Array(data);
+  },
+  async write(path, content) {
+    const parts = [];
+    let n = 0;
+    for await (const c of content) { const b = typeof c === "string" ? new TextEncoder().encode(c) : c; parts.push(b); n += b.length; }
+    const all = new Uint8Array(n);
+    let at = 0;
+    for (const p of parts) { all.set(p, at); at += p.length; }
+    await host.write(path, all);
+  },
+  mkdir: (path) => host.mkdir(path),
+  async *list(path, options) { for (const e of await host.list(path, !!options?.recursive)) yield e; },
+  stats: async (path) => (await host.stats(path)) ?? undefined,
+  exists: (path) => host.exists(path),
+  remove: (path) => host.remove(path),
+  move: (source, target) => host.move(source, target),
+  copy: (source, target) => host.copy(source, target),
+});
+
+const dbOf = (host) => (name) => ({
+  query: (sql, params) => host.dbQuery(String(name), String(sql), params ?? []),
+  exec: (sql) => host.dbExec(String(name), String(sql)),
+});
+
+/** An OpenCode-style tool's args (JSON Schema, a Standard Schema, or a record of either) as JSON Schema. */
+function jsonSchemaOf(args) {
+  if (!args || typeof args !== "object") return { type: "object", properties: {} };
+  const std = args["~standard"];
+  if (std) {
+    if (typeof std.jsonSchema?.input === "function") return std.jsonSchema.input({ target: "draft-2020-12" });
+    throw new Error("its args are a Standard Schema without a JSON Schema");
+  }
+  if (typeof args.type === "string") return args;
+  const properties = {};
+  const required = [];
+  for (const [key, field] of Object.entries(args)) {
+    properties[key] = field?.["~standard"] ? jsonSchemaOf(field) : field;
+    const optional = typeof field?.isOptional === "function" ? field.isOptional() : false;
+    if (!optional && field?.["~standard"]) required.push(key);
+  }
+  return { type: "object", properties, ...(required.length ? { required } : {}) };
+}
+
+async function validated(args, input) {
+  if (!args || typeof args !== "object") return input;
+  const check = async (schema, value, where) => {
+    const v = schema?.["~standard"]?.validate;
+    if (typeof v !== "function") return value;
+    const r = await v(value);
+    if (r.issues) throw new Error("invalid arguments" + where + ": " + r.issues.map((i) => i.message).join("; "));
+    return r.value;
+  };
+  if (args["~standard"]) return check(args, input, "");
+  if (typeof args.type === "string") return input;
+  const out = { ...input };
+  for (const [key, field] of Object.entries(args)) out[key] = await check(field, input?.[key], " (" + key + ")");
+  return out;
+}
+
+export default class extends WorkerEntrypoint {
+  ready() { return true; }
+  abort(reason) { controller.abort(new Error(String(reason))); }
+  describe() {
+    const m = tool.default;
+    if (!m || typeof m !== "object" || typeof m.execute !== "function")
+      throw new Error("an OpenCode-style tool default-exports {description, args, execute}");
+    return { description: String(m.description ?? ""), args: jsonSchemaOf(m.args) };
+  }
+  async run(input, host) {
+    const m = tool.default;
+    const execute = typeof m === "function" ? m : typeof m?.execute === "function" ? m.execute.bind(m) : undefined;
+    if (!execute) return { ok: false, error: "the script exports no execute function", logs };
+    const ctx = { files: filesOf(host), db: dbOf(host), signal: controller.signal, log };
+    try {
+      const args = typeof m === "function" ? input : await validated(m.args, input);
+      const out = await execute(args, ctx);
+      return { ok: true, output: typeof out === "string" ? out : JSON.stringify(out ?? null), logs };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e), logs };
+    }
+  }
+}
+`;
+
+interface ToolEntrypoint {
+  ready(): Promise<boolean>;
+  abort(reason: string): Promise<void>;
+  describe(): Promise<{ description: string; args: Record<string, unknown> }>;
+  run(
+    input: unknown,
+    host: ToolHost,
+  ): Promise<{ ok: boolean; output?: string; error?: string; logs?: string[] }>;
+}
+
+const COMPATIBILITY_DATE = "2026-10-01";
+
+/** Loads a bundle into an isolate of its own; `dispose` releases it once the call ended. */
+function load(loader: WorkerLoaderLike, code: string): { entry: ToolEntrypoint; dispose(): void } {
+  const worker = loader.load({
+    compatibilityDate: COMPATIBILITY_DATE,
+    mainModule: "main.js",
+    modules: { "main.js": MAIN, "harden.js": HARDEN, "tool.js": code },
+    env: {},
+    globalOutbound: null,
+  });
+  return {
+    entry: worker.getEntrypoint() as ToolEntrypoint,
+    dispose: () => {
+      try {
+        // CellB keeps the isolate's thread until its runtime closes (statewalker/cellb.dev#206).
+        worker.dispose?.();
+      } catch {}
+    },
+  };
+}
+
+/** Waits for `p` at most `ms`, rejecting with `message` after. */
+function within<T>(p: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(message)), ms);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+/** What an OpenCode-style tool says of itself: its bundle evaluated in an isolate. */
+export async function describeBundle(loader: WorkerLoaderLike, code: string, timeoutMs = 10_000) {
+  const { entry, dispose } = load(loader, code);
+  try {
+    return await within(
+      entry.describe(),
+      timeoutMs,
+      "ETIMEDOUT: the tool did not describe itself in time",
+    );
+  } finally {
+    dispose();
+  }
+}
+
+export interface ToolRun {
+  code: string;
+  input: unknown;
+  host: ToolHost;
+  timeoutMs: number;
+  /** The most output a call answers, in characters. */
+  maxOutput?: number;
+  /** Charges isolate time as the run goes; throws (ELIMIT) to end it. */
+  charge(ms: number): Promise<void>;
+  /** Records the time left once the run ended (never refused). */
+  record(ms: number): Promise<void>;
+}
+
+/** How often a running call's time is charged. */
+const SLICE_MS = 100;
+const MAX_OUTPUT = 1024 * 1024;
+
+/** Runs one call of a tool bundle in an isolate of its own (see the top of this file). */
+export async function runBundle(
+  loader: WorkerLoaderLike,
+  run: ToolRun,
+): Promise<{ output: string; isError: boolean; ms: number }> {
+  const started = Date.now();
+  const result = await runIn(loader, run);
+  return { ...result, ms: Date.now() - started };
+}
+
+async function runIn(
+  loader: WorkerLoaderLike,
+  run: ToolRun,
+): Promise<{ output: string; isError: boolean }> {
+  const { entry, dispose } = load(loader, run.code);
+  try {
+    // Loading is not the script's time: the isolate is up before the clock starts.
+    await within(entry.ready(), 30_000, "ETIMEDOUT: the tool's isolate did not start");
+    await run.charge(1);
+  } catch (e) {
+    run.host.revoke();
+    dispose();
+    return { output: String((e as Error)?.message ?? e), isError: true };
+  }
+  const started = Date.now();
+  // Time charged (or recorded) so far; a refused slice was spent all the same, and is recorded
+  // once the run ended, so the next run is refused at once.
+  let charged = 1;
+  let charging: Promise<unknown> | undefined;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
+  const ended = new Promise<string>((resolve) => {
+    deadline = setTimeout(
+      () => resolve(`ETIMEDOUT: the tool ran longer than ${run.timeoutMs} ms`),
+      run.timeoutMs,
+    );
+    timer = setInterval(() => {
+      if (charging) return;
+      const slice = Date.now() - started - charged;
+      if (slice <= 0) return;
+      charging = run.charge(slice).then(
+        () => {
+          charged += slice;
+          charging = undefined;
+        },
+        (e) => resolve(String((e as Error)?.message ?? e)),
+      );
+    }, SLICE_MS);
+  });
+  try {
+    const outcome = await Promise.race([
+      entry.run(run.input, run.host).then((r) => ({ r })),
+      ended.then((killed) => ({ killed })),
+    ]);
+    if ("killed" in outcome) {
+      // Ended: nothing it does from now on reaches anything, and it is told to stop.
+      run.host.revoke();
+      void Promise.resolve()
+        .then(() => entry.abort(outcome.killed))
+        .catch(() => {});
+      return { output: outcome.killed, isError: true };
+    }
+    const { r } = outcome;
+    const logs = r.logs?.length ? `\nlog:\n${r.logs.join("\n")}` : "";
+    if (!r.ok) return { output: `${r.error ?? "the tool failed"}${logs}`, isError: true };
+    const output = String(r.output ?? "null");
+    if (output.length > (run.maxOutput ?? MAX_OUTPUT))
+      return {
+        output: `EINVAL: the tool's output is larger than ${run.maxOutput ?? MAX_OUTPUT} characters`,
+        isError: true,
+      };
+    return { output, isError: false };
+  } catch (e) {
+    return { output: String((e as Error)?.message ?? e), isError: true };
+  } finally {
+    clearInterval(timer);
+    clearTimeout(deadline);
+    run.host.revoke();
+    dispose();
+    await charging;
+    const rest = Date.now() - started - charged;
+    if (rest > 0) await run.record(rest).catch(() => {});
+  }
+}

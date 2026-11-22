@@ -109,6 +109,8 @@ const catalog = (base: string) => ({
       },
     },
   }),
+  "/notes/dev.cellb.harness/tools/word_count.js":
+    "export default async (input) => String(input.text ?? '').split(/\\s+/).filter(Boolean).length;",
 });
 
 type Connect = (deployment: Deployment, token: string) => Promise<SessionClient>;
