@@ -498,6 +498,11 @@ export class UserSessions implements UserPort {
         agent: req.agent,
         ...(req.mode ? { mode: req.mode } : {}),
       });
+    // The parent may have been archived or revoked while the workspace worked: a child joining
+    // the tree now would be missed by that archive, so it is refused.
+    const now = this.#one<AgentRow & AgentMetaRow>(`${INDEX} WHERE a.id = ?`, parent.id);
+    if (!now || now.revoked || now.archived)
+      throw codedError("EACCES", "the agent session is revoked");
     const row: AgentRow = {
       id,
       workspace: parent.workspace,
@@ -588,8 +593,10 @@ export class UserSessions implements UserPort {
    * it: its sub-agents' too), and marks it and its descendants revoked.
    */
   async #revokeTree(us: UserSessionRow, row: AgentRow): Promise<void> {
-    if (!row.revoked && row.capability)
-      await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
+    // A session recorded before capabilities were kept has none to name (and no sub-agents):
+    // it is never marked revoked while the gate would still accept it.
+    if (!row.capability) return;
+    if (!row.revoked) await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
     for (const id of this.#tree(row.id))
       this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE id = ?", id);
   }
