@@ -1,0 +1,122 @@
+name: Nightly
+
+# The slow and costly checks of statewalker/statewalker-root#145 (decided in #85), every night and by
+# hand; never on pull requests, and nothing here blocks one. Each job that fails files one issue in
+# this repository (labelled `bug` and `ci-baseline`, titled "Nightly: <job> fails"), or comments on
+# the one already open (packages/ai-conformance/src/nightly/report.ts); a passing job writes
+# nothing. The per-suite reporter in statewalker/statewalker-ci's nightly.yml files every failure
+# under one title, so the jobs here report themselves, one issue per job.
+#
+#   scale        multi-GiB files and many concurrent streams through the session API, and the
+#                24-hour approval expiry on a fake clock (ai-conformance's tests/nightly)
+#   flue-latest  the conformance suite (and ai-flue's tests) against Flue's latest release; Flue
+#                and pi stay pinned in the repository, upgrades land as ordinary pull requests
+#   mutation     known defects in the gate and ai-access, each of which a suite must catch
+#                (packages/ai-conformance/mutations.json); a surviving mutant fails the job
+#   real-models  a handful of end-to-end tasks on one small real model, on a capped budget. Needs
+#                the NIGHTLY_LLM_API_KEY secret; without it the job is skipped and says so. The
+#                provider, model, prices and budget are repository variables (NIGHTLY_LLM_API,
+#                NIGHTLY_LLM_BASE_URL, NIGHTLY_LLM_MODEL, NIGHTLY_LLM_PRICES, NIGHTLY_LLM_BUDGET),
+#                defaulting to Anthropic's Claude Haiku 5.5 and a budget of 0.5 (USD).
+
+on:
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  nightly:
+    name: ${{ matrix.job }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - job: scale
+            run: pnpm --filter @statewalker/ai-conformance exec vitest run --config vitest.nightly.config.ts tests/nightly/scale.test.ts tests/nightly/approval-expiry.test.ts
+          - job: flue-latest
+            setup: node packages/ai-conformance/src/nightly/flue-latest.ts && pnpm install --no-frozen-lockfile
+            run: pnpm --filter @statewalker/ai-flue --filter @statewalker/ai-conformance run test
+          - job: mutation
+            run: node packages/ai-conformance/src/nightly/mutate.ts packages/ai-conformance/mutations.json --report "$RUNNER_TEMP/details.md"
+          - job: real-models
+            needs-key: true
+            run: pnpm --filter @statewalker/ai-conformance exec vitest run --config vitest.nightly.config.ts tests/nightly/real-models.test.ts
+    env:
+      # The provider key reaches only the real-model job.
+      NIGHTLY_LLM_API_KEY: ${{ matrix.needs-key && secrets.NIGHTLY_LLM_API_KEY || '' }}
+      NIGHTLY_LLM_API: ${{ vars.NIGHTLY_LLM_API }}
+      NIGHTLY_LLM_BASE_URL: ${{ vars.NIGHTLY_LLM_BASE_URL }}
+      NIGHTLY_LLM_MODEL: ${{ vars.NIGHTLY_LLM_MODEL }}
+      NIGHTLY_LLM_PRICES: ${{ vars.NIGHTLY_LLM_PRICES }}
+      NIGHTLY_LLM_BUDGET: ${{ vars.NIGHTLY_LLM_BUDGET }}
+    steps:
+      - name: Skip without the provider key
+        id: key
+        run: |
+          if [ "${{ matrix.needs-key || false }}" = true ] && [ -z "$NIGHTLY_LLM_API_KEY" ]; then
+            echo "::notice title=real-models skipped::NIGHTLY_LLM_API_KEY is not set in this repository's Actions secrets, so the real-model smoke tests did not run."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.key.outputs.skip == 'false'
+        uses: actions/checkout@v7
+
+      - if: steps.key.outputs.skip == 'false'
+        uses: pnpm/action-setup@v6
+
+      - if: steps.key.outputs.skip == 'false'
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: pnpm
+
+      - name: Install
+        if: steps.key.outputs.skip == 'false'
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup
+        if: steps.key.outputs.skip == 'false' && matrix.setup
+        run: ${{ matrix.setup }}
+
+      - name: Run
+        id: run
+        if: steps.key.outputs.skip == 'false'
+        continue-on-error: true
+        timeout-minutes: 100
+        run: |
+          set -o pipefail
+          ${{ matrix.run }} 2>&1 | tee "$RUNNER_TEMP/out.log"
+
+      # The details of a failure: the mutation run writes its own; otherwise the log's tail.
+      - name: Details
+        if: steps.run.outcome == 'failure'
+        run: |
+          [ -s "$RUNNER_TEMP/details.md" ] && exit 0
+          { echo '```'; tail -n 80 "$RUNNER_TEMP/out.log" 2>/dev/null; echo '```'; } > "$RUNNER_TEMP/details.md"
+
+      # A failure before the run (checkout, install, setup) is reported too: the job's status.
+      - name: Report to this repository's issues
+        if: always() && steps.key.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.run.outcome != 'skipped' && steps.run.outcome || job.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node packages/ai-conformance/src/nightly/report.ts --job "${{ matrix.job }}" --outcome "$OUTCOME" --run-url "$RUN_URL" --details-file "$RUNNER_TEMP/details.md"
+
+      - name: Fail the job when the run failed
+        if: steps.run.outcome == 'failure'
+        run: exit 1
