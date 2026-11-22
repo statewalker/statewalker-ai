@@ -1,5 +1,5 @@
-// The environment: the workspace store, the gated file view and the file protocol to it. Later
-// tickets add databases, search, executors, tools, the model gateway and secrets
+// The environment: the workspace store, the gated file view and the file protocol to it, secrets
+// and the model gateway. Later tickets add databases, search, executors and tools
 // (statewalker/statewalker-root#111).
 
 export {
@@ -35,6 +35,48 @@ export {
   runStoredCall,
   type StoredCall,
 } from "./mode-gate.js";
+export {
+  classifyModelError,
+  discoverModels,
+  errorMessage,
+  MODEL_GATEWAY_PLUGIN,
+  type ModelAttempt,
+  type ModelCall,
+  ModelGateway,
+  type ModelMessage,
+  type ModelMeter,
+  type ModelOutcome,
+  type ModelRequestMeta,
+  type ModelResponse,
+  type ModelSubstitution,
+  type ModelUsage,
+  providerAccess,
+} from "./model-gateway.js";
+export {
+  type CatalogModel,
+  type CatalogProvider,
+  checkModelsConfig,
+  checkUserProvider,
+  lookupModel,
+  MODEL_APIS,
+  MODEL_LEVELS,
+  type ModelApi,
+  type ModelCatalog,
+  type ModelCost,
+  type ModelDefinition,
+  type ModelLevel,
+  type ModelRight,
+  type ModelsConfig,
+  mayUse,
+  type PinnedModels,
+  type Provider,
+  parseModelsConfig,
+  pickSessionModel,
+  resolveModels,
+  splitModelId,
+  type Unusable,
+  usableModel,
+} from "./models.js";
 export { nameOf, normalise, parentOf } from "./paths.js";
 export {
   mountProfiles,

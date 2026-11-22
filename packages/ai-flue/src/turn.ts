@@ -3,8 +3,7 @@
 // the loop's messages into the harness's items (statewalker/statewalker-root#76, #87).
 // Ported from statewalker-sandbox apps/harness-proto-sessions/src/agent-session.ts.
 import { Agent } from "@earendil-works/pi-agent-core";
-import * as openaiCompletions from "@earendil-works/pi-ai/api/openai-completions";
-import { registerApiProvider, streamSimple } from "@earendil-works/pi-ai/compat";
+import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import {
   createBashTool,
   createEditTool,
@@ -14,16 +13,24 @@ import {
   createWriteTool,
   bash as flueBash,
 } from "@flue/runtime";
+import {
+  errorMessage,
+  type ModelCall,
+  type ModelMessage,
+  type ModelResponse,
+  type ModelUsage,
+} from "@statewalker/ai-environment";
 import type { ItemInput, Steer, TurnOutcome } from "@statewalker/ai-sessions";
 import type { FilesApi } from "@statewalker/webrun-files";
 import { Bash } from "just-bash/browser";
 import { FilesFs } from "./files-fs.js";
 
-/** An OpenAI-compatible chat-completions model (the gateway comes in a later ticket). */
-export interface ModelConfig {
-  baseUrl: string;
-  model: string;
-  apiKey?: string;
+/**
+ * The model gateway as a turn reaches it: the only way the loop reaches a model. It picks the model
+ * within the user's rights, holds the provider's key, falls back and meters (ai-environment).
+ */
+export interface ModelPort {
+  request(call: ModelCall): Promise<ModelResponse>;
 }
 
 /**
@@ -53,7 +60,12 @@ export interface FlueTurn {
   project: string;
   /** The gated file view the session holds. */
   files: FilesApi;
-  model: ModelConfig;
+  /** The model gateway. */
+  models: ModelPort;
+  /** The session's pinned model (an id), for the loop's bookkeeping; the gateway decides. */
+  model?: string;
+  /** The model the turn's message asked for (an id or an alias), within the user's rights. */
+  requested?: string;
   /** The user's message. */
   content: string;
   /**
@@ -93,33 +105,28 @@ export const TRACER_TOOLS: (keyof typeof TOOLS)[] = [
   "glob",
 ];
 
-let registered = false;
-function piModel(m: ModelConfig) {
-  if (!registered) {
-    registerApiProvider(
-      {
-        api: "openai-completions",
-        stream: openaiCompletions.stream as never,
-        streamSimple: openaiCompletions.streamSimple as never,
-      },
-      "statewalker-ai",
-    );
-    registered = true;
-  }
+/** The model the loop believes it talks to: the gateway answers with the real one. */
+function loopModel(id: string | undefined) {
   return {
-    id: m.model,
-    name: m.model,
+    id: id ?? "gateway",
+    name: id ?? "gateway",
     api: "openai-completions",
-    provider: "deployment",
-    baseUrl: m.baseUrl,
+    provider: "gateway",
+    baseUrl: "gateway:",
     headers: {},
-    input: ["text"],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     reasoning: false,
     contextWindow: 128_000,
     maxTokens: 4096,
   };
 }
+
+/** Where an answer carries its metered usage through the loop. */
+const USAGE = Symbol("usage");
+
+/** A context as plain JSON: tools lose their functions, so it can travel to the gateway. */
+const plain = (value: unknown) => JSON.parse(JSON.stringify(value ?? { messages: [] }));
 
 type Part = { type?: string; text?: string; id?: string; name?: string; arguments?: unknown };
 type Message = {
@@ -140,20 +147,33 @@ const textOf = (content: Message["content"]) =>
         .map((p) => p.text ?? "")
         .join("");
 
-/** The items of one message of the loop; `secrets` by tool call id. */
-function* itemsOf(m: Message, secrets: ReadonlyMap<string, string[]>): Generator<ItemInput> {
+/**
+ * The items of one message of the loop; `secrets` by tool call id. An answer's metered usage goes
+ * on its first item.
+ */
+function* itemsOf(
+  m: Message,
+  secrets: ReadonlyMap<string, string[]>,
+  usage?: ModelUsage,
+): Generator<ItemInput> {
   if (m.role === "assistant") {
     const text = textOf(m.content);
+    let first = true;
+    const metered = (item: ItemInput): ItemInput => {
+      if (!first || !usage) return item;
+      first = false;
+      return { ...item, usage };
+    };
     if (m.stopReason === "aborted") {
       // Cut short: what the model had said so far, marked incomplete.
-      if (text) yield { kind: "message", role: "assistant", text, incomplete: true };
+      if (text) yield metered({ kind: "message", role: "assistant", text, incomplete: true });
       return;
     }
     if (m.stopReason === "error") return;
-    if (text) yield { kind: "message", role: "assistant", text };
+    if (text) yield metered({ kind: "message", role: "assistant", text });
     for (const p of Array.isArray(m.content) ? m.content : [])
       if (p.type === "toolCall")
-        yield { kind: "tool_call", callId: p.id, name: p.name, args: p.arguments };
+        yield metered({ kind: "tool_call", callId: p.id, name: p.name, args: p.arguments });
   } else if (m.role === "toolResult") {
     yield {
       kind: "tool_result",
@@ -176,7 +196,7 @@ export async function runFlueTurn(
   turn: FlueTurn,
   emit: (item: ItemInput) => void,
 ): Promise<TurnOutcome> {
-  const outcome: TurnOutcome = { model: turn.model.model };
+  const outcome: TurnOutcome = turn.model ? { model: turn.model } : {};
   if (turn.signal?.aborted) return outcome;
   const sandbox = await flueBash(
     () => new Bash({ fs: new FilesFs(turn.files) as never, cwd: `/${turn.project}` }) as never,
@@ -196,9 +216,60 @@ export async function runFlueTurn(
     },
   }));
   const tools = [...TRACER_TOOLS.map((name) => TOOLS[name](sandbox as never)), ...hostTools];
+  let requests = 0;
+  /**
+   * The loop's only way to a model: one gateway request per step. Fallbacks are reported as items
+   * as soon as the answer comes; the answer itself then ends the loop's step.
+   */
+  const streamFn = (_model: unknown, context: unknown, options?: { maxTokens?: number }) => {
+    const stream = createAssistantMessageEventStream();
+    const aborted = new Promise<ModelMessage>((resolve) => {
+      const stop = () =>
+        resolve({ ...errorMessage(undefined, "the turn was cut short"), stopReason: "aborted" });
+      if (turn.signal?.aborted) stop();
+      else turn.signal?.addEventListener("abort", stop, { once: true });
+    });
+    const asked = turn.models
+      .request({
+        context: plain(context),
+        ...(turn.requested ? { model: turn.requested } : {}),
+        ...(options?.maxTokens ? { maxTokens: options.maxTokens } : {}),
+      })
+      .then(
+        (response) => {
+          if (requests++ === 0) {
+            outcome.model = response.model;
+            if (response.substitution) outcome.substitution = response.substitution;
+          }
+          for (const [i, attempt] of response.attempts.entries()) {
+            const next = response.attempts[i + 1];
+            if (next)
+              emit({
+                kind: "model_fallback",
+                from: attempt.usage.model,
+                to: next.usage.model,
+                reason: attempt.usage.outcome,
+                usage: attempt.usage,
+              });
+          }
+          const last = response.attempts.at(-1);
+          // The answer carries its usage under a symbol: it survives the loop's copies of the
+          // message and never travels back to a model (JSON drops it).
+          return last ? { ...response.message, [USAGE]: last.usage } : response.message;
+        },
+        (e: unknown) => errorMessage(undefined, String((e as Error)?.message ?? e)),
+      );
+    void Promise.race([asked, aborted]).then((message) => {
+      stream.push({ type: "start", partial: message } as never);
+      if (message.stopReason === "error" || message.stopReason === "aborted")
+        stream.push({ type: "error", reason: message.stopReason, error: message } as never);
+      else stream.push({ type: "done", reason: message.stopReason, message } as never);
+    });
+    return stream;
+  };
   const agent = new Agent({
-    streamFn: streamSimple as never,
-    getApiKey: async () => turn.model.apiKey ?? "none",
+    streamFn: streamFn as never,
+    getApiKey: async () => "gateway",
     initialState: {
       systemPrompt: [
         `You are the ${turn.agent} agent, working in /${turn.project}.`,
@@ -206,7 +277,7 @@ export async function runFlueTurn(
       ]
         .filter(Boolean)
         .join("\n\n"),
-      model: piModel(turn.model) as never,
+      model: loopModel(turn.model) as never,
       tools: tools as never,
       messages: [],
     },
@@ -232,7 +303,8 @@ export async function runFlueTurn(
     if (!prompted) return;
     if (m.role === "assistant" && m.stopReason === "error")
       failure = `EIO: the model failed: ${m.errorMessage ?? m.stopReason}`;
-    for (const item of itemsOf(m, secrets)) emit(item);
+    for (const item of itemsOf(m, secrets, (event.message as { [USAGE]?: ModelUsage })[USAGE]))
+      emit(item);
   });
   turn.onSteer?.((steer) => {
     const message = { role: "user", content: steer.text, timestamp: Date.now() };

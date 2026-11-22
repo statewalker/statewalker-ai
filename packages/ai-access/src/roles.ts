@@ -39,7 +39,8 @@ export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
     // The server-only task prefixes (#160) are the server's to publish and consume.
     'check if operation($a, $c), target($t), $a != "tasks" || !($t.starts_with("hooks.") || $t.starts_with("schedule."));',
   ],
-  reader: ["files.read", "files.list", "comments.read", "skills.use", "agents.use"],
+  // Readers run agents with read-only tools (#80), so they use models too (#134).
+  reader: ["files.read", "files.list", "comments.read", "skills.use", "agents.use", "models.use"],
 };
 
 /** The workspace-level roles: the workspace admin manages projects and members, not files. */

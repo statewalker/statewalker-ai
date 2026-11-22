@@ -64,6 +64,9 @@ function sessionApi(env: Env, token: string) {
       listServiceAccounts: async (t) => (await user()).listServiceAccounts(t),
       createServiceAccount: async (t, name) => (await user()).createServiceAccount(t, name),
       deleteServiceAccount: async (t, name) => (await user()).deleteServiceAccount(t, name),
+      listModels: async (t, query) => (await user()).listModels(t, query),
+      getModelConfig: async (t) => (await user()).getModelConfig(t),
+      setModelConfig: async (t, config) => (await user()).setModelConfig(t, config),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -148,6 +151,12 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     await workspaceOf(env, id).userCapability(String(body.token ?? ""));
     return json({ opened: true });
+  }
+  if (collection === "workspaces" && id && sub === "model-usage") {
+    // The workspace's model budget, every request recorded (usage reports are #179's).
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    return json({ usage: await workspaceOf(env, id).modelUsage() });
   }
   if (collection === "sessions" && id && sub === "messages") {
     // Past the User DO, straight to the agent session: its turn's file calls go to the gate.

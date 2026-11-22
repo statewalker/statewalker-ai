@@ -4,6 +4,10 @@
 //   FAIL                      the model refuses the request (HTTP 400): the turn fails
 //   HOLD <name>               "OK", once the scenario releases <name> (a turn that stays running)
 //   anything else             "OK"
+// A model name can be made to fail (`fail(name, status)`): its requests answer that HTTP status, so
+// scenarios can overload, rate-limit or refuse one model and watch the gateway fall back. Every
+// answer reports the same usage (12 prompt tokens, 4 of them cached, 3 completion tokens), and
+// GET /v1/models lists the names in `listed` (a provider's discovery endpoint).
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -14,6 +18,8 @@ export interface ModelRequest {
   model?: string;
   /** The system prompt the request carried. */
   system?: string;
+  /** The request's Authorization header: the key the gateway injected. */
+  authorization?: string;
 }
 
 export interface FakeModel {
@@ -24,6 +30,16 @@ export interface FakeModel {
   held(name: string): Promise<void>;
   /** Answers the `HOLD <name>` request (now, or as soon as it arrives). */
   release(name: string): void;
+  /** Makes every request naming `model` answer HTTP `status` (until `heal(model)`). */
+  fail(model: string, status: number): void;
+  heal(model: string): void;
+  /** The model names GET /v1/models lists. */
+  listed: string[];
+  /**
+   * The deployment's model configuration (the MODELS var) for this server: one provider,
+   * "scripted", and its models (`scripted/default` unless others are given), the first the default.
+   */
+  deploymentModels(config?: { models?: Record<string, unknown>[]; default?: string }): string;
   close(): Promise<void>;
 }
 
@@ -47,6 +63,8 @@ interface Hold {
 
 export async function fakeModel(): Promise<FakeModel> {
   const requests: ModelRequest[] = [];
+  const failing = new Map<string, number>();
+  const listed: string[] = [];
   const holds = new Map<string, Hold>();
   const hold = (name: string): Hold => {
     let h = holds.get(name);
@@ -64,6 +82,16 @@ export async function fakeModel(): Promise<FakeModel> {
     return h;
   };
   const server = createServer(async (req, res) => {
+    if (req.method === "GET" && req.url?.endsWith("/models")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          object: "list",
+          data: listed.map((id) => ({ id, object: "model", owned_by: "scripted" })),
+        }),
+      );
+      return;
+    }
     const json = JSON.parse((await body(req)) || "{}") as {
       model?: string;
       stream?: boolean;
@@ -82,7 +110,18 @@ export async function fakeModel(): Promise<FakeModel> {
         .filter((m) => m.role === "system" || m.role === "developer")
         .map((m) => text(m.content))
         .join("\n"),
+      ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
     });
+    const status = failing.get(String(json.model));
+    if (status) {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: { message: `the scripted model answers ${status}`, code: status },
+        }),
+      );
+      return;
+    }
     if (lastUserText === "FAIL" && messages.at(-1)?.role === "user") {
       res.writeHead(400, { "content-type": "application/json" });
       res.end(
@@ -119,7 +158,12 @@ export async function fakeModel(): Promise<FakeModel> {
       message = { role: "assistant", content: "OK" };
       finish = "stop";
     }
-    const usage = { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 };
+    const usage = {
+      prompt_tokens: 12,
+      completion_tokens: 3,
+      total_tokens: 15,
+      prompt_tokens_details: { cached_tokens: 4 },
+    };
     if (!json.stream) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
@@ -142,9 +186,21 @@ export async function fakeModel(): Promise<FakeModel> {
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   const { port } = server.address() as AddressInfo;
+  const url = `http://127.0.0.1:${port}/v1`;
   return {
-    url: `http://127.0.0.1:${port}/v1`,
+    url,
     requests,
+    listed,
+    fail: (model, status) => failing.set(model, status),
+    heal: (model) => failing.delete(model),
+    deploymentModels: (config = {}) => {
+      const models = config.models ?? [{ id: "scripted/default", alias: "default" }];
+      return JSON.stringify({
+        providers: [{ id: "scripted", api: "openai-completions", baseUrl: url }],
+        models,
+        default: config.default ?? String(models[0]?.id),
+      });
+    },
     held: (name) => hold(name).arrived,
     release: (name) => hold(name).release(),
     close: () =>

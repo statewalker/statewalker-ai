@@ -308,6 +308,12 @@ A connection to a model service, configured at some level, whose key is a secret
 **Model alias**:
 A role name such as `fast` that agents ask for, served by whichever configured model the most specific level maps it to.
 
+**Model gateway**:
+The host-side point through which every model request of an agent session goes; it picks the model within the user's rights, injects the provider's key, falls back on overload, rate-limit and unavailable errors, and meters the request.
+
+**Model budget**:
+A workspace's record of its model requests (tokens, cost, latency and outcome); requests to a user's own provider are metered but not charged to it.
+
 **Egress gateway**:
 The single host-side point through which all network requests from executed code leave the harness; it checks each request against the capability and the mode, blocks internal addresses, adds bound secrets and records the request.
 _Avoid_: proxy, firewall

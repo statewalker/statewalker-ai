@@ -41,6 +41,13 @@ export async function handleSessionRest(
     if (route === "POST /sessions") return api().startSession((await bodyOf(request)) as never);
     if (route === "GET /sessions") return api().listSessions(sessionsQuery(url));
     if (route === "PUT /me/mode") return api().setMode((await bodyOf(request)) as never);
+    if (route === "GET /me/models") return api().getModelConfig();
+    if (route === "PUT /me/models") return api().setModelConfig((await bodyOf(request)) as never);
+    if (route === "GET /models")
+      return api().listModels({
+        project: url.searchParams.get("project") ?? "",
+        discover: url.searchParams.get("discover") === "true",
+      });
     if (route === "GET /approvals") return api().listApprovals();
     if (request.method === "POST" && parts[1] === "approvals" && parts[2] && parts.length === 3)
       return api().answerApproval(parts[2], (await bodyOf(request)) as never);

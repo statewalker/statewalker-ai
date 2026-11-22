@@ -1,5 +1,6 @@
 // One DO per agent session: it holds the session's capability (the user capability its User DO
-// attenuated for it; never the access token) and runs its turns on Flue, whose file view is the
+// attenuated for it; never the access token or a provider key) and runs its turns on Flue, whose
+// models are the Workspace DO's model gateway and whose file view is the
 // Workspace DO's gate reached with that capability: a webrun-files-rpc client whose calls travel on
 // the Workspace DO's stub. A file call the gate stops for an approval ends the turn waiting on it;
 // the user's answer continues the session.
@@ -25,7 +26,7 @@ export class AgentSession extends DurableObject<Env> {
     super(ctx, env);
     this.#core = new AgentSessionCore({
       sql: ctx.storage.sql,
-      runTurn: ({ config, content, signal, onSteer, onApproval, waiting }, emit) => {
+      runTurn: ({ config, turn, content, model, signal, onSteer, onApproval, waiting }, emit) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         return runFlueTurn(
           {
@@ -39,12 +40,14 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            // The agent's first model the user may use, else the deployment's (the model gateway
-            // comes in a later ticket).
-            model: {
-              baseUrl: String(env.LLM_BASE_URL),
-              model: config.run?.models[0] ?? (env.LLM_MODEL || "default"),
+            // Every model request goes through the workspace's model gateway, with the session's
+            // capability: it picks the model within the user's rights, holds the provider's key,
+            // falls back and meters (statewalker/statewalker-root#134).
+            models: {
+              request: (call) => workspace.modelRequest(config.capability, { ...call, turn }),
             },
+            ...(config.model ? { model: config.model } : {}),
+            ...(model ? { requested: model } : {}),
             content,
             waiting,
             signal,

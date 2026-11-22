@@ -3,10 +3,15 @@
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 
-import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import type {
+  FilesRpcMethod,
+  ModelLevel,
+  ModelsConfig,
+  ModelUsage,
+} from "@statewalker/ai-environment";
 import { sessionOfTurn } from "./turns.js";
 
-export type { ApprovalRequest };
+export type { ApprovalRequest, ModelsConfig, ModelUsage };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
@@ -77,7 +82,7 @@ export interface ProfileView {
 
 /** What a turn adds to its session, in order. */
 export interface ItemInput {
-  kind: "message" | "tool_call" | "tool_result" | "approval";
+  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -97,6 +102,16 @@ export interface ItemInput {
   steer?: string;
   /** Cut short: the partial assistant message of a cancelled or interrupted turn. */
   incomplete?: true;
+  /**
+   * The metered model request that produced the item (on the first item of each answer), or that
+   * failed (on a `model_fallback` item).
+   */
+  usage?: ModelUsage;
+  /** A `model_fallback` item: the model that failed for one request, and the one tried next. */
+  from?: string;
+  to?: string;
+  /** Why it fell back: overloaded, rate_limited or unavailable. */
+  reason?: string;
 }
 
 /** The exact file call an approval runs, as the agent session stores it in its items. */
@@ -262,6 +277,34 @@ export interface StartSessionRequest {
    */
   unattended?: boolean;
   metadata?: Metadata;
+  /**
+   * A model (an id or an alias) to run the session on instead of the agent's: configured, and one
+   * the caller may use (statewalker/statewalker-root#105).
+   */
+  model?: string;
+}
+
+/** A model as the session API lists it for a project and a user. */
+export interface ModelView {
+  /** `<provider>/<model>`. */
+  id: string;
+  /** The aliases that pick it in the project (each the most specific level's). */
+  aliases: string[];
+  provider: string;
+  /** The level that configured it (a discovered model: its provider's level). */
+  level: ModelLevel;
+  /** Configured at some level: a discovered model stays off until a level lists it. */
+  enabled: boolean;
+  /** The caller holds its right (`models.use`). */
+  allowed: boolean;
+  /** Found through the provider's `/models` endpoint. */
+  discovered?: true;
+}
+
+export interface ModelsQuery {
+  project: string;
+  /** Asks each provider's `/models` endpoint too. */
+  discover?: boolean;
 }
 
 /**
@@ -290,6 +333,8 @@ export interface PinnedDefinitions {
   /** `<plugin>/<agent>`, or "default" for the generic agent when no agent is defined anywhere. */
   agent: string;
   run?: AgentRun;
+  /** The session's model (an id), pinned with its fallbacks by the workspace. */
+  model?: string;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -399,6 +444,12 @@ export interface SessionApi {
   createServiceAccount(req: { name: string }): Promise<CreatedServiceAccount>;
   /** Deletes a service account: its key is refused and its tokens are no longer renewed. */
   deleteServiceAccount(name: string): Promise<{ deleted: true }>;
+  /** A project's models as the caller sees them; `discover` asks each provider's `/models`. */
+  listModels(query: ModelsQuery): Promise<{ models: ModelView[] }>;
+  /** The caller's own model configuration (user level) in the token's workspace. */
+  getModelConfig(): Promise<ModelsConfig>;
+  /** Replaces the caller's own model configuration: their providers (keys are user secrets). */
+  setModelConfig(config: ModelsConfig): Promise<ModelsConfig>;
 }
 
 /** What an agent session DO is told when it starts. It holds the capability, never the token. */
@@ -412,6 +463,8 @@ export interface AgentSessionConfig {
   capability: string;
   /** The agent's definition, pinned at start (none: the generic agent). */
   run?: AgentRun;
+  /** The session's model (an id), pinned at start. */
+  model?: string;
 }
 
 /** The caller's User DO's side of the API: everything that needs the token checked. */
@@ -445,6 +498,10 @@ export interface UserPort {
   listServiceAccounts(token: string): Promise<{ accounts: ServiceAccountView[] }>;
   createServiceAccount(token: string, name: string): Promise<CreatedServiceAccount>;
   deleteServiceAccount(token: string, name: string): Promise<{ deleted: true }>;
+  listModels(token: string, query: ModelsQuery): Promise<{ models: ModelView[] }>;
+  getModelConfig(token: string): Promise<ModelsConfig>;
+  /** The configuration is checked by the workspace (EINVAL). */
+  setModelConfig(token: string, config: unknown): Promise<ModelsConfig>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -506,8 +563,14 @@ export function metadataOf(value: unknown): Metadata {
 /** `<plugin>/<agent>`: a plugin name, then an agent name (ai-definitions). */
 const AGENT_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
+function modelName(model: unknown): string {
+  if (typeof model !== "string" || !model || model.length > 320)
+    throw codedError("EINVAL", "model must be a model's id or alias");
+  return model;
+}
+
 function startRequest(req: unknown): StartSessionRequest {
-  const { project, agent, metadata, unattended } = (req ?? {}) as Record<string, unknown>;
+  const { project, agent, metadata, unattended, model } = (req ?? {}) as Record<string, unknown>;
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (agent !== undefined && (typeof agent !== "string" || !AGENT_ID.test(agent)))
@@ -519,7 +582,15 @@ function startRequest(req: unknown): StartSessionRequest {
     ...(agent !== undefined ? { agent } : {}),
     metadata: metadataOf(metadata),
     ...(unattended ? { unattended: true } : {}),
+    ...(model !== undefined ? { model: modelName(model) } : {}),
   };
+}
+
+function modelsQuery(query: unknown): ModelsQuery {
+  const { project, discover } = (query ?? {}) as Record<string, unknown>;
+  if (typeof project !== "string" || !NAME.test(project))
+    throw codedError("EINVAL", "project must be a project's name");
+  return { project, ...(discover === true || discover === "true" ? { discover: true } : {}) };
 }
 
 function accountName(name: unknown): string {
@@ -713,5 +784,8 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     createServiceAccount: async (req) =>
       ports.user.createServiceAccount(token, accountName(req?.name)),
     deleteServiceAccount: async (name) => ports.user.deleteServiceAccount(token, accountName(name)),
+    listModels: async (query) => ports.user.listModels(token, modelsQuery(query)),
+    getModelConfig: () => ports.user.getModelConfig(token),
+    setModelConfig: async (config) => ports.user.setModelConfig(token, config),
   };
 }

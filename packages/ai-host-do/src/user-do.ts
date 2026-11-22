@@ -12,6 +12,7 @@ import {
   type ApprovalRequest,
   type DeleteSecretRequest,
   type Metadata,
+  type ModelsQuery,
   type SecretScope,
   type SetSecretRequest,
   type StartSessionRequest,
@@ -61,6 +62,9 @@ export class User extends DurableObject<Env> {
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
+          listModels: (capability, query) => ws.listModels(capability, query),
+          getModelConfig: (capability) => ws.getModelConfig(capability),
+          setModelConfig: (capability, config) => ws.setModelConfig(capability, config),
         };
       },
       modes: deploymentModes(env),
@@ -183,6 +187,21 @@ export class User extends DurableObject<Env> {
   async deleteServiceAccount(token: string, name: string) {
     await this.#reachable();
     return this.#sessions.deleteServiceAccount(token, name);
+  }
+
+  async listModels(token: string, query: ModelsQuery) {
+    await this.#reachable();
+    return this.#sessions.listModels(token, query);
+  }
+
+  async getModelConfig(token: string) {
+    await this.#reachable();
+    return this.#sessions.getModelConfig(token);
+  }
+
+  async setModelConfig(token: string, config: unknown) {
+    await this.#reachable();
+    return this.#sessions.setModelConfig(token, config);
   }
 
   /** Test-only (the Worker admits this only with the ADMIN_KEY): every later call fails. */

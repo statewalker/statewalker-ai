@@ -44,7 +44,11 @@ import {
   readPlugins,
 } from "@statewalker/ai-definitions";
 import {
+  type CatalogModel,
+  checkModelsConfig,
+  checkUserProvider,
   deploymentSecrets,
+  discoverModels,
   FilesRpcHost,
   type FilesRpcMethod,
   type GatedFilesOptions,
@@ -54,8 +58,19 @@ import {
   IGNORE_FILE,
   ignoreRules,
   type ModeGate,
+  type ModelCall,
+  type ModelCatalog,
+  ModelGateway,
+  type ModelLevel,
+  type ModelResponse,
+  type ModelRight,
+  type ModelsConfig,
+  mayUse,
   normalise,
   type OutgoingRequest,
+  parseModelsConfig,
+  pickSessionModel,
+  resolveModels,
   type SecretInfo,
   SecretStore,
   type StoredLevel,
@@ -64,6 +79,8 @@ import {
 import type {
   CreatedServiceAccount,
   DeleteSecretRequest,
+  ModelsQuery,
+  ModelView,
   PinnedDefinitions,
   SecretScope,
   SecretView,
@@ -83,10 +100,14 @@ import {
   nameOf,
   verifyToken,
 } from "./env.js";
+import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { mountWorkspace } from "./workspace-store.js";
 
 /** The definitions mount's folder in each project of an agent session's file view. */
 const DEFINITIONS_FOLDER = ".agents";
+
+/** The workspace's and each project's model configuration, in their system folders. */
+const MODELS_FILE = "models";
 
 export class Workspace extends DurableObject<Env> {
   readonly #name: string;
@@ -101,6 +122,9 @@ export class Workspace extends DurableObject<Env> {
   readonly #deploymentRules: PermissionRules;
   readonly #secrets: SecretStore;
   readonly #definitions: DefinitionsStore;
+  readonly #models: ModelStore;
+  /** The deployment's model configuration, read once from the MODELS var. */
+  #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
   #deploymentPlugins?: Promise<{ plugins: Plugin[]; problems: string[] }>;
 
@@ -157,6 +181,7 @@ export class Workspace extends DurableObject<Env> {
     // Workspace, project and user secrets: sealed rows in this DO's SQLite, never files.
     this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
     this.#definitions = new DefinitionsStore(sql);
+    this.#models = new ModelStore(sql);
   }
 
   /**
@@ -250,7 +275,7 @@ export class Workspace extends DurableObject<Env> {
    */
   async pinDefinitions(
     capability: string,
-    req: { session: string; project: string; agent?: string },
+    req: { session: string; project: string; agent?: string; model?: string },
   ): Promise<PinnedDefinitions> {
     const user = await this.#authority.userOfUserCapability(capability);
     const project = String(req.project);
@@ -283,6 +308,14 @@ export class Workspace extends DurableObject<Env> {
     const run: NarrowedAgent | undefined = agent
       ? await narrowAgent(catalog, agent, allow)
       : undefined;
+    // The session's model, pinned with its fallbacks and the catalog it was picked from
+    // (statewalker/statewalker-root#105): nothing fits, nothing is pinned and no session starts.
+    const models = await pickSessionModel(await this.#modelCatalog(project, user), {
+      ...(req.model !== undefined ? { override: String(req.model) } : {}),
+      agentModels: agent?.models ?? [],
+      right: this.#modelRight(access.grants),
+    });
+    this.#models.pin(String(req.session), user, project, models);
     for (const p of plugins) this.#definitions.keep(p);
     this.#definitions.pin(
       String(req.session),
@@ -291,7 +324,185 @@ export class Workspace extends DurableObject<Env> {
       plugins.map((p) => ({ name: p.name, hash: p.hash })),
       run,
     );
-    return run ? { agent: run.id, run: agentRun(run) } : { agent: "default" };
+    return run
+      ? { agent: run.id, run: agentRun(run), model: models.model }
+      : { agent: "default", model: models.model };
+  }
+
+  // --- the model gateway (statewalker/statewalker-root#105, #134) ------------------------------
+
+  #readDeploymentModels(): ModelsConfig {
+    if (!this.#deploymentModels) {
+      const { config, problems } = parseModelsConfig(this.env.MODELS);
+      if (problems.length) console.warn(`MODELS: ${problems.join("; ")}`);
+      this.#deploymentModels = config;
+    }
+    return this.#deploymentModels;
+  }
+
+  /** Hosts a user-level provider may use over http or at a private address (test-only). */
+  #userProviderHosts(): string[] {
+    return (this.env.USER_PROVIDER_HOSTS ?? "")
+      .split(",")
+      .map((h) => h.trim().toLowerCase())
+      .filter(Boolean);
+  }
+
+  /** The user's own level, with any provider at an address a user may not use left out. */
+  #userModels(user: string): ModelsConfig {
+    const config = this.#models.userConfig(user) ?? {};
+    const providers = (config.providers ?? []).filter((p) => {
+      try {
+        checkUserProvider(p, this.#userProviderHosts());
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    return { ...config, providers };
+  }
+
+  /** The four levels folded for a user in a project: what its sessions may be served. */
+  async #modelCatalog(project: string, user: string): Promise<ModelCatalog> {
+    const store = await this.#store;
+    const read = async (path: string, level: ModelLevel) => {
+      const { config, problems } = parseModelsConfig(await tryReadText(store, path));
+      if (problems.length) console.warn(`models of the ${level} (${path}): ${problems.join("; ")}`);
+      return config;
+    };
+    const { catalog, problems } = resolveModels([
+      { level: "deployment", config: this.#readDeploymentModels() },
+      {
+        level: "workspace",
+        config: await read(`/${DEFAULT_SYSTEM_FOLDER}/${MODELS_FILE}`, "workspace"),
+      },
+      {
+        level: "project",
+        config: await read(`/${project}/${DEFAULT_SYSTEM_FOLDER}/${MODELS_FILE}`, "project"),
+      },
+      { level: "user", config: this.#userModels(user) },
+    ]);
+    if (problems.length) console.warn(`models of ${project}: ${problems.join("; ")}`);
+    return catalog;
+  }
+
+  /** `models.use:<provider>/<model>` or `models.use:<alias>`, decided from the grants. */
+  #modelRight(grants: readonly RoleGrant[]): ModelRight {
+    return (target) => decide(grants, { area: "models", action: "use", target });
+  }
+
+  /**
+   * One model request of an agent session, through the gateway: the session's pinned models,
+   * the user's model rights now, the provider's key from the session's secrets (bound to the
+   * `model-gateway` plugin and the provider's host), and the request metered in the workspace's
+   * budget. The key never leaves this DO except in the request to the provider.
+   */
+  async modelRequest(
+    capability: string,
+    call: ModelCall & { turn?: string },
+  ): Promise<ModelResponse> {
+    const facts = await this.#authority.agentSessionOf(capability);
+    const access = await this.#access(facts.project, facts.user);
+    if (!access.member)
+      throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
+    const found = this.#models.pinned(facts.session);
+    if (!found || found.user !== facts.user || found.project !== facts.project)
+      throw codedError("ENOENT", "the agent session pinned no model");
+    const turn =
+      typeof call.turn === "string" && call.turn.startsWith(`${facts.session}.tu-`)
+        ? call.turn
+        : undefined;
+    const gateway = new ModelGateway({
+      secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
+      // The budget records every request; limits reserve and refuse in `admit` (#179).
+      meter: { record: (usage, meta) => this.#models.record(usage, meta) },
+    });
+    return gateway.request(
+      found.pinned,
+      {
+        context: call.context,
+        ...(typeof call.model === "string" && call.model ? { model: call.model } : {}),
+        ...(typeof call.maxTokens === "number" ? { maxTokens: call.maxTokens } : {}),
+      },
+      this.#modelRight(access.grants),
+      {
+        session: facts.session,
+        ...(turn ? { turn } : {}),
+        user: facts.user,
+        project: facts.project,
+      },
+    );
+  }
+
+  /**
+   * A project's models as a member sees them: every configured one, whether they may use it, and,
+   * with `discover`, the models each provider's `/models` lists that no level configured (off).
+   */
+  async listModels(userCapability: string, query: ModelsQuery): Promise<ModelView[]> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const project = String(query.project);
+    const access = await this.#access(project, user);
+    if (!access.member) throw codedError("EACCES", `${user} is not a member of ${project}`);
+    const catalog = await this.#modelCatalog(project, user);
+    const right = this.#modelRight(access.grants);
+    const views: ModelView[] = [];
+    const view = async (m: CatalogModel): Promise<ModelView> => ({
+      id: m.id,
+      aliases: [...m.aliases].sort(),
+      provider: m.provider,
+      level: m.level,
+      enabled: true,
+      allowed: await mayUse(m, right),
+    });
+    for (const m of Object.values(catalog.models)) views.push(await view(m));
+    if (query.discover) {
+      const secrets = sessionSecrets(this.#secrets, this.#deploymentSecrets(), { project, user });
+      for (const provider of Object.values(catalog.providers)) {
+        let names: string[] = [];
+        try {
+          names = await discoverModels(provider, secrets);
+        } catch (e) {
+          console.warn(`discovery of ${provider.id}: ${String((e as Error)?.message ?? e)}`);
+        }
+        for (const name of names) {
+          const id = `${provider.id}/${name}`;
+          if (views.some((v) => v.id === id)) continue;
+          views.push({
+            id,
+            aliases: [],
+            provider: provider.id,
+            level: provider.level,
+            enabled: false,
+            allowed: await right(id),
+            discovered: true,
+          });
+        }
+      }
+    }
+    return views.sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  /** The user's own model configuration (user level) in this workspace. */
+  async getModelConfig(userCapability: string): Promise<ModelsConfig> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    return this.#models.userConfig(user) ?? {};
+  }
+
+  /**
+   * Replaces the user's own model configuration: providers (keys are the user's secrets, bound to
+   * `model-gateway` and the provider's host) at https addresses that are not private.
+   */
+  async setModelConfig(userCapability: string, config: unknown): Promise<ModelsConfig> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const checked = checkModelsConfig(config);
+    for (const p of checked.providers ?? []) checkUserProvider(p, this.#userProviderHosts());
+    this.#models.setUserConfig(user, checked);
+    return checked;
+  }
+
+  /** Test-only: every model request the workspace's budget recorded. */
+  async modelUsage(): Promise<ModelUsageRecord[]> {
+    return this.#models.usage();
   }
 
   /**
@@ -540,6 +751,7 @@ export class Workspace extends DurableObject<Env> {
   async eraseUserSecrets(capability: string): Promise<void> {
     const user = await this.#authority.userOfUserCapability(capability);
     this.#secrets.deleteScope("user", user);
+    this.#models.deleteUser(user);
   }
 
   /**

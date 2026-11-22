@@ -3,7 +3,7 @@ export { FilesFs } from "./files-fs.js";
 export {
   type FlueTurn,
   type HostTool,
-  type ModelConfig,
+  type ModelPort,
   runFlueTurn,
   TRACER_TOOLS,
 } from "./turn.js";

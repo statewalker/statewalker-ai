@@ -17,7 +17,7 @@ import {
   type PermissionRules,
   parseRules,
 } from "@statewalker/ai-access";
-import type { FilesRpcMethod } from "@statewalker/ai-environment";
+import type { FilesRpcMethod, ModelsConfig } from "@statewalker/ai-environment";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import type {
   AgentSessionConfig,
@@ -27,6 +27,8 @@ import type {
   CreatedServiceAccount,
   DeleteSecretRequest,
   Metadata,
+  ModelsQuery,
+  ModelView,
   PinnedDefinitions,
   ProfileView,
   SecretScope,
@@ -48,12 +50,19 @@ export interface WorkspaceGrants {
   /**
    * Pins the definitions of a new agent session of the user in a project (EACCES for a
    * non-member) and picks its agent: the one asked for, which the user must be allowed (ENOENT
-   * otherwise), or the project's default, then the deployment's.
+   * otherwise), or the project's default, then the deployment's; and its model, with the user's
+   * override (`model`) if any (ENOENT when none fits, EACCES for an override not the user's).
    */
   pinDefinitions(
     userCapability: string,
-    req: { session: string; project: string; agent?: string },
+    req: { session: string; project: string; agent?: string; model?: string },
   ): Promise<PinnedDefinitions>;
+  /** A project's models as the user sees them; `discover` asks each provider's `/models`. */
+  listModels(userCapability: string, query: ModelsQuery): Promise<ModelView[]>;
+  /** The user's own model configuration (user level) there. */
+  getModelConfig(userCapability: string): Promise<ModelsConfig>;
+  /** Replaces it; EINVAL for a malformed configuration. */
+  setModelConfig(userCapability: string, config: unknown): Promise<ModelsConfig>;
   /** Tells the gate the user session's mode and the user's own rules. */
   setUserSession(
     userCapability: string,
@@ -393,6 +402,7 @@ export class UserSessions implements UserPort {
       session: id,
       project: req.project,
       ...(req.agent ? { agent: req.agent } : {}),
+      ...(req.model ? { model: req.model } : {}),
     });
     const capability = attenuateForAgentSession(us.capability, {
       session: id,
@@ -440,6 +450,7 @@ export class UserSessions implements UserPort {
         agent: row.agent,
         capability,
         ...(pinned.run ? { run: pinned.run } : {}),
+        ...(pinned.model ? { model: pinned.model } : {}),
       },
     };
   }
@@ -606,6 +617,21 @@ export class UserSessions implements UserPort {
     const us = await this.#userSession(token);
     await this.#o.workspace(us.workspace).deleteServiceAccount(us.capability, name);
     return { deleted: true };
+  }
+
+  async listModels(token: string, query: ModelsQuery): Promise<{ models: ModelView[] }> {
+    const us = await this.#userSession(token);
+    return { models: await this.#o.workspace(us.workspace).listModels(us.capability, query) };
+  }
+
+  async getModelConfig(token: string): Promise<ModelsConfig> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).getModelConfig(us.capability);
+  }
+
+  async setModelConfig(token: string, config: unknown): Promise<ModelsConfig> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).setModelConfig(us.capability, config);
   }
 
   async listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }> {

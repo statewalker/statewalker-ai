@@ -73,7 +73,7 @@ let deployment: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     ROLE_SOURCES: "sql,file",
@@ -300,7 +300,7 @@ describe("workspace backends", () => {
     async (_name, vars) => {
       const backend = await workspaceBackend(vars);
       const d = await startDeployment(HOST, {
-        LLM_BASE_URL: model.url,
+        MODELS: model.deploymentModels(),
         DEV_LOGIN: "true",
         ADMIN_KEY,
         ...backend.vars,

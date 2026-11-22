@@ -83,7 +83,7 @@ let shortLived: Deployment;
 beforeAll(async () => {
   model = await fakeModel();
   deployment = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     // The deployment's rules.
@@ -102,7 +102,7 @@ beforeAll(async () => {
     ),
   );
   shortLived = await startDeployment(HOST, {
-    LLM_BASE_URL: model.url,
+    MODELS: model.deploymentModels(),
     DEV_LOGIN: "true",
     ADMIN_KEY,
     APPROVAL_TTL_MS: "400",
