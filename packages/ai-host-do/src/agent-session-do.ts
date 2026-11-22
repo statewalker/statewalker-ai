@@ -8,7 +8,7 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
-import { approvalId, settleAsk } from "@statewalker/ai-access";
+import { approvalId, codeOf, settleAsk } from "@statewalker/ai-access";
 import {
   approvalAware,
   errorMessage,
@@ -405,8 +405,15 @@ export class AgentSession extends DurableObject<Env> {
    */
   async send(message: AgentMessage) {
     const config = this.#core.config();
-    const crossed =
-      config && message.delivery !== "steer" ? await this.#charge(config, "turns", 1) : [];
+    let crossed: WarningView[] = [];
+    if (config && message.delivery !== "steer")
+      try {
+        crossed = await this.#charge(config, "turns", 1);
+      } catch (e) {
+        // Only a limit refuses a message here: a capability the gate refuses (revoked, removed)
+        // fails the turn at its first action, as before.
+        if (codeOf(e) === "ELIMIT") throw e;
+      }
     const accepted = await this.#core.send(message);
     if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
     return accepted;
