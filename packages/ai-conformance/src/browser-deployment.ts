@@ -20,13 +20,14 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const PACKAGE = join(HERE, "..");
 /** Pyodide and the engine script, served to the page's Python engine (statewalker/statewalker-root#142). */
 const PYODIDE_DIR = fileURLToPath(new URL(".", import.meta.resolve("pyodide/pyodide.mjs")));
-const PYODIDE_ENGINE = fileURLToPath(
-  import.meta.resolve("@statewalker/ai-environment/engines/pyodide-engine.mjs"),
-);
+/** The engine scripts sit in `engines/` beside the package's modules (src/ or dist/). */
+const engineScript = (name: string) =>
+  fileURLToPath(
+    new URL(`../engines/${name}`, import.meta.resolve("@statewalker/ai-environment/pyodide")),
+  );
+const PYODIDE_ENGINE = engineScript("pyodide-engine.mjs");
 /** The Wasmer engine script and the SDK's package folder (`dist/`, `pkg/`), served likewise. */
-const WASMER_ENGINE = fileURLToPath(
-  import.meta.resolve("@statewalker/ai-environment/engines/wasmer-engine.mjs"),
-);
+const WASMER_ENGINE = engineScript("wasmer-engine.mjs");
 const WASMER_SDK = join(fileURLToPath(new URL(".", import.meta.resolve("@wasmer/sdk"))), "..");
 
 const TYPES: Record<string, string> = {
