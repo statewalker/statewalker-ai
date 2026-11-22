@@ -153,6 +153,36 @@ describe("the gated file view", () => {
     expect(await store.exists("/alpha/docs/.env")).toBe(true);
     expect(await store.exists("/alpha/elsewhere")).toBe(false);
   });
+
+  it("decides a folder's entries in one call when the holder decides many at once, changing nothing on a refusal", async () => {
+    const batches: [FileAction, string][][] = [];
+    const files = view({
+      authorize: async () => {
+        throw new Error("decided one by one");
+      },
+      authorizeAll: async (checks) => {
+        batches.push([...checks]);
+        for (const [action, path] of checks)
+          if (action === "delete" && path === "/alpha/docs/guide.md")
+            throw codedError("EACCES", `may not delete ${path}`);
+      },
+    });
+    await expect(files.remove("/alpha/docs")).rejects.toThrow(/EACCES/);
+    expect(batches.at(-1)).toEqual(
+      expect.arrayContaining([
+        ["delete", "/alpha/docs/.env"],
+        ["delete", "/alpha/docs/guide.md"],
+      ]),
+    );
+    await expect(files.copy("/alpha/docs", "/alpha/copy")).resolves.toBe(true);
+    await expect(files.move("/alpha/docs", "/alpha/elsewhere")).rejects.toThrow(/EACCES/);
+    expect(await readText(store, "/alpha/docs/guide.md")).toBe("the guide");
+    expect(await store.exists("/alpha/elsewhere")).toBe(false);
+    // One call for the operation's path, one for every entry under it (and one for a replaced target).
+    batches.length = 0;
+    expect(await files.remove("/alpha/build")).toBe(true);
+    expect(batches).toEqual([[["delete", "/alpha/build"]], [["delete", "/alpha/build/out.js"]]]);
+  });
 });
 
 describe("ignore rules", () => {
