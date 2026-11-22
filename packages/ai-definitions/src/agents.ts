@@ -6,6 +6,7 @@ import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import { catalogAgents, catalogSkills, catalogTools } from "./catalog.js";
 import { parseFrontMatter } from "./front-matter.js";
 import { EXTENSION, isItemName, isPluginName } from "./loader.js";
+import { catalogMcpServers } from "./mcp.js";
 import type { ToolAction } from "./tools.js";
 
 /**
@@ -50,6 +51,12 @@ export interface AgentDefinition {
 /** An agent's lists after narrowing: the ids the user may use, never patterns. */
 export interface NarrowedAgent extends AgentDefinition {
   skills: string[];
+  /**
+   * The agent's tool patterns, kept for the tools of remote MCP servers (#135): those are listed
+   * later, by the gateway, and each is matched then (and narrowed by the permissions at every
+   * call). Only when the catalog has an MCP server.
+   */
+  mcpTools?: string[];
 }
 
 const strings = (v: unknown): string[] | undefined => {
@@ -147,8 +154,10 @@ export async function narrowAgent(
       tools.push(t.id);
   const models: string[] = [];
   for (const m of agent.models) if (await allow("models", m)) models.push(m);
+  const mcp = (await catalogMcpServers(catalog)).length > 0;
   return {
     ...agent,
+    ...(mcp ? { mcpTools: [...agent.tools] } : {}),
     models,
     skills: await allowed(await catalogSkills(catalog), "skills", allow, agent.skills),
     tools,

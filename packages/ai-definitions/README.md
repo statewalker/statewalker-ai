@@ -4,7 +4,9 @@
 
 Plugin sources in, definitions out: the plugin loader (Agent Plugins 1.0 and Claude Code
 layouts), the catalog of agents, skills and tools, each role's `.agents/` view, and tool
-definitions (one OpenAPI 3.1 operation each, REST imports included).
+definitions (one OpenAPI 3.1 operation each, REST imports included), and the pieces of the host-side
+gateway to remote MCP servers (a plugin's `mcp.json` servers, their tools as definitions, and the
+stateless Streamable HTTP requests and answers).
 
 Part of the AI harness (statewalker/statewalker-root#111): see the
 [repository's README](https://github.com/statewalker/statewalker-ai#readme), its

@@ -57,10 +57,17 @@ import {
   type AgentDefinition,
   type Allow,
   buildPlugin,
+  catalogMcpServers,
   catalogToolDefinitions,
   catalogTools,
   definitionsView,
   findAgent,
+  type McpServer,
+  matches,
+  mcpAnswer,
+  mcpCallOutput,
+  mcpRequest,
+  mcpTools,
   type NarrowedAgent,
   narrowAgent,
   type Plugin,
@@ -196,6 +203,11 @@ const STRICTNESS = { allow: 0, classify: 1, ask: 2, deny: 3 } as const;
 
 /** The project's instructions for agents, which auto mode's risk classifier is shown. */
 const AGENTS_FILE = "AGENTS.md";
+/** How long a remote MCP server's tool list is kept at most, and after a failure (#135). */
+const MCP_LIST_TTL_MS = 5 * 60_000;
+const MCP_LIST_FAILURE_MS = 10_000;
+/** The most `tools/list` pages read from one server. */
+const MCP_LIST_PAGES = 16;
 
 /** The definitions mount's folder in each project of an agent session's file view. */
 const DEFINITIONS_FOLDER = ".agents";
@@ -247,6 +259,11 @@ export class Workspace extends DurableObject<Env> {
   readonly #harnesses = new Map<string, { at: number; ids: Map<string, string> }>();
   /** Plugin builds by level and source hash (statewalker/statewalker-root#130). */
   readonly #builds = new Map<string, Promise<{ plugin?: Plugin; problems: string[] }>>();
+  /**
+   * The tools remote MCP servers listed, by session and server, while their answer's time to live
+   * lasts (statewalker/statewalker-root#135): listing is a request through the gateway.
+   */
+  readonly #mcpLists = new Map<string, { until: number; tools: Promise<ToolDefinition[]> }>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -1795,10 +1812,17 @@ export class Workspace extends DurableObject<Env> {
     const found = await this.#definitions.session(facts.session);
     if (!found || found.user !== facts.user || found.project !== facts.project) return out;
     const requested = new Set(found.run?.tools ?? []);
+    // A remote MCP server's tools are listed now, so its agent's patterns decide (#135).
+    const mcpRequested = (id: string) => found.run?.mcpTools?.some((p) => matches(p, id)) ?? false;
     const allow = this.#allow(access.grants);
-    for (const definition of await catalogToolDefinitions(found.catalog)) {
+    const local = await catalogToolDefinitions(found.catalog);
+    const remote = found.run?.mcpTools?.length
+      ? await this.#mcpTools(facts, found.catalog, new Set(local.map((d) => d[TOOL_EXTENSION].id)))
+      : [];
+    for (const definition of [...local, ...remote]) {
       const x = definition[TOOL_EXTENSION];
-      if (!requested.has(x.id) || !(await allow("tools", x.id, x.action))) continue;
+      const asked = x.source === "mcp" ? mcpRequested(x.id) : requested.has(x.id);
+      if (!asked || !(await allow("tools", x.id, x.action))) continue;
       const req = toolRequest(x);
       const decideIn = (m: ResolvedMode | undefined): ModeVerdict => {
         if (!m) return { verdict: "deny", reason: "an unknown sub-agent mode", step: "mode" };
@@ -1923,10 +1947,13 @@ export class Workspace extends DurableObject<Env> {
       }
     }
     const route = x.route;
-    if (route.kind === "rest") {
+    if (route.kind === "rest" || route.kind === "mcp") {
       let request: OutgoingRequest;
       try {
-        request = restRequest(found.definition, args);
+        request =
+          route.kind === "rest"
+            ? restRequest(found.definition, args)
+            : mcpRequest(route, "tools/call", { name: route.name, arguments: args }, 1);
       } catch (e) {
         return { output: String((e as Error)?.message ?? e), isError: true };
       }
@@ -1941,6 +1968,15 @@ export class Workspace extends DurableObject<Env> {
       const secrets = result.secrets.length ? { secrets: result.secrets } : {};
       const warnings = result.warnings?.length ? { warnings: result.warnings } : {};
       if (result.error) return { output: result.error, isError: true, ...secrets, ...warnings };
+      if (route.kind === "mcp") {
+        // The remote server's answer: its own auth applies (a refusal is an error result).
+        const answer = mcpAnswer(result, 1);
+        const out =
+          answer.result === undefined
+            ? { output: answer.error, isError: true }
+            : mcpCallOutput(answer.result);
+        return { ...out, ...secrets, ...warnings };
+      }
       return {
         output: `${result.status} ${result.body ?? ""}`,
         isError: !result.ok,
@@ -1949,11 +1985,101 @@ export class Workspace extends DurableObject<Env> {
       };
     }
     if (route.kind === "native") return this.#runNative(agentCapability, facts, x, args, call.turn);
-    // Remote MCP servers' tools run with statewalker/statewalker-root#135.
     return {
-      output: `ENOSYS: ${route.kind} tools do not run in this deployment yet`,
+      output: `ENOSYS: ${route.kind} tools do not run in this deployment`,
       isError: true,
     };
+  }
+
+  /**
+   * The tools of the remote MCP servers of a session's pinned plugins, listed by the host-side
+   * gateway (statewalker/statewalker-root#135): each Streamable HTTP server is asked `tools/list`
+   * (every page) through the secrets gateway, metered as outbound requests of the session's
+   * member, project and workspace, and its tools become tool definitions of its plugin. A listing
+   * is kept for the session while its time to live lasts (at most five minutes); a server that
+   * fails gives no tools for a short while. stdio servers and servers whose files hold
+   * credentials give none: they answer ENOSYS or EINVAL, logged.
+   */
+  async #mcpTools(
+    facts: AgentSessionFacts,
+    catalog: FilesApi,
+    taken: ReadonlySet<string>,
+  ): Promise<ToolDefinition[]> {
+    const out: ToolDefinition[] = [];
+    const names = new Set(taken);
+    for (const server of await catalogMcpServers(catalog)) {
+      if (server.problem) {
+        console.warn(`MCP server ${server.plugin}/${server.server}: ${server.problem}`);
+        continue;
+      }
+      const key = JSON.stringify([facts.session, server.plugin, server.server]);
+      const now = Date.now();
+      let entry = this.#mcpLists.get(key);
+      if (!entry || entry.until <= now) {
+        const listing = this.#listMcp(facts, server);
+        entry = { until: now + MCP_LIST_TTL_MS, tools: listing.then((l) => l.tools) };
+        const kept = entry;
+        listing.then(
+          (l) => {
+            kept.until = Date.now() + l.ttl;
+          },
+          () => {},
+        );
+        this.#mcpLists.set(key, entry);
+        if (this.#mcpLists.size > 512)
+          this.#mcpLists.delete(this.#mcpLists.keys().next().value as string);
+      }
+      const ids = new Set<string>();
+      for (const d of await entry.tools) {
+        const id = d[TOOL_EXTENSION].id;
+        if (names.has(id)) continue;
+        ids.add(id);
+        out.push(d);
+      }
+      for (const id of ids) names.add(id);
+    }
+    return out;
+  }
+
+  /** One server's tools, every page; none (and a short time to live) when listing fails. */
+  async #listMcp(
+    facts: AgentSessionFacts,
+    server: McpServer,
+  ): Promise<{ tools: ToolDefinition[]; ttl: number }> {
+    const where = `MCP server ${server.plugin}/${server.server}`;
+    const listed: unknown[] = [];
+    let ttl = MCP_LIST_TTL_MS;
+    let cursor: string | undefined;
+    try {
+      for (let page = 0; page < MCP_LIST_PAGES; page++) {
+        const request = mcpRequest(
+          { url: String(server.url), headers: server.headers },
+          "tools/list",
+          cursor !== undefined ? { cursor } : {},
+          page + 1,
+        );
+        const answer = mcpAnswer(await this.#meteredFetch(facts, request, server.plugin), page + 1);
+        if (answer.error) {
+          console.warn(`${where}: tools/list: ${answer.error}`);
+          return { tools: [], ttl: MCP_LIST_FAILURE_MS };
+        }
+        const { tools, nextCursor, ttlMs } = answer.result as {
+          tools?: unknown;
+          nextCursor?: unknown;
+          ttlMs?: unknown;
+        };
+        if (Array.isArray(tools)) listed.push(...tools);
+        if (typeof ttlMs === "number" && ttlMs >= 0) ttl = Math.min(ttl, ttlMs);
+        if (typeof nextCursor !== "string" || !nextCursor) break;
+        cursor = nextCursor;
+      }
+    } catch (e) {
+      console.warn(`${where}: tools/list: ${String((e as Error)?.message ?? e)}`);
+      return { tools: [], ttl: MCP_LIST_FAILURE_MS };
+    }
+    const { tools, problems } = mcpTools(server, listed);
+    if (problems.length) console.warn(`${where}: ${problems.join("; ")}`);
+    return { tools, ttl };
   }
 
   /** The deployment catalog's plugin bundles approved to run native tools, by hash. */

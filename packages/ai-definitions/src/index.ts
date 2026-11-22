@@ -46,6 +46,18 @@ export {
   writePlugin,
 } from "./loader.js";
 export {
+  catalogMcpServers,
+  MCP_REVISION,
+  type McpOutgoing,
+  type McpRoute,
+  type McpServer,
+  mcpAnswer,
+  mcpCallOutput,
+  mcpRequest,
+  mcpServersOf,
+  mcpTools,
+} from "./mcp.js";
+export {
   catalogToolDefinitions,
   closedSchema,
   type JsonSchema,
