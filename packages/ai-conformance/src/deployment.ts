@@ -63,6 +63,11 @@ export const CAN = {
   python: RUNTIME === "node" || RUNTIME === "browser",
   /** WASIX programs on a Wasmer engine, live over the session's files: CellB in a browser and on Node. */
   posix: RUNTIME === "node" || RUNTIME === "browser",
+  /**
+   * Deployments run by a runtime process of its own on a local port (CellD, workerd), started by
+   * the runner's process-deployment.ts.
+   */
+  processDeployments: RUNTIME === "celld" || RUNTIME === "workerd",
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
