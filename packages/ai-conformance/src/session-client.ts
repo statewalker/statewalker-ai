@@ -1,6 +1,7 @@
 // The session API as a client sees it, over REST. Scenarios are written against `SessionClient`,
 // so the same scenario runs over every transport (REST here, RPC in ./rpc-client.ts).
 import type {
+  ChatTransportLike,
   EventsPage,
   EventsQuery,
   ItemsQuery,
@@ -9,10 +10,13 @@ import type {
   SessionEvent,
   SessionsQuery,
   StopReason,
+  UIMessageChunk,
 } from "@statewalker/ai-sessions";
+import { DefaultChatTransport } from "ai";
 import type { Deployment } from "./deployment.js";
 
 export type {
+  ChatTransportLike,
   EventsPage,
   EventsQuery,
   ItemsQuery,
@@ -21,6 +25,7 @@ export type {
   SessionEvent,
   SessionsQuery,
   StopReason,
+  UIMessageChunk,
 };
 
 /** An item of a turn, as the session API lists it. */
@@ -320,6 +325,20 @@ export interface SessionClient {
   getModelConfig(): Promise<ModelsConfig>;
   /** Replaces the caller's own model configuration (user level). */
   setModelConfig(config: ModelsConfig): Promise<ModelsConfig>;
+  /**
+   * A chat transport (the AI SDK's `ChatTransport`) on one agent session's UI message stream: over
+   * REST the AI SDK's own HTTP transport at `/v1/sessions/<id>/chat` (chat id: the session id),
+   * over RPC the session API's transport.
+   */
+  chat(sessionId: string): ChatTransportLike;
+  /**
+   * Resumes a session's UI message stream (REST: `GET /v1/sessions/<id>/chat/stream`): a turn's
+   * message replayed from the log, or what follows a cursor; null when there is nothing to follow.
+   */
+  replayChat(
+    sessionId: string,
+    from?: { turn?: string; since?: number },
+  ): Promise<ReadableStream<UIMessageChunk> | null>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -337,6 +356,38 @@ async function answer<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => ({}))) as { error?: string };
   if (!res.ok) throw new ApiError(res.status, String(body.error ?? res.statusText));
   return body as T;
+}
+
+/** Checks a response is the AI SDK's UI message stream, by its headers. */
+export function expectUiStream(res: Response): void {
+  if (
+    res.headers.get("x-vercel-ai-ui-message-stream") !== "v1" ||
+    !res.headers.get("content-type")?.startsWith("text/event-stream")
+  )
+    throw new ApiError(500, "not an AI SDK UI message stream");
+}
+
+/** The chunks of a UI message stream's SSE body (`data: <json>` frames up to `data: [DONE]`). */
+export function uiChunks(body: ReadableStream<Uint8Array>): ReadableStream<UIMessageChunk> {
+  const frames = sseFrames(body);
+  return new ReadableStream<UIMessageChunk>({
+    async pull(controller) {
+      for (;;) {
+        const { value, done } = await frames.next();
+        if (done || value.data === "[DONE]") {
+          controller.close();
+          return;
+        }
+        if (value.data !== undefined) {
+          controller.enqueue(JSON.parse(value.data) as UIMessageChunk);
+          return;
+        }
+      }
+    },
+    async cancel() {
+      await frames.return(undefined);
+    },
+  });
 }
 
 /** One frame of an SSE stream: an event (with its id, if any), or a comment (a keep-alive). */
@@ -427,6 +478,23 @@ export function restClient(deployment: Deployment, token: string): SessionClient
   };
   const s = (id: string) => `/v1/sessions/${encodeURIComponent(id)}`;
   const client: SessionClient = {
+    chat: (id) =>
+      new DefaultChatTransport({
+        api: `${s(id)}/chat`,
+        headers: { authorization: `Bearer ${token}` },
+        fetch: ((input: string | URL | Request, init?: RequestInit) =>
+          deployment.fetch(String(input), init)) as typeof fetch,
+      }) as unknown as ChatTransportLike,
+    async replayChat(id, from = {}) {
+      const p = new URLSearchParams();
+      if (from.turn) p.set("turn", from.turn);
+      if (from.since !== undefined) p.set("since", String(from.since));
+      const res = await deployment.fetch(`${s(id)}/chat/stream?${p}`, { headers });
+      if (res.status === 204) return null;
+      if (!res.ok || !res.body) await answer(res);
+      expectUiStream(res);
+      return uiChunks(res.body as ReadableStream<Uint8Array>);
+    },
     me: () => call("GET", "/v1/me"),
     startSession: (req) => call("POST", "/v1/sessions", req),
     getSession: (id) => call("GET", s(id)),

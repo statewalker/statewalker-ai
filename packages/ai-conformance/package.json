@@ -24,6 +24,8 @@
     "vitest": "catalog:",
     "@statewalker/ai-environment": "workspace:^",
     "@statewalker/webrun-files": "catalog:",
-    "@statewalker/webrun-files-rpc": "catalog:"
+    "@statewalker/webrun-files-rpc": "catalog:",
+    "ai": "catalog:",
+    "zod": "catalog:"
   }
 }

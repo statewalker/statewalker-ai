@@ -137,6 +137,8 @@ export interface ItemInput {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** A `tool_result` answering an approval the user denied. */
+  denied?: true;
   /** The approval an `approval` item waits on, or a resumed `tool_result` answers. */
   approval?: string;
   /** An `approval` item's request (the gate's). */
@@ -259,6 +261,8 @@ export interface TurnView {
   model_substitution?: ModelSubstitution;
   /** Fields of the message request the API did not use. */
   ignored?: string[];
+  /** The approval this turn continues the session with: a turn queued by answering it. */
+  answers?: string;
   created: number;
   started?: number;
   ended?: number;

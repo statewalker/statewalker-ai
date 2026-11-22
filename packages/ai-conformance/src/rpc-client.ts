@@ -1,6 +1,12 @@
 // The session API over RPC: webrun-rpc methods over msgpack frames on a WebSocket the
 // deployment's Worker accepts at /v1/rpc. The access token goes in the first call.
-import { sessionRpcClient, statusOf } from "@statewalker/ai-sessions";
+import {
+  resumePlan,
+  sessionChatTransport,
+  sessionRpcClient,
+  statusOf,
+  uiMessageChunks,
+} from "@statewalker/ai-sessions";
 import type { Deployment } from "./deployment.js";
 import { ApiError, type SessionClient, TERMINAL_EVENTS, type Turn } from "./session-client.js";
 
@@ -25,6 +31,11 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     throw new ApiError(statusOf(e), String((e as Error)?.message ?? e));
   };
   const client: RpcSessionClient = {
+    chat: (id) => sessionChatTransport(api, id),
+    async replayChat(id, from = {}) {
+      const plan = await resumePlan(api, id, from).catch(refusal);
+      return plan ? uiMessageChunks(api, id, plan) : null;
+    },
     me: () => api.me().catch(refusal),
     startSession: (req) => api.startSession(req).catch(refusal),
     getSession: (id) => api.getSession(id).catch(refusal),

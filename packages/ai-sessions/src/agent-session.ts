@@ -326,6 +326,10 @@ export class AgentSessionCore implements AgentPort {
       "SELECT requested, used, reason FROM turn_substitutions WHERE turn = ?",
       row.id,
     );
+    const answers = this.#one<{ approval: string }>(
+      "SELECT approval FROM approval_answers WHERE turn = ?",
+      row.id,
+    );
     return {
       id: row.id,
       session: config?.id ?? "",
@@ -344,6 +348,7 @@ export class AgentSessionCore implements AgentPort {
           }
         : {}),
       ...(ignored.length ? { ignored } : {}),
+      ...(answers ? { answers: String(answers.approval) } : {}),
       created: Number(row.created),
       ...(row.started ? { started: Number(row.started) } : {}),
       ...(row.ended ? { ended: Number(row.ended) } : {}),
@@ -385,6 +390,7 @@ export class AgentSessionCore implements AgentPort {
     config: AgentSessionConfig,
     turn: { content: string; delivery: Delivery; model?: string; ignored: string[] },
     first: boolean,
+    before?: (turn: string) => void,
   ): string {
     const id = `${config.id}.tu-${crypto.randomUUID()}`;
     const edge = this.#one<{ lo: number | null; hi: number | null }>(
@@ -401,6 +407,7 @@ export class AgentSessionCore implements AgentPort {
       JSON.stringify(turn.ignored),
       Date.now(),
     );
+    before?.(id);
     this.#log("turn.queued", id, this.#view(this.#turnRow(id), false));
     return id;
   }
@@ -583,10 +590,16 @@ export class AgentSessionCore implements AgentPort {
       .find((i) => i.approval === answer.approval && i.stored);
     if (!item?.stored || !item.request) throw codedError("ENOENT", "no such approval");
     const { method, path, target } = item.stored;
-    const result = (output: string, isError: boolean) =>
-      this.#append(turn, { kind: "tool_result", approval: answer.approval, output, isError });
+    const result = (output: string, isError: boolean, denied = false) =>
+      this.#append(turn, {
+        kind: "tool_result",
+        approval: answer.approval,
+        output,
+        isError,
+        ...(denied ? { denied: true as const } : {}),
+      });
     if (answer.decision !== "allow") {
-      result(`denied by the user${answer.message ? `: ${answer.message}` : ""}`, true);
+      result(`denied by the user${answer.message ? `: ${answer.message}` : ""}`, true, true);
       return;
     }
     try {
@@ -678,13 +691,15 @@ export class AgentSessionCore implements AgentPort {
       .some((i) => i.approval === approval && i.stored);
     if (!known) throw codedError("ENOENT", "no such approval");
     const content = `${answer.decision === "allow" ? "allowed" : "denied"}: ${approval}`;
-    const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false);
-    this.#sql.exec(
-      "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
-      id,
-      approval,
-      answer.decision,
-      answer.message ?? null,
+    // The answer is stored before the turn is logged, so its queued event names the approval.
+    const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false, (turn) =>
+      this.#sql.exec(
+        "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
+        turn,
+        approval,
+        answer.decision,
+        answer.message ?? null,
+      ),
     );
     this.#pump();
     return { turn_id: id, session_id: config.id, delivery: "next", offset };
