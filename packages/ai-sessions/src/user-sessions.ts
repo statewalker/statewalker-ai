@@ -81,6 +81,7 @@ import type {
 } from "./api.js";
 import type { IndexedSession } from "./search.js";
 import type { SqlLike } from "./sql.js";
+import type { OwnTriggerEntry, TriggersCall } from "./triggers.js";
 
 /** What a User DO asks of one workspace's Workspace DO. */
 export interface WorkspaceGrants {
@@ -201,6 +202,8 @@ export interface WorkspaceGrants {
   usageRecords(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage>;
   /** One task API call with a user capability (statewalker/statewalker-root#206). */
   tasks(userCapability: string, call: TasksCall): Promise<unknown>;
+  /** One trigger API call with a user capability (statewalker/statewalker-root#207). */
+  triggers?(userCapability: string, call: TriggersCall): Promise<unknown>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -250,6 +253,25 @@ export interface UserSessionsOptions {
   now?: () => number;
   /** The deployment's memory caps (JSON), for preferences, which belong to no project. */
   memoryCaps?: string;
+  /**
+   * Tells another user's User DO (a service account's) a trigger it owns was created, changed or
+   * deleted (statewalker/statewalker-root#207): their index of triggers.
+   */
+  indexTriggerOf?(owner: string, workspace: string, entry: TriggerIndexChange): Promise<void>;
+}
+
+/** A change of a user's index of triggers: an entry, or one deleted. */
+export type TriggerIndexChange = OwnTriggerEntry | { id: string; deleted: true };
+
+/** What a trigger's fire asks of its owner's User DO for a new session (#207). */
+export interface TriggeredSessionRequest {
+  project: string;
+  agent?: string;
+  model?: string;
+  limits?: StartSessionRequest["limits"];
+  /** The mode the session runs in, fixed in its capability. */
+  mode: string;
+  metadata: Metadata;
 }
 
 export { DEFAULT_MODE };
@@ -382,6 +404,9 @@ export class UserSessions implements UserPort {
     // statewalker/statewalker-root#125: metadata and archiving, beside the index.
     this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS agent_session_meta (
       id TEXT PRIMARY KEY, metadata TEXT NOT NULL, archived INTEGER)`);
+    // statewalker/statewalker-root#207: the triggers the user owns, in every workspace.
+    this.#o.sql.exec(`CREATE TABLE IF NOT EXISTS trigger_index (id TEXT PRIMARY KEY,
+      workspace TEXT NOT NULL, project TEXT NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL)`);
   }
 
   #now(): number {
@@ -668,7 +693,206 @@ export class UserSessions implements UserPort {
     req: StartSessionRequest,
   ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
     const us = await this.#userSession(token);
-    const id = `as-${crypto.randomUUID()}`;
+    return this.#startAgentSession(us, `as-${crypto.randomUUID()}`, req);
+  }
+
+  /**
+   * The user session of a workspace for a trigger's fire, which comes with no access token
+   * (statewalker/statewalker-root#207): the one the user has there, else one opened with the user
+   * capability the workspace minted for the fire.
+   */
+  #triggerUserSession(workspace: string, userCapability: string): UserSessionRow {
+    const row = this.#one<UserSessionRow>(
+      "SELECT * FROM user_sessions WHERE workspace = ?",
+      workspace,
+    );
+    if (row) return row;
+    this.#o.sql.exec(
+      "INSERT OR IGNORE INTO user_sessions VALUES (?, ?, ?, ?, ?)",
+      workspace,
+      `us-${crypto.randomUUID()}`,
+      DEFAULT_MODE,
+      userCapability,
+      Date.now(),
+    );
+    return this.#one<UserSessionRow>(
+      "SELECT * FROM user_sessions WHERE workspace = ?",
+      workspace,
+    ) as UserSessionRow;
+  }
+
+  /**
+   * Starts a trigger's new session as this user (statewalker/statewalker-root#207): unattended, in
+   * the trigger's mode, in the user's index like any other. Only the workspace's trigger, through
+   * the new session's own DO, asks; membership and agent rights are decided at the workspace now.
+   */
+  async startTriggeredSession(
+    id: string,
+    workspace: string,
+    userCapability: string,
+    req: TriggeredSessionRequest,
+  ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
+    if (!/^as-[A-Za-z0-9-]{1,64}$/.test(String(id)))
+      throw codedError("EINVAL", "invalid session id");
+    if (this.#one("SELECT 1 FROM agent_sessions WHERE id = ?", id))
+      throw codedError("EEXIST", "the session exists");
+    const us = this.#triggerUserSession(workspace, userCapability);
+    return this.#startAgentSession(
+      us,
+      id,
+      {
+        project: req.project,
+        ...(req.agent ? { agent: req.agent } : {}),
+        ...(req.model ? { model: req.model } : {}),
+        ...(req.limits?.length ? { limits: req.limits } : {}),
+        unattended: true,
+        metadata: req.metadata,
+      },
+      req.mode,
+    );
+  }
+
+  /**
+   * A trigger's session this user owns, for a fire that appends to it (statewalker/statewalker-root#207):
+   * ENOENT unless it is theirs, in that workspace; EBUSY when archived or revoked.
+   */
+  triggerTarget(workspace: string, id: string): AgentSessionView {
+    const row = this.#one<AgentRow & AgentMetaRow>(
+      `${INDEX} WHERE a.id = ? AND a.workspace = ?`,
+      id,
+      workspace,
+    );
+    if (!row) throw codedError("ENOENT", "no such agent session");
+    const v = view(row);
+    if (v.archived || v.revoked)
+      throw codedError("EBUSY", "the agent session is archived or revoked");
+    return v;
+  }
+
+  /**
+   * Archives a trigger's new session after its time (statewalker/statewalker-root#207), as the user
+   * would: revoked, then marked archived with its sub-agents. Answers the sessions to stop.
+   */
+  async archiveTriggeredSession(
+    workspace: string,
+    userCapability: string,
+    id: string,
+  ): Promise<string[]> {
+    const row = this.#one<AgentRow>(
+      "SELECT * FROM agent_sessions WHERE id = ? AND workspace = ?",
+      id,
+      workspace,
+    );
+    if (!row) return [];
+    const us = this.#triggerUserSession(workspace, userCapability);
+    await this.#revokeTree(us, row);
+    const now = Date.now();
+    const tree = this.#tree(id);
+    for (const sid of tree)
+      this.#o.sql.exec(
+        `INSERT INTO agent_session_meta VALUES (?, '{}', ?)
+          ON CONFLICT (id) DO UPDATE SET archived = COALESCE(agent_session_meta.archived, excluded.archived)`,
+        sid,
+        now,
+      );
+    return tree;
+  }
+
+  /** One trigger API call in the token's workspace; the owner's index follows what changed. */
+  async triggers(token: string, call: TriggersCall): Promise<unknown> {
+    const us = await this.#userSession(token);
+    const ws = this.#o.workspace(us.workspace);
+    if (!ws.triggers) throw codedError("ENOSYS", "this deployment has no triggers");
+    const target = (call.args[call.op === "createTrigger" ? 1 : 2] as { target?: unknown })?.target;
+    const owner = (call.args[1] as { owner?: unknown } | undefined)?.owner;
+    // A session target of the caller's own trigger is one of their sessions, unattended, in the
+    // project (a service account's is checked when it fires).
+    if (
+      (call.op === "createTrigger" || call.op === "updateTrigger") &&
+      typeof target === "string" &&
+      target.startsWith("session:") &&
+      (call.op === "updateTrigger" || owner === undefined || owner === this.#o.user)
+    ) {
+      const row = this.#one<AgentRow & AgentMetaRow>(
+        `${INDEX} WHERE a.id = ? AND a.workspace = ?`,
+        target.slice("session:".length),
+        us.workspace,
+      );
+      if (row) {
+        const v = view(row);
+        if (v.project !== call.args[0])
+          throw codedError("EINVAL", "the target session is in another project");
+        if (!v.unattended) throw codedError("EINVAL", "the target session is not unattended");
+        if (v.archived || v.revoked)
+          throw codedError("EINVAL", "the target session is archived or revoked");
+      } else if (call.op === "createTrigger")
+        throw codedError("EINVAL", "the target session is not one of yours");
+    }
+    const out = (await ws.triggers(us.capability, call)) as Record<string, unknown>;
+    if (call.op === "createTrigger" || call.op === "updateTrigger") {
+      const v = out as unknown as OwnTriggerEntry & { owner: string };
+      await this.#indexFor(v.owner, us.workspace, {
+        id: v.id,
+        workspace: us.workspace,
+        project: v.project,
+        name: v.name,
+        kind: v.kind,
+      });
+    }
+    if (call.op === "deleteTrigger") {
+      await this.#indexFor(String(out.owner), us.workspace, {
+        id: String(out.id),
+        deleted: true,
+      });
+      return { deleted: true };
+    }
+    return out;
+  }
+
+  async #indexFor(owner: string, workspace: string, change: TriggerIndexChange): Promise<void> {
+    if (owner === this.#o.user) this.indexTrigger(workspace, change);
+    else await this.#o.indexTriggerOf?.(owner, workspace, change);
+  }
+
+  /** Records a change of a trigger this user owns in their index. */
+  indexTrigger(workspace: string, change: TriggerIndexChange): void {
+    if ("deleted" in change) {
+      this.#o.sql.exec("DELETE FROM trigger_index WHERE id = ?", change.id);
+      return;
+    }
+    this.#o.sql.exec(
+      "INSERT OR REPLACE INTO trigger_index VALUES (?, ?, ?, ?, ?)",
+      change.id,
+      workspace,
+      change.project,
+      change.name,
+      change.kind,
+    );
+  }
+
+  /** The triggers the caller owns, in every workspace, from their index. */
+  async listOwnTriggers(token: string): Promise<{ triggers: OwnTriggerEntry[] }> {
+    await this.claims(token);
+    const rows = this.#o.sql
+      .exec("SELECT * FROM trigger_index ORDER BY workspace, project, name")
+      .toArray() as unknown as OwnTriggerEntry[];
+    return {
+      triggers: rows.map((r) => ({
+        id: String(r.id),
+        workspace: String(r.workspace),
+        project: String(r.project),
+        name: String(r.name),
+        kind: r.kind,
+      })),
+    };
+  }
+
+  async #startAgentSession(
+    us: UserSessionRow,
+    id: string,
+    req: StartSessionRequest,
+    mode?: string,
+  ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
     // Membership, the agent and the session's definitions, decided and pinned by the workspace.
     const pinned = await this.#o.workspace(us.workspace).pinDefinitions(us.capability, {
       session: id,
@@ -681,6 +905,7 @@ export class UserSessions implements UserPort {
       project: req.project,
       agent: pinned.agent,
       unattended: req.unattended === true,
+      ...(mode !== undefined ? { mode } : {}),
     });
     const row: AgentRow = {
       id,

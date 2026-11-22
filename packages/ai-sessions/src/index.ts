@@ -10,6 +10,7 @@ export {
   type CancelApprovals,
   type EffectOf,
   type OnTopics,
+  type OnTurnEnded,
   type RecordApprovals,
   type RevertFiles,
   type RunAction,
@@ -178,6 +179,14 @@ export {
 export { bearerOf, bodyOf, errorResponse, handleSessionRest, ndjsonResponse } from "./rest.js";
 export { type SessionRpcConnection, serveSessionRpc, sessionRpcClient } from "./rpc.js";
 export {
+  CATCH_UP_MS,
+  checkSchedule,
+  dueFires,
+  nextFire,
+  ON_TIME_MS,
+  parseCron,
+} from "./schedule.js";
+export {
   DEFAULT_SEARCH_LIMIT,
   fencedData,
   type IndexedSession,
@@ -206,6 +215,28 @@ export {
   snippet,
 } from "./search.js";
 export type { SqlLike } from "./sql.js";
+export {
+  type CreatedTrigger,
+  type FireResult,
+  type FireSource,
+  HOOK_SIGNATURE_HEADER,
+  HOOK_TIMESTAMP_HEADER,
+  HOOK_WINDOW_MS,
+  hookSignature,
+  type OwnTriggerEntry,
+  sameText,
+  TRIGGERS_METHODS,
+  type TriggerFire,
+  type TriggerInput,
+  type TriggerKind,
+  type TriggerPatch,
+  type TriggerSchedule,
+  type TriggersApi,
+  type TriggersCall,
+  type TriggerTarget,
+  type TriggerView,
+  triggerMessage,
+} from "./triggers.js";
 export { sessionOfTurn } from "./turns.js";
 export {
   type ChatRequestBody,
@@ -225,6 +256,8 @@ export {
 } from "./ui-stream.js";
 export {
   DEFAULT_MODE,
+  type TriggeredSessionRequest,
+  type TriggerIndexChange,
   UserSessions,
   type UserSessionsOptions,
   type WorkspaceGrants,

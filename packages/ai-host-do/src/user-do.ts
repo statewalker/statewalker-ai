@@ -24,6 +24,9 @@ import {
   type StartSessionRequest,
   type SubAgentRequest,
   type TasksCall,
+  type TriggeredSessionRequest,
+  type TriggerIndexChange,
+  type TriggersCall,
   type UsageQuery,
   type UsageRecordsQuery,
   type UsageReport,
@@ -38,6 +41,7 @@ import {
   ledgerOptions,
   nameOf,
   profilesOf,
+  userOf,
   verifyToken,
   workspaceOf,
 } from "./env.js";
@@ -106,6 +110,7 @@ export class User extends DurableObject<Env> {
           manageLimits: (capability, call) => ws.manageLimits(capability, call),
           usageRecords: (capability, query) => ws.usageExport(capability, query),
           tasks: (capability, call) => ws.tasks(capability, call),
+          triggers: (capability, call) => ws.triggers(capability, call),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -122,6 +127,9 @@ export class User extends DurableObject<Env> {
       modes: deploymentModes(env),
       approvalTtlMs: approvalTtlMs(env),
       memoryCaps: env.MEMORY_CAPS,
+      // A service account's index of triggers, told by the User DO of whoever changed one (#207).
+      indexTriggerOf: (owner, workspace, change) =>
+        userOf(env, owner).indexTrigger(workspace, change),
       // The User DO's one clock: approvals expire by it, and limits count by it.
       now: () => this.#limits.clock.now(),
     });
@@ -345,6 +353,45 @@ export class User extends DurableObject<Env> {
   async memory(token: string, call: MemoryCall) {
     await this.#reachable();
     return this.#sessions.memory(token, call);
+  }
+
+  /** One trigger API call of the caller (statewalker/statewalker-root#207). */
+  async triggers(token: string, call: TriggersCall) {
+    await this.#reachable();
+    return this.#sessions.triggers(token, call);
+  }
+
+  async listOwnTriggers(token: string) {
+    await this.#reachable();
+    return this.#sessions.listOwnTriggers(token);
+  }
+
+  /** A change of a trigger this user owns, for their index (another User DO tells it). */
+  async indexTrigger(workspace: string, change: TriggerIndexChange) {
+    this.#sessions.indexTrigger(workspace, change);
+  }
+
+  /** A trigger's new session as this user, asked by that session's DO (#207). */
+  async startTriggeredSession(
+    id: string,
+    workspace: string,
+    userCapability: string,
+    req: TriggeredSessionRequest,
+  ) {
+    await this.#reachable();
+    return this.#sessions.startTriggeredSession(id, workspace, userCapability, req);
+  }
+
+  /** Whether a trigger may append to this session of the user's (#207). */
+  async triggerTarget(workspace: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.triggerTarget(workspace, id);
+  }
+
+  /** Archives a trigger's session after its time (#207): the sessions to stop. */
+  async archiveTriggeredSession(workspace: string, userCapability: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.archiveTriggeredSession(workspace, userCapability, id);
   }
 
   /** One task API call of the caller (statewalker/statewalker-root#206). */

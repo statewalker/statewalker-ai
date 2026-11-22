@@ -136,6 +136,8 @@ export async function handleSessionRest(
         },
       });
     if (route === "DELETE /me/profile") return api().eraseProfile();
+    const triggers = await triggerRoute(request, url, parts, api);
+    if (triggers !== NOT_A_ROUTE) return triggers;
     const tasks = await taskRoute(request, url, parts, api, options);
     if (tasks !== NOT_A_ROUTE) return tasks;
     const memory = memoryRoute(parts);
@@ -307,6 +309,47 @@ const numberParam = (url: URL, name: string): number | undefined => {
   const v = url.searchParams.get(name);
   return v === null || v === "" ? undefined : Number(v);
 };
+
+/**
+ * The trigger API's routes (statewalker/statewalker-root#207): `/v1/projects/{p}/triggers[/{id}
+ * [/fires]]`, `POST /v1/triggers/{id}/fire` and `GET /v1/triggers` (the caller's own). Webhooks
+ * (`/v1/hooks/{id}`) are served by the host's entry worker, before any token.
+ */
+async function triggerRoute(
+  request: Request,
+  url: URL,
+  parts: string[],
+  api: () => SessionApi,
+): Promise<unknown> {
+  const m = request.method;
+  if (parts[1] === "triggers") {
+    if (parts.length === 2 && m === "GET") return api().listOwnTriggers();
+    if (parts.length === 4 && parts[2] && parts[3] === "fire" && m === "POST")
+      return api().fireTrigger(parts[2], (await bodyOf(request)) as never);
+    return NOT_A_ROUTE;
+  }
+  if (parts[1] !== "projects" || !parts[2] || parts[3] !== "triggers") return NOT_A_ROUTE;
+  const project = parts[2];
+  const id = parts[4];
+  if (parts.length === 4) {
+    if (m === "GET") return api().listTriggers(project);
+    if (m === "POST")
+      return created(await api().createTrigger(project, (await bodyOf(request)) as never));
+    return NOT_A_ROUTE;
+  }
+  if (!id) return NOT_A_ROUTE;
+  if (parts.length === 5) {
+    if (m === "GET") return api().getTrigger(project, id);
+    if (m === "PATCH") return api().updateTrigger(project, id, (await bodyOf(request)) as never);
+    if (m === "DELETE") return api().deleteTrigger(project, id);
+    return NOT_A_ROUTE;
+  }
+  if (parts.length === 6 && parts[5] === "fires" && m === "GET") {
+    const limit = numberParam(url, "limit");
+    return api().triggerFires(project, id, limit === undefined ? {} : { limit });
+  }
+  return NOT_A_ROUTE;
+}
 
 /**
  * The task API's routes (statewalker/statewalker-root#206): `/v1/projects/{p}/tasks[/{id}/reply]`,

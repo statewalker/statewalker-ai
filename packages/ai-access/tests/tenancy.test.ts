@@ -124,6 +124,19 @@ describe("unattended agent sessions", () => {
     expect(await authority.agentSessionOf(forged)).toMatchObject({ unattended: false });
   });
 
+  it("a triggered session's mode is fixed in its capability, and no later block changes it", async () => {
+    const authority = WorkspaceAuthority.fromStored(WorkspaceAuthority.generate());
+    const user = authority.mintUser("ann");
+    expect((await authority.agentSessionOf(attenuateForAgentSession(user, grant))).mode).toBe(
+      undefined,
+    );
+    const planned = attenuateForAgentSession(user, { ...grant, unattended: true, mode: "plan" });
+    expect(await authority.agentSessionOf(planned)).toMatchObject({ mode: "plan" });
+    const changed = Biscuit.fromBase64(planned).attenuate('session_mode("bypassPermissions");');
+    expect(await authority.agentSessionOf(changed.toBase64())).toMatchObject({ mode: "plan" });
+    expect(() => attenuateForAgentSession(user, { ...grant, mode: "no mode!" })).toThrow(/EINVAL/);
+  });
+
   it("turns an ask into a deny with a reason when unattended, and leaves every other verdict", () => {
     const ask = { verdict: "ask" as const, source: "mode", reason: "default mode asks for writes" };
     expect(settleAsk(ask, { unattended: false })).toEqual(ask);

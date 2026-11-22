@@ -92,6 +92,8 @@ function sessionApi(env: Env, token: string) {
       manageLimits: async (t, call) => (await user()).manageLimits(t, call),
       usageRecords: async (t, q) => (await user()).usageRecords(t, q),
       tasks: async (t, call) => (await user()).tasks(t, call),
+      triggers: async (t, call) => (await user()).triggers(t, call),
+      listOwnTriggers: async (t) => (await user()).listOwnTriggers(t),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -286,6 +288,41 @@ async function operatorRoutes(request: Request, env: Env, path: string) {
   return ndjsonResponse(await pageOf(0), pageOf);
 }
 
+/** A webhook body's hard cap before anything is read further; the payload cap (64 KB) is the trigger's. */
+const MAX_HOOK_BODY = 1024 * 1024;
+
+/**
+ * A trigger's webhook (statewalker/statewalker-root#207): `POST /v1/hooks/{id}`, the id naming its
+ * workspace (`<workspace>.<random>`). The Workspace DO checks the signature (or the owner service
+ * account's token) before anything else; 202 with the task (and the fire, when one started).
+ */
+async function hookRoute(request: Request, env: Env, path: string) {
+  const m = /^\/v1\/hooks\/([^/]+)$/.exec(path);
+  if (!m) return undefined;
+  if (request.method !== "POST") throw codedError("EINVAL", "a webhook takes POST");
+  const id = decodeURIComponent(String(m[1]));
+  const workspace = id.slice(0, Math.max(0, id.lastIndexOf(".")));
+  if (!workspace || !workspacesOf(env).includes(workspace))
+    throw codedError("ENOENT", "no such webhook");
+  const length = Number(request.headers.get("content-length") ?? 0);
+  if (length > MAX_HOOK_BODY) throw codedError("E2BIG", "the request body is too large");
+  const body = await request.text();
+  if (body.length > MAX_HOOK_BODY) throw codedError("E2BIG", "the request body is too large");
+  const headers: Record<string, string> = {};
+  request.headers.forEach((v, k) => {
+    if (k.startsWith("x-trigger-")) headers[k] = v;
+  });
+  const bearer = bearerOf(request);
+  const key = request.headers.get("idempotency-key");
+  const result = await workspaceOf(env, workspace).hook(id, {
+    body,
+    headers,
+    ...(bearer ? { bearer } : {}),
+    ...(key !== null ? { idempotencyKey: key } : {}),
+  });
+  return json(result, 202);
+}
+
 /** The session API's RPC channel: a WebSocket this Worker accepts and serves until it closes. */
 function rpcChannel(request: Request, env: Env): Response {
   if (request.headers.get("upgrade")?.toLowerCase() !== "websocket")
@@ -330,6 +367,8 @@ export default {
         blockSize: blockSizeOf(env),
       });
       if (files) return files;
+      const hook = await hookRoute(request, env, path);
+      if (hook) return hook;
       const token = await tokenRoutes(request, env, path);
       if (token) return token;
       const operator = await operatorRoutes(request, env, path);
