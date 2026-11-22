@@ -1564,6 +1564,9 @@ export class Workspace extends DurableObject<Env> {
         const key = String(call.idempotencyKey ?? "");
         if (!/^[A-Za-z0-9_-]{1,128}$/.test(key))
           throw codedError("EINVAL", "a task needs an idempotency key");
+        // Taken before the POST: a revoke landing while it is out finds no task to cancel yet
+        // (statewalker/statewalker-ai#84), so the answer is checked against them below.
+        const revocations = await this.#authority.revocationIdsOf(agentCapability);
         const got = answer(
           await this.#uhpSend(facts, server, "POST", "/v1/responses", {
             body,
@@ -1572,7 +1575,7 @@ export class Workspace extends DurableObject<Env> {
           }),
         );
         const id = (got.json as { id?: unknown })?.id;
-        if (got.status >= 200 && got.status < 300 && isUhpId(id))
+        if (got.status >= 200 && got.status < 300 && isUhpId(id)) {
           sql.exec(
             "INSERT OR REPLACE INTO uhp_active VALUES (?, ?, ?, ?, ?, ?)",
             id,
@@ -1580,8 +1583,22 @@ export class Workspace extends DurableObject<Env> {
             facts.session,
             facts.project,
             facts.user,
-            JSON.stringify(await this.#authority.revocationIdsOf(agentCapability)),
+            JSON.stringify(revocations),
           );
+          // Revoked (or archived) while the POST was out: the task is cancelled here, where the
+          // token is, and the session is refused like at its next use.
+          if (this.#revokedAny(revocations)) {
+            done(id);
+            try {
+              await this.#uhpSend(facts, server, "POST", `/v1/responses/${id}/cancel`, {
+                uncharged: true,
+              });
+            } catch (e) {
+              console.warn(`UHP cancel of ${id}: ${String((e as Error)?.message ?? e)}`);
+            }
+            throw codedError("EACCES", "the capability was revoked");
+          }
+        }
         return got;
       }
       case "get": {
@@ -1620,6 +1637,19 @@ export class Workspace extends DurableObject<Env> {
       default:
         throw codedError("EINVAL", "no such UHP call");
     }
+  }
+
+  /** Whether any of these revocation ids is on the revocation list. */
+  #revokedAny(ids: readonly string[]): boolean {
+    return (
+      ids.length > 0 &&
+      this.ctx.storage.sql
+        .exec(
+          `SELECT 1 FROM revocations WHERE id IN (SELECT value FROM json_each(?)) LIMIT 1`,
+          JSON.stringify(ids),
+        )
+        .toArray().length > 0
+    );
   }
 
   /** Sends UHP cancel to every remote task a revoked block stopped. */

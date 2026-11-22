@@ -8,7 +8,9 @@
 //   anything else           completes with "REMOTE: <text>"
 // An `input_response` completes with "ANSWER: <answer>" (a secret's answer is kept in `secrets`
 // and never echoed). A task completes on the `polls`-th read of it (default 1). `failNext` answers
-// that many POST /v1/responses with 500 before handling one. Harnesses: chrn_coder and chrn_other.
+// that many POST /v1/responses with 500 before handling one. `hold()` keeps every POST
+// /v1/responses unanswered (recorded, not handled) until the function it returns is called.
+// Harnesses: chrn_coder and chrn_other.
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -40,6 +42,8 @@ export interface FakeUhp {
   secrets: string[];
   polls: number;
   failNext: number;
+  /** Holds POST /v1/responses unanswered until the returned function is called. */
+  hold(): () => void;
   /** Resolves once a request whose body includes `text` arrived. */
   received(text: string): Promise<void>;
   close(): Promise<void>;
@@ -52,6 +56,7 @@ export async function fakeUhp(token: string): Promise<FakeUhp> {
   const files = new Map<string, string>();
   const keys = new Map<string, string>();
   const waiters: { text: string; ok: () => void }[] = [];
+  let held: Promise<void> | undefined;
   const state: FakeUhp = {
     url: "",
     host: "127.0.0.1",
@@ -61,6 +66,16 @@ export async function fakeUhp(token: string): Promise<FakeUhp> {
     secrets: [],
     polls: 1,
     failNext: 0,
+    hold: () => {
+      let release = () => {};
+      held = new Promise<void>((ok) => {
+        release = () => {
+          held = undefined;
+          ok();
+        };
+      });
+      return release;
+    },
     received: (text) =>
       state.requests.some((r) => r.body?.includes(text))
         ? Promise.resolve()
@@ -261,6 +276,7 @@ export async function fakeUhp(token: string): Promise<FakeUhp> {
         waiters.splice(waiters.indexOf(w), 1);
         w.ok();
       }
+    while (held && request.method === "POST" && request.path === "/v1/responses") await held;
     const out = handle(request);
     res.writeHead(out.status, {
       "content-type": out.type ?? "application/json",

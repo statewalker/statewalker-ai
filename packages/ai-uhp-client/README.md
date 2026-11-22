@@ -10,7 +10,10 @@ are written back through the capability as one change set, a `write` under the m
 server or secret of the harness's crosses but the server's own token. Its items are mirrored into
 the session marked `external`, which the risk classifier never sees; a question
 (`input_request`) becomes an approval (a question for free text); cancelling, archiving or revoking
-the session sends UHP cancel.
+the session sends UHP cancel. Each task continues the remote session from the response of the last
+task on the turn's path (`previous_response_id`): after a rewind, a branch switch or an edit, the
+remote session follows the active path; with no task on the path (rewound before the first one, or
+a fork) the task starts a fresh remote session, with the files copied in again.
 
 It holds `RemoteCore` (the turn of a remote session, its tasks, polls, questions and write-back in
 the DO's SQLite), the parts of the protocol it uses, the server registration format and the
