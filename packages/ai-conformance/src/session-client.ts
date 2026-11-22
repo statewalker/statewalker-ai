@@ -28,7 +28,7 @@ export interface Item {
   seq: number;
   id: string;
   turn: string;
-  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback";
+  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback" | "mode_decision";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -53,6 +53,16 @@ export interface Item {
   from?: string;
   to?: string;
   reason?: string;
+  /** A `mode_decision` item (auto mode): the step that decided, and its verdict. */
+  step?: "rule" | "safe" | "classifier" | "approval" | "mode";
+  verdict?: "allow" | "ask" | "deny";
+  /** A `mode_decision` item: the action decided. */
+  action?: { method: string; path: string; target?: string; size?: number };
+  /** A classifier's decision: its model and how long it took. */
+  model?: string;
+  latency_ms?: number;
+  /** Set on the denial after which the session fell back to this mode. */
+  fallback?: string;
 }
 
 /** One request to a model, metered. */
@@ -82,7 +92,7 @@ export interface Approval {
   permission: string;
   /** Why the mode or a rule asks. */
   reason: string;
-  status: "pending" | "allowed" | "denied" | "expired";
+  status: "pending" | "allowed" | "denied" | "expired" | "blocked";
   created: number;
   expires: number;
 }
@@ -129,6 +139,8 @@ export interface UserSession {
   mode: string;
   /** The pending approvals of the user's agent sessions in this workspace. */
   approvals?: Approval[];
+  /** Actions auto mode's risk classifier blocked recently: approving one retries it. */
+  blocked?: Approval[];
 }
 
 export interface AgentSession {

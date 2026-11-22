@@ -141,6 +141,12 @@ export class User extends DurableObject<Env> {
     return this.#sessions.recordApprovals(session, requests);
   }
 
+  /** Told by an agent session's DO: an action auto mode's risk classifier blocked. */
+  async recordBlocked(session: string, request: ApprovalRequest) {
+    await this.#reachable();
+    return this.#sessions.recordBlocked(session, request);
+  }
+
   /** Told by an agent session's DO: start a sub-agent of it (the harness tool `agent.start`). */
   async startSubAgent(parent: string, capability: string, req: SubAgentRequest) {
     await this.#reachable();
