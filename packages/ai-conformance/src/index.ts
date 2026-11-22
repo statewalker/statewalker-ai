@@ -26,9 +26,11 @@ export {
   type Approval,
   type ApprovalAnswer,
   advanceUserClock,
+  type ChatTransportLike,
   type EventsPage,
   type EventsQuery,
   eventOf,
+  expectUiStream,
   flueStorage,
   type Item,
   type ItemsPage,
@@ -69,7 +71,9 @@ export {
   sseFrames,
   TERMINAL_EVENTS,
   type Turn,
+  type UIMessageChunk,
   type UserSession,
+  uiChunks,
 } from "./session-client.js";
 export {
   checkThreatTable,

@@ -3,6 +3,7 @@
 import { codedError, retryAfterOf, statusOf } from "@statewalker/ai-access";
 import type { SessionApi, SessionsQuery } from "./api.js";
 import { eventStream } from "./sse.js";
+import { chatPlan, resumePlan, uiMessageStreamResponse } from "./ui-stream.js";
 
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), {
@@ -121,6 +122,28 @@ export async function handleSessionRest(
           turn: url.searchParams.get("turn") ?? undefined,
           keepAliveMs: options.keepAliveMs,
         });
+      }
+    }
+    // The AI SDK UI message stream: `useChat` posts to /chat and resumes at /chat/<chat id>/stream
+    // (the session in the path is the one followed; the chat id is the UI's).
+    if (collection === "sessions" && id && sub === "chat") {
+      if (request.method === "POST" && parts.length === 4) {
+        const plan = await chatPlan(api(), id, (await bodyOf(request)) as never);
+        return uiMessageStreamResponse(api(), id, plan, { keepAliveMs: options.keepAliveMs });
+      }
+      if (
+        request.method === "GET" &&
+        parts.at(-1) === "stream" &&
+        (parts.length === 5 || parts.length === 6)
+      ) {
+        const cursor = request.headers.get("last-event-id") ?? url.searchParams.get("since");
+        const turn = url.searchParams.get("turn");
+        const plan = await resumePlan(api(), id, {
+          ...(turn ? { turn } : {}),
+          ...(cursor !== null && cursor !== "" ? { since: Number(cursor) } : {}),
+        });
+        if (!plan) return new Response(null, { status: 204 });
+        return uiMessageStreamResponse(api(), id, plan, { keepAliveMs: options.keepAliveMs });
       }
     }
     if (collection === "sessions" && id && sub === "items" && parts.length === 5)

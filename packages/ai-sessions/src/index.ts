@@ -124,6 +124,21 @@ export { type SessionRpcConnection, serveSessionRpc, sessionRpcClient } from "./
 export type { SqlLike } from "./sql.js";
 export { sessionOfTurn } from "./turns.js";
 export {
+  type ChatRequestBody,
+  type ChatTransportLike,
+  chatPlan,
+  resumePlan,
+  sessionChatTransport,
+  UI_MESSAGE_STREAM_HEADERS,
+  type UIMessageChunk,
+  type UiStreamApi,
+  type UiStreamFrame,
+  type UiStreamPlan,
+  uiMessageChunks,
+  uiMessageFrames,
+  uiMessageStreamResponse,
+} from "./ui-stream.js";
+export {
   DEFAULT_MODE,
   UserSessions,
   type UserSessionsOptions,
