@@ -126,6 +126,9 @@ One message, tool call, tool result, decision or approval in an agent session.
 An agent session's durable, numbered record of what happened in it (turns queued, started and ended, items created); every stream of the session is a cursor read of it, so a reader going away never cancels anything.
 _Avoid_: event stream (a stream is one read of the log)
 
+**Projection**:
+Another API's view of the session API, read from the same event log and methods: the OpenAI projection, the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it).
+
 **Summary**:
 A compacted stand-in for a range of a session's items or lower summaries; the items themselves are kept.
 
@@ -213,6 +216,12 @@ One metered event, naming the workspace, project, user, session and turn it belo
 **Limit**:
 A cap on one meter at one level (deployment, workspace, project, user in a workspace, user across the deployment, or agent session), optionally per period. A narrower level can only lower it; the tightest limit applies.
 _Avoid_: quota (as a separate concept), budget (except for model spend)
+
+**Reservation**:
+The worst case of a model request (its input plus `max_tokens`), held against every limit on its path before the model is asked and settled to the real cost after, so spend never overshoots a limit.
+
+**Increment**:
+What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.
 
 ### Policy
 

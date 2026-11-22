@@ -3,15 +3,17 @@
 // caller's access token, checked each time by the caller's User DO (statewalker/statewalker-root#157).
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
 
-import type {
-  FilesRpcMethod,
-  ModelLevel,
-  ModelsConfig,
-  ModelUsage,
+import {
+  type FilesRpcMethod,
+  type Limit,
+  type ModelLevel,
+  type ModelsConfig,
+  type ModelUsage,
+  parseLimits,
 } from "@statewalker/ai-environment";
 import { sessionOfTurn } from "./turns.js";
 
-export type { ApprovalRequest, ModelsConfig, ModelUsage };
+export type { ApprovalRequest, Limit, ModelsConfig, ModelUsage };
 
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
@@ -129,7 +131,14 @@ export interface ProfileView {
 
 /** What a turn adds to its session, in order. */
 export interface ItemInput {
-  kind: "message" | "tool_call" | "tool_result" | "approval" | "model_fallback" | "mode_decision";
+  kind:
+    | "message"
+    | "tool_call"
+    | "tool_result"
+    | "approval"
+    | "model_fallback"
+    | "mode_decision"
+    | "limit_warning";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -137,6 +146,8 @@ export interface ItemInput {
   args?: unknown;
   output?: string;
   isError?: boolean;
+  /** A `tool_result` answering an approval the user denied. */
+  denied?: true;
   /** The approval an `approval` item waits on, or a resumed `tool_result` answers. */
   approval?: string;
   /** An `approval` item's request (the gate's). */
@@ -177,6 +188,24 @@ export interface ItemInput {
   latency_ms?: number;
   /** Set on the denial after which the session fell back to this mode. */
   fallback?: string;
+  /**
+   * A `limit_warning` item (statewalker/statewalker-root#179): the limit whose `warn_at` share the
+   * turn's usage crossed, `{meter, level, target, limit_level, period, used, value, warn_at}`.
+   */
+  warning?: LimitWarningView;
+}
+
+/** A limit whose warning share usage crossed (statewalker/statewalker-root#179). */
+export interface LimitWarningView {
+  meter: string;
+  level: string;
+  target: string;
+  /** The limit's own level: a deployment ceiling held by a workspace says `deployment`. */
+  limit_level: string;
+  period: string;
+  used: number;
+  value: number;
+  warn_at: number;
 }
 
 /** One decision of auto mode on a change, as the gate reports it to the agent session. */
@@ -202,7 +231,7 @@ export interface StoredAction {
    * A file change, a database action (`db`: the path is the database), or a tool call (`tool`: the
    * path is the tool's name, the content its arguments as JSON).
    */
-  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool";
+  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool" | "limit";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -227,18 +256,32 @@ export type TurnStatus =
   | "completed"
   | "failed"
   | "cancelled"
-  | "interrupted";
+  | "interrupted"
+  /** Ended before its answer was complete, by a limit (statewalker/statewalker-root#179). */
+  | "incomplete";
+
+/** The limit a turn stopped at (statewalker/statewalker-root#179). */
+export interface StopLimit {
+  meter: string;
+  level: string;
+  target: string;
+  value: number;
+  period: string;
+  used: number;
+}
 
 /**
  * Why a turn stopped. A turn that ended without completing (`cancelled`, `interrupted`,
- * `failed`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
+ * `failed`, `incomplete`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
  */
 export interface StopReason {
-  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval";
-  /** What went wrong, for `error`. */
+  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval" | "budget";
+  /** What went wrong, for `error`; which limit, for `budget`. */
   message?: string;
   /** The approvals a `waiting` turn waits on. */
   approval_ids?: string[];
+  /** The model spend limit a `budget` stop names. */
+  limit?: StopLimit;
 }
 
 /** A model the turn ran on other than the one asked for (statewalker/statewalker-root#108). */
@@ -262,6 +305,8 @@ export interface TurnView {
   model_substitution?: ModelSubstitution;
   /** Fields of the message request the API did not use. */
   ignored?: string[];
+  /** The approval this turn continues the session with: a turn queued by answering it. */
+  answers?: string;
   created: number;
   started?: number;
   ended?: number;
@@ -276,6 +321,7 @@ export const TERMINAL_TURN_STATUSES: readonly TurnStatus[] = [
   "failed",
   "cancelled",
   "interrupted",
+  "incomplete",
 ];
 
 export interface SendMessageRequest {
@@ -368,6 +414,12 @@ export interface StartSessionRequest {
    * the caller may use (statewalker/statewalker-root#105).
    */
   model?: string;
+  /**
+   * The session's own limits (statewalker/statewalker-root#179): `[{meter, value, period?,
+   * on_exceed?, warn_at?, increment?}]`, at session level. They only add to the limits of every
+   * broader level, so the tightest applies.
+   */
+  limits?: Limit[];
 }
 
 /** A model as the session API lists it for a project and a user. */
@@ -426,6 +478,10 @@ export interface PinnedDefinitions {
    * order in which a skill name two plugins share goes to the first.
    */
   plugins?: string[];
+  /** The session limits of the deployment, the workspace and the project (#179). */
+  limits?: Limit[];
+  /** Whether the session's models include a user's own provider (their own key, #179). */
+  ownKeys?: boolean;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -464,6 +520,16 @@ export interface DeleteSecretRequest extends SecretScope {
 
 /** The session API, as one caller (one access token) sees it. */
 export interface SessionApi {
+  /**
+   * Holds one concurrent stream of the caller (an SSE stream, a long poll) against the limits on
+   * streams: its id, or ELIMIT (429) over one (statewalker/statewalker-root#179). Not served over
+   * RPC: the API's own streams hold and release.
+   */
+  holdStream(): Promise<string>;
+  /** Releases a held stream. */
+  releaseStream(id: string): Promise<void>;
+  /** `readEvents` for a stream that holds its own slot (an SSE stream): its long polls hold none. */
+  readHeldEvents(sessionId: string, query?: EventsQuery): Promise<EventsPage>;
   /** Opens the caller's user session in the workspace, or resumes it. */
   me(): Promise<UserSessionView>;
   /** Starts an agent session in a project the caller is a member of. */
@@ -581,6 +647,15 @@ export interface AgentSessionConfig {
   tools?: string[];
   /** A sub-agent's own mode, beside the user session's: the gate applies the stricter. */
   mode?: string;
+  /**
+   * The session's limits (statewalker/statewalker-root#179): the broader levels' session
+   * defaults and the start request's own, all counted in the agent session's DO.
+   */
+  limits?: Limit[];
+  /** Whether its models include the user's own provider: own-key spend is reserved with the user. */
+  ownKeys?: boolean;
+  /** No one answers approvals: a limit's ask denies. */
+  unattended?: boolean;
 }
 
 /** What the harness tool `agent.start` asks for: a child session of the calling session. */
@@ -632,6 +707,8 @@ export interface UserPort {
   getModelConfig(token: string): Promise<ModelsConfig>;
   /** The configuration is checked by the workspace (EINVAL). */
   setModelConfig(token: string, config: unknown): Promise<ModelsConfig>;
+  holdStream(token: string): Promise<string>;
+  releaseStream(token: string, id: string): Promise<void>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -744,7 +821,10 @@ function modelName(model: unknown): string {
 }
 
 function startRequest(req: unknown): StartSessionRequest {
-  const { project, agent, metadata, unattended, model } = (req ?? {}) as Record<string, unknown>;
+  const { project, agent, metadata, unattended, model, limits } = (req ?? {}) as Record<
+    string,
+    unknown
+  >;
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
   if (agent !== undefined && (typeof agent !== "string" || !AGENT_ID.test(agent)))
@@ -757,7 +837,18 @@ function startRequest(req: unknown): StartSessionRequest {
     metadata: metadataOf(metadata),
     ...(unattended ? { unattended: true } : {}),
     ...(model !== undefined ? { model: modelName(model) } : {}),
+    ...(limits !== undefined ? { limits: sessionLimits(limits) } : {}),
   };
+}
+
+/** A start request's limits: session level, each checked (EINVAL names the first problem). */
+function sessionLimits(limits: unknown): Limit[] {
+  if (!Array.isArray(limits) || limits.length > 32)
+    throw codedError("EINVAL", "limits is a list of at most 32 limits");
+  const parsed = parseLimits(limits.map((l) => ({ ...(l ?? {}), level: "session" })));
+  const problem = parsed.problems.find((p) => !p.includes("its period is total"));
+  if (problem) throw codedError("EINVAL", problem);
+  return parsed.limits.map(({ target: _t, ...l }) => l);
 }
 
 function modelsQuery(query: unknown): ModelsQuery {
@@ -936,8 +1027,22 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     async readEvents(sessionId, query) {
       const session = await own(sessionId);
+      const q = (query ?? {}) as EventsQuery;
+      // A long poll is a stream while it waits (#179).
+      if (!(Number(q.wait) > 0)) return ports.agent(session.id).events(q);
+      const held = await ports.user.holdStream(token);
+      try {
+        return await ports.agent(session.id).events(q);
+      } finally {
+        await ports.user.releaseStream(token, held).catch(() => {});
+      }
+    },
+    async readHeldEvents(sessionId, query) {
+      const session = await own(sessionId);
       return ports.agent(session.id).events((query ?? {}) as EventsQuery);
     },
+    holdStream: () => ports.user.holdStream(token),
+    releaseStream: async (id) => ports.user.releaseStream(token, String(id)),
     async mcp(sessionId, message) {
       const checked = mcpMessage(message);
       const session = await own(sessionId);

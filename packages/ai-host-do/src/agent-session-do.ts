@@ -10,11 +10,16 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
+import { approvalId, codeOf, settleAsk } from "@statewalker/ai-access";
 import { TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
 import {
   approvalAware,
   approvalOf,
+  errorMessage,
   filesOverRpc,
+  limitOfMessage,
+  type ModelCall,
+  type ModelResponse,
   runStoredCall,
   type StoredCall,
 } from "@statewalker/ai-environment";
@@ -35,9 +40,11 @@ import {
   createModelSummarizer,
   type EventsQuery,
   type GateDecisionInput,
+  type ItemInput,
   type ItemsQuery,
   type McpMessage,
   parseCompaction,
+  type TurnRun,
 } from "@statewalker/ai-sessions";
 import {
   type DatabaseHost,
@@ -47,8 +54,11 @@ import {
   runStoredDatabaseCall,
 } from "./db-tools.js";
 import { agentOf, blockSizeOf, type Env, userOf } from "./env.js";
+import { refusal, SessionLimits, type WarningView, warningView } from "./limits-host.js";
 import { answerMcp, executionModeOf, harnessDefinition, pluginHostTool } from "./session-tools.js";
 import { AGENT_START, agentStartTool } from "./sub-agents.js";
+
+type OnApproval = TurnRun["onApproval"];
 
 /**
  * Runs a sub-agent's first turn: starts its DO, sends it the message, and waits for the turn to
@@ -104,6 +114,8 @@ function databaseHost(env: Env, config: AgentSessionConfig, capability: string):
 
 export class AgentSession extends DurableObject<Env> {
   readonly #core: AgentSessionCore;
+  /** The session level's limits and counters (statewalker/statewalker-root#179). */
+  readonly #limits: SessionLimits;
   #flue?: FlueSession;
 
   /** The session's Flue session on this DO (the Flue instance id is the session's id). */
@@ -121,6 +133,8 @@ export class AgentSession extends DurableObject<Env> {
   async #tools(
     config: AgentSessionConfig,
     onApproval: (request: ApprovalRequest, call: StoredCall) => void,
+    turn?: string,
+    emit?: (item: ItemInput) => void,
   ) {
     const env = this.env;
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -153,7 +167,14 @@ export class AgentSession extends DurableObject<Env> {
     const pluginTools = plugins.map((d) =>
       pluginHostTool(
         d,
-        (args) => workspace.callTool(config.capability, { name: d[TOOL_EXTENSION].name, args }),
+        (args) =>
+          this.#outbound(config, d, turn, emit, () =>
+            workspace.callTool(config.capability, {
+              name: d[TOOL_EXTENSION].name,
+              args,
+              ...(turn ? { turn } : {}),
+            }),
+          ),
         {
           onApproval,
           waitingOn: () => waitingOn,
@@ -169,6 +190,43 @@ export class AgentSession extends DurableObject<Env> {
       hostTools,
       definitions: [...harness.map(harnessDefinition), ...plugins],
     };
+  }
+
+  /**
+   * A plugin tool's call, held to the session's own limits on outbound requests when it sends one
+   * (a REST tool, #179): refused before it reaches the workspace, counted here after. The
+   * workspace counts its own levels; the warnings it crossed become items of the turn.
+   */
+  async #outbound(
+    config: AgentSessionConfig,
+    definition: ToolDefinition,
+    turn: string | undefined,
+    emit: ((item: ItemInput) => void) | undefined,
+    call: () => Promise<{
+      output: string;
+      isError: boolean;
+      secrets?: string[];
+      warnings?: WarningView[];
+    }>,
+  ) {
+    const outbound = definition[TOOL_EXTENSION].route.kind === "rest";
+    const scopes = this.#limits.scopes(config);
+    if (outbound)
+      try {
+        this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+      } catch (e) {
+        return { output: String((refusal(e) as Error).message), isError: true };
+      }
+    const { warnings, ...result } = await call();
+    for (const warning of warnings ?? []) emit?.({ kind: "limit_warning", warning });
+    if (outbound)
+      for (const warning of this.#limits.ledger.add(
+        scopes,
+        { outbound_requests: 1 },
+        this.#limits.meta(config, turn),
+      ))
+        emit?.({ kind: "limit_warning", warning: warningView(warning) });
+    return result;
   }
 
   /**
@@ -200,14 +258,38 @@ export class AgentSession extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    this.#limits = new SessionLimits(ctx.storage.sql, env);
     // Every model request goes through the workspace's model gateway, with the session's
     // capability: it picks the model within the user's rights, holds the provider's key, falls
     // back and meters (statewalker/statewalker-root#134).
-    const gateway = (config: AgentSessionConfig, turn?: string): ModelPort => {
+    const gateway = (
+      config: AgentSessionConfig,
+      turn?: string,
+      emit?: (item: ItemInput) => void,
+      onApproval?: OnApproval,
+    ): ModelPort => {
       const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
       return {
-        request: (call) =>
-          workspace.modelRequest(config.capability, { ...call, ...(turn ? { turn } : {}) }),
+        request: async (call) => {
+          try {
+            return await this.#metered(config, turn, call, emit, (c) =>
+              workspace.modelRequest(config.capability, { ...c, ...(turn ? { turn } : {}) }),
+            );
+          } catch (e) {
+            // A limit that asks (session or user level, attended): the turn ends waiting on the
+            // user's approval, without asking the model. Any other refusal fails the request.
+            if (!onApproval || !(await this.#asks(config, e, onApproval))) throw e;
+            return {
+              message: {
+                ...errorMessage(undefined, ""),
+                stopReason: "stop",
+                errorMessage: undefined,
+              },
+              model: config.model ?? "gateway",
+              attempts: [],
+            } as ModelResponse;
+          }
+        },
       };
     };
     const compaction = parseCompaction(env.COMPACTION);
@@ -231,7 +313,7 @@ export class AgentSession extends DurableObject<Env> {
       ) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
-        const set = await this.#tools(config, onApproval);
+        const set = await this.#tools(config, onApproval, turn, emit);
         return this.#flueOf(config.id).run(
           {
             id: config.id,
@@ -245,7 +327,7 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            models: gateway(config, turn),
+            models: gateway(config, turn, emit, onApproval),
             ...(config.model ? { model: config.model } : {}),
             ...(model ? { requested: model } : {}),
             content,
@@ -255,12 +337,24 @@ export class AgentSession extends DurableObject<Env> {
             onSteer,
             tools: set.hostTools,
             allowTools: set.offered,
+            // Every tool call counts against the limits on tool calls (#179): a refused call is
+            // not run, and the agent carries on with the refusal.
+            admitTool: async (name) => {
+              try {
+                const crossed = await this.#charge(config, "tool_calls", 1, turn, { tool: name });
+                for (const warning of crossed) emit({ kind: "limit_warning", warning });
+                return undefined;
+              } catch (e) {
+                return this.#breach(config, e, onApproval);
+              }
+            },
             ...(config.plugins ? { plugins: config.plugins } : {}),
           },
           emit,
         );
       },
       runAction: async (config, call) => {
+        if (call.method === "limit") return this.#raise(config, call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -297,8 +391,177 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.start(config);
   }
 
-  send(message: AgentMessage) {
-    return this.#core.send(message);
+  /**
+   * What a refusal by a limit tells the agent. A limit that asks (session, member or user level)
+   * waits on the user's approval when someone is there to give it (the turn then ends waiting),
+   * and denies when the session is unattended (statewalker/statewalker-root#127).
+   */
+  async #breach(config: AgentSessionConfig, e: unknown, onApproval?: OnApproval): Promise<string> {
+    const text = String((e as Error)?.message ?? e);
+    if (onApproval && (await this.#asks(config, e, onApproval)))
+      return `${text}; waiting on the user's approval to raise it`;
+    const limit = limitOfMessage(text);
+    if (limit?.verdict === "ask")
+      return settleAsk({ verdict: "ask", reason: text }, { unattended: !!config.unattended })
+        .reason;
+    return text;
+  }
+
+  /** Records an approval for a limit that asks, when the session is attended: true if it did. */
+  async #asks(config: AgentSessionConfig, e: unknown, onApproval: OnApproval): Promise<boolean> {
+    const text = String((e as Error)?.message ?? e);
+    const limit = limitOfMessage(text);
+    if (!text.includes("ELIMIT") || limit?.verdict !== "ask") return false;
+    if (
+      settleAsk({ verdict: "ask" as const, reason: text }, { unattended: !!config.unattended })
+        .verdict !== "ask"
+    )
+      return false;
+    const path = `${String(limit.key)}@${Number(limit.value)}`;
+    const id = await approvalId(config.id, "limit", path);
+    onApproval(
+      {
+        id,
+        session: config.id,
+        project: config.project,
+        action: { method: "limit", path },
+        permission: `limits.raise:${String(limit.meter)}`,
+        reason: text.slice(text.indexOf("ELIMIT")),
+      },
+      { method: "limit", path, target: String(Number(limit.increment) || 0) },
+    );
+    return true;
+  }
+
+  /**
+   * Runs an approved raise of a limit (statewalker/statewalker-root#179): by one increment, at the
+   * DO that counts its level; the member's and the user's check the user's approval themselves.
+   */
+  async #raise(config: AgentSessionConfig, call: { path: string; target?: string }) {
+    const at = call.path.lastIndexOf("@");
+    const key = call.path.slice(0, at);
+    const increment = Number(call.target) || 0;
+    const level = (JSON.parse(key) as unknown[])[0];
+    const approval = await approvalId(config.id, "limit", call.path);
+    if (level === "session") this.#limits.ledger.raise(key, increment);
+    else if (level === "member")
+      await this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace)).raiseLimit(
+        config.capability,
+        { approval, key, increment },
+      );
+    else if (level === "user")
+      await userOf(this.env, config.user).raiseLimit(config.id, { approval, key, increment });
+    else throw new Error(`EACCES: a ${String(level)} limit is never raised by an approval`);
+    return { raised: true };
+  }
+
+  /**
+   * One model request with the session's own limits (statewalker/statewalker-root#179): the
+   * workspace reserves its levels in the gateway; the session's level (counted here) and, for the
+   * user's own keys, the user's (counted in their User DO) reserve the request's worst case first
+   * and settle to the real usage after. Every limit the usage crossed the warning share of is left
+   * as an item.
+   */
+  async #metered(
+    config: AgentSessionConfig,
+    turn: string | undefined,
+    call: ModelCall,
+    emit: ((item: ItemInput) => void) | undefined,
+    request: (call: ModelCall) => Promise<ModelResponse>,
+  ): Promise<ModelResponse> {
+    const warn = (warnings: unknown[] | undefined) => {
+      for (const warning of warnings ?? [])
+        emit?.({ kind: "limit_warning", warning: warning as WarningView });
+    };
+    const scopes = this.#limits.scopes(config);
+    const sessionBound = scopes.some((s) => s.limits.some((l) => l.meter.startsWith("model_")));
+    if (!sessionBound && !config.ownKeys) {
+      const response = await request(call);
+      warn(response.warnings);
+      return response;
+    }
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    const estimate = await workspace.modelEstimate(config.capability, call);
+    const meta = this.#limits.meta(config, turn);
+    let reserved: string | undefined;
+    try {
+      if (sessionBound) reserved = this.#limits.ledger.reserve(scopes, estimate.worst, meta).id;
+    } catch (e) {
+      throw refusal(e);
+    }
+    const user = userOf(this.env, config.user);
+    let own: string | undefined;
+    let response: ModelResponse | undefined;
+    try {
+      if (estimate.own) own = await user.reserveOwnKey(meta, estimate.own);
+      response = await request(call);
+    } finally {
+      const all = { model_tokens: 0, model_spend: 0 };
+      const mine = { model_tokens: 0, model_spend: 0 };
+      for (const { usage } of response?.attempts ?? [])
+        for (const into of usage.charged ? [all] : [all, mine]) {
+          into.model_tokens += usage.input_tokens + usage.output_tokens;
+          into.model_spend += usage.cost ?? 0;
+        }
+      if (reserved) warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
+      if (own) warn(await user.settleOwnKey(own, mine, meta));
+    }
+    warn(response.warnings);
+    return response;
+  }
+
+  /**
+   * Charges a flow meter of a turn to the session (counted here) and to its member, project and
+   * workspace (counted in the Workspace DO), refusing at the first limit: the session's is
+   * checked first, then the workspace charges, then the session.
+   */
+  async #charge(
+    config: AgentSessionConfig,
+    meter: string,
+    amount: number,
+    turn?: string,
+    detail?: Record<string, unknown>,
+  ): Promise<WarningView[]> {
+    const scopes = this.#limits.scopes(config);
+    try {
+      this.#limits.ledger.check(scopes, { [meter]: amount });
+    } catch (e) {
+      throw refusal(e);
+    }
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    const crossed = await workspace.chargeUsage(config.capability, {
+      meter,
+      amount,
+      ...(turn ? { turn } : {}),
+      ...(detail ? { detail } : {}),
+    });
+    const own = this.#limits.ledger.charge(
+      scopes,
+      { [meter]: amount },
+      this.#limits.meta(config, turn),
+      detail,
+    );
+    return [...crossed, ...own.map(warningView)];
+  }
+
+  /**
+   * A message: a new turn (a steer joins the running one) counts against the limits on turns of
+   * the session, its member, project and workspace, at once; ELIMIT (429) over one.
+   */
+  async send(message: AgentMessage) {
+    const config = this.#core.config();
+    let crossed: WarningView[] = [];
+    if (config && message.delivery !== "steer")
+      try {
+        crossed = await this.#charge(config, "turns", 1);
+      } catch (e) {
+        // Only a limit refuses a message here: a capability the gate refuses (revoked, removed)
+        // fails the turn at its first action, as before.
+        if (codeOf(e) === "ELIMIT") throw e;
+      }
+    const accepted = await this.#core.send(message);
+    if (crossed.length) this.#core.warn(accepted.turn_id, crossed);
+    return accepted;
   }
 
   turn(turnId: string) {

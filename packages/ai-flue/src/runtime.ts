@@ -126,6 +126,12 @@ export interface FlueTurn {
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
   /**
+   * Asked before every tool call (statewalker/statewalker-root#179): a refusal's text when a limit
+   * on tool calls refuses it (the call is not run, the agent carries on with the refusal as its
+   * result), nothing to run it.
+   */
+  admitTool?(name: string): Promise<string | undefined>;
+  /**
    * The names of the tools the model may be offered, Flue's and the host's (none: all of them). A
    * sub-agent's are within its parent's (statewalker/statewalker-root#126).
    */
@@ -553,6 +559,23 @@ function approvalAware(tool: AgentTool, waiting: () => boolean): AgentTool {
   };
 }
 
+/**
+ * A tool whose every call is admitted first by the limits on tool calls (#179): a refused call is
+ * not run, and its refusal is the call's error result (a limit that asks also leaves the turn
+ * waiting on the user's approval).
+ */
+function admitted(tool: AgentTool, turn: FlueTurn): AgentTool {
+  if (!turn.admitTool) return tool;
+  return {
+    ...tool,
+    async execute(id, params, signal, onUpdate) {
+      const refused = await turn.admitTool?.(tool.name);
+      if (refused !== undefined) throw new Error(refused);
+      return tool.execute(id, params, signal, onUpdate);
+    },
+  };
+}
+
 /** The session's tool set for this turn: Flue's file tools and the host's, as offered. */
 function toolsFor(session: string, sandbox: unknown): AgentTool[] {
   const live = LIVE.get(session);
@@ -581,7 +604,7 @@ function toolsFor(session: string, sandbox: unknown): AgentTool[] {
   return [
     ...TRACER_TOOLS.filter(offered).map((name) => TOOLS[name](sandbox as never) as AgentTool),
     ...hostTools,
-  ].map((tool) => approvalAware(tool, waiting));
+  ].map((tool) => approvalAware(admitted(tool, turn), waiting));
 }
 
 /**

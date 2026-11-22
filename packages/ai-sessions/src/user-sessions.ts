@@ -17,7 +17,7 @@ import {
   type PermissionRules,
   parseRules,
 } from "@statewalker/ai-access";
-import type { FilesRpcMethod, ModelsConfig } from "@statewalker/ai-environment";
+import type { FilesRpcMethod, Limit, ModelsConfig } from "@statewalker/ai-environment";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import type {
   AgentRun,
@@ -105,7 +105,14 @@ export interface WorkspaceGrants {
     run?: AgentRun;
     model?: string;
     plugins?: string[];
+    limits?: Limit[];
+    ownKeys?: boolean;
   }>;
+  /** Holds and releases one of the user's streams against the limits on streams (#179). */
+  holdStream(userCapability: string, id: string): Promise<void>;
+  releaseStream(userCapability: string, id: string): Promise<void>;
+  /** Agent sessions of this user that ended: they no longer count as active (#179). */
+  sessionsEnded(userCapability: string, sessions: string[]): Promise<void>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -432,6 +439,29 @@ export class UserSessions implements UserPort {
    * Answers one of the caller's pending approvals. An allow is granted at the gate (with the
    * user capability), which re-checks it against the mode and roles when the action runs.
    */
+  /** Holds one stream of the user in the token's workspace (ELIMIT over a limit on streams). */
+  async holdStream(token: string): Promise<string> {
+    const us = await this.#userSession(token);
+    const id = `st-${crypto.randomUUID()}`;
+    await this.#o.workspace(us.workspace).holdStream(us.capability, id);
+    return id;
+  }
+
+  async releaseStream(token: string, id: string): Promise<void> {
+    const us = await this.#userSession(token);
+    await this.#o.workspace(us.workspace).releaseStream(us.capability, String(id));
+  }
+
+  /** Whether the user allowed this approval of this agent session (statewalker/statewalker-root#179). */
+  approvalAllowed(session: string, id: string): boolean {
+    const row = this.#one<{ status: string }>(
+      "SELECT status FROM approvals WHERE session = ? AND id = ?",
+      session,
+      id,
+    );
+    return row?.status === "allowed";
+  }
+
   async answerApproval(token: string, id: string, answer: ApprovalAnswer): Promise<ApprovalView> {
     const us = await this.#userSession(token);
     const row = this.#one<ApprovalRow>(
@@ -526,6 +556,9 @@ export class UserSessions implements UserPort {
         ...(pinned.run ? { run: pinned.run } : {}),
         ...(pinned.model ? { model: pinned.model } : {}),
         ...(pinned.plugins ? { plugins: pinned.plugins } : {}),
+        ...limitsOf(pinned.limits, req.limits),
+        ...(pinned.ownKeys ? { ownKeys: true } : {}),
+        ...(req.unattended ? { unattended: true } : {}),
       },
     };
   }
@@ -557,7 +590,7 @@ export class UserSessions implements UserPort {
     const id = `as-${crypto.randomUUID()}`;
     // The workspace checks the agent against the parent's definition and the user's roles, pins
     // the child's definitions and narrows the parent's capability for it.
-    const { capability, agent, run, model, plugins } = await this.#o
+    const { capability, agent, run, model, plugins, limits, ownKeys } = await this.#o
       .workspace(us.workspace)
       .delegate(us.capability, parentCapability, {
         session: id,
@@ -612,6 +645,9 @@ export class UserSessions implements UserPort {
         ...(model ? { model } : {}),
         ...(req.tools ? { tools: [...req.tools] } : {}),
         ...(req.mode ? { mode: req.mode } : {}),
+        ...limitsOf(limits),
+        ...(ownKeys ? { ownKeys: true } : {}),
+        ...(row.unattended ? { unattended: true } : {}),
       },
     };
   }
@@ -664,8 +700,11 @@ export class UserSessions implements UserPort {
     // A session recorded before capabilities were kept has none to name (and no sub-agents):
     // it is never marked revoked while the gate would still accept it.
     if (!row.capability) return;
+    const tree = this.#tree(row.id);
+    // They no longer count as active sessions (statewalker/statewalker-root#179).
+    await this.#o.workspace(us.workspace).sessionsEnded(us.capability, tree);
     if (!row.revoked) await this.#o.workspace(us.workspace).revoke(us.capability, row.capability);
-    for (const id of this.#tree(row.id))
+    for (const id of tree)
       this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE id = ?", id);
   }
 
@@ -694,7 +733,9 @@ export class UserSessions implements UserPort {
   }
 
   async deleteAgentSession(token: string, id: string): Promise<void> {
+    const us = await this.#userSession(token);
     const own = await this.ownAgentSession(token, id);
+    await this.#o.workspace(us.workspace).sessionsEnded(us.capability, [own.id]);
     this.#o.sql.exec("DELETE FROM agent_session_meta WHERE id = ?", own.id);
     this.#o.sql.exec("DELETE FROM agent_sessions WHERE id = ?", own.id);
   }
@@ -812,7 +853,14 @@ export class UserSessions implements UserPort {
       "SELECT * FROM user_sessions WHERE workspace = ?",
       workspace,
     );
-    if (us) await this.#o.workspace(workspace).revoke(us.capability, us.capability);
+    if (us) {
+      const ids = this.#o.sql
+        .exec("SELECT id FROM agent_sessions WHERE workspace = ? AND revoked = 0", workspace)
+        .toArray()
+        .map((r) => String(r.id));
+      await this.#o.workspace(workspace).sessionsEnded(us.capability, ids);
+      await this.#o.workspace(workspace).revoke(us.capability, us.capability);
+    }
     this.#o.sql.exec("UPDATE agent_sessions SET revoked = 1 WHERE workspace = ?", workspace);
     this.#o.sql.exec("DELETE FROM user_sessions WHERE workspace = ?", workspace);
     return { revoked: true };
@@ -856,4 +904,10 @@ export class UserSessions implements UserPort {
       .toArray() as unknown as (AgentRow & AgentMetaRow)[];
     return { sessions: rows.map(view) };
   }
+}
+
+/** A session's limits: the broader levels' session defaults and the start request's own. */
+function limitsOf(...lists: (Limit[] | undefined)[]): { limits?: Limit[] } {
+  const all = lists.flatMap((l) => l ?? []);
+  return all.length ? { limits: all } : {};
 }

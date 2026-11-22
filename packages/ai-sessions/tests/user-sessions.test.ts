@@ -25,6 +25,7 @@ function sessionsOver(sql: SqlLike) {
     memberRoles: async () => ["reader"],
     pinDefinitions: async () => ({ agent: "default" }),
     setUserSession: async () => {},
+    sessionsEnded: async () => {},
     revoke: async (owner: string, target: string) => {
       revoked.push([owner, target]);
     },

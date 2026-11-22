@@ -13,6 +13,7 @@
 //   continues the session as a turn that runs the stored call again (re-checked at the gate) or
 //   tells the model the denial.
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
+import { limitOfMessage } from "@statewalker/ai-environment";
 import type {
   AgentMessage,
   AgentPort,
@@ -26,10 +27,12 @@ import type {
   ItemInput,
   ItemsPage,
   ItemsQuery,
+  LimitWarningView,
   MessageAccepted,
   ModelSubstitution,
   SessionEvent,
   SessionStatus,
+  StopLimit,
   StopReason,
   StoredAction,
   TurnStatus,
@@ -130,6 +133,21 @@ const rowsText = (rows: unknown): string =>
         : value,
   );
 
+/** The model spend limit an error names (`ELIMIT: … [limit {"meter":"model_spend", …}]`). */
+function budgetOf(error: string): StopLimit | undefined {
+  if (!error.includes("ELIMIT")) return undefined;
+  const limit = limitOfMessage(error);
+  if (!limit || !/^model_(spend|tokens)$/.test(String(limit.meter))) return undefined;
+  return {
+    meter: String(limit.meter),
+    level: String(limit.level),
+    target: String(limit.target),
+    value: Number(limit.value),
+    period: String(limit.period),
+    used: Number(limit.used),
+  };
+}
+
 type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;
 
 /** What the core reports when a turn ends. */
@@ -191,7 +209,14 @@ const eventOf = (row: EventRow): SessionEvent => ({
   created: Number(row.created),
 });
 
-const TERMINAL: readonly string[] = ["waiting", "completed", "failed", "cancelled", "interrupted"];
+const TERMINAL: readonly string[] = [
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "incomplete",
+];
 const KINDS: readonly string[] = [
   "message",
   "tool_call",
@@ -199,6 +224,7 @@ const KINDS: readonly string[] = [
   "approval",
   "model_fallback",
   "mode_decision",
+  "limit_warning",
 ];
 const MAX_PAGE = 1000;
 const MAX_WAIT_MS = 60_000;
@@ -309,6 +335,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     );
     const stored = itemOf(this.#one<ItemRow>("SELECT * FROM items WHERE id = ?", id) as ItemRow);
     this.#log("item.created", turn, stored);
+    // A warning of a limit is also its own event (statewalker/statewalker-root#179).
+    if (kind === "limit_warning" && item.warning) this.#log("limit.warning", turn, item.warning);
     return stored;
   }
 
@@ -325,6 +353,10 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     // What the gateway said ran instead of the model the message asked for (#105).
     const substitution = this.#one<ModelSubstitution>(
       "SELECT requested, used, reason FROM turn_substitutions WHERE turn = ?",
+      row.id,
+    );
+    const answers = this.#one<{ approval: string }>(
+      "SELECT approval FROM approval_answers WHERE turn = ?",
       row.id,
     );
     return {
@@ -345,6 +377,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
           }
         : {}),
       ...(ignored.length ? { ignored } : {}),
+      ...(answers ? { answers: String(answers.approval) } : {}),
       created: Number(row.created),
       ...(row.started ? { started: Number(row.started) } : {}),
       ...(row.ended ? { ended: Number(row.ended) } : {}),
@@ -386,6 +419,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     config: AgentSessionConfig,
     turn: { content: string; delivery: Delivery; model?: string; ignored: string[] },
     first: boolean,
+    before?: (turn: string) => void,
   ): string {
     const id = `${config.id}.tu-${crypto.randomUUID()}`;
     const edge = this.#one<{ lo: number | null; hi: number | null }>(
@@ -402,6 +436,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       JSON.stringify(turn.ignored),
       Date.now(),
     );
+    before?.(id);
     this.#log("turn.queued", id, this.#view(this.#turnRow(id), false));
     return id;
   }
@@ -531,6 +566,18 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         { type: running.endAs, ...(running.endReason ? { message: running.endReason } : {}) },
         model ? { model } : {},
       );
+    else if (error && budgetOf(error))
+      // A limit on model spend refused a request: the turn ends incomplete, naming the limit.
+      this.#finish(
+        row.id,
+        "incomplete",
+        {
+          type: "budget",
+          message: error.slice(error.indexOf("ELIMIT")),
+          limit: budgetOf(error) as StopLimit,
+        },
+        model ? { model } : {},
+      );
     else if (error)
       this.#finish(
         row.id,
@@ -584,10 +631,16 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       .find((i) => i.approval === answer.approval && i.stored);
     if (!item?.stored || !item.request) throw codedError("ENOENT", "no such approval");
     const { method, path, target } = item.stored;
-    const result = (output: string, isError: boolean) =>
-      this.#append(turn, { kind: "tool_result", approval: answer.approval, output, isError });
+    const result = (output: string, isError: boolean, denied = false) =>
+      this.#append(turn, {
+        kind: "tool_result",
+        approval: answer.approval,
+        output,
+        isError,
+        ...(denied ? { denied: true as const } : {}),
+      });
     if (answer.decision !== "allow") {
-      result(`denied by the user${answer.message ? `: ${answer.message}` : ""}`, true);
+      result(`denied by the user${answer.message ? `: ${answer.message}` : ""}`, true, true);
       return;
     }
     try {
@@ -605,7 +658,8 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
           isError: !!r.isError,
           ...(r.secrets?.length ? { secrets: r.secrets } : {}),
         });
-      } else if (method === "db" && done !== null && done !== undefined)
+      } else if (method === "limit") result("the user raised the limit: carry on", false);
+      else if (method === "db" && done !== null && done !== undefined)
         // A database query's answer: its rows, as the tool would have answered them.
         result(`db ${path}: ${rowsText(done)}`, false);
       else result(`${method} ${path}${target ? ` ${target}` : ""}: done`, false);
@@ -622,6 +676,12 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   }
 
   // --- the port -------------------------------------------------------------------------------
+
+  /** Leaves the limits a turn's start crossed the warning share of, as items of that turn. */
+  warn(turn: string, warnings: LimitWarningView[]): void {
+    this.#turnRow(turn);
+    for (const warning of warnings) this.#append(turn, { kind: "limit_warning", warning });
+  }
 
   async start(config: AgentSessionConfig): Promise<void> {
     if (this.config()) throw codedError("EINVAL", `agent session ${config.id} already started`);
@@ -689,13 +749,15 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       .some((i) => i.approval === approval && i.stored);
     if (!known) throw codedError("ENOENT", "no such approval");
     const content = `${answer.decision === "allow" ? "allowed" : "denied"}: ${approval}`;
-    const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false);
-    this.#sql.exec(
-      "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
-      id,
-      approval,
-      answer.decision,
-      answer.message ?? null,
+    // The answer is stored before the turn is logged, so its queued event names the approval.
+    const id = this.#queue(config, { content, delivery: "next", ignored: [] }, false, (turn) =>
+      this.#sql.exec(
+        "INSERT INTO approval_answers VALUES (?, ?, ?, ?)",
+        turn,
+        approval,
+        answer.decision,
+        answer.message ?? null,
+      ),
     );
     this.#pump();
     return { turn_id: id, session_id: config.id, delivery: "next", offset };
