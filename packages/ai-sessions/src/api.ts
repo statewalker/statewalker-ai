@@ -517,8 +517,37 @@ export interface RewindRequest {
   before_turn?: string;
   /** Cancels the running turn and the queued ones first; without it they refuse the rewind (409). */
   cancel_running?: boolean;
-  /** Reverting files comes with statewalker/statewalker-root#191: refused until then. */
+  /**
+   * Reverts the files the rewound turns (and the sub-agents they started) changed to their state
+   * before the first of them, where nobody changed them since (statewalker/statewalker-root#191).
+   */
   revert_files?: boolean;
+}
+
+/**
+ * What a rewind's `revert_files` did with the files the rewound turns changed (paths as the file
+ * view names them, `/<project>/...`). The revert is one `write` under the session's mode: in a mode
+ * that asks, nothing is written until the user allows the `approval` (the files `pending`); a
+ * denial is `refused`.
+ */
+export interface FilesRevertResult {
+  /** Restored to their state before the first rewound turn that changed them. */
+  reverted: string[];
+  /** Changed since by someone else: left alone. */
+  conflicts: string[];
+  /** Their pre-image is no longer kept (past the retention, or dropped): left alone. */
+  unavailable: string[];
+  /** The approval the revert waits on; answering it allowed reverts the files then. */
+  approval?: string;
+  /** The files the revert will restore once allowed. */
+  pending?: string[];
+  /** Why the mode refused the revert. */
+  refused?: string;
+}
+
+/** An answer to a revert's approval: what the revert did then (statewalker/statewalker-root#191). */
+export interface RevertAnswered {
+  files: FilesRevertResult;
 }
 
 /** One effect of a rewound turn that a rewind does not revert: the tool call that made it. */
@@ -547,6 +576,8 @@ export interface RewindResult {
   database_changes: TurnEffect[];
   /** Effects outside the harness (outbound requests of tools). */
   irreversible_effects: TurnEffect[];
+  /** With `revert_files`: what the revert did with the files the rewound turns changed. */
+  files?: FilesRevertResult;
 }
 
 /** One turn of the session's tree. */
@@ -894,12 +925,14 @@ export interface SessionApi {
   listApprovals(): Promise<{ approvals: ApprovalView[] }>;
   /**
    * Answers one of the caller's approvals. The answer continues the agent session as a turn
-   * (allowing re-checks and runs the stored action), accepted like a message.
+   * (allowing re-checks and runs the stored action), accepted like a message. An answer to a
+   * rewind's revert of files (statewalker/statewalker-root#191) runs no turn: allowing reverts the
+   * files then, and `files` says what it did.
    */
   answerApproval(
     id: string,
     answer: ApprovalAnswer,
-  ): Promise<{ approval: ApprovalView; accepted: MessageAccepted }>;
+  ): Promise<{ approval: ApprovalView; accepted?: MessageAccepted; files?: FilesRevertResult }>;
   /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
   files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** A project's databases the caller may use (`db.read` or `db.write`), with their sizes. */
@@ -1255,6 +1288,11 @@ export interface AgentPort {
    * stored action again (re-checked at the gate), or tells the model the denial.
    */
   answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
+  /**
+   * The answer to a rewind's revert of files (statewalker/statewalker-root#191): no turn runs; an
+   * allow reverts the files now.
+   */
+  answerRevert(approval: string, answer: ApprovalAnswer): Promise<RevertAnswered>;
   /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
   mcp(message: McpMessage): Promise<McpResponse | null>;
   /** The session level's limits now, with what is used, reserved and left of each. */
@@ -1775,6 +1813,10 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async answerApproval(id, answer) {
       const checked = approvalAnswer(answer);
       const approval = await ports.user.answerApproval(token, String(id), checked);
+      if (approval.action.method === "revert") {
+        const { files } = await ports.agent(approval.session).answerRevert(approval.id, checked);
+        return { approval, files };
+      }
       const accepted = await ports.agent(approval.session).answer(approval.id, checked);
       return {
         approval,

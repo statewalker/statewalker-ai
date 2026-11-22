@@ -430,9 +430,11 @@ export class AgentSession extends DurableObject<Env> {
             ...(instructions ? { instructions } : {}),
             project: config.project,
             files: approvalAware(
-              filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
-                blockSize: blockSizeOf(env),
-              }),
+              // Each change is recorded under the turn, with its pre-image (#191).
+              filesOverRpc(
+                (method, args) => workspace.files(config.capability, method, args, turn),
+                { blockSize: blockSizeOf(env) },
+              ),
               onApproval,
             ),
             models: gateway(config, turn, emit, onApproval),
@@ -462,7 +464,7 @@ export class AgentSession extends DurableObject<Env> {
           emit,
         );
       },
-      runAction: async (config, call) => {
+      runAction: async (config, call, turn) => {
         if (call.method === "limit") return this.#raise(config, call);
         // A remote session's answers went to its server with the answer; its task is started by
         // the turn that continues. A write-back runs once, with the user's grant.
@@ -470,7 +472,7 @@ export class AgentSession extends DurableObject<Env> {
         if (call.method === "changeset")
           try {
             return await this.#remote.applyWriteBack(
-              this.#remotePort(config),
+              this.#remotePort(config, turn),
               String(call.target ?? ""),
             );
           } catch (e) {
@@ -506,7 +508,7 @@ export class AgentSession extends DurableObject<Env> {
           }
         }
         const files = filesOverRpc(
-          (method, args) => workspace.files(config.capability, method, args),
+          (method, args) => workspace.files(config.capability, method, args, turn),
           { blockSize: blockSizeOf(env) },
         );
         return runStoredCall(files, call);
@@ -525,6 +527,12 @@ export class AgentSession extends DurableObject<Env> {
       },
       // A rewind cancels the approvals of the turns it rewound, at the user's User DO.
       cancelApprovals: (config, ids) => userOf(env, config.user).cancelApprovals(config.id, ids),
+      // A rewind's revert of files, at the gate (#191).
+      revertFiles: (config, scope) =>
+        env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace)).revertFiles(
+          config.capability,
+          scope,
+        ),
       effectOf,
     });
   }
@@ -962,6 +970,11 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.classifierItems();
   }
 
+  /** The answer to a rewind's revert of files (#191): an allow reverts them now. */
+  answerRevert(approval: string, answer: ApprovalAnswer) {
+    return this.#core.answerRevert(approval, answer);
+  }
+
   async answer(approval: string, answer: ApprovalAnswer) {
     const config = this.#core.config();
     if (config?.run?.remote) {
@@ -1028,10 +1041,12 @@ export class AgentSession extends DurableObject<Env> {
           emit?.({ kind: "limit_warning", warning: warningView(warning) });
         return answer;
       },
-      files: filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
-        blockSize: blockSizeOf(this.env),
-      }),
-      applyChangeSet: (files) => workspace.applyChangeSet(config.capability, { files }),
+      files: filesOverRpc(
+        (method, args) => workspace.files(config.capability, method, args, turn),
+        { blockSize: blockSizeOf(this.env) },
+      ),
+      applyChangeSet: (files) =>
+        workspace.applyChangeSet(config.capability, { files, ...(turn ? { turn } : {}) }),
       tick: (ms, signal) =>
         new Promise<void>((resolve, reject) => {
           signal?.throwIfAborted();

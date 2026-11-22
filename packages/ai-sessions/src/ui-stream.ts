@@ -164,6 +164,8 @@ export async function chatPlan(
         scope: "once",
         ...(a.reason ? { message: a.reason } : {}),
       });
+      // A revert's approval runs no turn: nothing to stream.
+      if (!accepted) continue;
       turns.push(accepted.turn_id);
       since = Math.min(since, accepted.offset);
     }

@@ -339,6 +339,8 @@ export async function createResponse(
         scope: "once",
         ...(answer.reason ? { message: answer.reason } : {}),
       });
+      // A revert's approval runs no turn (statewalker/statewalker-root#191).
+      if (!accepted) continue;
       turns.push(accepted.turn_id);
       since = Math.min(since, accepted.offset);
     }

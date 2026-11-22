@@ -55,6 +55,11 @@ export interface Env {
   WORKSPACE_S3_SECRET_ACCESS_KEY?: string;
   /** The workspace's default ignore rules for agent sessions, in gitignore syntax. */
   IGNORE?: string;
+  /**
+   * How long file pre-images are kept (statewalker/statewalker-root#191), as JSON
+   * `{"days": 30, "megabytes": 100}` (the defaults; megabytes per top-level session).
+   */
+  PRE_IMAGES?: string;
   /** Bytes per block of a file stream (default 1 MiB). */
   FILE_BLOCK_SIZE?: string;
   /** The profiles file system's backend: "sql" (the default) or "memory". */
