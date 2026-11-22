@@ -443,7 +443,8 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
       });
       expect(res.headers.get("content-type")).toContain("application/x-ndjson");
       const lines = (await res.text()).split("\n").filter(Boolean);
-      expect(lines.length).toBe(records.length);
+      // The same records, and any written since the first read (the calls in between are metered).
+      expect(lines.map((l) => JSON.parse(l))).toEqual(expect.arrayContaining(records));
     }
   });
   it("manages the session defaults of a project whose name looks like a session's", async () => {
