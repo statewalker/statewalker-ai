@@ -8,6 +8,12 @@
 // deployment (ai-host-do) on CellB Node in-process, with the scripted model, through the official
 // OpenAI SDK: over REST (the deployment's routes), and over RPC (the projection run in the client
 // over the session API's RPC methods).
+import { openAiFetch } from "@statewalker/ai-openai-compat";
+import {
+  type SessionApi,
+  sessionRpcClient,
+  TERMINAL_TURN_STATUSES,
+} from "@statewalker/ai-sessions";
 import OpenAI, { APIError } from "openai";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -29,6 +35,7 @@ const TRANSPORTS = ["rest", "rpc"];
 const USERS = [
   ...["ann", "bob", "cy", "dee", "eli", "fay", "gus", "hal", "ivy", "jo", "kim", "lou"],
   "mia",
+  "ned",
 ];
 
 const AP = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
@@ -672,3 +679,64 @@ describe("OpenAI streams and an expiring token", () => {
     }
   });
 });
+
+describe("a Chat Completions stream and a turn that ends between two reads", () => {
+  // statewalker/statewalker-ai#95: the stream read the log up to date while the turn was still
+  // running, then asked the turn's status; when the answer was logged and the turn ended in
+  // between, it stopped on the status without reading the answer, and streamed no text.
+  it("streams the answer the turn logged after the stream was up to date", async () => {
+    const token = await login(deployment, "ned-rpc");
+    const res = await deployment.fetch("/v1/rpc", { headers: { upgrade: "websocket" } });
+    const ws = (res as Response & { webSocket?: { accept(): void; close(): void } }).webSocket;
+    if (!ws) throw new Error("the deployment refused RPC");
+    ws.accept();
+    sockets.push(ws);
+    const api = (await sessionRpcClient(ws as never, token)).api as SessionApi;
+    const h = "oa-between-reads";
+    // The turn ends exactly between the stream's up-to-date read and its status check: the
+    // status check releases the held model and answers once the turn's end is logged.
+    let upToDate = false;
+    const racing: SessionApi = Object.create(api);
+    racing.readEvents = async (session, query) => {
+      const page = await api.readEvents(session, query);
+      upToDate = page.up_to_date;
+      return page;
+    };
+    racing.getTurn = async (id) => {
+      if (upToDate && !isTerminalStatus((await api.getTurn(id)).status)) {
+        model.release(h);
+        const { session } = await api.getTurn(id);
+        for (let since = 0, ended = false; !ended; ) {
+          const page = await api.readEvents(session, { since, wait: 10_000 });
+          ended = page.events.some(
+            (e) => e.turn === id && isTerminalStatus(e.type.replace(/^turn\./, "")),
+          );
+          since = page.offset;
+        }
+      }
+      return api.getTurn(id);
+    };
+    const openai = new OpenAI({
+      apiKey: token,
+      baseURL: restClient(deployment, token).openai("oa-rpc").baseURL,
+      fetch: openAiFetch(racing) as typeof fetch,
+      maxRetries: 0,
+    });
+    let text = "";
+    let finish: string | null | undefined;
+    for await (const chunk of await openai.chat.completions.create({
+      model: "default",
+      messages: [{ role: "user", content: `HOLD ${h}` }],
+      stream: true,
+    })) {
+      text += chunk.choices[0]?.delta.content ?? "";
+      finish = chunk.choices[0]?.finish_reason ?? finish;
+    }
+    model.release(h);
+    expect(text).toBe("OK");
+    expect(finish).toBe("stop");
+  });
+});
+
+const isTerminalStatus = (status: string) =>
+  (TERMINAL_TURN_STATUSES as readonly string[]).includes(status);
