@@ -5,7 +5,8 @@
 //   workerd  `wrangler dev` on that folder (local workerd through Miniflare)
 //   celld    `celld dev` on that folder: the binary CELLD_BIN names, else the pinned Docker image
 //            CELLD_IMAGE (host network, so the scripted model and the fake servers on 127.0.0.1
-//            are reachable, and the temp folder mounted at its own path for the local backend)
+//            are reachable, and the temp folder, which holds the deployment folders, mounted at
+//            its own path)
 // Requests go over HTTP, WebSockets over Node's WebSocket client.
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import {
@@ -117,7 +118,10 @@ interface Started {
 function startCelld(folder: string, port: number): Started {
   const args = ["dev", ".", "--host", "127.0.0.1", "--port", String(port), "--no-watch", "--clean"];
   const bin = process.env.CELLD_BIN;
-  if (bin) return { child: spawn(bin, args, { cwd: folder, env: quietEnv() }) };
+  if (bin)
+    return {
+      child: spawn(bin, args, { cwd: join(folder, "app"), env: quietEnv(), detached: true }),
+    };
   const image = process.env.CELLD_IMAGE || CELLD_IMAGE;
   const name = `ai-conformance-${process.pid}-${++counter}`;
   const tmp = tmpdir();
@@ -140,11 +144,11 @@ function startCelld(folder: string, port: number): Started {
       "-v",
       `${tmp}:${tmp}`,
       "-w",
-      folder,
+      join(folder, "app"),
       image,
       ...args,
     ],
-    { env: quietEnv() },
+    { env: quietEnv(), detached: true },
   );
   const remove = () =>
     run("docker", ["rm", "--force", name]).then(
@@ -168,7 +172,7 @@ function startWorkerd(folder: string, port: number): Started {
     [
       "dev",
       "-c",
-      join(folder, "wrangler.json"),
+      join(folder, "app", "wrangler.json"),
       "--ip",
       "127.0.0.1",
       "--port",
@@ -179,8 +183,13 @@ function startWorkerd(folder: string, port: number): Started {
       "--log-level",
       "warn",
     ],
-    // Wrangler's own log files go with the folder.
-    { cwd: folder, env: { ...quietEnv(), WRANGLER_LOG_PATH: join(folder, "logs") } },
+    // Wrangler's own log files go with the folder. A process group of its own: wrangler starts
+    // workerd, and both stop together.
+    {
+      cwd: folder,
+      env: { ...quietEnv(), WRANGLER_LOG_PATH: join(folder, "logs") },
+      detached: true,
+    },
   );
   return { child };
 }
@@ -204,20 +213,25 @@ async function waitReady(origin: string, child: ChildProcess, logs: string[]): P
   }
 }
 
-/** A folder of its own for one deployment: the bundle's files, and wrangler.json with `vars`. */
+/**
+ * A folder of its own for one deployment: `app/` holds the bundle's files and wrangler.json with
+ * `vars`; the runtime's state and logs go beside it, never into the folder wrangler watches.
+ */
 function deploymentFolder(bundled: string, vars: Record<string, string>): string {
   const folder = mkdtempSync(join(tmpdir(), "ai-conformance-"));
+  const app = join(folder, "app");
+  mkdirSync(app);
   for (const f of readdirSync(bundled)) {
     if (f === "wrangler.json") continue;
     try {
-      linkSync(join(bundled, f), join(folder, f));
+      linkSync(join(bundled, f), join(app, f));
     } catch {
-      copyFileSync(join(bundled, f), join(folder, f));
+      copyFileSync(join(bundled, f), join(app, f));
     }
   }
   const config = JSON.parse(readFileSync(join(bundled, "wrangler.json"), "utf8"));
   config.vars = { ...config.vars, ...vars };
-  writeFileSync(join(folder, "wrangler.json"), JSON.stringify(config, null, 1));
+  writeFileSync(join(app, "wrangler.json"), JSON.stringify(config, null, 1));
   return folder;
 }
 
@@ -253,9 +267,17 @@ async function startIn(runtime: "celld" | "workerd", folder: string): Promise<De
   };
   child.stdout?.on("data", sink);
   child.stderr?.on("data", sink);
+  /** Signals the runtime's whole process group (wrangler and its workerd). */
+  const signal = (sig: NodeJS.Signals) => {
+    try {
+      if (child.pid) process.kill(-child.pid, sig);
+    } catch {
+      child.kill(sig);
+    }
+  };
   const kill = () => {
     started.kill?.();
-    child.kill("SIGKILL");
+    signal("SIGKILL");
   };
   children.add(kill);
   const origin = `http://127.0.0.1:${port}`;
@@ -264,11 +286,13 @@ async function startIn(runtime: "celld" | "workerd", folder: string): Promise<De
     await started.stop?.();
     if (child.exitCode === null && child.signalCode === null) {
       const exited = new Promise((r) => child.once("exit", r));
-      child.kill("SIGTERM");
-      const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+      signal("SIGTERM");
+      const timer = setTimeout(() => signal("SIGKILL"), 5000);
       await exited;
       clearTimeout(timer);
     }
+    // Whatever the runtime left of its group.
+    signal("SIGKILL");
   };
   try {
     await waitReady(origin, child, logs);

@@ -296,7 +296,7 @@ describe("workspace backends", () => {
     ["S3", { WORKSPACE_BACKEND: "s3" }],
     ["SqlFs on the Durable Object's SQLite", { WORKSPACE_BACKEND: "sql" }],
   ].filter(
-    // The local backend needs a local file system for the Worker (CellB Node and CellD only).
+    // The local backend needs a local file system for the Worker (CellB Node only).
     ([, vars]) => CAN.localFiles || (vars as Record<string, string>).WORKSPACE_BACKEND !== "local",
   ) as [string, Record<string, string>][];
   it.each(backends)(

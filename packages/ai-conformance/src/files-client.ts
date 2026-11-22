@@ -68,7 +68,18 @@ export function restFiles(deployment: Deployment, token: string): FilesClient {
       const start = options?.start ?? 0;
       const end = options?.length === undefined ? Infinity : start + options.length;
       for (;;) {
-        const { value, done } = await reader.read();
+        let chunk: Awaited<ReturnType<typeof reader.read>>;
+        try {
+          chunk = await reader.read();
+        } catch (e) {
+          // Over HTTP a body the server ends with an error (a block refused midway) only breaks
+          // the connection, without the reason: asking again answers it, as the response's status.
+          const again = await send(path);
+          if (!again.ok) await refusal(again);
+          await again.body?.cancel();
+          throw e;
+        }
+        const { value, done } = chunk;
         if (done) return;
         const from = Math.max(0, start - at);
         const to = Math.min(value.length, end - at);

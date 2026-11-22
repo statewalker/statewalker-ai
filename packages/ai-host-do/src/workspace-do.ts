@@ -173,6 +173,7 @@ import {
   warningView,
 } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
+import { type HeldFilesCall, keepStreamEventsAlive } from "./stream-events.js";
 import { toolEsbuild } from "./tool-bundler.js";
 import { describeBundle, runBundle, ToolHost } from "./tool-executor.js";
 import { mountWorkspace } from "./workspace-store.js";
@@ -207,6 +208,8 @@ export class Workspace extends DurableObject<Env> {
   readonly #store: Promise<FilesApi>;
   /** One files-RPC server per capability that holds a file view, so streams live across calls. */
   readonly #files: FilesRpcHost;
+  /** A files-RPC call on a holder's view, its write streams' opening events kept alive. */
+  readonly #filesCall: HeldFilesCall;
   readonly #authority: WorkspaceAuthority;
   readonly #sqlRoles: SqlRoleSource;
   readonly #roles: RoleSource;
@@ -245,6 +248,10 @@ export class Workspace extends DurableObject<Env> {
     this.#store = mountWorkspace(env, ctx.storage, this.#name);
     this.#store.catch(() => {});
     this.#files = new FilesRpcHost((capability) => this.#fileView(capability));
+    this.#filesCall = keepStreamEventsAlive(
+      (capability, method, args) => this.#files.call(capability, method, args),
+      (until) => this.ctx.waitUntil(until),
+    );
     sql.exec("CREATE TABLE IF NOT EXISTS ws_keys (name TEXT PRIMARY KEY, value TEXT NOT NULL)");
     // The tracer kept user and agent sessions here; they live in User DOs now. No release held
     // them, so their rows are dropped rather than migrated.
@@ -935,7 +942,7 @@ export class Workspace extends DurableObject<Env> {
    * a capability this workspace did not sign is refused (EACCES).
    */
   async files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
-    return this.#files.call(capability, method, args);
+    return this.#filesCall(capability, method, args);
   }
 
   /**
@@ -1680,7 +1687,7 @@ export class Workspace extends DurableObject<Env> {
     // An action the mode asks about is refused: a running tool cannot wait for an approval.
     const files = filesOverRpc(
       (method, a) =>
-        this.#files.call(capability, method, a).catch((e) => {
+        this.#filesCall(capability, method, a).catch((e) => {
           const asked = approvalOf(e);
           if (!asked) throw e;
           throw codedError(

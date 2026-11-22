@@ -35,8 +35,11 @@ export const RUNTIME: Runtime = runtimeOf(process.env.CONFORMANCE_RUNTIME);
  * that needs one runs only where it is offered (`it.runIf(CAN.localFiles)`).
  */
 export const CAN = {
-  /** A local file system for the Worker: the `local` workspace backend (CellB Node and CellD only). */
-  localFiles: RUNTIME === "node" || RUNTIME === "celld",
+  /**
+   * A local file system for the Worker: the `local` workspace backend, CellB Node only (CellD's
+   * node:fs is a request-local /tmp and the read-only bundle; workerd and browsers have none).
+   */
+  localFiles: RUNTIME === "node",
   /**
    * Deployment-held keys: SECRETS_KEY and the deployment secrets. A browser deployment holds none
    * (its secrets are sealed by a key of its own; `@statewalker/ai-host-do/browser`).

@@ -1,0 +1,8 @@
+---
+"@statewalker/ai-host-do": patch
+---
+
+The harness runs on CellD and workerd as on CellB (statewalker/statewalker-root#141):
+- **File writes on CellD:** a file write streamed over several files-RPC calls keeps the call that opened it alive until the stream ends, in the Workspace and Profiles DOs. CellD refuses a storage transaction to code continuing an event that has ended.
+- **Native tools on CellD:** a native tool's isolate reaches the host by plain values, one step per round of host calls, where the Worker Loader carries no stub into it (CellD). Elsewhere it still gets the host as a stub.
+- **`local` workspace backend:** documented as CellB Node only, since CellD's `node:fs` has no host file system.
