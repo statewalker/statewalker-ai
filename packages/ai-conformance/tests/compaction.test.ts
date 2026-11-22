@@ -85,7 +85,7 @@ describe.each(transports)("compaction over %s", (name, connect) => {
 
   it("gives the model the session's summaries in place of its old items, and keeps every item", async () => {
     const ann = await as(byMessages);
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const words = ["one", "two", "three", "four"].map((w) => `${t}-${w}`);
     let from = 0;
     for (const w of words) {
@@ -123,7 +123,7 @@ describe.each(transports)("compaction over %s", (name, connect) => {
 
   it("promotes summaries into a deeper one as the session grows", async () => {
     const ann = await as(byMessages);
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     for (let i = 1; i <= 5; i++) await ann.sendMessage(session.id, { content: `${t}-m${i}` });
     const { events } = await ann.readEvents(session.id, { since: 0, limit: 1000 });
     const made = events
@@ -144,7 +144,7 @@ describe.each(transports)("compaction over %s", (name, connect) => {
 
   it("sizes the tail by tokens when the deployment says so", async () => {
     const ann = await as(byTokens);
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     let from = 0;
     for (const w of ["aaaa", "bbbb", "cccc"]) {
       from = model.requests.length;
@@ -162,7 +162,7 @@ describe.each(transports)("compaction over %s", (name, connect) => {
 
   it("summarizes with no tools offered, over the session's own items only", async () => {
     const ann = await as(byMessages);
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const from = model.requests.length;
     for (const w of ["x1", "x2", "x3"]) await ann.sendMessage(session.id, { content: `${t}-${w}` });
     const summaries = model.requests.slice(from).filter((r) => r.summary);
@@ -180,7 +180,7 @@ describe.each(transports)("compaction over %s", (name, connect) => {
 
   it("gives the model the earlier turns' tool calls and results", async () => {
     const ann = await as(byMessages);
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     await ann.sendMessage(session.id, { content: 'CALL read {"path":"/alpha/readme.md"}' });
     const from = model.requests.length;
     expect(await ann.sendMessage(session.id, { content: `${t}-after` })).toMatchObject({

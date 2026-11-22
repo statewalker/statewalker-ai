@@ -14,6 +14,7 @@ catalog:
   "@statewalker/cellb": 0.8.8
   "@statewalker/webrun-biscuit": ^0.2.3
   "@statewalker/webrun-files": ^0.12.0
+  "@statewalker/webrun-files-composite": ^0.12.0
   "@statewalker/webrun-files-mem": ^0.12.0
   "@statewalker/webrun-files-node": ^0.12.0
   "@statewalker/webrun-files-rpc": ^0.3.0
@@ -26,6 +27,8 @@ catalog:
   "@aws-sdk/client-s3": 3.1155.0
   # gitignore-syntax matching for the ignore rules.
   ignore: ^7.0.5
+  # YAML front matter of agents and skills, and OpenAPI files written in YAML (ai-definitions).
+  yaml: ^2.9.1
   # SigV4 for the S3 workspace backend's fetch-based client (ai-host-do).
   aws4fetch: ^1.0.20
   "@statewalker/webrun-rpc": ^0.16.0

@@ -39,6 +39,12 @@
     // Bytes per block of every file stream; each block is authorized again.
     "FILE_BLOCK_SIZE": "1048576",
     "TOKEN_TTL_MS": "3600000",
+    // The deployment's plugin catalog: JSON {"<path>": "<text>"} of plugin sources, one folder per
+    // plugin (Agent Plugins 1.0 or Claude Code layout). Workspaces add theirs in
+    // `/.system/plugins/`, projects in `<project>/.system/plugins/`.
+    "CATALOG": "{}",
+    // The default agent, `<plugin>/<agent>`, for projects whose `.system/settings` names none.
+    "DEFAULT_AGENT": "",
     // Optional: the deployment's permission rules, JSON {"allow": [...], "ask": [...], "deny": [...]},
     // entries "area.action[:target]" or "tool:<name>", applied in every project and mode beside each
     // project's `.system/permission-rules` and each user's `permission-rules` in their profile.

@@ -89,22 +89,22 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
   });
 
   it("starts an agent session in a project the user is a member of", async () => {
-    const session = await (await as("ann")).startSession({ project: "alpha", agent: "tracer" });
-    expect(session).toMatchObject({ id: expect.any(String), project: "alpha", agent: "tracer" });
+    const session = await (await as("ann")).startSession({ project: "alpha" });
+    expect(session).toMatchObject({ id: expect.any(String), project: "alpha" });
     // The session's capability stays on the server.
     expect(JSON.stringify(session)).not.toMatch(/capability/i);
   });
 
   it("refuses to start an agent session for a user not in the project's access file", async () => {
     const bob = await as("bob");
-    await expect(bob.startSession({ project: "alpha", agent: "tracer" })).rejects.toMatchObject({
+    await expect(bob.startSession({ project: "alpha" })).rejects.toMatchObject({
       status: 403,
     });
     const ann = await as("ann");
-    await expect(ann.startSession({ project: "beta", agent: "tracer" })).rejects.toMatchObject({
+    await expect(ann.startSession({ project: "beta" })).rejects.toMatchObject({
       status: 403,
     });
-    await expect(ann.startSession({ project: "nowhere", agent: "tracer" })).rejects.toMatchObject({
+    await expect(ann.startSession({ project: "nowhere" })).rejects.toMatchObject({
       status: 403,
     });
   });
@@ -114,7 +114,7 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
 
   it("runs a turn in which Flue's read tool returns a project file through the gate", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    const session = await ann.startSession({ project: "alpha" });
     const turn = await ann.sendMessage(session.id, { content: read("/alpha/readme.md") });
     expect(turn).toMatchObject({ session: session.id, status: "completed" });
     expect(model.requests.at(-2)?.tools).toContain("read");
@@ -133,7 +133,7 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
 
   it("refuses the read tool a file outside the session's project", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    const session = await ann.startSession({ project: "alpha" });
     // A project ann is no member of is not there (ENOENT); one she is, but not this session's,
     // is refused (EACCES).
     const outside: Record<string, [string, RegExp]> = {
@@ -155,7 +155,7 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
 
   it("never lets the read tool see the project's system folder", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    const session = await ann.startSession({ project: "alpha" });
     for (const path of ["/alpha/.system/access", ".system/access", "/alpha/x/../.system/access"]) {
       const turn = await ann.sendMessage(session.id, { content: read(path) });
       const [result] = toolResults(turn);
@@ -167,7 +167,7 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
 
   it("lists the items of the session's turns, in order", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    const session = await ann.startSession({ project: "alpha" });
     expect((await ann.listItems(session.id)).items).toEqual([]);
     const turn = await ann.sendMessage(session.id, { content: read("/alpha/readme.md") });
     const { items } = await ann.listItems(session.id);
@@ -192,13 +192,13 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
 
   it("refuses to list another user's agent session", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "tracer" });
+    const session = await ann.startSession({ project: "alpha" });
     await expect(ann.listItems(session.id)).resolves.toMatchObject({ items: [] });
     await expect((await as("bob")).listItems(session.id)).rejects.toMatchObject({ status: 404 });
   });
 
   it("refuses a message to another user's agent session", async () => {
-    const session = await (await as("ann")).startSession({ project: "alpha", agent: "tracer" });
+    const session = await (await as("ann")).startSession({ project: "alpha" });
     const bob = await as("bob");
     await expect(
       bob.sendMessage(session.id, { content: read("/alpha/readme.md") }),
@@ -210,7 +210,7 @@ describe.each(transports)("tracer over %s", (_name, connect) => {
 
   it("refuses to start an agent session without a valid access token", async () => {
     await expect(
-      (await connect(deployment, "")).startSession({ project: "alpha", agent: "tracer" }),
+      (await connect(deployment, "")).startSession({ project: "alpha" }),
     ).rejects.toMatchObject({ status: 401 });
   });
 });

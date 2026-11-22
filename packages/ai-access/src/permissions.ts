@@ -44,7 +44,10 @@ interface AreaSpec {
 export const AREAS: Readonly<Record<string, AreaSpec>> = {
   files: { actions: ["read", "list", "write", "delete"], target: "path" },
   comments: { actions: ["read", "write"], target: "path" },
-  tools: { actions: ["call"], target: "name" },
+  // `tools.use:<plugin>/<tool>` shows a tool in the definitions mount and offers it (#80, #90);
+  // `skills.use:<plugin>/<skill>` a skill (#80).
+  tools: { actions: ["call", "use"], target: "name" },
+  skills: { actions: ["use"], target: "name" },
   db: { actions: ["read", "write", "admin"], target: "name" },
   models: { actions: ["use"], target: "name" },
   members: { actions: ["read", "manage"], target: "name" },
@@ -60,6 +63,8 @@ export const AREAS: Readonly<Record<string, AreaSpec>> = {
     byName: true,
     aliases: { fetch: ["read", "write"] },
   },
+  // `agents.use:<plugin>/<agent>` (#80, #82): granted only by name, so `*` never reaches it; the
+  // built-in roles name it for plugin agents (roles.ts).
   agents: { actions: ["use"], target: "name", byName: true },
   // Workspace-level: the workspace admin's.
   projects: { actions: ["create"], target: "name", byName: true },

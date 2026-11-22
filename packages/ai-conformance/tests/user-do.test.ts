@@ -98,12 +98,12 @@ describe.each(transports)("user DO over %s", (name, connect) => {
   it("lists the caller's agent sessions in the token's workspace, from the session index", async () => {
     const ann = await as(u("ann"));
     expect(await ann.listSessions()).toEqual({ sessions: [] });
-    const first = await ann.startSession({ project: "alpha", agent: "one" });
-    const second = await ann.startSession({ project: "alpha", agent: "two" });
+    const first = await ann.startSession({ project: "alpha" });
+    const second = await ann.startSession({ project: "alpha" });
     const { sessions } = await ann.listSessions();
     expect(sessions.map((s) => [s.id, s.project, s.agent, s.workspace])).toEqual([
-      [first.id, "alpha", "one", "default"],
-      [second.id, "alpha", "two", "default"],
+      [first.id, "alpha", "default", "default"],
+      [second.id, "alpha", "default", "default"],
     ]);
     // The user session's capability and the agent sessions' stay on the server.
     expect(JSON.stringify([await ann.me(), sessions])).not.toMatch(/capabilit|Ei[A-Za-z0-9_-]{40}/);
@@ -112,8 +112,8 @@ describe.each(transports)("user DO over %s", (name, connect) => {
   it("lists another workspace's sessions only with a token for that workspace", async () => {
     const inDefault = await as(u("ann"));
     const inOther = await as(u("ann"), "other");
-    const here = await inDefault.startSession({ project: "alpha", agent: "here" });
-    const there = await inOther.startSession({ project: "gamma", agent: "there" });
+    const here = await inDefault.startSession({ project: "alpha" });
+    const there = await inOther.startSession({ project: "gamma" });
     expect(there.workspace).toBe("other");
     const ids = async (c: SessionClient) => (await c.listSessions()).sessions.map((s) => s.id);
     expect(await ids(inDefault)).toContain(here.id);
@@ -139,7 +139,7 @@ describe.each(transports)("user DO over %s", (name, connect) => {
 
   it("the gate answers an agent session's file calls while its User DO is unreachable", async () => {
     const cid = await as(u("cid"));
-    const session = await cid.startSession({ project: "alpha", agent: "reader" });
+    const session = await cid.startSession({ project: "alpha" });
     await makeUserUnreachable(deployment, ADMIN_KEY, u("cid"));
     await expect(cid.listSessions()).rejects.toMatchObject({ status: 500 });
     const read = `CALL read ${JSON.stringify({ path: "/alpha/readme.md" })}`;
@@ -177,7 +177,7 @@ describe.each(transports)("user DO over %s", (name, connect) => {
   it("erasing a user erases their profile and their User DO's storage", async () => {
     const eve = await as(u("eve"));
     const before = await eve.me();
-    const session = await eve.startSession({ project: "alpha", agent: "doomed" });
+    const session = await eve.startSession({ project: "alpha" });
     expect((await eve.profile()).projects).toHaveLength(1);
     expect(await eve.eraseUser()).toEqual({ erased: true });
     expect(await eve.profile()).toEqual({ user: u("eve"), projects: [] });

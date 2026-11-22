@@ -76,7 +76,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("accepts a message with its turn's id, stream URL and offset, and runs the turn on its own", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h = hold();
     const accepted = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     expect(accepted).toMatchObject({
@@ -104,7 +104,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("queues next messages FIFO behind the running turn", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
@@ -127,7 +127,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("steers the running turn at its next step", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
@@ -154,7 +154,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("interrupts the running turn, keeping its items, and runs the interrupting message next", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
@@ -181,7 +181,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("runs a steer the turn did not take after the message that interrupted it", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
@@ -201,7 +201,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("cancels only that turn, running or queued; the other queued messages stay", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h1 = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h1}` });
     await model.held(h1);
@@ -229,7 +229,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("ends every turn with a terminal event carrying the full turn", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const accepted = await ann.postMessage(session.id, { content: "hello" });
     const turn = await ann.waitTurn(accepted);
     const { events } = await ann.readEvents(session.id, { since: accepted.offset });
@@ -261,7 +261,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("reports the request fields it ignored and the model it used instead of the one asked for", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const accepted = await ann.postMessage(session.id, {
       content: "hello",
       model: "gpt-unheard-of",
@@ -295,7 +295,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("pages and filters the session's items, and reads one alone", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     await ann.sendMessage(session.id, {
       content: `CALL read ${JSON.stringify({ path: "readme.md" })}`,
     });
@@ -344,7 +344,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("reads the event log with a cursor that waits for the next event", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const empty = await ann.readEvents(session.id);
     expect(empty).toEqual({ events: [], offset: 0, up_to_date: true });
     const accepted = await ann.postMessage(session.id, { content: "hello" });
@@ -362,12 +362,10 @@ describe.each(transports)("turns over %s", (name, connect) => {
     const tag = `search-${t}-${Date.now()}`;
     const red = await ann.startSession({
       project: "alpha",
-      agent: "a",
       metadata: { tag, color: "red" },
     });
     const blue = await ann.startSession({
       project: "alpha",
-      agent: "a",
       metadata: { tag, color: "blue" },
     });
     expect(red.metadata).toEqual({ tag, color: "red" });
@@ -390,7 +388,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
     // Another user's search never finds them; bad metadata is refused.
     expect((await (await as("bob")).listSessions({ metadata: { tag } })).sessions).toEqual([]);
     await expect(
-      ann.startSession({ project: "alpha", agent: "a", metadata: { "bad key": "x" } }),
+      ann.startSession({ project: "alpha", metadata: { "bad key": "x" } }),
     ).rejects.toMatchObject({ status: 400 });
     await expect(ann.updateSession(red.id, { metadata: { n: 1 as never } })).rejects.toMatchObject({
       status: 400,
@@ -404,7 +402,6 @@ describe.each(transports)("turns over %s", (name, connect) => {
     const ann = await as("ann");
     const session = await ann.startSession({
       project: "alpha",
-      agent: "a",
       metadata: { kept: "yes" },
     });
     const h = hold();
@@ -441,7 +438,7 @@ describe.each(transports)("turns over %s", (name, connect) => {
 
   it("deletes a session and its history, but not while it runs", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "a" });
+    const session = await ann.startSession({ project: "alpha" });
     const h = hold();
     const running = await ann.postMessage(session.id, { content: `HOLD ${h}` });
     await model.held(h);
@@ -490,7 +487,7 @@ describe("the event stream over SSE", () => {
 
   it("streams the durable log from a cursor, resumes from Last-Event-ID and marks up-to-date", async () => {
     const { token, client } = await as("ann");
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     await client.sendMessage(session.id, { content: "one" });
     const path = `/v1/sessions/${session.id}/events`;
     const backlog = await until(
@@ -531,7 +528,7 @@ describe("the event stream over SSE", () => {
 
   it("sends keep-alives while nothing happens", async () => {
     const { token, client } = await as("ann");
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     const frames = await openEvents(`/v1/sessions/${session.id}/events`, token);
     const seen = await until(frames, (f) => f.comment === "keep-alive");
     expect(seen.map((f) => f.event ?? f.comment)).toEqual(["up-to-date", "keep-alive"]);
@@ -540,7 +537,7 @@ describe("the event stream over SSE", () => {
 
   it("never cancels a turn when its reader disconnects", async () => {
     const { token, client } = await as("ann");
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     const h = hold();
     const accepted = await client.postMessage(session.id, { content: `HOLD ${h}` });
     const frames = await openEvents(accepted.stream_url, token);
@@ -553,7 +550,7 @@ describe("the event stream over SSE", () => {
 
   it("ends a turn's stream with its terminal event, even after the turn ended", async () => {
     const { token, client } = await as("ann");
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     const accepted = await client.postMessage(session.id, { content: "done" });
     const seen: SseFrame[] = [];
     for await (const f of await openEvents(accepted.stream_url, token)) seen.push(f);
@@ -574,7 +571,7 @@ describe("the event stream over SSE", () => {
 
   it("ends a session's stream with session.archived, even opened after the archive", async () => {
     const { token, client } = await as("ann");
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     await client.archiveSession(session.id);
     const path = `/v1/sessions/${session.id}/events`;
     const all: SseFrame[] = [];
@@ -588,7 +585,7 @@ describe("the event stream over SSE", () => {
 
   it("refuses an event stream without a valid token or for another user's session", async () => {
     const { client } = await as("ann");
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     const path = `/v1/sessions/${session.id}/events`;
     expect((await deployment.fetch(path)).status).toBe(401);
     const bob = await login(deployment, "bob-rest");
@@ -599,7 +596,7 @@ describe("the event stream over SSE", () => {
   it("ends an open stream with an error event once its token expires", async () => {
     const token = await login(deployment, "ann-rest", { ttlMs: 1500 });
     const client = restClient(deployment, token);
-    const session = await client.startSession({ project: "alpha", agent: "a" });
+    const session = await client.startSession({ project: "alpha" });
     const seen: SseFrame[] = [];
     for await (const f of await openEvents(`/v1/sessions/${session.id}/events`, token))
       seen.push(f);

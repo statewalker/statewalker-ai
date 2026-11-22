@@ -219,7 +219,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
       value: "inject-me-5b7e",
       bindings: binding,
     });
-    const session = await ann.startSession({ project: "alpha", agent: "caller" });
+    const session = await ann.startSession({ project: "alpha" });
     let turn!: Awaited<ReturnType<SessionClient["sendMessage"]>>;
     const got = await received(async () => {
       turn = await ann.sendMessage(session.id, { content: "CALL fixture__call {}" });
@@ -245,7 +245,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
   it("the most specific level wins: user, then project, then workspace", async () => {
     const ann = await as("ann");
     const wendy = await as("wendy");
-    const session = await ann.startSession({ project: "alpha", agent: "levels" });
+    const session = await ann.startSession({ project: "alpha" });
     const call = () => ann.sendMessage(session.id, { content: "CALL fixture__call {}" });
     await wendy.setSecret({
       level: "workspace",
@@ -285,7 +285,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
       bindings: binding,
     });
     try {
-      const session = await ann.startSession({ project: "alpha", agent: "exfil" });
+      const session = await ann.startSession({ project: "alpha" });
       for (const tool of ["fixture__elsewhere", "other__call"]) {
         let turn!: Awaited<ReturnType<SessionClient["sendMessage"]>>;
         const got = await received(async () => {
@@ -316,7 +316,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
 
   it("a replaced secret applies to the next call; a deleted one fails the call by name", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "rotate" });
+    const session = await ann.startSession({ project: "alpha" });
     const call = () => ann.sendMessage(session.id, { content: "CALL fixture__call {}" });
     await ann.setSecret({
       level: "user",
@@ -356,7 +356,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
       value: "echoed-value-ab12",
       bindings: binding,
     });
-    const session = await ann.startSession({ project: "alpha", agent: "echo" });
+    const session = await ann.startSession({ project: "alpha" });
     const turn = await ann.sendMessage(session.id, { content: "CALL fixture__echo {}" });
     expect(toolResults(turn)).toEqual([
       expect.objectContaining({
@@ -370,7 +370,7 @@ describe.each(transports)("secrets over %s", (name, connect) => {
 
   it("a deployment secret reaches only its bound plugin and host", async () => {
     const ann = await as("ann");
-    const session = await ann.startSession({ project: "alpha", agent: "deploy" });
+    const session = await ann.startSession({ project: "alpha" });
     const got = await received(() =>
       ann.sendMessage(session.id, { content: "CALL fixture__deploy {}" }),
     );
