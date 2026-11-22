@@ -18,11 +18,11 @@
     "@statewalker/cellb": "catalog:",
     "@statewalker/webrun-files-mem": "catalog:",
     "@xterm/addon-fit": "catalog:",
-    "@xterm/xterm": "catalog:"
+    "@xterm/xterm": "catalog:",
+    "@statewalker/ai-host-do": "workspace:^"
   },
   "devDependencies": {
     "@statewalker/ai-conformance": "workspace:^",
-    "@statewalker/ai-host-do": "workspace:^",
     "@types/node": "catalog:",
     "esbuild": "catalog:",
     "typescript": "catalog:",

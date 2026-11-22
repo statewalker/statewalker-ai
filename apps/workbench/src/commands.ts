@@ -90,7 +90,9 @@ export function createShell(options: ShellOptions): Shell {
 
   async function follow(accepted: Parameters<SessionClient["follow"]>[0], signal?: AbortSignal) {
     const cancel = () => void client.cancelTurn(accepted.turn_id).catch(() => {});
-    signal?.addEventListener("abort", cancel, { once: true });
+    // A Ctrl-C pressed before the stream opened cancels at once.
+    if (signal?.aborted) cancel();
+    else signal?.addEventListener("abort", cancel, { once: true });
     try {
       for await (const step of client.follow(accepted)) {
         if ("item" in step) {

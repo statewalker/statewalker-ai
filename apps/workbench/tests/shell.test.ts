@@ -149,6 +149,18 @@ describe("the workbench shell", () => {
     );
   });
 
+  it("cancels the turn on Ctrl-C, even one pressed before the turn's stream opened", async () => {
+    const { shell, lines } = await shellFor("wb");
+    const stop = new AbortController();
+    stop.abort();
+    try {
+      await shell.run("HOLD ctrl-c", stop.signal);
+      expect(lines.at(-1)).toMatch(/^turn cancelled/);
+    } finally {
+      model.release("ctrl-c");
+    }
+  });
+
   it("reports a refusal instead of failing", async () => {
     const { shell, lines } = await shellFor("wb");
     await shell.run("use elsewhere");

@@ -4,6 +4,7 @@
 // keeps only its user's own (statewalker/statewalker-root#132). The page reaches it only through
 // the session API: requests come in as messages, answers go back as a head and body chunks.
 import { loadProject } from "@statewalker/cellb/browser";
+import { browserDeploymentConfig } from "@statewalker/ai-host-do/browser";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
 
 type LoadedProject = Awaited<ReturnType<typeof loadProject>>;
@@ -33,7 +34,9 @@ async function start({ url, vars }: StartMessage) {
       const config = JSON.parse(new TextDecoder().decode(bytes));
       // The build already made it a browser deployment's (scripts/build-harness.mjs); the page's
       // variables never add a deployment-held secret: HOSTING stays "browser".
-      config.vars = { ...config.vars, ...vars, HOSTING: "browser" };
+      // The page's own admin key is the one held name it keeps; nothing else it passes can add a
+      // deployment-held secret.
+      Object.assign(config, browserDeploymentConfig(config, vars, { keep: ["ADMIN_KEY"] }));
       bytes = enc.encode(JSON.stringify(config));
     }
     await files.write(`/${name}`, [bytes]);
