@@ -57,6 +57,15 @@ const METHODS = [
   "eraseBranch",
   "forkSession",
   "listMemory",
+  // The trigger API (statewalker/statewalker-root#207).
+  "listTriggers",
+  "createTrigger",
+  "getTrigger",
+  "updateTrigger",
+  "deleteTrigger",
+  "triggerFires",
+  "fireTrigger",
+  "listOwnTriggers",
   // The task API (statewalker/statewalker-root#206).
   "publish",
   "listTasks",

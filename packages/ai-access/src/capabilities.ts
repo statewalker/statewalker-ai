@@ -58,6 +58,11 @@ export interface AgentSessionGrant {
    * block can undo it.
    */
   unattended?: boolean;
+  /**
+   * A mode the session runs in instead of its user session's (a trigger's, statewalker/statewalker-root#207):
+   * fixed in the capability, so no later block changes it.
+   */
+  mode?: string;
 }
 
 /**
@@ -131,6 +136,8 @@ check if resource($p), $p.starts_with({root});`;
 
 // Added to the agent session's block when it is unattended: its presence alone is the flag.
 const UNATTENDED_FACT = "\nunattended(true);";
+// Added to the agent session's block for a session with a mode of its own (a trigger's, #207).
+const SESSION_MODE_FACT = "\nsession_mode({mode});";
 
 const GRANT_FACTS = ["agent_session", "project", "agent"] as const;
 
@@ -167,15 +174,23 @@ const term = (t: unknown) => (t as { v: unknown }).v;
  */
 export function attenuateForAgentSession(userCapability: string, grant: AgentSessionGrant): string {
   if (!NAME.test(grant.project)) throw codedError("EINVAL", "project must be a project's name");
+  if (grant.mode !== undefined && !MODE_NAME.test(String(grant.mode)))
+    throw codedError("EINVAL", "invalid mode name");
   return Biscuit.fromBase64(userCapability)
-    .attenuate(AGENT_BLOCK + (grant.unattended ? UNATTENDED_FACT : ""), {
-      params: {
-        session: grant.session,
-        project: grant.project,
-        agent: grant.agent,
-        root: `/${grant.project}/`,
+    .attenuate(
+      AGENT_BLOCK +
+        (grant.unattended ? UNATTENDED_FACT : "") +
+        (grant.mode !== undefined ? SESSION_MODE_FACT : ""),
+      {
+        params: {
+          session: grant.session,
+          project: grant.project,
+          agent: grant.agent,
+          root: `/${grant.project}/`,
+          ...(grant.mode !== undefined ? { mode: grant.mode } : {}),
+        },
       },
-    })
+    )
     .toBase64();
 }
 
@@ -309,12 +324,17 @@ export class WorkspaceAuthority {
     });
     const project = String(values.project);
     if (!NAME.test(project)) throw codedError("EACCES", "not an agent session's capability");
+    const sessionModes = block.facts.filter((f) => f.predicate.name === "session_mode");
+    const modeTerm = sessionModes[0]?.predicate.terms[0] as Term | undefined;
+    if (sessionModes.length > 1 || (sessionModes.length === 1 && modeTerm?.t !== "str"))
+      throw codedError("EACCES", "not an agent session's capability");
     const facts: AgentSessionFacts = {
       user,
       session: String(values.agent_session),
       project,
       agent: String(values.agent),
       unattended,
+      ...(modeTerm?.t === "str" ? { mode: modeTerm.v } : {}),
     };
     // Sub-agent blocks: only those the workspace signed count, each naming the session before it
     // as its parent. A block the holder appended is a check at most, never a fact the gate reads.

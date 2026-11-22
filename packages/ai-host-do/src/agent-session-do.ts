@@ -56,6 +56,7 @@ import {
   type SessionHistory,
   type SessionScanQuery,
   type TopicsQuery,
+  type TriggeredSessionRequest,
   type TurnRun,
 } from "@statewalker/ai-sessions";
 import { RemoteCore, type RemotePort, type UhpCall } from "@statewalker/ai-uhp-client";
@@ -645,7 +646,80 @@ export class AgentSession extends DurableObject<Env> {
       // The topic titles on the active path, kept in the user's session index (#174).
       onTopics: (config, titles) =>
         userOf(env, config.user).sessionTopics(config.id, config.capability, titles),
+      // An unattended session's turn ended: a trigger's fire acks its tasks (#207).
+      onTurnEnded: async (config, turn) => {
+        if (!config.unattended) return;
+        const told = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace))
+          .triggerTurnEnded(config.capability, {
+            id: turn.id,
+            status: turn.status,
+            ...(turn.usage ? { cost: turn.usage.cost } : {}),
+          })
+          .catch(() => {});
+        this.ctx.waitUntil(told);
+        await told;
+      },
     });
+  }
+
+  // --- triggers (statewalker/statewalker-root#207) ----------------------------------------------
+
+  /**
+   * A trigger's new session, asked by its workspace for this DO's session id: the owner's User DO
+   * puts it in their index as an unattended session of theirs (deciding membership and the agent at
+   * the workspace now), then it starts and takes the fire's message.
+   */
+  async fireTrigger(req: {
+    id: string;
+    workspace: string;
+    owner: string;
+    userCapability: string;
+    request: TriggeredSessionRequest;
+    message: string;
+  }) {
+    if (this.#core.config()) throw codedError("EEXIST", "the session exists");
+    const { config } = await userOf(this.env, req.owner).startTriggeredSession(
+      req.id,
+      req.workspace,
+      req.userCapability,
+      req.request,
+    );
+    await this.start(config);
+    return this.send({ content: req.message, delivery: "next", ignored: [], origin: "agent" });
+  }
+
+  /**
+   * A trigger's message to this session, one of its owner's: only an unattended session of the
+   * owner's in the trigger's workspace and project, not archived or revoked (their User DO says).
+   */
+  async sendTriggered(req: { workspace: string; owner: string; project: string; message: string }) {
+    const config = this.#core.config();
+    if (
+      !config ||
+      config.user !== req.owner ||
+      config.workspace !== req.workspace ||
+      config.project !== req.project
+    )
+      throw codedError("ENOENT", "no such session of the trigger's owner");
+    if (!config.unattended) throw codedError("EINVAL", "the target session is not unattended");
+    await userOf(this.env, req.owner).triggerTarget(req.workspace, config.id);
+    return this.send({ content: req.message, delivery: "next", ignored: [], origin: "agent" });
+  }
+
+  /** Archives a trigger's session after its time, as its owner would, with its sub-agents. */
+  async archiveTriggered(req: { workspace: string; owner: string; userCapability: string }) {
+    const config = this.#core.config();
+    if (!config || config.user !== req.owner || config.workspace !== req.workspace) return;
+    const tree = await userOf(this.env, req.owner).archiveTriggeredSession(
+      req.workspace,
+      req.userCapability,
+      config.id,
+    );
+    await this.archive();
+    for (const id of tree.filter((t) => t !== config.id))
+      await agentOf(this.env, id)
+        .archive()
+        .catch(() => {});
   }
 
   start(config: AgentSessionConfig): Promise<void> {

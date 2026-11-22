@@ -10,6 +10,7 @@ export type ErrorCode =
   | "EEXIST" // it exists already (409)
   | "ELIMIT" // a limit refused it (statewalker/statewalker-root#179): too many, for now (429)
   | "ENOSPC" // a storage limit refused a write; reads and deletes still work (507)
+  | "E2BIG" // a request's body or payload is over its cap (413, statewalker/statewalker-root#207)
   | "ENOSYS" // not implemented (501)
   | "EIO"; // anything else (500)
 
@@ -32,6 +33,7 @@ const CODES = new Set<string>([
   "EEXIST",
   "ELIMIT",
   "ENOSPC",
+  "E2BIG",
   "ENOSYS",
   "EIO",
 ]);
@@ -40,7 +42,7 @@ const CODES = new Set<string>([
 export function codeOf(e: unknown): ErrorCode {
   const own = (e as { code?: unknown })?.code;
   if (typeof own === "string" && CODES.has(own)) return own as ErrorCode;
-  const prefix = /^(E[A-Z]+):/.exec(String((e as Error)?.message ?? e))?.[1];
+  const prefix = /^(E[A-Z0-9]+):/.exec(String((e as Error)?.message ?? e))?.[1];
   return prefix && CODES.has(prefix) ? (prefix as ErrorCode) : "EIO";
 }
 
@@ -53,6 +55,7 @@ const STATUS: Record<ErrorCode, number> = {
   EEXIST: 409,
   ELIMIT: 429,
   ENOSPC: 507,
+  E2BIG: 413,
   ENOSYS: 501,
   EIO: 500,
 };

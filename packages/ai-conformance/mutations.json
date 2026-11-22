@@ -7,7 +7,8 @@
     "memory": "pnpm --filter @statewalker/ai-memory exec vitest run",
     "memory-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/memory.test.ts",
     "tasks": "pnpm --filter @statewalker/ai-tasks exec vitest run",
-    "tasks-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/tasks.test.ts"
+    "tasks-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/tasks.test.ts",
+    "triggers-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/triggers.test.ts"
   },
   "mutations": [
     {
@@ -249,6 +250,30 @@
       "find": "    if (!taker)\n      throw taskError(\"EACCES\", \"only a consumer that took or claimed a task replies to it\");\n",
       "replace": "    if (!taker) return this.#insert(project, { subject: \"_inbox.x\" }, holder);\n",
       "suites": ["tasks", "tasks-conformance"]
+    },
+    {
+      "id": "hook-signature-unchecked",
+      "why": "a webhook with any signature is taken",
+      "file": "packages/ai-host-do/src/triggers-host.ts",
+      "find": "if (!sameText(expected, signature))",
+      "replace": "if (false)",
+      "suites": ["triggers-conformance"]
+    },
+    {
+      "id": "hook-replay-taken",
+      "why": "a replayed signed webhook request is taken again",
+      "file": "packages/ai-host-do/src/triggers-host.ts",
+      "find": "throw codedError(\"EAUTH\", \"a replayed webhook request\");",
+      "replace": "void 0;",
+      "suites": ["triggers-conformance"]
+    },
+    {
+      "id": "trigger-editable-by-project-owner",
+      "why": "a project owner changes what another user's trigger runs",
+      "file": "packages/ai-host-do/src/triggers-host.ts",
+      "find": "if (!full && !(rights.project && onlyDisable))",
+      "replace": "if (!full && !rights.project)",
+      "suites": ["triggers-conformance"]
     }
   ]
 }

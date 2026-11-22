@@ -121,6 +121,20 @@ export class Issuer extends DurableObject<Env> {
   }
 
   /** Revokes a user everywhere: no more tokens are signed or renewed for them. */
+  /**
+   * Why a user may no longer act (statewalker/statewalker-root#207), or undefined: revoked
+   * everywhere, or a service account that was deleted. A trigger's owner is checked at each fire.
+   */
+  async standing(user: string): Promise<string | undefined> {
+    const revoked = this.ctx.storage.sql
+      .exec("SELECT 1 FROM revoked_users WHERE user = ?", user)
+      .toArray();
+    if (revoked.length) return `${user}'s access is revoked`;
+    if (isServiceAccount(user) && !this.#account(user))
+      return `the service account ${user} was deleted`;
+    return undefined;
+  }
+
   async revokeUser(user: string): Promise<void> {
     this.ctx.storage.sql.exec(
       "INSERT OR REPLACE INTO revoked_users VALUES (?, ?)",
