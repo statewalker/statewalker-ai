@@ -165,6 +165,11 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     return json({ usage: await workspaceOf(env, id).modelUsage() });
   }
+  if (collection === "sessions" && id && sub === "flue-storage") {
+    // The rows of Flue's tables in the session's DO; `forget` first drops its in-memory Flue
+    // session, as a fresh DO instance has none.
+    return json({ tables: await agentOf(env, id).flueStorage(body.forget === true) });
+  }
   if (collection === "workspaces" && id && sub === "database-storage") {
     // Every database of the workspace and its size: the storage meter's input (#179).
     if (!workspacesOf(env).includes(id))
