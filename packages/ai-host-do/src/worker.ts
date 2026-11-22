@@ -91,6 +91,7 @@ function sessionApi(env: Env, token: string) {
       usage: async (t, q) => (await user()).usage(t, q),
       manageLimits: async (t, call) => (await user()).manageLimits(t, call),
       usageRecords: async (t, q) => (await user()).usageRecords(t, q),
+      tasks: async (t, call) => (await user()).tasks(t, call),
     },
     agent: (id) => {
       const agent = agentOf(env, id);

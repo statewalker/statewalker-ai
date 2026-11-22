@@ -409,12 +409,17 @@ export class WorkspaceLimits {
     }
   }
 
-  /** Counts `delta` bytes of files in a project. */
+  /**
+   * Counts `delta` bytes of a project's storage: its files, or another category's (`queue`: the
+   * task queue's waiting tasks and dead letters, statewalker/statewalker-root#206), named in the
+   * usage records' detail.
+   */
   async adjustStorage(
     project: string,
     user: string,
     delta: number,
     store: FilesApi,
+    category?: string,
   ): Promise<void> {
     await this.ensureStorage(project, store);
     if (!delta) return;
@@ -422,6 +427,7 @@ export class WorkspaceLimits {
       this.#storageScopes(await this.scopes(project, user)),
       { storage_bytes: delta },
       this.meta(project, user),
+      category ? { category } : undefined,
     );
   }
 

@@ -71,6 +71,7 @@ import type {
   SetSecretRequest,
   StartSessionRequest,
   SubAgentRequest,
+  TasksCall,
   UsageQuery,
   UsageRecordsPage,
   UsageRecordsQuery,
@@ -198,6 +199,8 @@ export interface WorkspaceGrants {
   manageLimits(userCapability: string, call: LimitsCall): Promise<LimitsView>;
   /** A page of the workspace's usage records; EACCES unless the user is its admin. */
   usageRecords(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage>;
+  /** One task API call with a user capability (statewalker/statewalker-root#206). */
+  tasks(userCapability: string, call: TasksCall): Promise<unknown>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -1452,6 +1455,12 @@ export class UserSessions implements UserPort {
   async usageRecords(token: string, query: UsageRecordsQuery): Promise<UsageRecordsPage> {
     const us = await this.#userSession(token);
     return this.#o.workspace(us.workspace).usageRecords(us.capability, query);
+  }
+
+  /** One task API call in the token's workspace, decided there with the user's capability. */
+  async tasks(token: string, call: TasksCall): Promise<unknown> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).tasks(us.capability, call);
   }
 
   /** The agent each of these sessions of the user runs; unknown ones left out. */

@@ -5,7 +5,9 @@
     "environment": "pnpm --filter @statewalker/ai-environment exec vitest run",
     "gate-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/file-view.test.ts tests/modes.test.ts tests/tenancy.test.ts tests/roles.test.ts tests/user-do.test.ts",
     "memory": "pnpm --filter @statewalker/ai-memory exec vitest run",
-    "memory-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/memory.test.ts"
+    "memory-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/memory.test.ts",
+    "tasks": "pnpm --filter @statewalker/ai-tasks exec vitest run",
+    "tasks-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/tasks.test.ts"
   },
   "mutations": [
     {
@@ -199,6 +201,54 @@
       "find": "if ((await digestOf(fm.data, fm.body)) !== fm.data[DIGEST])",
       "replace": "if (false)",
       "suites": ["memory", "memory-conformance"]
+    },
+    {
+      "id": "tasks-server-prefix-open",
+      "why": "anyone publishes hooks.* and schedule.* through the API",
+      "file": "packages/ai-host-do/src/tasks-host.ts",
+      "find": "if (startsWithAny(s, SERVER_PREFIXES))",
+      "replace": "if (false)",
+      "suites": ["tasks-conformance"]
+    },
+    {
+      "id": "tasks-agent-prefix-open",
+      "why": "anyone publishes under another agent's prefix",
+      "file": "packages/ai-host-do/src/tasks-host.ts",
+      "find": "if (!own || !s.startsWith(own))",
+      "replace": "if (false)",
+      "suites": ["tasks-conformance"]
+    },
+    {
+      "id": "tasks-destination-ignored",
+      "why": "a task with a destination is taken by anyone",
+      "file": "packages/ai-tasks/src/queue.ts",
+      "find": "if (row.destination && !reader.destinations.includes(row.destination)) continue;",
+      "replace": "",
+      "suites": ["tasks", "tasks-conformance"]
+    },
+    {
+      "id": "tasks-inbox-open",
+      "why": "an inbox is read by anyone",
+      "file": "packages/ai-tasks/src/queue.ts",
+      "find": "if (!sub || (sub.inbox && sub.owner !== reader.id))",
+      "replace": "if (!sub)",
+      "suites": ["tasks", "tasks-conformance"]
+    },
+    {
+      "id": "tasks-lease-any-holder",
+      "why": "anyone settles another's lease",
+      "file": "packages/ai-tasks/src/queue.ts",
+      "find": "if (!row || row.holder !== holder)",
+      "replace": "if (!row)",
+      "suites": ["tasks", "tasks-conformance"]
+    },
+    {
+      "id": "tasks-reply-unchecked",
+      "why": "anyone replies to a task they never took",
+      "file": "packages/ai-tasks/src/queue.ts",
+      "find": "    if (!taker)\n      throw taskError(\"EACCES\", \"only a consumer that took or claimed a task replies to it\");\n",
+      "replace": "    if (!taker) return this.#insert(project, { subject: \"_inbox.x\" }, holder);\n",
+      "suites": ["tasks", "tasks-conformance"]
     }
   ]
 }

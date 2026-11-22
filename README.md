@@ -22,6 +22,8 @@ packages/
   ai-sessions/       user and agent sessions, turns, items, summaries, event log, session API
   ai-memory/         memory across sessions: preferences, user, project and agent memory, the
                      memory tool and the memory API's one implementation
+  ai-tasks/          the per-project task queue: tasks, subscriptions, leases, dead letters,
+                     reply inboxes, the executor contract and its runner (no harness types)
   ai-flue/           Flue on the environment
   ai-host-do/        Durable Objects, REST and RPC, runtime bindings
   ai-openai-compat/  OpenAI projection
@@ -36,7 +38,8 @@ published (the first usable release, statewalker/statewalker-root#132), and `ai-
 (statewalker/statewalker-root#173), which `ai-sessions` and `ai-host-do` depend on, and
 `ai-uhp-client` (statewalker/statewalker-root#144), which `ai-host-do` depends on, and
 `ai-openai-compat` (statewalker/statewalker-root#138) and `ai-uhp` (statewalker/statewalker-root#139),
-which `ai-host-do` routes; the others are private
+which `ai-host-do` routes, and `ai-tasks` (statewalker/statewalker-root#206), which `ai-sessions`
+and `ai-host-do` depend on; the others are private
 skeletons until their tickets give them content. A package's first version is published once, by a
 human, and later releases go through CI (statewalker-root's release rules). In the workspace the
 packages export their TypeScript sources; `publishConfig.exports` points the published ones at
@@ -124,3 +127,13 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   agent's next model like a provider's 429, and with no model left the turn ends incomplete with
   `stop_reason: rate_limited`. A user's own keys are held to their own `user` limits on
   `model_requests` and `model_tokens`.
+- **Tasks wait in a queue until someone pulls them** (statewalker/statewalker-root#160, #206). Each
+  project has one task queue in its Workspace DO: people, agents (the tools `tasks_publish`,
+  `tasks_peek`, `tasks_take`, `tasks_reply`) and, later, webhooks and schedules publish tasks under
+  subjects; subscriptions (NATS-style `*` and `>` filters on the subject, a destination, a sender)
+  peek, take or claim them with leases, and notifications only say "changed". The contract in
+  `ai-tasks` names no harness type, so it can move to a lower layer (#204); rights
+  (`tasks.publish`, `tasks.subscribe`, `tasks.admin`), modes and limits are the host's. The
+  deployment's `TASKS` (`{max_payload_bytes, expiry_days, max_expiry_days, dead_letter_days,
+  max_waiting}`) sets the caps: 64 KB payloads, 7 days (30 at most), 14 days of dead letters and
+  10,000 waiting tasks per project; the queue's bytes count as storage (category `queue`).

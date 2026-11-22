@@ -226,6 +226,7 @@ function callOf(stored: StoredAction): ActionCall {
     stored.method === "db" ||
     stored.method === "tool" ||
     stored.method === "memory" ||
+    stored.method === "tasks" ||
     stored.method === "changeset" ||
     stored.method === "run"
       ? { content: fromBase64(stored.content ?? "") }
@@ -1268,7 +1269,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });
       } else if (
-        (method === "tool" || method === "memory" || method === "run") &&
+        (method === "tool" || method === "memory" || method === "tasks" || method === "run") &&
         done &&
         typeof done === "object" &&
         "output" in done

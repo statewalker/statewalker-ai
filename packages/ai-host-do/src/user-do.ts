@@ -23,6 +23,7 @@ import {
   type SetSecretRequest,
   type StartSessionRequest,
   type SubAgentRequest,
+  type TasksCall,
   type UsageQuery,
   type UsageRecordsQuery,
   type UsageReport,
@@ -104,6 +105,7 @@ export class User extends DurableObject<Env> {
           usage: (capability, query) => ws.usageReport(capability, query),
           manageLimits: (capability, call) => ws.manageLimits(capability, call),
           usageRecords: (capability, query) => ws.usageExport(capability, query),
+          tasks: (capability, call) => ws.tasks(capability, call),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -153,7 +155,7 @@ export class User extends DurableObject<Env> {
    */
   async admitRequest(token: string, kind: ApiRequestKind) {
     await this.#reachable();
-    if (!["message", "stream", "session"].includes(kind))
+    if (!["message", "stream", "session", "task"].includes(kind))
       throw codedError("EINVAL", "no such kind of request");
     const { user, workspace } = await this.#sessions.claims(token);
     const meta = { workspace, project: "", user };
@@ -343,6 +345,12 @@ export class User extends DurableObject<Env> {
   async memory(token: string, call: MemoryCall) {
     await this.#reachable();
     return this.#sessions.memory(token, call);
+  }
+
+  /** One task API call of the caller (statewalker/statewalker-root#206). */
+  async tasks(token: string, call: TasksCall) {
+    await this.#reachable();
+    return this.#sessions.tasks(token, call);
   }
 
   /** Told by an agent session's DO: its topic titles on the active path (#174). */
