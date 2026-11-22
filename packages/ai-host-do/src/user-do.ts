@@ -10,6 +10,7 @@ import { filesOverRpc } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
+  type DatabaseCall,
   type DeleteSecretRequest,
   type Metadata,
   type ModelsQuery,
@@ -55,6 +56,8 @@ export class User extends DurableObject<Env> {
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
           files: (capability, method, args) => ws.files(capability, method, args),
+          listDatabases: (capability, project) => ws.listDatabases(capability, project),
+          databaseCall: (capability, call) => ws.databaseCall(capability, call),
           listSecrets: (capability, scope) => ws.listSecrets(capability, scope),
           setSecret: (capability, req) => ws.setSecret(capability, req),
           deleteSecret: (capability, req) => ws.deleteSecret(capability, req),
@@ -160,6 +163,16 @@ export class User extends DurableObject<Env> {
   async files(token: string, method: FilesRpcMethod, args: unknown[]) {
     await this.#reachable();
     return this.#sessions.files(token, method, args);
+  }
+
+  async listDatabases(token: string, project: string) {
+    await this.#reachable();
+    return this.#sessions.listDatabases(token, project);
+  }
+
+  async databaseCall(token: string, call: DatabaseCall) {
+    await this.#reachable();
+    return this.#sessions.databaseCall(token, call);
   }
 
   async listSecrets(token: string, scope: SecretScope) {

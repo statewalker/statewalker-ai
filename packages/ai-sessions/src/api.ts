@@ -63,6 +63,43 @@ export interface AgentSessionView {
   root?: string;
 }
 
+/** A project's database, as the session API lists it to a member who may use it. */
+export interface DatabaseView {
+  name: string;
+  /** What the caller's roles let them do there: write, or read (every call rolled back). */
+  access: "read" | "write";
+  /** The bytes it takes, as the storage meter counts them. */
+  bytes: number;
+}
+
+/** One db-rpc call on a project's database (statewalker/statewalker-root#136). */
+export interface DatabaseCall {
+  project: string;
+  database: string;
+  method: "query" | "readPage" | "closeQuery" | "exec" | "flush";
+  args: unknown[];
+}
+
+const DB_METHODS = ["query", "readPage", "closeQuery", "exec", "flush"];
+
+/** A database call as the API takes it: checked, with nothing else carried along. */
+function databaseCall(call: unknown): DatabaseCall {
+  const c = (call ?? {}) as Record<string, unknown>;
+  if (typeof c.project !== "string" || !c.project)
+    throw codedError("EINVAL", "project must be a project's name");
+  if (typeof c.database !== "string" || !c.database)
+    throw codedError("EINVAL", "database must be a database's name");
+  if (typeof c.method !== "string" || !DB_METHODS.includes(c.method))
+    throw codedError("EINVAL", "method must be a db-rpc method");
+  if (!Array.isArray(c.args)) throw codedError("EINVAL", "args must be a list");
+  return {
+    project: c.project,
+    database: c.database,
+    method: c.method as DatabaseCall["method"],
+    args: c.args,
+  };
+}
+
 /** A workspace's service account, as the session API lists it: never its API key. */
 export interface ServiceAccountView {
   /** Its name in the workspace, as the admin gave it. */
@@ -122,11 +159,12 @@ export interface ItemInput {
 
 /** The exact file call an approval runs, as the agent session stores it in its items. */
 export interface StoredAction {
-  method: "write" | "mkdir" | "remove" | "copy" | "move";
+  /** A file change, or a database action (`db`: the path is the database). */
+  method: "write" | "mkdir" | "remove" | "copy" | "move" | "db";
   path: string;
   /** A copy's or move's target. */
   target?: string;
-  /** A write's content, base64. */
+  /** A write's content, or a database action's (its encoded statement), base64. */
   content?: string;
 }
 
@@ -426,6 +464,13 @@ export interface SessionApi {
   ): Promise<{ approval: ApprovalView; accepted: MessageAccepted }>;
   /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
   files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
+  /** A project's databases the caller may use (`db.read` or `db.write`), with their sizes. */
+  listDatabases(project: string): Promise<{ databases: DatabaseView[] }>;
+  /**
+   * One db-rpc call on a project's database, decided at the workspace's gate: with only
+   * `db.read` it runs in a transaction that is always rolled back.
+   */
+  database(call: DatabaseCall): Promise<unknown>;
   /**
    * The secrets of one level the caller manages (`secrets.write:<level>`; a project's for project
    * secrets): names, levels, bindings and update times, never values.
@@ -519,6 +564,8 @@ export interface UserPort {
   answerApproval(token: string, id: string, answer: ApprovalAnswer): Promise<ApprovalView>;
   /** One files-RPC call on the user's own file view of the token's workspace. */
   files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
+  listDatabases(token: string, project: string): Promise<{ databases: DatabaseView[] }>;
+  databaseCall(token: string, call: DatabaseCall): Promise<unknown>;
   listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }>;
   setSecret(token: string, req: SetSecretRequest): Promise<SecretView>;
   deleteSecret(token: string, req: DeleteSecretRequest): Promise<{ deleted: true }>;
@@ -814,6 +861,12 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
       };
     },
     files: (method, args) => ports.user.files(token, method, args),
+    listDatabases: async (project) => {
+      if (typeof project !== "string" || !project)
+        throw codedError("EINVAL", "project must be a project's name");
+      return ports.user.listDatabases(token, project);
+    },
+    database: async (call) => ports.user.databaseCall(token, databaseCall(call)),
     listSecrets: async (scope) => ports.user.listSecrets(token, secretScope(scope)),
     setSecret: async (req) => ports.user.setSecret(token, setSecretRequest(req)),
     deleteSecret: async (req) =>

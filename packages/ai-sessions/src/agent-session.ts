@@ -113,9 +113,21 @@ function callOf(stored: StoredAction): ActionCall {
     method: stored.method,
     path: stored.path,
     ...(stored.target !== undefined ? { target: stored.target } : {}),
-    ...(stored.method === "write" ? { content: fromBase64(stored.content ?? "") } : {}),
+    ...(stored.method === "write" || stored.method === "db"
+      ? { content: fromBase64(stored.content ?? "") }
+      : {}),
   };
 }
+
+/** Rows as the model reads them: JSON, big integers as text and BLOBs by their size. */
+const rowsText = (rows: unknown): string =>
+  JSON.stringify(rows, (_key, value) =>
+    typeof value === "bigint"
+      ? value.toString()
+      : value instanceof Uint8Array
+        ? `<${value.length} bytes>`
+        : value,
+  );
 
 type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;
 
@@ -565,7 +577,10 @@ export class AgentSessionCore implements AgentPort {
       if (done && typeof done === "object" && "$approval" in done) {
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });
-      } else result(`${method} ${path}${target ? ` ${target}` : ""}: done`, false);
+      } else if (method === "db" && done !== null && done !== undefined)
+        // A database query's answer: its rows, as the tool would have answered them.
+        result(`db ${path}: ${rowsText(done)}`, false);
+      else result(`${method} ${path}${target ? ` ${target}` : ""}: done`, false);
     } catch (e) {
       result(String((e as Error)?.message ?? e), true);
     }

@@ -15,10 +15,13 @@ export {
   type AgentSessionGrant,
   type AuthorityOptions,
   attenuateForAgentSession,
+  type DatabaseAction,
+  type DatabaseRequest,
   type FileAction,
   type FileRequest,
   type StoredRootKey,
   type SubAgentGrant,
+  type ToolGrant,
   WorkspaceAuthority,
 } from "./capabilities.js";
 export { type CodedError, codedError, codeOf, type ErrorCode, statusOf } from "./errors.js";

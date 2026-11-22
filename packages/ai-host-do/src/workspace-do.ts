@@ -20,6 +20,7 @@ import {
   type FileAction,
   fileRoleSource,
   isMode,
+  type ModeDecision,
   type ModeDefinition,
   modeOf,
   PERMISSION_RULES_FILE,
@@ -32,11 +33,13 @@ import {
   SqlRoleSource,
   type StoredRootKey,
   settleAsk,
+  type ToolGrant,
   WORKSPACE_ROLES,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
   type Allow,
+  catalogTools,
   definitionsView,
   findAgent,
   type NarrowedAgent,
@@ -92,6 +95,7 @@ import type {
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
 import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
+import { type DatabaseCall, DatabaseGate, type DatabaseView } from "./database-gate.js";
 import { agentRun, DefinitionsStore } from "./definitions-store.js";
 import {
   blockSizeOf,
@@ -128,6 +132,7 @@ export class Workspace extends DurableObject<Env> {
   readonly #secrets: SecretStore;
   readonly #definitions: DefinitionsStore;
   readonly #models: ModelStore;
+  readonly #databases: DatabaseGate;
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
@@ -187,6 +192,19 @@ export class Workspace extends DurableObject<Env> {
     this.#secrets = new SecretStore({ sql, secretsKey: env.SECRETS_KEY, workspace: this.#name });
     this.#definitions = new DefinitionsStore(sql);
     this.#models = new ModelStore(sql);
+    this.#databases = new DatabaseGate({
+      sql,
+      workspace: this.#name,
+      authority: this.#authority,
+      store: this.#store,
+      systemFolder: DEFAULT_SYSTEM_FOLDER,
+      backend: (name) => env.DATABASE.get(env.DATABASE.idFromName(name)),
+      access: (project, user) => this.#access(project, user),
+      decide: async (facts, req) =>
+        (await this.#modeDecider(facts, await this.#store))(req.area, req.action, req.target),
+      consume: async (facts, id) => this.#registry.consume(id, facts.session, facts.user),
+      mayCallTool: (facts, tool) => this.#mayCallTool(facts, tool),
+    });
   }
 
   /**
@@ -598,6 +616,47 @@ export class Workspace extends DurableObject<Env> {
     return this.#files.call(capability, method, args);
   }
 
+  /**
+   * How the rules of the deployment, the project, the user and the agent session, and the user
+   * session's current mode, decide the actions of one agent session: read once, then decided per
+   * action (files, databases). An unattended session's asks are denies with a reason
+   * (statewalker/statewalker-root#127), and the agent carries on.
+   */
+  async #modeDecider(
+    facts: AgentSessionFacts,
+    store: FilesApi,
+  ): Promise<(area: string, action: string, target: string) => ModeDecision> {
+    const root = `/${facts.project}`;
+    const state = this.#registry.userSession(facts.user);
+    const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
+    const mode = modeOf(name, this.#modes);
+    const projectRules = parseRules(
+      await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
+    );
+    const layers = [
+      { source: "deployment", rules: this.#deploymentRules },
+      { source: "project", rules: projectRules },
+      { source: "user", rules: state?.rules ?? {} },
+      this.#registry.sessionLayer(facts.session, facts.user),
+    ];
+    // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user session's,
+    // and the strictest verdict wins: a child is never looser than its parent. A mode the
+    // deployment no longer knows denies.
+    const extra = (facts.modes ?? []).map((m) =>
+      isMode(m, this.#modes) ? modeOf(m, this.#modes) : undefined,
+    );
+    return (area, action, target) => {
+      let decision: ModeDecision = decideMode({ area, action, target }, { mode, layers });
+      for (const m of extra) {
+        const other = m
+          ? decideMode({ area, action, target }, { mode: m, layers })
+          : { verdict: "deny" as const, source: "mode", reason: "an unknown sub-agent mode" };
+        if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
+      }
+      return settleAsk(decision, facts);
+    };
+  }
+
   /** The mode and the rules of one agent session, as the gate decides them at every call. */
   #modeGate(facts: AgentSessionFacts, store: FilesApi): ModeGate {
     return {
@@ -606,34 +665,8 @@ export class Workspace extends DurableObject<Env> {
       decide: async (checks) => {
         const root = `/${facts.project}`;
         // Read once per operation: the user session's mode and rules, and the project's rules.
-        const state = this.#registry.userSession(facts.user);
-        const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
-        const mode = modeOf(name, this.#modes);
-        const projectRules = parseRules(
-          await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
-        );
-        const layers = [
-          { source: "deployment", rules: this.#deploymentRules },
-          { source: "project", rules: projectRules },
-          { source: "user", rules: state?.rules ?? {} },
-          this.#registry.sessionLayer(facts.session, facts.user),
-        ];
-        // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user
-        // session's, and the strictest verdict wins: a child is never looser than its parent. A
-        // mode the deployment no longer knows denies.
-        const extra = (facts.modes ?? []).map((m) =>
-          isMode(m, this.#modes) ? modeOf(m, this.#modes) : undefined,
-        );
-        const decideOne = (action: FileAction, target: string) => {
-          let decision = decideMode({ area: "files", action, target }, { mode, layers });
-          for (const m of extra) {
-            const other = m
-              ? decideMode({ area: "files", action, target }, { mode: m, layers })
-              : { verdict: "deny" as const, source: "mode", reason: "an unknown sub-agent mode" };
-            if (STRICTNESS[other.verdict] > STRICTNESS[decision.verdict]) decision = other;
-          }
-          return decision;
-        };
+        const decide = await this.#modeDecider(facts, store);
+        const decideOne = (action: FileAction, target: string) => decide("files", action, target);
         const definitions = `${root}/${DEFINITIONS_FOLDER}`.toLowerCase();
         return checks.map(([action, path]) =>
           // Outside the project nothing is decided here: the roles and the capability refuse it.
@@ -645,13 +678,63 @@ export class Workspace extends DurableObject<Env> {
                 (path.toLowerCase() === definitions ||
                   path.toLowerCase().startsWith(`${definitions}/`))
               ? { verdict: "deny" as const, reason: "the definitions mount is read-only" }
-              : // An unattended session has nobody to ask: its asks are denies with a reason
-                // (statewalker/statewalker-root#127), and the agent carries on.
-                settleAsk(decideOne(action, path === root ? "/" : path.slice(root.length)), facts),
+              : decideOne(action, path === root ? "/" : path.slice(root.length)),
         );
       },
       consume: async (id) => this.#registry.consume(id, facts.session, facts.user),
     };
+  }
+
+  // --- databases (statewalker/statewalker-root#81, #136) --------------------------------------
+
+  /**
+   * One db-rpc call on a project's database, for the holder of a capability (an agent session, a
+   * plugin tool of one, or the user's own session), decided at the gate now.
+   */
+  async databaseCall(capability: string, call: DatabaseCall): Promise<unknown> {
+    return this.#databases.call(capability, call);
+  }
+
+  /** Creates or drops a project's database (`db.admin`; for an agent, under the mode). */
+  async manageDatabase(
+    capability: string,
+    req: { project?: string; database: string; op: "create" | "drop" },
+  ) {
+    return this.#databases.manage(capability, req);
+  }
+
+  /** A project's declared databases the holder may use. */
+  async listDatabases(capability: string, project?: string): Promise<DatabaseView[]> {
+    return this.#databases.list(capability, project);
+  }
+
+  /** Whether an agent session may call one plugin tool now: pinned at its start, and `tools.call`. */
+  async #mayCallTool(facts: AgentSessionFacts, tool: ToolGrant): Promise<boolean> {
+    const found = await this.#definitions.session(facts.session);
+    if (!found || found.user !== facts.user || found.project !== facts.project) return false;
+    const id = `${tool.plugin}/${tool.tool}`;
+    if (!(await catalogTools(found.catalog)).some((t) => t.id === id)) return false;
+    // An agent whose definition lists its tools gets only those.
+    if (found.run?.tools?.length && !found.run.tools.includes(id)) return false;
+    const access = await this.#access(facts.project, facts.user);
+    return access.member && decide(access.grants, { area: "tools", action: "call", target: id });
+  }
+
+  /**
+   * The capability one plugin tool of an agent session runs with: the session's, narrowed by a
+   * block this workspace signs, so the tool reaches the plugin's private databases (and nothing
+   * the session can't). Only for a tool the session may call now; the agent never holds it.
+   */
+  async forTool(agentCapability: string, tool: ToolGrant): Promise<string> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    if (!(await this.#mayCallTool(facts, tool)))
+      throw codedError("EACCES", `may not call ${String(tool?.plugin)}/${String(tool?.tool)}`);
+    return this.#authority.forTool(agentCapability, tool);
+  }
+
+  /** Test-only, and the storage meter's input (#179): every database and the bytes it takes. */
+  async databaseStorage() {
+    return this.#databases.storage();
   }
 
   /**

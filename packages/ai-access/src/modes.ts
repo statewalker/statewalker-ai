@@ -87,9 +87,10 @@ export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
     askReason: "default mode asks before changing anything",
   },
   acceptEdits: {
-    rules: { allow: [...READS, "files.write", "comments.write"] },
+    // Database writes are edits too (statewalker/statewalker-root#81).
+    rules: { allow: [...READS, "files.write", "comments.write", "db.write"] },
     otherwise: "ask",
-    askReason: "acceptEdits mode allows file edits; deletes and other actions ask",
+    askReason: "acceptEdits mode allows file and database edits; deletes and other actions ask",
   },
   plan: {
     rules: { allow: [...READS, "files.write:{folders}", "files.delete:{folders}"] },

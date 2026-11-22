@@ -29,7 +29,9 @@ export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
     "tools.use",
     "skills.use",
     "agents.use",
-    "db.*",
+    // Owners alone create and drop databases (`db.admin`, statewalker/statewalker-root#81).
+    "db.read",
+    "db.write",
     "models.use",
     "memory.write:project",
     "memory.write:agent",
@@ -40,7 +42,16 @@ export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
     'check if operation($a, $c), target($t), $a != "tasks" || !($t.starts_with("hooks.") || $t.starts_with("schedule."));',
   ],
   // Readers run agents with read-only tools (#80), so they use models too (#134).
-  reader: ["files.read", "files.list", "comments.read", "skills.use", "agents.use", "models.use"],
+  // Readers query databases too: read-only calls run in a transaction that is always rolled back.
+  reader: [
+    "files.read",
+    "files.list",
+    "comments.read",
+    "db.read",
+    "skills.use",
+    "agents.use",
+    "models.use",
+  ],
 };
 
 /** The workspace-level roles: the workspace admin manages projects and members, not files. */
