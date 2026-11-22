@@ -41,6 +41,7 @@ const METHODS = [
   "getModelConfig",
   "setModelConfig",
   "effectiveLimits",
+  "usage",
   "listDatabases",
   "listMemory",
   "memoryEntry",

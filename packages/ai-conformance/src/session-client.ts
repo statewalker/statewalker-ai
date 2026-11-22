@@ -307,6 +307,32 @@ export interface LimitState {
   reset?: number;
 }
 
+/** What a usage report is asked for (statewalker/statewalker-root#181). */
+export interface UsageQuery {
+  level?: "user" | "project" | "workspace";
+  project?: string;
+  period?: "hour" | "day" | "month" | "total";
+  group_by?: ("project" | "user" | "agent" | "model" | "day")[];
+}
+
+/** Usage totals of one group: what it is keyed by, and each meter's amount. */
+export interface UsageGroup {
+  key: { project?: string; user?: string; agent?: string; model?: string; day?: string };
+  /** None for usage under a user's own key seen by anyone but that user. */
+  usage?: Record<string, number>;
+  own_key?: true;
+}
+
+export interface UsageReport {
+  level: string;
+  target: string;
+  period: string;
+  start: number;
+  end?: number;
+  group_by: string[];
+  groups: UsageGroup[];
+}
+
 /** One request to a model, as the workspace's budget recorded it (test-only admin route). */
 export interface ModelUsageRecord {
   session: string;
@@ -494,6 +520,8 @@ export interface SessionClient {
     project?: string;
     session?: string;
   }): Promise<{ limits: LimitState[] }>;
+  /** `GET /v1/usage?level&project&period&group_by`: usage totals the caller may see. */
+  usage(query?: UsageQuery): Promise<UsageReport>;
 }
 
 /** A refusal by the session API; `status` is the HTTP status REST answers with. */
@@ -739,6 +767,11 @@ export function restClient(deployment: Deployment, token: string): SessionClient
         `/v1/models?${new URLSearchParams({ project, ...(discover ? { discover: "true" } : {}) })}`,
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
+    usage: ({ group_by, ...q } = {}) =>
+      call(
+        "GET",
+        `/v1/usage${search({ ...q, ...(group_by ? { group_by: group_by.join(",") } : {}) })}`,
+      ),
     effectiveLimits: (q = {}) =>
       call("GET", `/v1/limits/effective${search(q as Record<string, unknown>)}`),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),

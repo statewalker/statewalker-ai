@@ -8,6 +8,9 @@ import {
   type Limit,
   type LimitState,
   type ModelLevel,
+  USAGE_GROUPS,
+  type UsageGroup,
+  type UsageGroupBy,
   type ModelsConfig,
   type ModelUsage,
   parseLimits,
@@ -34,6 +37,8 @@ export type {
   Limit,
   LimitState,
   MemoryAction,
+  UsageGroup,
+  UsageGroupBy,
   MemoryCall,
   ModelsConfig,
   ModelUsage,
@@ -724,6 +729,44 @@ export interface SessionApi {
    * with what is used, reserved and left, and when it resets.
    */
   effectiveLimits(query?: EffectiveLimitsQuery): Promise<{ limits: LimitState[] }>;
+  /**
+   * Usage totals (statewalker/statewalker-root#181): the caller's own, a project's with
+   * `usage.read:project`, the workspace's with `usage.read:workspace`, grouped by project, user,
+   * agent, model or day. Usage under a user's own key shows its amounts to that user alone.
+   */
+  usage(query?: UsageQuery): Promise<UsageReport>;
+}
+
+/** What a usage report is asked for (statewalker/statewalker-root#181). */
+export interface UsageQuery {
+  /**
+   * `user` (the default): the caller's own usage in the token's workspace; `project`: a project's
+   * (`usage.read:project`, or the workspace's); `workspace`: the workspace's (`usage.read:workspace`).
+   */
+  level?: "user" | "project" | "workspace";
+  /** The project of a `project` report. */
+  project?: string;
+  /** The current window it sums (calendar days and months in the deployment's zone): month. */
+  period?: "hour" | "day" | "month" | "total";
+  group_by?: UsageGroupBy[];
+}
+
+/** Usage totals for one level and target over the period's current window, by group. */
+export interface UsageReport {
+  level: "user" | "project" | "workspace";
+  /** The user, project or workspace reported on. */
+  target: string;
+  period: string;
+  /** The window's start (ms since the epoch). */
+  start: number;
+  /** When the window ends; none for a total. */
+  end?: number;
+  group_by: UsageGroupBy[];
+  /**
+   * The totals of each group. Usage under a user's own key is its own group (`own_key`): with its
+   * amounts for that user alone, without them for anyone else.
+   */
+  groups: UsageGroup[];
 }
 
 export interface EffectiveLimitsQuery {
@@ -825,6 +868,8 @@ export interface UserPort {
   eraseProfile(token: string): Promise<{ erased: true }>;
   /** The limits on the caller's usage in the token's workspace (and a project), and their own. */
   effectiveLimits(token: string, query: { project?: string }): Promise<{ limits: LimitState[] }>;
+  /** A usage report the caller may see; their own-key usage with its amounts at user level. */
+  usage(token: string, query: UsageQuery): Promise<UsageReport>;
 }
 
 /** A message as an agent session DO takes it: checked, with the fields the API ignored. */
@@ -969,6 +1014,29 @@ function sessionLimits(limits: unknown): Limit[] {
   const problem = parsed.problems.find((p) => !p.includes("its period is total"));
   if (problem) throw codedError("EINVAL", problem);
   return parsed.limits.map(({ target: _t, ...l }) => l);
+}
+
+/** A usage query as the API takes it (EINVAL otherwise); `group_by` may be a comma list. */
+function usageQuery(query: unknown): UsageQuery {
+  const q = (query ?? {}) as Record<string, unknown>;
+  const level = q.level ?? "user";
+  if (level !== "user" && level !== "project" && level !== "workspace")
+    throw codedError("EINVAL", "level is user, project or workspace");
+  const period = q.period ?? "month";
+  if (!["hour", "day", "month", "total"].includes(String(period)))
+    throw codedError("EINVAL", "period is hour, day, month or total");
+  if (level === "project" && (typeof q.project !== "string" || !NAME.test(q.project)))
+    throw codedError("EINVAL", "a project report names its project");
+  const raw = q.group_by ?? [];
+  const list = typeof raw === "string" ? raw.split(",").filter(Boolean) : raw;
+  if (!Array.isArray(list) || list.some((g) => !(USAGE_GROUPS as readonly unknown[]).includes(g)))
+    throw codedError("EINVAL", `group_by is a list of ${USAGE_GROUPS.join(", ")}`);
+  return {
+    level,
+    ...(level === "project" ? { project: q.project as string } : {}),
+    period: period as UsageQuery["period"],
+    group_by: [...new Set(list as UsageGroupBy[])],
+  };
 }
 
 function modelsQuery(query: unknown): ModelsQuery {
@@ -1256,6 +1324,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     exportProfile: () => ports.user.exportProfile(token),
     eraseProfile: () => ports.user.eraseProfile(token),
+    usage: async (query) => ports.user.usage(token, usageQuery(query)),
     async effectiveLimits(query) {
       const q = (query ?? {}) as Record<string, unknown>;
       for (const k of ["project", "session"] as const)

@@ -65,6 +65,8 @@ import type {
   SetSecretRequest,
   StartSessionRequest,
   SubAgentRequest,
+  UsageQuery,
+  UsageReport,
   UserPort,
   UserSessionView,
 } from "./api.js";
@@ -159,6 +161,8 @@ export interface WorkspaceGrants {
   sessionsEnded(userCapability: string, sessions: string[]): Promise<void>;
   /** The limits on the user's usage there now (a project's: EACCES for a non-member). */
   effectiveLimits(userCapability: string, query: { project?: string }): Promise<LimitState[]>;
+  /** A usage report the user may see there (EACCES without its `usage.read`). */
+  usage(userCapability: string, query: UsageQuery): Promise<UsageReport>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -1195,6 +1199,21 @@ export class UserSessions implements UserPort {
     return {
       limits: await this.#o.workspace(us.workspace).effectiveLimits(us.capability, query),
     };
+  }
+
+  async usage(token: string, query: UsageQuery): Promise<UsageReport> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).usage(us.capability, query);
+  }
+
+  /** The agent each of these sessions of the user runs; unknown ones left out. */
+  sessionAgents(ids: readonly string[]): Map<string, string> {
+    const found = new Map<string, string>();
+    for (const id of new Set(ids)) {
+      const row = this.#one<{ agent: string }>("SELECT agent FROM agent_sessions WHERE id = ?", id);
+      if (row) found.set(id, String(row.agent));
+    }
+    return found;
   }
 
   async listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }> {

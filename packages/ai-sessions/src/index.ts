@@ -75,6 +75,8 @@ export {
   TERMINAL_TURN_STATUSES,
   type TurnStatus,
   type TurnView,
+  type UsageQuery,
+  type UsageReport,
   type UsageTotals,
   type UserPort,
   type UserSessionView,

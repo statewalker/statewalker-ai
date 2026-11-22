@@ -94,8 +94,12 @@ import {
   gatewayFetch,
   IGNORE_FILE,
   ignoreRules,
+  groupUsage,
   type Limit,
   type LimitState,
+  type Period,
+  USAGE_GROUPS,
+  windowOf,
   lookupModel,
   type ModeGate,
   type ModelCall,
@@ -148,6 +152,8 @@ import type {
   SecretView,
   ServiceAccountView,
   SetSecretRequest,
+  UsageQuery,
+  UsageReport,
 } from "@statewalker/ai-sessions";
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
 import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
@@ -163,6 +169,7 @@ import {
   deploymentRules,
   type Env,
   issuerOf,
+  ledgerOptions,
   nameOf,
   verifyToken,
 } from "./env.js";
@@ -1279,6 +1286,73 @@ export class Workspace extends DurableObject<Env> {
     if (project && !(await this.#member(project, user)))
       throw codedError("EACCES", `${user} is not a member of ${project}`);
     return this.#limits.states(project, user);
+  }
+
+  /**
+   * A usage report over the period's current window (statewalker/statewalker-root#181): a user's
+   * own usage here, a project's with a project role granting `usage.read:project` or a workspace
+   * role granting `usage.read:workspace`, the workspace's with the latter. Usage under users' own
+   * keys is never counted here: other reports show it as groups with `own_key` and no amounts.
+   */
+  async usageReport(userCapability: string, query: UsageQuery): Promise<UsageReport> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const level = query?.level ?? "user";
+    const period = (query?.period ?? "month") as Period;
+    const groupBy = (query?.group_by ?? []).filter((g) =>
+      (USAGE_GROUPS as readonly string[]).includes(g),
+    );
+    const { timeZone } = ledgerOptions(this.env);
+    const window = windowOf(period, Date.now(), timeZone);
+    const until = Number.isFinite(window.reset) ? window.reset : Number.MAX_SAFE_INTEGER;
+    const workspaceReader = async () => {
+      const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+        Object.hasOwn(WORKSPACE_ROLES, r),
+      );
+      return decide(resolveRoles(held, {}).grants, {
+        area: "usage",
+        action: "read",
+        target: "workspace",
+      });
+    };
+    let target: string;
+    let filter: { user?: string; project?: string } = {};
+    if (level === "user") {
+      target = user;
+      filter = { user };
+    } else if (level === "project") {
+      target = String(query.project ?? "");
+      const access = await this.#access(target, user);
+      // Only project roles: a workspace role reaches projects through usage.read:workspace.
+      const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+      const reads =
+        (access.member && decide(grants, { area: "usage", action: "read", target: "project" })) ||
+        (await workspaceReader());
+      if (!reads) throw codedError("EACCES", `${user} may not read the usage of ${target}`);
+      filter = { project: target };
+    } else if (level === "workspace") {
+      target = this.#name;
+      if (!(await workspaceReader()))
+        throw codedError("EACCES", `${user} may not read this workspace's usage`);
+    } else throw codedError("EINVAL", "level is user, project or workspace");
+    const rows = this.#limits.ledger.aggregate({ from: window.start, until, ...filter });
+    const own =
+      level === "user" ? [] : this.#models.ownKeyRows(window.start, until, filter.project);
+    const agents = this.#definitions.agents(
+      [...rows, ...own].flatMap((r) => (r.session ? [r.session] : [])),
+    );
+    const options = { timeZone, agentOf: (s: string) => agents.get(s) ?? "" };
+    return {
+      level,
+      target,
+      period,
+      start: window.start,
+      ...(Number.isFinite(window.reset) ? { end: window.reset } : {}),
+      group_by: groupBy,
+      groups: [
+        ...groupUsage(rows, groupBy, options),
+        ...groupUsage(own, groupBy, { ...options, ownKey: true }),
+      ],
+    };
   }
 
   /** Test-only: the workspace's usage records after a seq. */

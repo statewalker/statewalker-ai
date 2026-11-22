@@ -90,6 +90,20 @@ export class DefinitionsStore {
     );
   }
 
+  /** The agent each of these sessions runs (`<plugin>/<agent>`, or "default"); unknown ones left out. */
+  agents(sessions: readonly string[]): Map<string, string> {
+    const found = new Map<string, string>();
+    for (const session of new Set(sessions)) {
+      const row = this.#sql
+        .exec("SELECT run FROM session_definitions WHERE session = ?", session)
+        .toArray()[0];
+      if (!row) continue;
+      const run = row.run ? (JSON.parse(String(row.run)) as { id?: string }) : undefined;
+      found.set(session, run?.id ?? "default");
+    }
+    return found;
+  }
+
   /** A catalog of plugins (in memory), each at `/<plugin>/`. */
   async catalogOf(plugins: readonly Plugin[]): Promise<MemFilesApi> {
     const catalog = new MemFilesApi();

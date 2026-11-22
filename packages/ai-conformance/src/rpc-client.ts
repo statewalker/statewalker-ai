@@ -90,6 +90,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     exportProfile: async () => new Uint8Array(await api.exportProfile().catch(refusal)),
     eraseProfile: () => api.eraseProfile().catch(refusal) as never,
     effectiveLimits: (q) => api.effectiveLimits(q ?? {}).catch(refusal) as never,
+    usage: (q) => api.usage((q ?? {}) as never).catch(refusal) as never,
     close: () => connection.close(),
   };
   return client;

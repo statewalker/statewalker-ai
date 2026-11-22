@@ -34,6 +34,12 @@ const perTransport = (roles: Record<string, string>) =>
 function projectFiles(t: string): Record<string, string> {
   return {
     [`/rep-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner", [`bob-${t}`]: "editor" }),
+    [`/use-${t}/.system/access`]: JSON.stringify({
+      [`ann-${t}`]: "owner",
+      [`bob-${t}`]: "editor",
+      [`cid-${t}`]: "editor",
+    }),
+    [`/own-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner", [`kim-${t}`]: "editor" }),
     [`/rep-${t}/.system/limits`]: limits({
       meter: "turns",
       level: "project",
@@ -80,6 +86,7 @@ beforeAll(async () => {
     DEV_LOGIN: "true",
     ADMIN_KEY,
     SECRETS_KEY: "conformance-secrets-key",
+    USER_PROVIDER_HOSTS: "127.0.0.1",
     MODELS: model.deploymentModels({
       models: [
         { id: "scripted/default", alias: "default" },
@@ -152,5 +159,114 @@ describe.each(transports)("usage and limits over %s", (name, connect) => {
       cost: 6,
       output_tokens: 6,
     });
+  });
+
+  it("reports each user's own usage, and a project's to those with usage.read:project", async () => {
+    const bob = await as("bob");
+    const cid = await as("cid");
+    const ann = await as("ann");
+    const s = await bob.startSession({ project: `use-${t}`, model: "scripted/priced" });
+    await bob.sendMessage(s.id, { content: "hello" });
+    const c = await cid.startSession({ project: `use-${t}`, model: "scripted/priced" });
+    await cid.sendMessage(c.id, { content: "hello" });
+    await cid.sendMessage(c.id, { content: "hello" });
+    // Everyone sees their own usage in the workspace.
+    const own = await bob.usage({ period: "day" });
+    expect(own).toMatchObject({ level: "user", target: u("bob"), period: "day" });
+    expect(own.groups).toEqual([
+      expect.objectContaining({ key: {}, usage: expect.objectContaining({ turns: 1, model_spend: 3 }) }),
+    ]);
+    const byAgent = await bob.usage({ period: "day", group_by: ["agent", "model"] });
+    expect(byAgent.groups).toContainEqual(
+      expect.objectContaining({
+        key: { agent: s.agent, model: "scripted/priced" },
+        usage: expect.objectContaining({ model_spend: 3 }),
+      }),
+    );
+    // An editor holds no usage.read:project.
+    await expect(
+      bob.usage({ level: "project", project: `use-${t}`, period: "day" }),
+    ).rejects.toMatchObject({ status: 403 });
+    // The owner does: the project's usage per member.
+    const project = await ann.usage({
+      level: "project",
+      project: `use-${t}`,
+      period: "day",
+      group_by: ["user"],
+    });
+    expect(project).toMatchObject({ level: "project", target: `use-${t}` });
+    expect(project.groups).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          key: { user: u("bob") },
+          usage: expect.objectContaining({ turns: 1, model_spend: 3 }),
+        }),
+        expect.objectContaining({
+          key: { user: u("cid") },
+          usage: expect.objectContaining({ turns: 2, model_spend: 6 }),
+        }),
+      ]),
+    );
+    const today = new Date().toISOString().slice(0, 10);
+    const byDay = await ann.usage({
+      level: "project",
+      project: `use-${t}`,
+      period: "month",
+      group_by: ["day"],
+    });
+    expect(byDay.groups.map((g) => g.key.day)).toContain(today);
+  });
+
+  it("reports the workspace's usage per project and member to the workspace admin alone", async () => {
+    const boss = await as("boss");
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `use-${t}` });
+    await ann.sendMessage(s.id, { content: "hello" });
+    const report = await boss.usage({ level: "workspace", period: "day", group_by: ["project", "user"] });
+    expect(report).toMatchObject({ level: "workspace", target: "default" });
+    expect(report.groups).toContainEqual(
+      expect.objectContaining({
+        key: { project: `use-${t}`, user: u("ann") },
+        usage: expect.objectContaining({ turns: expect.any(Number) }),
+      }),
+    );
+    // The admin reads any project's usage through usage.read:workspace, without being a member.
+    await boss.usage({ level: "project", project: `use-${t}`, period: "day" });
+    // An owner holds no usage.read:workspace.
+    await expect(ann.usage({ level: "workspace" })).rejects.toMatchObject({ status: 403 });
+  });
+
+  it("shows usage under a user's own key to that user alone: others see 'own key' without amounts", async () => {
+    const kim = await as("kim");
+    await kim.setSecret({
+      level: "user",
+      name: "KIM_KEY",
+      value: "kim-model-key",
+      bindings: { plugins: ["model-gateway"], hosts: ["127.0.0.1"] },
+    });
+    await kim.setModelConfig({
+      providers: [{ id: "kims", api: "openai-completions", baseUrl: model.url, secret: "KIM_KEY" }],
+      models: [{ id: "kims/own", maxTokens: 10, cost: { input: 0, output: 1_000_000 } }],
+    });
+    const s = await kim.startSession({ project: `own-${t}`, model: "kims/own" });
+    await kim.sendMessage(s.id, { content: "hello" });
+    const mine = await kim.usage({ period: "day", group_by: ["model"] });
+    expect(mine.groups).toContainEqual({
+      key: { model: "kims/own" },
+      own_key: true,
+      usage: expect.objectContaining({ model_spend: 3 }),
+    });
+    const owner = await (await as("ann")).usage({
+      level: "project",
+      project: `own-${t}`,
+      period: "day",
+      group_by: ["user", "model"],
+    });
+    expect(owner.groups).toContainEqual({ key: { user: u("kim"), model: "kims/own" }, own_key: true });
+    expect(owner.groups.some((g) => g.key.model === "kims/own" && g.usage)).toBe(false);
+    const admin = await (await as("boss")).usage({ level: "workspace", period: "day", group_by: ["user"] });
+    const kims = admin.groups.filter((g) => g.key.user === u("kim"));
+    expect(kims).toContainEqual({ key: { user: u("kim") }, own_key: true });
+    expect(kims.some((g) => g.usage?.model_spend)).toBe(false);
   });
 });

@@ -591,13 +591,17 @@ export class AgentSession extends DurableObject<Env> {
     } finally {
       const all = { model_tokens: 0, model_spend: 0 };
       const mine = { model_tokens: 0, model_spend: 0 };
+      // The own-key model, so the user's usage report groups it (#181).
+      let ownModel: string | undefined;
       for (const { usage } of response?.attempts ?? [])
         for (const into of usage.charged ? [all] : [all, mine]) {
+          if (!usage.charged) ownModel = usage.model;
           into.model_tokens += usage.input_tokens + usage.output_tokens;
           into.model_spend += usage.cost ?? 0;
         }
       if (reserved) warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
-      if (own) warn(await user.settleOwnKey(own, mine, meta));
+      if (own)
+        warn(await user.settleOwnKey(own, mine, meta, ownModel ? { model: ownModel } : undefined));
     }
     warn(response.warnings);
     return response;

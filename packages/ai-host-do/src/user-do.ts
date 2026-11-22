@@ -6,7 +6,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
-import { filesOverRpc, type UsageMeta } from "@statewalker/ai-environment";
+import { filesOverRpc, groupUsage, type UsageMeta } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
@@ -19,6 +19,8 @@ import {
   type SetSecretRequest,
   type StartSessionRequest,
   type SubAgentRequest,
+  type UsageQuery,
+  type UsageReport,
   UserSessions,
 } from "@statewalker/ai-sessions";
 import { tryReadText } from "@statewalker/webrun-files";
@@ -27,6 +29,7 @@ import {
   blockSizeOf,
   deploymentModes,
   type Env,
+  ledgerOptions,
   nameOf,
   profilesOf,
   verifyToken,
@@ -79,6 +82,7 @@ export class User extends DurableObject<Env> {
           revoke: (capability, target) => ws.revoke(capability, target),
           delegate: (capability, parent, grant) => ws.delegate(capability, parent, grant),
           effectiveLimits: (capability, query) => ws.effectiveLimits(capability, query),
+          usage: (capability, query) => ws.usageReport(capability, query),
           listServiceAccounts: (capability) => ws.listServiceAccounts(capability),
           createServiceAccount: (capability, name) => ws.createServiceAccount(capability, name),
           deleteServiceAccount: (capability, name) => ws.deleteServiceAccount(capability, name),
@@ -166,6 +170,30 @@ export class User extends DurableObject<Env> {
     await this.#reachable();
     const { limits } = await this.#sessions.effectiveLimits(token, query);
     return { limits: [...limits, ...this.#limits.ledger.states(await this.#limits.scopes())] };
+  }
+
+  /**
+   * A usage report (statewalker/statewalker-root#181), from the token's workspace; the user's own
+   * report adds their usage on their own keys there, which only this DO holds.
+   */
+  async usage(token: string, query: UsageQuery): Promise<UsageReport> {
+    await this.#reachable();
+    const report = await this.#sessions.usage(token, query);
+    if (report.level !== "user") return report;
+    const { workspace } = await this.#sessions.claims(token);
+    const rows = this.#limits.ledger.aggregate({
+      from: report.start,
+      until: report.end ?? Number.MAX_SAFE_INTEGER,
+      workspace,
+      user: nameOf(this.ctx),
+    });
+    const agents = this.#sessions.sessionAgents(rows.flatMap((r) => (r.session ? [r.session] : [])));
+    const own = groupUsage(rows, report.group_by, {
+      timeZone: ledgerOptions(this.env).timeZone,
+      agentOf: (session) => agents.get(session) ?? "",
+      ownKey: true,
+    });
+    return { ...report, groups: [...report.groups, ...own] };
   }
 
   /** Test-only: the user's own-key usage records after a seq. */

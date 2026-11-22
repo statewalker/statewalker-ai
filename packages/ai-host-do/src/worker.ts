@@ -81,6 +81,7 @@ function sessionApi(env: Env, token: string) {
       exportProfile: async (t) => (await user()).exportProfile(t),
       eraseProfile: async (t) => (await user()).eraseProfile(t),
       effectiveLimits: async (t, q) => (await user()).effectiveLimits(t, q),
+      usage: async (t, q) => (await user()).usage(t, q),
     },
     agent: (id) => {
       const agent = agentOf(env, id);

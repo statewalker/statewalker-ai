@@ -9,6 +9,7 @@ import type {
   ModelsConfig,
   ModelUsage,
   PinnedModels,
+  UsageRow,
 } from "@statewalker/ai-environment";
 
 interface SqlLike {
@@ -100,6 +101,29 @@ export class ModelStore {
       usage.charged ? 1 : 0,
       Date.now(),
     );
+  }
+
+  /**
+   * The requests on users' own keys between `from` and `until` (of a project), as usage rows with
+   * no amounts: who used their own key where, never how much (statewalker/statewalker-root#181).
+   */
+  ownKeyRows(from: number, until: number, project?: string): UsageRow[] {
+    return this.#sql
+      .exec(
+        `SELECT DISTINCT project, user, session, model, (created / 900000) * 900000 AS bucket
+          FROM model_usage WHERE charged = 0 AND created >= ? AND created < ?${project !== undefined ? " AND project = ?" : ""}`,
+        from,
+        until,
+        ...(project !== undefined ? [project] : []),
+      )
+      .toArray()
+      .map((r) => ({
+        project: String(r.project),
+        user: String(r.user),
+        session: String(r.session),
+        model: String(r.model),
+        bucket: Number(r.bucket),
+      }));
   }
 
   /** Every request recorded, oldest first. */
