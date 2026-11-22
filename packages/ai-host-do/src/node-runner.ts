@@ -197,7 +197,8 @@ export default class extends WorkerEntrypoint {
     };
     const show = (v) => { if (typeof v === "string") return v; try { return v instanceof Error ? String(v.stack ?? v) : JSON.stringify(v) ?? String(v); } catch { return String(v); } };
     const line = (name) => (...args) => { put(name)(args.map(show).join(" ") + "\\n"); };
-    define("console", { log: line("stdout"), info: line("stdout"), debug: line("stdout"), warn: line("stderr"), error: line("stderr"), trace: line("stderr") });
+    const console = { log: line("stdout"), info: line("stdout"), debug: line("stdout"), warn: line("stderr"), error: line("stderr"), trace: line("stderr") };
+    define("console", console);
     const proc = {
       argv: ["node", String(input.script), ...(input.args ?? []).map(String)],
       env: { ...(input.env ?? {}) },
@@ -217,7 +218,7 @@ export default class extends WorkerEntrypoint {
       signal: controller.signal,
     };
     define("process", proc);
-    define("__harness", { host, cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
+    define("__harness", { host, console, cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
     let exitCode = 0;
     try {
       await import("./tool.js");
@@ -253,6 +254,9 @@ export async function bundleNodeScript(
       entry: script,
       packages: nodeModulesPackages(),
       modules: (specifier) => NODE_MODULES[specifier],
+      // The script's `console` is the isolate's, writing to stdout and stderr: named through
+      // `__harness`, since a host may rebind the global `console` of loaded code (CellB does).
+      define: { console: "__harness.console" },
       format: "esm",
       platform: "neutral",
       conditions: ["node", "worker", "browser"],
