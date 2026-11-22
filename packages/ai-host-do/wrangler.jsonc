@@ -72,5 +72,10 @@
     //                        POST /admin/users/<user>/unreachable makes that User DO refuse every call
     //                        POST /admin/sessions/<id>/messages {content} runs a turn past the User DO
     //                          and answers it once it ended
+    //                        POST /admin/users/<user>/revoke revokes a user everywhere, at the issuer (the operator's)
+    //                        POST /admin/workspaces/<ws>/user-session {token} hands a token straight to that
+    //                          workspace's DO, past the routing by the token's workspace
+    // Always on, the token issuer's routes: POST /v1/token {key} (a service account's API key for an
+    // access token) and POST /v1/token/renew (a valid access token, as bearer, for a fresh one).
   }
 }

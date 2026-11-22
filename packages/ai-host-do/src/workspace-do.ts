@@ -30,6 +30,7 @@ import {
   resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
+  settleAsk,
   WORKSPACE_ROLES,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
@@ -61,10 +62,12 @@ import {
   sessionSecrets,
 } from "@statewalker/ai-environment";
 import type {
+  CreatedServiceAccount,
   DeleteSecretRequest,
   PinnedDefinitions,
   SecretScope,
   SecretView,
+  ServiceAccountView,
   SetSecretRequest,
 } from "@statewalker/ai-sessions";
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
@@ -76,6 +79,7 @@ import {
   deploymentModes,
   deploymentRules,
   type Env,
+  issuerOf,
   nameOf,
   verifyToken,
 } from "./env.js";
@@ -119,7 +123,22 @@ export class Workspace extends DurableObject<Env> {
       root = WorkspaceAuthority.generate();
       sql.exec("INSERT INTO ws_keys VALUES ('root', ?)", JSON.stringify(root));
     }
-    this.#authority = WorkspaceAuthority.fromStored(root);
+    // The revocation list (statewalker/statewalker-root#78, #127): the revocation ids of revoked
+    // capabilities' blocks. A capability holding one is refused at its next use, everywhere the
+    // authority verifies it: the gate, every block of a stream, secrets and the gateway.
+    sql.exec(
+      "CREATE TABLE IF NOT EXISTS revocations (id TEXT PRIMARY KEY, revoked INTEGER NOT NULL)",
+    );
+    this.#authority = WorkspaceAuthority.fromStored(root, {
+      isRevoked: (ids) =>
+        ids.length > 0 &&
+        sql
+          .exec(
+            `SELECT 1 FROM revocations WHERE id IN (${ids.map(() => "?").join(", ")}) LIMIT 1`,
+            ...ids,
+          )
+          .toArray().length > 0,
+    });
     this.#sqlRoles = new SqlRoleSource(sql);
     const files = fileRoleSource(
       async (path) => tryReadText(await this.#store, path),
@@ -394,9 +413,18 @@ export class Workspace extends DurableObject<Env> {
                 (path.toLowerCase() === definitions ||
                   path.toLowerCase().startsWith(`${definitions}/`))
               ? { verdict: "deny" as const, reason: "the definitions mount is read-only" }
-              : decideMode(
-                  { area: "files", action, target: path === root ? "/" : path.slice(root.length) },
-                  { mode, layers },
+              : // An unattended session has nobody to ask: its asks are denies with a reason
+                // (statewalker/statewalker-root#127), and the agent carries on.
+                settleAsk(
+                  decideMode(
+                    {
+                      area: "files",
+                      action,
+                      target: path === root ? "/" : path.slice(root.length),
+                    },
+                    { mode, layers },
+                  ),
+                  facts,
                 ),
         );
       },
@@ -530,6 +558,47 @@ export class Workspace extends DurableObject<Env> {
       throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
     const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
     return gatewayFetch(call.request, String(call.plugin), lookup);
+  }
+
+  /**
+   * Puts a capability on the revocation list, for the user session holding the user capability it
+   * was narrowed from (or that user capability itself): it, and every capability narrowed from it,
+   * is refused from its next use on.
+   */
+  async revoke(userCapability: string, capability: string): Promise<void> {
+    const id = await this.#authority.revocationOf(userCapability, capability);
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO revocations VALUES (?, ?)", id, Date.now());
+  }
+
+  /** Refuses (EACCES) a user capability whose user is not the workspace's admin. */
+  async #admin(userCapability: string): Promise<void> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+      Object.hasOwn(WORKSPACE_ROLES, r),
+    );
+    const grants = resolveRoles(held, {}).grants;
+    if (!decide(grants, { area: "members", action: "manage", target: "workspace" }))
+      throw codedError("EACCES", `${user} may not manage this workspace's service accounts`);
+  }
+
+  /**
+   * The workspace's service accounts (statewalker/statewalker-root#127): non-human users that sign
+   * in with an API key and hold project roles like any user. The issuer keeps them; the workspace
+   * admin manages them, through here.
+   */
+  async listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]> {
+    await this.#admin(userCapability);
+    return issuerOf(this.env).listServiceAccounts(this.#name);
+  }
+
+  async createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount> {
+    await this.#admin(userCapability);
+    return issuerOf(this.env).createServiceAccount(this.#name, String(name));
+  }
+
+  async deleteServiceAccount(userCapability: string, name: string): Promise<void> {
+    await this.#admin(userCapability);
+    await issuerOf(this.env).deleteServiceAccount(this.#name, String(name));
   }
 
   /**

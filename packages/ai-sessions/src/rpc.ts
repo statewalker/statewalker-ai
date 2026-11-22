@@ -31,6 +31,11 @@ const METHODS = [
   "listSecrets",
   "setSecret",
   "deleteSecret",
+  "revokeSession",
+  "revokeUserSession",
+  "listServiceAccounts",
+  "createServiceAccount",
+  "deleteServiceAccount",
 ] as const;
 type Method = (typeof METHODS)[number];
 type Channel = Pick<SessionApi, Method> & { authenticate(token: string): Promise<UserSessionView> };
