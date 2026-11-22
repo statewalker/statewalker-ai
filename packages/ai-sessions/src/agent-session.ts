@@ -194,7 +194,12 @@ function budgetOf(error: string): StopLimit | undefined {
  */
 function rateLimitedOf(error: string): boolean {
   if (/\bERATELIMITED\b/.test(error)) return true;
-  return error.includes("ELIMIT") && limitOfMessage(error)?.verdict === "delay";
+  const limit = limitOfMessage(error);
+  return (
+    error.includes("ELIMIT") &&
+    limit?.verdict === "delay" &&
+    (limit.period === "second" || limit.period === "minute")
+  );
 }
 
 type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;

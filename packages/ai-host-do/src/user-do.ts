@@ -87,7 +87,8 @@ export class User extends DurableObject<Env> {
           sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
           holdStream: (capability, id) => ws.holdStream(capability, id),
           releaseStream: (capability, id) => ws.releaseStream(capability, id),
-          admitRequest: (capability, kind) => ws.admitRequest(capability, kind),
+          admitRequest: (capability, kind, maxDelayMs) =>
+            ws.admitRequest(capability, kind, maxDelayMs),
           files: (capability, method, args) => ws.files(capability, method, args),
           listDatabases: (capability, project) => ws.listDatabases(capability, project),
           databaseCall: (capability, call) => ws.databaseCall(capability, call),
@@ -153,9 +154,14 @@ export class User extends DurableObject<Env> {
       throw codedError("EINVAL", "no such kind of request");
     const { user, workspace } = await this.#sessions.claims(token);
     const meta = { workspace, project: "", user };
+    // One max delay for the request, whichever levels make it wait: the workspace gets what the
+    // user's level left of it.
+    const { maxDelayMs } = this.#limits.delay();
+    const started = this.#limits.clock.now();
     await this.#limits.admitRequest(meta, kind);
+    const left = Math.max(0, maxDelayMs - (this.#limits.clock.now() - started));
     try {
-      await this.#sessions.admitRequest(token, kind);
+      await this.#sessions.admitRequest(token, kind, left);
     } catch (e) {
       // A request the workspace refused is not counted against the user.
       await this.#limits.refundRequest(meta).catch(() => {});

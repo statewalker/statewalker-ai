@@ -174,9 +174,10 @@ export interface WorkspaceGrants {
   releaseStream(userCapability: string, id: string): Promise<void>;
   /**
    * Counts one session API request of the user against the workspace's rate limits
-   * (statewalker/statewalker-root#180): waits on a `delay` limit, then ELIMIT (429).
+   * (statewalker/statewalker-root#180): waits on a `delay` limit for at most `maxDelayMs` (what the
+   * request has left of its max delay), then ELIMIT (429).
    */
-  admitRequest(userCapability: string, kind: ApiRequestKind): Promise<void>;
+  admitRequest(userCapability: string, kind: ApiRequestKind, maxDelayMs?: number): Promise<void>;
   /** Agent sessions of this user that ended: they no longer count as active (#179). */
   sessionsEnded(userCapability: string, sessions: string[]): Promise<void>;
   /** The limits on the user's usage there now (a project's: EACCES for a non-member). */
@@ -571,9 +572,9 @@ export class UserSessions implements UserPort {
   }
 
   /** Counts one session API request of the user in the token's workspace (#180). */
-  async admitRequest(token: string, kind: ApiRequestKind): Promise<void> {
+  async admitRequest(token: string, kind: ApiRequestKind, maxDelayMs?: number): Promise<void> {
     const us = await this.#userSession(token);
-    await this.#o.workspace(us.workspace).admitRequest(us.capability, kind);
+    await this.#o.workspace(us.workspace).admitRequest(us.capability, kind, maxDelayMs);
   }
 
   async releaseStream(token: string, id: string): Promise<void> {

@@ -167,7 +167,13 @@ const STREAMS: Record<string, StreamFn> = {
  */
 export function isRateRefusal(error: unknown): boolean {
   const text = String((error as Error)?.message ?? error);
-  return text.includes("ELIMIT") && limitOfMessage(text)?.verdict === "delay";
+  const limit = limitOfMessage(text);
+  // Only a short period's limit is a rate limit; a day's or a month's that delays is a budget.
+  return (
+    text.includes("ELIMIT") &&
+    limit?.verdict === "delay" &&
+    (limit.period === "second" || limit.period === "minute")
+  );
 }
 
 /** Overload, rate-limit and unavailable errors, from a provider's status or message. */

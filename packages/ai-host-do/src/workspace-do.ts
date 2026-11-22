@@ -783,11 +783,17 @@ export class Workspace extends DurableObject<Env> {
    * charged to the user (their User DO), not here.
    */
   #modelMeter(project: string, user: string): ModelMeter {
+    // One max delay for the whole request, whichever limits and fallback models make it wait.
+    const deadline = this.#limits.clock.now() + this.#limits.delay().maxDelayMs;
     return {
       admit: async (_model, meta, estimate, provider) => {
         // The workspace's share of the provider key's rate limits first (#180): a request over it
         // waits for the next minute, or is refused as the provider's 429 would be.
-        const rate = await this.#limits.admitProvider(provider, this.#modelUsageMeta(meta));
+        const rate = await this.#limits.admitProvider(
+          provider,
+          this.#modelUsageMeta(meta),
+          deadline,
+        );
         if (estimate.own_key) return rate ? { rate } : undefined;
         const scopes = await this.#limits.scopes(project, user);
         const amounts = {
@@ -797,7 +803,7 @@ export class Workspace extends DurableObject<Env> {
         try {
           const { id } = await withDelay(
             () => this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
-            this.#limits.delay(),
+            this.#limits.delay(deadline),
           );
           return { id, ...(rate ? { rate } : {}) };
         } catch (e) {
@@ -1829,14 +1835,23 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
+   * Test-only (the Worker admits this only with the ADMIN_KEY): moves the clock this DO counts
+   * limits by `ms` forward.
+   */
+  async advanceClock(ms: number): Promise<number> {
+    if (!Number.isFinite(ms) || ms < 0) throw codedError("EINVAL", "ms must be a number >= 0");
+    return this.#limits.clock.advance(ms);
+  }
+
+  /**
    * Counts one session API request of the user (a message, a stream opened, a session started)
    * against the workspace's and the member's rate limits (statewalker/statewalker-root#180).
    */
-  async admitRequest(userCapability: string, kind: string): Promise<void> {
+  async admitRequest(userCapability: string, kind: string, maxDelayMs?: number): Promise<void> {
     const user = await this.#authority.userOfUserCapability(userCapability);
     if (kind !== "message" && kind !== "stream" && kind !== "session")
       throw codedError("EINVAL", "no such kind of request");
-    await this.#limits.admitRequest(user, kind);
+    await this.#limits.admitRequest(user, kind, maxDelayMs);
   }
 
   /** Releases one of the user's streams. */

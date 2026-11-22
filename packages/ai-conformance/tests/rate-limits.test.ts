@@ -14,6 +14,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   advanceUserClock,
+  advanceWorkspaceClock,
   type Deployment,
   type FakeModel,
   fakeModel,
@@ -44,6 +45,8 @@ const WS = (t: string) => ({
   /** Two workspaces with a share of one request a minute each of the scripted provider. */
   p1: `${t}-p1`,
   p2: `${t}-p2`,
+  /** A workspace limit of 2 a minute, for a user held to 2 a minute too. */
+  stack: `${t}-stack`,
   /** A share of 5 requests and 50 tokens a minute of the scripted provider (a request takes 15). */
   tokens: `${t}-tokens`,
 });
@@ -120,6 +123,24 @@ beforeAll(async () => {
           on_exceed: "delay",
         })),
       ),
+      ...TRANSPORTS.flatMap((t) => [
+        {
+          meter: "api_requests",
+          level: "user",
+          target: `lou-${t}`,
+          value: 2,
+          period: "minute",
+          on_exceed: "delay",
+        },
+        {
+          meter: "api_requests",
+          level: "workspace",
+          target: WS(t).stack,
+          value: 2,
+          period: "minute",
+          on_exceed: "delay",
+        },
+      ]),
       ...TRANSPORTS.map((t) => ({
         meter: "api_requests",
         level: "workspace",
@@ -137,7 +158,7 @@ beforeAll(async () => {
       {
         "/work/.system/access": JSON.stringify(
           Object.fromEntries(
-            [...HELD, "fay", "gus", "hal", "ivy", "jay", "kay"].flatMap((u) =>
+            [...HELD, "fay", "gus", "hal", "ivy", "jay", "kay", "lou"].flatMap((u) =>
               TRANSPORTS.map((t) => [`${u}-${t}`, "owner"]),
             ),
           ),
@@ -392,6 +413,20 @@ describe.each(transports)("rate limits over %s", (name, connect) => {
     await expect(kay.postMessage(s.id, { content: "hello" })).rejects.toMatchObject({
       status: 429,
       message: expect.stringContaining("60 api_requests per minute"),
+    });
+  });
+
+  it("waits 30 s in all, however many levels delay a request", async () => {
+    const lou = await as("lou", ws.stack);
+    await lou.startSession({ project: "work" });
+    await lou.startSession({ project: "work" });
+    // Both the user's window (their User DO's clock) and the workspace's reset in 20 s.
+    await advanceUserClock(deployment, ADMIN_KEY, u("lou"), 39_000);
+    await advanceWorkspaceClock(deployment, ADMIN_KEY, ws.stack, 39_000);
+    // The user's level waits 20 s; the 10 s left are less than the workspace's 20: denied.
+    await expect(lou.startSession({ project: "work" })).rejects.toMatchObject({
+      status: 429,
+      message: expect.stringContaining(ws.stack),
     });
   });
 });

@@ -266,9 +266,14 @@ export class WorkspaceLimits {
     }
   }
 
-  /** How a request waits on a `delay` limit here: up to the max delay, on this DO's clock. */
-  delay() {
-    return delayOptions(this.#env, this.clock);
+  /**
+   * How a request waits on a `delay` limit here: up to the max delay, on this DO's clock, or to
+   * `deadline` (on this clock) when the request already waited elsewhere.
+   */
+  delay(deadline?: number) {
+    const options = delayOptions(this.#env, this.clock);
+    if (deadline === undefined) return options;
+    return { ...options, maxDelayMs: Math.max(0, deadline - this.clock.now()) };
   }
 
   /**
@@ -276,8 +281,14 @@ export class WorkspaceLimits {
    * (statewalker/statewalker-root#180), waiting on a `delay` limit; ELIMIT (429) past it. Counters
    * only: a request is no usage record.
    */
-  async admitRequest(user: string, kind: ApiRequestKind): Promise<void> {
+  async admitRequest(user: string, kind: ApiRequestKind, maxDelayMs?: number): Promise<void> {
     const scopes = (await this.scopes("", user)).filter((s) => s.level !== "project");
+    // What the request has left of its max delay, never more than this deployment's.
+    const own = this.delay();
+    const left =
+      typeof maxDelayMs === "number" && Number.isFinite(maxDelayMs)
+        ? Math.max(0, Math.min(own.maxDelayMs, maxDelayMs))
+        : own.maxDelayMs;
     try {
       await withDelay(
         () =>
@@ -290,7 +301,7 @@ export class WorkspaceLimits {
               record: false,
             },
           ),
-        this.delay(),
+        { ...own, maxDelayMs: left },
       );
     } catch (e) {
       throw refusal(e);
@@ -307,6 +318,7 @@ export class WorkspaceLimits {
   async admitProvider(
     provider: CatalogProvider | undefined,
     meta: UsageMeta,
+    deadline?: number,
   ): Promise<string | undefined> {
     if (!provider || provider.level === "user") return undefined;
     const scope = providerScope(provider.id, rateShare(provider.rate, this.#workspace));
@@ -314,7 +326,7 @@ export class WorkspaceLimits {
     try {
       const { id } = await withDelay(
         () => this.ledger.reserve([scope], { model_requests: 1, model_tokens: 1 }, meta),
-        this.delay(),
+        this.delay(deadline),
       );
       return id;
     } catch (e) {
@@ -591,6 +603,11 @@ export class UserLimits {
     this.#env = env;
     this.#user = user;
     this.#read = read;
+  }
+
+  /** How a request waits on a `delay` limit here: up to the max delay, on this DO's clock. */
+  delay() {
+    return delayOptions(this.#env, this.clock);
   }
 
   /**

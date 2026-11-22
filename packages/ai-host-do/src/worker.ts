@@ -182,6 +182,12 @@ async function devRoutes(request: Request, env: Env, path: string) {
     await issuerOf(env).revokeUser(id);
     return json({ revoked: id });
   }
+  if (collection === "workspaces" && id && sub === "clock") {
+    // Moves the workspace's limits clock forward, so a scenario places a request in a window.
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    return json({ offset: await workspaceOf(env, id).advanceClock(Number(body.advance_ms)) });
+  }
   if (collection === "workspaces" && id && sub === "user-session") {
     // Hands an access token straight to one workspace's DO, whichever workspace it names: only a
     // token for that workspace opens a user session there. The capability is not returned.

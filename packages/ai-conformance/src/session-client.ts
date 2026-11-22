@@ -1113,6 +1113,25 @@ export async function advanceUserClock(
 }
 
 /**
+ * Moves a workspace's clock `ms` forward: the clock its Workspace DO counts limits by (test-only,
+ * behind `ADMIN_KEY`). Answers the total offset.
+ */
+export async function advanceWorkspaceClock(
+  deployment: Deployment,
+  adminKey: string,
+  workspace: string,
+  ms: number,
+): Promise<number> {
+  const { offset } = await admin<{ offset: number }>(
+    deployment,
+    adminKey,
+    `/admin/workspaces/${encodeURIComponent(workspace)}/clock`,
+    { advance_ms: ms },
+  );
+  return offset;
+}
+
+/**
  * Sends a message straight to an agent session's DO, past the user's User DO (test-only, behind
  * `ADMIN_KEY`): the turn's file calls still go to the Workspace DO's gate.
  */
