@@ -383,9 +383,15 @@ export class UserSessions implements UserPort {
   #approvalView(row: ApprovalRow): ApprovalView {
     const expired =
       (row.status === "pending" || row.status === "blocked") && Number(row.expires) <= this.#now();
+    // A sub-agent's approval names its tree's root (statewalker/statewalker-ai#88).
+    const root = this.#one<{ root: string | null }>(
+      "SELECT root FROM agent_sessions WHERE id = ?",
+      row.session,
+    )?.root;
     return {
       ...(JSON.parse(row.request) as ApprovalRequest),
       workspace: row.workspace,
+      ...(root && root !== row.session ? { root } : {}),
       status: expired ? "expired" : (row.status as ApprovalView["status"]),
       created: Number(row.created),
       expires: Number(row.expires),
