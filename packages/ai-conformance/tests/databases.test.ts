@@ -66,6 +66,7 @@ function fixtures(): Record<string, string> {
       [`ace-${t}`]: "editor",
       [`don-${t}`]: "editor",
       [`tia-${t}`]: "editor",
+      [`max-${t}`]: "editor",
     });
     files[`/${p}/.system/databases`] = JSON.stringify({ notes: {}, big: {} });
     // Another project, which data's members are not in.
@@ -127,6 +128,11 @@ afterAll(async () => {
 
 const call = (tool: string, args: unknown) => `CALL ${tool} ${JSON.stringify(args)}`;
 const toolResult = (turn: Turn) => turn.items.find((i) => i.kind === "tool_result");
+/** What the model was last shown (tests of a file run one at a time): its last request's texts. */
+const lastAsked = (): string =>
+  (model.requests.filter((r) => !r.classifier && !r.summary).at(-1)?.messages ?? [])
+    .map((m) => m.text)
+    .join("\n");
 const approvalOf = async (client: SessionClient, turn: Turn): Promise<Approval> => {
   expect(turn.status).toBe("waiting");
   const id = turn.stop_reason?.approval_ids?.[0];
@@ -274,6 +280,54 @@ describe.each(transports)("databases over %s", (name, connect) => {
     expect(await own.query(p, "notes", "SELECT v FROM todo WHERE v = 'dee'")).toEqual([
       { v: "dee" },
     ]);
+    // The agent continues the turn with the write's result (statewalker/statewalker-root#214).
+    expect(answered.status).toBe("completed");
+    expect(answered.items.map((i) => i.kind)).toEqual(["tool_result", "message"]);
+    expect(lastAsked()).toContain("[Result of an approved action] db notes:");
+  });
+
+  it("continues a turn waiting on several approvals once the last one is answered", async () => {
+    const own = await as("own");
+    await own.exec(p, "notes", "CREATE TABLE IF NOT EXISTS pair (v TEXT)");
+    const max = await as("max");
+    const s = await max.startSession({ project: p });
+    // One answer of two changes, each asking: a file write and a database write.
+    const turn = await max.sendMessage(s.id, {
+      content: [
+        call("write", { path: "pair.md", content: "pair\n" }),
+        call("db_exec", { database: "notes", sql: "INSERT INTO pair VALUES ('max')" }),
+      ].join("\n"),
+    });
+    expect(turn.status).toBe("waiting");
+    const ids = turn.stop_reason?.approval_ids ?? [];
+    expect(ids).toHaveLength(2);
+    const approvals = (await max.listApprovals()).approvals;
+    const file = approvals.find((a) => ids.includes(a.id) && a.action.method === "write");
+    const db = approvals.find((a) => ids.includes(a.id) && a.action.method === "db");
+    expect(file && db).toBeTruthy();
+    const asked = model.requests.length;
+    // The first answer runs its action; the turn still waits on the other, the model not asked.
+    const first = await max.answerApproval(String(db?.id), { decision: "allow", scope: "once" });
+    const waiting = await max.waitTurn(first.accepted);
+    expect(waiting.status).toBe("waiting");
+    expect(waiting.stop_reason).toMatchObject({ type: "approval", approval_ids: [file?.id] });
+    expect(waiting.items.map((i) => i.kind)).toEqual(["tool_result"]);
+    expect(model.requests.length).toBe(asked);
+    expect(await own.query(p, "notes", "SELECT v FROM pair")).toEqual([{ v: "max" }]);
+    // The last answer continues the turn, with both results.
+    const last = await max.answerApproval(String(file?.id), {
+      decision: "deny",
+      scope: "once",
+      message: "no files",
+    });
+    const done = await max.waitTurn(last.accepted);
+    expect(done.status).toBe("completed");
+    expect(done.items.map((i) => i.kind)).toEqual(["tool_result", "message"]);
+    const shown = lastAsked();
+    expect(shown).toContain("[Result of an approved action] db notes:");
+    expect(shown).toContain(
+      `[Result of a denied action] write /${p}/pair.md: denied by the user: no files`,
+    );
   });
 
   it("plan mode reads databases and asks before writes; acceptEdits writes; dontAsk refuses", async () => {

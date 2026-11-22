@@ -236,6 +236,9 @@ _Avoid_: policy, setting
 A user's decision on an action that an "ask" paused.
 _Avoid_: permission prompt, confirmation
 
+**Answer turn**:
+The turn an approval's answer (or its expiry) queues: it runs or refuses the stored action, then the agent continues the waiting turn's work with the result, without a new user message; it waits again while other approvals of that turn are unanswered.
+
 **Risk classifier**:
 The model that decides, in `auto` mode, whether an action no rule or safe class settles is allowed, asked about or denied; it never sees tool results.
 
