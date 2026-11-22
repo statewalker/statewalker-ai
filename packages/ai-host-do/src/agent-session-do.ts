@@ -491,6 +491,7 @@ export class AgentSession extends DurableObject<Env> {
               workspace.callTool(config.capability, {
                 name: call.path,
                 args: JSON.parse(new TextDecoder().decode(call.content ?? new Uint8Array())),
+                ...(turn ? { turn } : {}),
               });
             // Held to the session's own limits as a direct call is (#outbound): outbound requests,
             // a native tool's isolate time.

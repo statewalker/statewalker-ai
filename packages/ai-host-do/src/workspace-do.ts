@@ -2653,7 +2653,8 @@ export class Workspace extends DurableObject<Env> {
     // An action the mode asks about is refused: a running tool cannot wait for an approval.
     const files = filesOverRpc(
       (method, a) =>
-        this.#files.call(capability, method, a).catch((e) => {
+        // Recorded under the calling turn, with pre-images, as the agent's own changes (#191).
+        this.files(capability, method, a, turn).catch((e) => {
           const asked = approvalOf(e);
           if (!asked) throw e;
           throw codedError(

@@ -265,6 +265,26 @@ describe.each(transports)("native tools over %s", (name, connect) => {
     }
   });
 
+  it("records a tool's file changes under the calling turn: a rewind reverts them (statewalker/statewalker-root#191)", async () => {
+    const cy = await as("cy");
+    await cy.setMode({ mode: "bypassPermissions" });
+    try {
+      const s = await cy.startSession({ project });
+      const a = await cy.sendMessage(s.id, { content: "start" });
+      const path = `/${project}/notes/rewound-${t}.md`;
+      const wrote = await cy.sendMessage(s.id, {
+        content: call("proj__note", { path, text: "by the tool" }),
+      });
+      expect(results(wrote)).toEqual([expect.objectContaining({ isError: false })]);
+      const result = await cy.rewind(s.id, { to_turn: a.id, revert_files: true });
+      expect(result.files).toEqual({ reverted: [path], conflicts: [], unavailable: [] });
+      const read = await cy.sendMessage(s.id, { content: call("read", { path }) });
+      expect(results(read)).toEqual([expect.objectContaining({ isError: true })]);
+    } finally {
+      await cy.setMode({ mode: "default" });
+    }
+  });
+
   it("generates OpenCode-style tools' documents, and runs them", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project });
