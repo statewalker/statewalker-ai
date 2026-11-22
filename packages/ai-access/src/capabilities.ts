@@ -59,8 +59,8 @@ export interface AgentSessionGrant {
 export interface SubAgentGrant {
   session: string;
   agent: string;
-  /** A mode the child's actions are also decided by: the strictest verdict wins. */
-  mode?: string;
+  /** Modes the child's actions are also decided by: the strictest verdict wins. */
+  modes?: string[];
 }
 
 /** What an agent session's capability says: its user (root-signed) and its grant. */
@@ -318,19 +318,20 @@ export class WorkspaceAuthority {
       throw codedError("EINVAL", "invalid session id");
     if (typeof grant.agent !== "string" || !grant.agent)
       throw codedError("EINVAL", "agent must be an agent's name");
-    if (grant.mode !== undefined && !MODE_NAME.test(grant.mode))
+    const modes = grant.modes ?? [];
+    if (!modes.every((m) => typeof m === "string" && MODE_NAME.test(m)))
       throw codedError("EINVAL", "invalid mode name");
     const token = Biscuit.fromBase64(parentCapability);
     const block = thirdPartyBlock(
       token.thirdPartyRequest(),
       this.#keys.secretKey,
-      SUB_AGENT_BLOCK + (grant.mode ? "\nmode({mode});" : ""),
+      SUB_AGENT_BLOCK + modes.map((_, i) => `\nmode({mode${i}});`).join(""),
       0,
       {
         session: grant.session,
         parent: parent.session,
         agent: grant.agent,
-        ...(grant.mode ? { mode: grant.mode } : {}),
+        ...Object.fromEntries(modes.map((m, i) => [`mode${i}`, m])),
       },
     );
     return token.appendThirdParty(block).toBase64();

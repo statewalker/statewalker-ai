@@ -10,7 +10,6 @@ import {
   type ApprovalRequest,
   attenuateForAgentSession,
   codedError,
-  type SubAgentGrant,
   DEFAULT_MODE,
   isMode,
   type ModeDefinition,
@@ -21,6 +20,7 @@ import {
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
 import { type FilesApi, tryReadText } from "@statewalker/webrun-files";
 import type {
+  AgentRun,
   AgentSessionConfig,
   AgentSessionView,
   ApprovalAnswer,
@@ -83,8 +83,8 @@ export interface WorkspaceGrants {
   delegate(
     userCapability: string,
     parentCapability: string,
-    grant: SubAgentGrant,
-  ): Promise<string>;
+    grant: { session: string; agent: string; mode?: string },
+  ): Promise<{ capability: string; agent: string; run?: AgentRun }>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -489,16 +489,20 @@ export class UserSessions implements UserPort {
     if (req.mode !== undefined && !isMode(req.mode, this.#o.modes))
       throw codedError("EINVAL", `no mode '${req.mode}'`);
     const id = `as-${crypto.randomUUID()}`;
-    const capability = await this.#o.workspace(us.workspace).delegate(us.capability, parentCapability, {
-      session: id,
-      agent: req.agent,
-      ...(req.mode ? { mode: req.mode } : {}),
-    });
+    // The workspace checks the agent against the parent's definition and the user's roles, pins
+    // the child's definitions and narrows the parent's capability for it.
+    const { capability, agent, run } = await this.#o
+      .workspace(us.workspace)
+      .delegate(us.capability, parentCapability, {
+        session: id,
+        agent: req.agent,
+        ...(req.mode ? { mode: req.mode } : {}),
+      });
     const row: AgentRow = {
       id,
       workspace: parent.workspace,
       project: parent.project,
-      agent: req.agent,
+      agent,
       created: Date.now(),
       capability,
       unattended: parent.unattended,
@@ -532,6 +536,7 @@ export class UserSessions implements UserPort {
         capability,
         parent: String(row.parent),
         root: String(row.root),
+        ...(run ? { run } : {}),
         ...(req.tools ? { tools: [...req.tools] } : {}),
         ...(req.mode ? { mode: req.mode } : {}),
       },
@@ -597,7 +602,10 @@ export class UserSessions implements UserPort {
   async archiveAgentSession(token: string, id: string) {
     const us = await this.#userSession(token);
     const own = await this.ownAgentSession(token, id);
-    const row = this.#one<AgentRow>("SELECT * FROM agent_sessions WHERE id = ?", own.id) as AgentRow;
+    const row = this.#one<AgentRow>(
+      "SELECT * FROM agent_sessions WHERE id = ?",
+      own.id,
+    ) as AgentRow;
     await this.#revokeTree(us, row);
     const now = Date.now();
     for (const sid of this.#tree(own.id))

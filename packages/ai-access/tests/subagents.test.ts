@@ -36,7 +36,7 @@ describe("sub-agent capabilities", () => {
     const grandchild = await authority.delegate(user, child, {
       session: "as-3",
       agent: "checker",
-      mode: "plan",
+      modes: ["plan"],
     });
     expect(await authority.agentSessionOf(grandchild)).toMatchObject({
       session: "as-3",

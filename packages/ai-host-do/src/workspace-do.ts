@@ -16,8 +16,8 @@ import {
   DEFAULT_MODE,
   DEFAULT_SYSTEM_FOLDER,
   decide,
-  type FileAction,
   decideMode,
+  type FileAction,
   fileRoleSource,
   isMode,
   type ModeDefinition,
@@ -31,7 +31,6 @@ import {
   resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
-  type SubAgentGrant,
   settleAsk,
   WORKSPACE_ROLES,
   WorkspaceAuthority,
@@ -64,6 +63,7 @@ import {
   sessionSecrets,
 } from "@statewalker/ai-environment";
 import type {
+  AgentRun,
   CreatedServiceAccount,
   DeleteSecretRequest,
   PinnedDefinitions,
@@ -582,18 +582,42 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
-   * The capability of a sub-agent of an agent session (statewalker/statewalker-root#126), for the
-   * user session that session's capability was narrowed from: the parent's capability with a
-   * block this workspace signs, naming the child. A mode must be one the deployment knows.
+   * Starts a sub-agent of an agent session (statewalker/statewalker-root#126), for the user session
+   * that session's capability was narrowed from: the agent must be one the parent's pinned
+   * definition lists and the user may use now; the child's definitions are pinned like any
+   * session's, and its capability is the parent's with a block this workspace signs, naming the
+   * child and any mode (asked for, or its definition's) that may only make the gate stricter.
    */
   async delegate(
     userCapability: string,
     parentCapability: string,
-    grant: SubAgentGrant,
-  ): Promise<string> {
+    grant: { session: string; agent: string; mode?: string },
+  ): Promise<{ capability: string; agent: string; run?: AgentRun }> {
+    // The parent must be narrowed from this very user session (revocation ids name it).
+    await this.#authority.revocationOf(userCapability, parentCapability);
+    const parent = await this.#authority.agentSessionOf(parentCapability);
+    const pinned = await this.#definitions.session(parent.session);
+    const listed =
+      pinned?.user === parent.user && pinned.project === parent.project
+        ? (pinned.run?.agents ?? [])
+        : [];
+    if (!listed.includes(String(grant.agent)))
+      throw codedError("EACCES", `${parent.agent} may not start '${grant.agent}'`);
     if (grant.mode !== undefined && !isMode(grant.mode, this.#modes))
       throw codedError("EINVAL", `no mode '${grant.mode}'`);
-    return this.#authority.delegate(userCapability, parentCapability, grant);
+    const child = await this.pinDefinitions(userCapability, {
+      session: grant.session,
+      project: parent.project,
+      agent: grant.agent,
+    });
+    // A mode the definition asks for, like one the parent asks for, may only be stricter.
+    const modes = [grant.mode, child.run?.mode].filter((m): m is string => !!m);
+    const capability = await this.#authority.delegate(userCapability, parentCapability, {
+      session: grant.session,
+      agent: child.agent,
+      modes,
+    });
+    return { capability, agent: child.agent, ...(child.run ? { run: child.run } : {}) };
   }
 
   /** Refuses (EACCES) a user capability whose user is not the workspace's admin. */

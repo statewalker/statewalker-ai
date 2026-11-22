@@ -73,7 +73,10 @@ export function agentStartTool(offered: readonly string[], host: SubAgentHost): 
           throw codedError("EINVAL", "message must be a non-empty string");
         if (mode !== undefined && typeof mode !== "string")
           throw codedError("EINVAL", "mode must be a mode's name");
-        if (tools !== undefined && !(Array.isArray(tools) && tools.every((x) => typeof x === "string")))
+        if (
+          tools !== undefined &&
+          !(Array.isArray(tools) && tools.every((x) => typeof x === "string"))
+        )
           throw codedError("EINVAL", "tools must be a list of tool names");
         // Never more than the caller's own tools.
         const allowed = tools ? offered.filter((name) => tools.includes(name)) : [...offered];

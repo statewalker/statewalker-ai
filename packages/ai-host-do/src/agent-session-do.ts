@@ -69,9 +69,13 @@ export class AgentSession extends DurableObject<Env> {
           workspace.gatewayFetch(config.capability, call),
         );
         // The tools this session is offered: a sub-agent's are within its parent's.
-        const offered = [...TRACER_TOOLS, ...rest.map((t) => t.name), AGENT_START].filter(
-          (name) => !config.tools || config.tools.includes(name),
-        );
+        // `agent.start` only for an agent whose definition lists sub-agents the user may use.
+        const delegates = (config.run?.agents ?? []).length > 0;
+        const offered = [
+          ...TRACER_TOOLS,
+          ...rest.map((t) => t.name),
+          ...(delegates ? [AGENT_START] : []),
+        ].filter((name) => !config.tools || config.tools.includes(name));
         const agentStart = agentStartTool(offered, {
           startSubAgent: (req) =>
             userOf(env, config.user).startSubAgent(config.id, config.capability, req),

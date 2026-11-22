@@ -691,6 +691,8 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async sendMessage(sessionId, req) {
       const message = messageOf(req);
       const session = await own(sessionId);
+      // Archiving revokes too: an archived session says so first (409, as before revocation).
+      if (session.archived) throw codedError("EBUSY", "the agent session is archived");
       if (session.revoked) throw codedError("EACCES", "the agent session is revoked");
       const accepted = await ports.agent(session.id).send(message);
       return {
