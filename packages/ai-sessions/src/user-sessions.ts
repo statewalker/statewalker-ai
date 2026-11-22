@@ -22,6 +22,7 @@ import {
   approvalError,
   type FilesRpcMethod,
   type Limit,
+  type LimitState,
   type ModelsConfig,
   rootedFiles,
 } from "@statewalker/ai-environment";
@@ -53,6 +54,8 @@ import type {
   DatabaseCall,
   DatabaseView,
   DeleteSecretRequest,
+  LimitsCall,
+  LimitsView,
   Metadata,
   ModelsQuery,
   ModelView,
@@ -65,6 +68,10 @@ import type {
   StartSessionRequest,
   SubAgentRequest,
   TurnRef,
+  UsageQuery,
+  UsageRecordsPage,
+  UsageRecordsQuery,
+  UsageReport,
   UserPort,
   UserSessionView,
 } from "./api.js";
@@ -166,6 +173,14 @@ export interface WorkspaceGrants {
   releaseStream(userCapability: string, id: string): Promise<void>;
   /** Agent sessions of this user that ended: they no longer count as active (#179). */
   sessionsEnded(userCapability: string, sessions: string[]): Promise<void>;
+  /** The limits on the user's usage there now (a project's: EACCES for a non-member). */
+  effectiveLimits(userCapability: string, query: { project?: string }): Promise<LimitState[]>;
+  /** A usage report the user may see there (EACCES without its `usage.read`). */
+  usage(userCapability: string, query: UsageQuery): Promise<UsageReport>;
+  /** One call on the limits the user manages there (EACCES without `limits.write:<level>`). */
+  manageLimits(userCapability: string, call: LimitsCall): Promise<LimitsView>;
+  /** A page of the workspace's usage records; EACCES unless the user is its admin. */
+  usageRecords(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage>;
   /** The workspace's service accounts; EACCES unless the user is a workspace admin. */
   listServiceAccounts(userCapability: string): Promise<ServiceAccountView[]>;
   createServiceAccount(userCapability: string, name: string): Promise<CreatedServiceAccount>;
@@ -660,7 +675,9 @@ export class UserSessions implements UserPort {
         ...(pinned.run ? { run: pinned.run } : {}),
         ...(pinned.model ? { model: pinned.model } : {}),
         ...(pinned.plugins ? { plugins: pinned.plugins } : {}),
-        ...limitsOf(pinned.limits, req.limits),
+        ...limitsOf(pinned.limits),
+        // The start request's limits are the user's own: theirs to replace later (#181).
+        ...(req.limits?.length ? { ownLimits: req.limits } : {}),
         ...(pinned.ownKeys ? { ownKeys: true } : {}),
         ...(req.unattended ? { unattended: true } : {}),
       },
@@ -1302,6 +1319,41 @@ export class UserSessions implements UserPort {
   async setModelConfig(token: string, config: unknown): Promise<ModelsConfig> {
     const us = await this.#userSession(token);
     return this.#o.workspace(us.workspace).setModelConfig(us.capability, config);
+  }
+
+  async effectiveLimits(
+    token: string,
+    query: { project?: string },
+  ): Promise<{ limits: LimitState[] }> {
+    const us = await this.#userSession(token);
+    return {
+      limits: await this.#o.workspace(us.workspace).effectiveLimits(us.capability, query),
+    };
+  }
+
+  async usage(token: string, query: UsageQuery): Promise<UsageReport> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).usage(us.capability, query);
+  }
+
+  async manageLimits(token: string, call: LimitsCall): Promise<LimitsView> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).manageLimits(us.capability, call);
+  }
+
+  async usageRecords(token: string, query: UsageRecordsQuery): Promise<UsageRecordsPage> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).usageRecords(us.capability, query);
+  }
+
+  /** The agent each of these sessions of the user runs; unknown ones left out. */
+  sessionAgents(ids: readonly string[]): Map<string, string> {
+    const found = new Map<string, string>();
+    for (const id of new Set(ids)) {
+      const row = this.#one<{ agent: string }>("SELECT agent FROM agent_sessions WHERE id = ?", id);
+      if (row) found.set(id, String(row.agent));
+    }
+    return found;
   }
 
   async listAgentSessions(token: string): Promise<{ sessions: AgentSessionView[] }> {

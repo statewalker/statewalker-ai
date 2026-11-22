@@ -44,6 +44,8 @@ export function agentRun(agent: NarrowedAgent): AgentRun {
     agents: agent.agents,
     ...(agent.mode ? { mode: agent.mode } : {}),
     ...(agent.requires !== undefined ? { requires: agent.requires } : {}),
+    ...(agent.remote ? { remote: agent.remote } : {}),
+    ...(agent.inputs ? { inputs: agent.inputs } : {}),
   };
 }
 
@@ -88,6 +90,20 @@ export class DefinitionsStore {
       run ? JSON.stringify(run) : null,
       Date.now(),
     );
+  }
+
+  /** The agent each of these sessions runs (`<plugin>/<agent>`, or "default"); unknown ones left out. */
+  agents(sessions: readonly string[]): Map<string, string> {
+    const found = new Map<string, string>();
+    for (const session of new Set(sessions)) {
+      const row = this.#sql
+        .exec("SELECT run FROM session_definitions WHERE session = ?", session)
+        .toArray()[0];
+      if (!row) continue;
+      const run = row.run ? (JSON.parse(String(row.run)) as { id?: string }) : undefined;
+      found.set(session, run?.id ?? "default");
+    }
+    return found;
   }
 
   /** What a session pinned, as pinned: its user, project, plugin pins and agent. */

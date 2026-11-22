@@ -37,11 +37,13 @@ import {
   parseAutoMode,
   parseClassifierAnswer,
   parseRules,
+  REMOTE_AGENT_PREFIX,
   type ResolvedMode,
   type RoleEntries,
   type RoleGrant,
   type RoleSource,
   type RuleLayer,
+  remoteAgentRequest,
   resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
@@ -52,6 +54,7 @@ import {
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
+  type AgentDefinition,
   type Allow,
   buildPlugin,
   catalogMcpServers,
@@ -90,11 +93,14 @@ import {
   type GateDecision,
   type GatedFilesOptions,
   type GatewayResult,
+  gatedFiles,
   gatedFilesRpc,
   gatewayFetch,
+  groupUsage,
   IGNORE_FILE,
   ignoreRules,
   type Limit,
+  type LimitState,
   lookupModel,
   type ModeGate,
   type ModelCall,
@@ -110,14 +116,19 @@ import {
   mayUse,
   normalise,
   type OutgoingRequest,
+  type Period,
   parseModelsConfig,
   pickSessionModel,
+  redactSecrets,
   resolveModels,
+  resolveSecrets,
   rootedFiles,
   type SecretInfo,
   SecretStore,
   type StoredLevel,
   sessionSecrets,
+  USAGE_GROUPS,
+  windowOf,
   withDelay,
 } from "@statewalker/ai-environment";
 import {
@@ -140,6 +151,8 @@ import type {
   AgentRun,
   CreatedServiceAccount,
   DeleteSecretRequest,
+  LimitsCall,
+  LimitsView,
   ModelsQuery,
   ModelView,
   PinnedDefinitions,
@@ -147,7 +160,26 @@ import type {
   SecretView,
   ServiceAccountView,
   SetSecretRequest,
+  UsageQuery,
+  UsageRecordsPage,
+  UsageRecordsQuery,
+  UsageReport,
 } from "@statewalker/ai-sessions";
+import {
+  foldUhpServers,
+  isTerminal,
+  isUhpId,
+  parseRemoteAgentId,
+  parseUhpServers,
+  remoteAgentId,
+  remoteAgents,
+  UHP_PLUGIN,
+  UHP_VERSION,
+  type UhpAnswer,
+  type UhpCall,
+  type UhpServer,
+  uhpError,
+} from "@statewalker/ai-uhp-client";
 import { type FilesApi, tryReadText, writeText } from "@statewalker/webrun-files";
 import { CompositeFilesApi } from "@statewalker/webrun-files-composite";
 import { MemFilesApi } from "@statewalker/webrun-files-mem";
@@ -162,10 +194,13 @@ import {
   deploymentRules,
   type Env,
   issuerOf,
+  ledgerOptions,
   nameOf,
   verifyToken,
 } from "./env.js";
 import {
+  editLimitsFile,
+  LIMITS_FILE,
   meteredFiles,
   refusal,
   type WarningView,
@@ -200,6 +235,10 @@ const MAX_TOOL_LIST = 10_000;
 const MODELS_FILE = "models";
 /** A project's memory caps, beside its system folder's other settings (#157). */
 const MEMORY_CAPS_FILE = "memory-caps";
+/** The workspace's own UHP servers, in its system folder (#144). */
+const UHP_SERVERS_FILE = "uhp-servers";
+/** The most bytes of one answer from a UHP server, unless UHP_WRITEBACK_MAX_BYTES says otherwise. */
+const DEFAULT_WRITEBACK_MAX = 16 * 1024 * 1024;
 /** Where a project's memory lives in its system folder (#157). */
 const MEMORY_FOLDER = "memory";
 
@@ -229,10 +268,14 @@ export class Workspace extends DurableObject<Env> {
   readonly #limits: WorkspaceLimits;
   /** Writes to each project's and agent's memory are serialized (statewalker/statewalker-root#157). */
   readonly #memoryLock = new KeyedLock();
+  /** Edits of a limits file are serialized (#181). */
+  readonly #limitsLock = new KeyedLock();
   /** The deployment's model configuration, read once from the MODELS var. */
   #deploymentModels?: ModelsConfig;
   /** The deployment catalog's plugins, read once from the CATALOG var. */
   #deploymentPlugins?: Promise<{ plugins: Plugin[]; problems: string[] }>;
+  /** UHP servers' harnesses as discovered (#144), by server: listed name or id → harness id. */
+  readonly #harnesses = new Map<string, { at: number; ids: Map<string, string> }>();
   /** Plugin builds by level and source hash (statewalker/statewalker-root#130). */
   readonly #builds = new Map<string, Promise<{ plugin?: Plugin; problems: string[] }>>();
   /**
@@ -377,9 +420,14 @@ export class Workspace extends DurableObject<Env> {
   /** The user's `<area>.use` permissions in a project, as the definitions ask for them. */
   #allow(grants: readonly RoleGrant[]): Allow {
     // A read tool may also be used with `tools.read` (readers, statewalker/statewalker-root#129).
+    // A remote agent only with `agents.use:remote:<server>/<harness>` (#144).
     return (area, target, action) =>
-      decide(grants, { area, action: "use", target }) ||
-      (area === "tools" && action === "read" && decide(grants, { area, action: "read", target }));
+      area === "agents" && target.startsWith(REMOTE_AGENT_PREFIX)
+        ? decide(grants, remoteAgentRequest(target.slice(REMOTE_AGENT_PREFIX.length)))
+        : decide(grants, { area, action: "use", target }) ||
+          (area === "tools" &&
+            action === "read" &&
+            decide(grants, { area, action: "read", target }));
   }
 
   #readDeploymentPlugins() {
@@ -465,10 +513,35 @@ export class Workspace extends DurableObject<Env> {
     const plugins = await this.#plugins(project);
     const catalog = await this.#definitions.catalogOf(plugins);
     const allow = this.#allow(access.grants);
+    // Remote agents (#144): the harnesses the UHP servers list here, each `remote:<server>/<harness>`.
+    const servers = await this.#uhpServers();
+    const remotes: string[] = [];
+    for (const id of remoteAgents(servers)) if (await allow("agents", id)) remotes.push(id);
     const usable = async (id: string | undefined) => {
       if (!id) return undefined;
-      const agent = await findAgent(catalog, id);
-      return agent && (await allow("agents", agent.id)) ? agent : undefined;
+      const ref = parseRemoteAgentId(id);
+      const agent: AgentDefinition | undefined = ref
+        ? remotes.includes(id)
+          ? {
+              id,
+              plugin: "remote",
+              name: ref.harness,
+              models: [],
+              tools: [],
+              agents: [],
+              instructions: "",
+              remote: ref,
+            }
+          : undefined
+        : await findAgent(catalog, id);
+      if (!agent || !(await allow("agents", agent.id))) return undefined;
+      // A plugin agent whose core is remote needs that remote agent too.
+      if (
+        agent.remote &&
+        !remotes.includes(remoteAgentId(agent.remote.server, agent.remote.harness))
+      )
+        return undefined;
+      return agent;
     };
     let agent = await usable(req.agent);
     if (req.agent && !agent) throw codedError("ENOENT", `no agent '${req.agent}' here`);
@@ -487,7 +560,7 @@ export class Workspace extends DurableObject<Env> {
       agent = (await usable(projectDefault)) ?? (await usable(this.env.DEFAULT_AGENT));
     }
     const run: NarrowedAgent | undefined = agent
-      ? await narrowAgent(catalog, agent, allow)
+      ? await narrowAgent(catalog, agent, allow, remotes)
       : undefined;
     // The session's model, pinned with its fallbacks and the catalog it was picked from
     // (statewalker/statewalker-root#105): nothing fits, nothing is pinned and no session starts.
@@ -883,6 +956,12 @@ export class Workspace extends DurableObject<Env> {
    * unless the user granted that exact action.
    */
   async #fileView(capability: string) {
+    const { store, options, agent } = await this.#gatedOptions(capability);
+    return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
+  }
+
+  /** The store and options of the gated view a capability holds (before the mode). */
+  async #gatedOptions(capability: string) {
     const raw = this.#meteredStore(await this.#store);
     const agent = await this.#authority.agentSessionOf(capability).catch(() => undefined);
     const user = agent?.user ?? (await this.#authority.userOfUserCapability(capability));
@@ -920,7 +999,7 @@ export class Workspace extends DurableObject<Env> {
           }
         : {}),
     };
-    return gatedFilesRpc(store, options, agent ? this.#modeGate(agent, store) : undefined);
+    return { store, options, agent };
   }
 
   /**
@@ -1232,6 +1311,453 @@ export class Workspace extends DurableObject<Env> {
     return this.#authority.forTool(agentCapability, tool);
   }
 
+  // --- remote agent sessions (statewalker/statewalker-root#109, #144) --------------------------
+
+  /** The UHP servers this workspace may use: the deployment's, then the workspace's own. */
+  async #uhpServers(): Promise<UhpServer[]> {
+    const deployment = parseUhpServers(this.env.UHP_SERVERS, "deployment");
+    const workspace = parseUhpServers(
+      await tryReadText(await this.#store, `/${DEFAULT_SYSTEM_FOLDER}/${UHP_SERVERS_FILE}`),
+      "workspace",
+    );
+    for (const [where, read] of [
+      ["UHP_SERVERS", deployment],
+      [`/${DEFAULT_SYSTEM_FOLDER}/${UHP_SERVERS_FILE}`, workspace],
+    ] as const)
+      if (read.problems.length) console.warn(`${where}: ${read.problems.join("; ")}`);
+    return foldUhpServers([deployment.servers, workspace.servers]);
+  }
+
+  #uhpTables() {
+    const sql = this.ctx.storage.sql;
+    // The remote tasks running now, with the revocation ids of the capability that started each:
+    // a revocation of any of them cancels the task.
+    sql.exec(`CREATE TABLE IF NOT EXISTS uhp_active (response TEXT NOT NULL, server TEXT NOT NULL,
+      session TEXT NOT NULL, project TEXT NOT NULL, user TEXT NOT NULL, revocations TEXT NOT NULL,
+      PRIMARY KEY (server, response))`);
+    // Sessions whose start (an open-world run action) was decided: later tasks are continuations.
+    sql.exec("CREATE TABLE IF NOT EXISTS uhp_started (session TEXT PRIMARY KEY)");
+    return sql;
+  }
+
+  /**
+   * One request to a UHP server for an agent session: its token is the secret the server names,
+   * put in by the gateway only when bound to plugin `uhp` and the server's host; counted against
+   * the workspace's, project's and member's limits on outbound requests and bytes. A refusal before
+   * sending is `refused`, never retried.
+   */
+  async #uhpSend(
+    facts: { session: string; project: string; user: string },
+    server: UhpServer,
+    method: string,
+    path: string,
+    options: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      binary?: boolean;
+      turn?: string;
+      uncharged?: boolean;
+    } = {},
+  ): Promise<{
+    status: number;
+    json?: unknown;
+    bytes?: Uint8Array;
+    error?: string;
+    refused?: boolean;
+  }> {
+    const body = options.body === undefined ? undefined : JSON.stringify(options.body);
+    const request: OutgoingRequest = {
+      method,
+      url: `${server.baseUrl}${path}`,
+      headers: {
+        authorization: `Bearer {{secret:${server.secret}}}`,
+        "uhp-version": UHP_VERSION,
+        accept: options.binary ? "*/*" : "application/json",
+        ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        ...(options.headers ?? {}),
+      },
+      ...(body !== undefined ? { body } : {}),
+    };
+    const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
+    const resolved = await resolveSecrets(request, UHP_PLUGIN, lookup);
+    if (!resolved.ok) return { status: 0, error: resolved.error, refused: true };
+    const meta = this.#limits.meta(facts.project, facts.user, facts.session, options.turn);
+    const detail = { plugin: UHP_PLUGIN, host: new URL(request.url).host };
+    const sent = {
+      outbound_requests: 1,
+      outbound_bytes: new TextEncoder().encode(body ?? "").length,
+    };
+    // A cancel is never refused by a limit: it is counted after (#144).
+    if (options.uncharged)
+      this.#limits.ledger.add(
+        await this.#limits.scopes(facts.project, facts.user),
+        sent,
+        meta,
+        detail,
+      );
+    else await this.#limits.charge(facts.project, facts.user, sent, meta, detail);
+    let res: Response;
+    try {
+      res = await fetch(resolved.url, {
+        method,
+        headers: resolved.headers,
+        ...(body !== undefined ? { body } : {}),
+        redirect: "manual",
+      });
+    } catch (e) {
+      return {
+        status: 0,
+        error: `EIO: the UHP server could not be reached: ${redactSecrets(String((e as Error)?.message ?? e), resolved.used)}`,
+      };
+    }
+    const max = Number(this.env.UHP_WRITEBACK_MAX_BYTES) || DEFAULT_WRITEBACK_MAX;
+    if (Number(res.headers.get("content-length") ?? 0) > max) {
+      await res.body?.cancel();
+      return { status: 0, error: "EIO: the UHP server's answer is too large", refused: true };
+    }
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    this.#limits.ledger.add(
+      await this.#limits.scopes(facts.project, facts.user),
+      { outbound_bytes: bytes.length },
+      meta,
+      detail,
+    );
+    if (bytes.length > max)
+      return { status: 0, error: "EIO: the UHP server's answer is too large", refused: true };
+    if (options.binary && res.ok) return { status: res.status, bytes };
+    const text = redactSecrets(new TextDecoder().decode(bytes), resolved.used);
+    let json: unknown;
+    try {
+      json = text ? JSON.parse(text) : undefined;
+    } catch {
+      json = undefined;
+    }
+    return { status: res.status, ...(json !== undefined ? { json } : {}) };
+  }
+
+  /** The UHP harness id a listed harness names, as the server reports it now (cached briefly). */
+  async #uhpHarness(
+    facts: { session: string; project: string; user: string },
+    server: UhpServer,
+    listed: string,
+  ): Promise<string> {
+    const key = `${server.id} ${server.baseUrl}`;
+    const cached = this.#harnesses.get(key);
+    let ids = cached && Date.now() - cached.at < 5 * 60_000 ? cached.ids : undefined;
+    if (!ids) {
+      const got = await this.#uhpSend(facts, server, "GET", "/v1/harnesses");
+      if (got.refused || got.status === 0) throw new Error(got.error ?? "EIO: discovery failed");
+      if (got.status !== 200) throw uhpError(got.status, got.json, "the harness discovery");
+      const list = ((got.json as { harnesses?: { id?: unknown; name?: unknown }[] })?.harnesses ??
+        []) as { id?: unknown; name?: unknown }[];
+      ids = new Map();
+      for (const h of list)
+        if (typeof h?.id === "string") {
+          ids.set(h.id, h.id);
+          if (typeof h.name === "string" && !ids.has(h.name)) ids.set(h.name, h.id);
+        }
+      this.#harnesses.set(key, { at: Date.now(), ids });
+    }
+    const id = ids.get(listed);
+    if (!id)
+      throw codedError("ENOENT", `the UHP server ${server.id} offers no harness '${listed}'`);
+    return id;
+  }
+
+  /**
+   * Decides starting a remote agent session's task, once per session: an open-world `run` action
+   * (`agents.use:remote:<server>/<harness>` in the rules) that asks in `default`, goes to the risk
+   * classifier in `auto` and is allowed in `bypassPermissions`; an unattended session's ask is a
+   * deny. Throws the approval it waits on, or the refusal.
+   */
+  async #decideRemoteStart(facts: AgentSessionFacts, target: string): Promise<void> {
+    const sql = this.#uhpTables();
+    if (sql.exec("SELECT 1 FROM uhp_started WHERE session = ?", facts.session).toArray().length)
+      return;
+    const store = await this.#store;
+    const verdict = this.#settled(
+      (await this.#decider(facts, store))("agents", "remote", target),
+      facts,
+    );
+    const request: ApprovalRequest = {
+      id: await approvalId(facts.session, "remote", target),
+      session: facts.session,
+      project: facts.project,
+      action: { method: "remote", path: target },
+      permission: `agents.use:remote:${target}`,
+      reason: `starting the remote agent remote:${target} sends it copies of the project's files: ${verdict.reason}`,
+    };
+    const record = async (d: Omit<GateDecision, "action">) => {
+      if (verdict.step) await this.#record(facts, { action: request.action, ...d });
+    };
+    if (verdict.verdict === "deny")
+      throw codedError("EACCES", `may not start remote:${target}: ${verdict.reason}`);
+    if (verdict.verdict !== "allow") {
+      if (this.#registry.consume(request.id, facts.session, facts.user))
+        await record({
+          step: "approval",
+          verdict: "allow",
+          reason: "the user approved this action",
+        });
+      else if (verdict.verdict === "classify") {
+        const c = await this.#classify(facts, store, request);
+        await record({
+          step: "classifier",
+          verdict: c.verdict,
+          reason: c.reason,
+          ...(c.model ? { model: c.model } : {}),
+          latency_ms: c.latency_ms,
+          ...(c.fallback ? { fallback: c.fallback } : {}),
+          ...(c.stop ? { stop: c.stop } : {}),
+        });
+        if (c.verdict === "deny")
+          throw codedError(
+            "EACCES",
+            `may not start remote:${target}: the risk classifier denied it: ${c.reason}`,
+          );
+        if (c.verdict === "ask") throw approvalError({ ...request, reason: c.reason });
+      } else {
+        await record({ step: verdict.step ?? "mode", verdict: "ask", reason: verdict.reason });
+        throw approvalError(request);
+      }
+    }
+    sql.exec("INSERT OR IGNORE INTO uhp_started VALUES (?)", facts.session);
+  }
+
+  /**
+   * One call of a remote agent session to its UHP server (statewalker/statewalker-root#144), for
+   * the holder of its capability: the server and harness are the session's pinned ones, used now
+   * only while the user's roles still grant `agents.use:remote:<server>/<harness>`. A task's body
+   * carries its input and continuation only: never a tool, an MCP server or a secret of ours. The
+   * first task's start is decided under the mode (#decideRemoteStart).
+   */
+  async uhp(agentCapability: string, call: UhpCall & { turn?: string }): Promise<UhpAnswer> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    const found = await this.#definitions.session(facts.session);
+    const remote = found?.run?.remote;
+    if (!found || found.user !== facts.user || found.project !== facts.project || !remote)
+      throw codedError("EACCES", "not a remote agent session");
+    const server = (await this.#uhpServers()).find((s) => s.id === remote.server);
+    const listed = server?.harnesses[remote.harness];
+    if (!server || !listed)
+      throw codedError("ENOENT", `no remote agent remote:${remote.server}/${remote.harness} here`);
+    const target = `${remote.server}/${remote.harness}`;
+    const access = await this.#access(facts.project, facts.user);
+    if (!access.member || !decide(access.grants, remoteAgentRequest(target)))
+      throw codedError("EACCES", `may not use remote:${target}`);
+    const turn = this.#turnOf(facts.session, call.turn);
+    const sql = this.#uhpTables();
+    const done = (response: string) =>
+      sql.exec("DELETE FROM uhp_active WHERE server = ? AND response = ?", server.id, response);
+    const answer = (got: UhpAnswer & { refused?: boolean }): UhpAnswer => {
+      if (got.refused) throw new Error(got.error);
+      const { refused: _r, ...rest } = got;
+      return rest;
+    };
+    switch (call.op) {
+      case "respond": {
+        await this.#decideRemoteStart(facts, target);
+        const harness = await this.#uhpHarness(facts, server, listed);
+        const b = (call.body ?? {}) as Record<string, unknown>;
+        const body = {
+          input: b.input,
+          ...(isUhpId(b.previous_response_id)
+            ? { previous_response_id: b.previous_response_id }
+            : {}),
+          background: true,
+          store: true,
+          metadata: { harness_id: harness },
+        };
+        const key = String(call.idempotencyKey ?? "");
+        if (!/^[A-Za-z0-9_-]{1,128}$/.test(key))
+          throw codedError("EINVAL", "a task needs an idempotency key");
+        const got = answer(
+          await this.#uhpSend(facts, server, "POST", "/v1/responses", {
+            body,
+            headers: { "idempotency-key": key },
+            ...(turn ? { turn } : {}),
+          }),
+        );
+        const id = (got.json as { id?: unknown })?.id;
+        if (got.status >= 200 && got.status < 300 && isUhpId(id))
+          sql.exec(
+            "INSERT OR REPLACE INTO uhp_active VALUES (?, ?, ?, ?, ?, ?)",
+            id,
+            server.id,
+            facts.session,
+            facts.project,
+            facts.user,
+            JSON.stringify(await this.#authority.revocationIdsOf(agentCapability)),
+          );
+        return got;
+      }
+      case "get": {
+        if (!isUhpId(call.response)) throw codedError("EINVAL", "no such response");
+        const got = answer(
+          await this.#uhpSend(facts, server, "GET", `/v1/responses/${call.response}`, {
+            ...(turn ? { turn } : {}),
+          }),
+        );
+        const status = (got.json as { status?: unknown })?.status;
+        if (typeof status === "string" && isTerminal(status)) done(call.response);
+        return got;
+      }
+      case "cancel": {
+        if (!isUhpId(call.response)) throw codedError("EINVAL", "no such response");
+        done(call.response);
+        return answer(
+          await this.#uhpSend(facts, server, "POST", `/v1/responses/${call.response}/cancel`, {
+            uncharged: true,
+          }),
+        );
+      }
+      case "download": {
+        if (!isUhpId(call.container) || !isUhpId(call.file))
+          throw codedError("EINVAL", "no such file");
+        return answer(
+          await this.#uhpSend(
+            facts,
+            server,
+            "GET",
+            `/v1/containers/${call.container}/files/${call.file}/content`,
+            { binary: true, ...(turn ? { turn } : {}) },
+          ),
+        );
+      }
+      default:
+        throw codedError("EINVAL", "no such UHP call");
+    }
+  }
+
+  /** Sends UHP cancel to every remote task a revoked block stopped. */
+  async #cancelRemote(revoked: string): Promise<void> {
+    const sql = this.#uhpTables();
+    const rows = sql.exec("SELECT * FROM uhp_active").toArray() as unknown as {
+      response: string;
+      server: string;
+      session: string;
+      project: string;
+      user: string;
+      revocations: string;
+    }[];
+    const servers = rows.length ? await this.#uhpServers() : [];
+    for (const row of rows) {
+      if (!(JSON.parse(String(row.revocations)) as string[]).includes(revoked)) continue;
+      sql.exec(
+        "DELETE FROM uhp_active WHERE server = ? AND response = ?",
+        row.server,
+        row.response,
+      );
+      const server = servers.find((s) => s.id === row.server);
+      if (!server) continue;
+      try {
+        await this.#uhpSend(row, server, "POST", `/v1/responses/${row.response}/cancel`, {
+          uncharged: true,
+        });
+      } catch (e) {
+        console.warn(`UHP cancel of ${row.response}: ${String((e as Error)?.message ?? e)}`);
+      }
+    }
+  }
+
+  /**
+   * Writes a remote agent session's returned artifacts back through its capability, as one change
+   * set (statewalker/statewalker-root#109): one `write` under the mode for all the files, so in
+   * `default` the user is asked once, with the files listed; each write is then authorized again
+   * by the capability and the roles. A denial of any file refuses the whole set; an approval the
+   * user granted for exactly these files is consumed.
+   */
+  async applyChangeSet(
+    agentCapability: string,
+    req: { files: { path: string; content: Uint8Array }[] },
+  ): Promise<{ written: string[] }> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    const found = await this.#definitions.session(facts.session);
+    if (!found?.run?.remote || found.user !== facts.user)
+      throw codedError("EACCES", "not a remote agent session");
+    const root = `/${facts.project}`;
+    const files = (Array.isArray(req?.files) ? req.files : []).map((f) => ({
+      path: normalise(String(f?.path)),
+      content: f?.content instanceof Uint8Array ? f.content : new Uint8Array(),
+    }));
+    if (!files.length) throw codedError("EINVAL", "an empty change set");
+    for (const f of files)
+      if (!f.path.startsWith(`${root}/`))
+        throw codedError("EACCES", `may not write back '${f.path}': outside the project`);
+    const store = await this.#store;
+    const gate = this.#modeGate(facts, store);
+    const verdicts = await gate.decide(files.map((f) => ["write", f.path] as [FileAction, string]));
+    const denied = verdicts.flatMap((v, i) =>
+      v.verdict === "deny" ? [`${files[i]?.path}: ${v.reason}`] : [],
+    );
+    if (denied.length) throw codedError("EACCES", `may not write back: ${denied.join("; ")}`);
+    const worst = verdicts.reduce((a, b) =>
+      STRICTNESS[b.verdict] > STRICTNESS[a.verdict] ? b : a,
+    );
+    if (worst.verdict !== "allow") {
+      const enc = new TextEncoder();
+      const listing: [string, string][] = [];
+      for (const f of files)
+        listing.push([
+          f.path,
+          [...new Uint8Array(await crypto.subtle.digest("SHA-256", f.content))]
+            .map((b) => b.toString(16).padStart(2, "0"))
+            .join(""),
+        ]);
+      const id = await approvalId(
+        facts.session,
+        "changeset",
+        root,
+        enc.encode(JSON.stringify(listing)),
+      );
+      const size = files.reduce((n, f) => n + f.content.length, 0);
+      const paths = files.map((f) => f.path).join(", ");
+      const request: ApprovalRequest = {
+        id,
+        session: facts.session,
+        project: facts.project,
+        action: { method: "changeset", path: root, size },
+        permission: `files.write:${(files[0] as { path: string }).path.slice(root.length)}`,
+        reason: `${found.run.id} returned ${files.length} file(s) to write back: ${paths}; ${worst.reason}`,
+      };
+      const record = async (d: Omit<GateDecision, "action">) => {
+        if (worst.step) await this.#record(facts, { action: request.action, ...d });
+      };
+      if (this.#registry.consume(id, facts.session, facts.user))
+        await record({
+          step: "approval",
+          verdict: "allow",
+          reason: "the user approved this action",
+        });
+      else if (worst.verdict === "classify") {
+        const c = await this.#classify(facts, store, request);
+        await record({
+          step: "classifier",
+          verdict: c.verdict,
+          reason: c.reason,
+          ...(c.model ? { model: c.model } : {}),
+          latency_ms: c.latency_ms,
+          ...(c.fallback ? { fallback: c.fallback } : {}),
+          ...(c.stop ? { stop: c.stop } : {}),
+        });
+        if (c.verdict === "deny")
+          throw codedError(
+            "EACCES",
+            `may not write back: the risk classifier denied it: ${c.reason}`,
+          );
+        if (c.verdict === "ask") throw approvalError({ ...request, reason: c.reason });
+      } else {
+        await record({ step: worst.step ?? "mode", verdict: "ask", reason: worst.reason });
+        throw approvalError(request);
+      }
+    }
+    // Each write authorized again by the capability and the roles, in the agent's own view.
+    const { store: view, options } = await this.#gatedOptions(agentCapability);
+    const files$ = gatedFiles(view, options);
+    for (const f of files) await files$.write(f.path, [f.content]);
+    return { written: files.map((f) => f.path) };
+  }
+
   // --- limits (statewalker/statewalker-root#179) -----------------------------------------------
 
   /**
@@ -1316,9 +1842,200 @@ export class Workspace extends DurableObject<Env> {
     this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
   }
 
-  /** Test-only: the workspace's usage records after a seq. */
-  async usageRecords(since = 0) {
-    return this.#limits.ledger.records(Number(since) || 0);
+  /**
+   * The limits on a user's usage now, with what is used, reserved and left of each
+   * (statewalker/statewalker-root#181): the workspace's (and the deployment's ceilings) and the
+   * member's, and a project's when one is named, which the user must be a member of.
+   */
+  async effectiveLimits(
+    userCapability: string,
+    query: { project?: string },
+  ): Promise<LimitState[]> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const project = typeof query?.project === "string" ? query.project : "";
+    if (project && !(await this.#member(project, user)))
+      throw codedError("EACCES", `${user} is not a member of ${project}`);
+    return this.#limits.states(project, user);
+  }
+
+  /**
+   * A usage report over the period's current window (statewalker/statewalker-root#181): a user's
+   * own usage here, a project's with a project role granting `usage.read:project` or a workspace
+   * role granting `usage.read:workspace`, the workspace's with the latter. Usage under users' own
+   * keys is never counted here: other reports show it as groups with `own_key` and no amounts.
+   */
+  async usageReport(userCapability: string, query: UsageQuery): Promise<UsageReport> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const level = query?.level ?? "user";
+    const period = (query?.period ?? "month") as Period;
+    const groupBy = (query?.group_by ?? []).filter((g) =>
+      (USAGE_GROUPS as readonly string[]).includes(g),
+    );
+    const { timeZone } = ledgerOptions(this.env);
+    const window = windowOf(period, Date.now(), timeZone);
+    const until = Number.isFinite(window.reset) ? window.reset : Number.MAX_SAFE_INTEGER;
+    const workspaceReader = async () =>
+      decide(await this.#workspaceGrants(user), {
+        area: "usage",
+        action: "read",
+        target: "workspace",
+      });
+    let target: string;
+    let filter: { user?: string; project?: string } = {};
+    if (level === "user") {
+      target = user;
+      filter = { user };
+    } else if (level === "project") {
+      target = String(query.project ?? "");
+      const access = await this.#access(target, user);
+      // Only project roles: a workspace role reaches projects through usage.read:workspace.
+      const grants = access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role));
+      const reads =
+        (access.member && decide(grants, { area: "usage", action: "read", target: "project" })) ||
+        (await workspaceReader());
+      if (!reads) throw codedError("EACCES", `${user} may not read the usage of ${target}`);
+      filter = { project: target };
+    } else if (level === "workspace") {
+      target = this.#name;
+      if (!(await workspaceReader()))
+        throw codedError("EACCES", `${user} may not read this workspace's usage`);
+    } else throw codedError("EINVAL", "level is user, project or workspace");
+    const rows = this.#limits.ledger.aggregate({ from: window.start, until, ...filter });
+    const own =
+      level === "user" ? [] : this.#models.ownKeyRows(window.start, until, filter.project);
+    const agents = this.#definitions.agents(
+      [...rows, ...own].flatMap((r) => (r.session ? [r.session] : [])),
+    );
+    const options = { timeZone, agentOf: (s: string) => agents.get(s) ?? "" };
+    return {
+      level,
+      target,
+      period,
+      start: window.start,
+      ...(Number.isFinite(window.reset) ? { end: window.reset } : {}),
+      group_by: groupBy,
+      groups: [
+        ...groupUsage(rows, groupBy, options),
+        ...groupUsage(own, groupBy, { ...options, ownKey: true }),
+      ],
+    };
+  }
+
+  /** The user's workspace roles' grants (a project's roles never reach the workspace). */
+  async #workspaceGrants(user: string): Promise<RoleGrant[]> {
+    const held = (await this.#roles.workspaceRoles(user)).filter((r) =>
+      Object.hasOwn(WORKSPACE_ROLES, r),
+    );
+    return resolveRoles(held, {}).grants;
+  }
+
+  /**
+   * One call on the limits a user manages here (statewalker/statewalker-root#181), each in the
+   * file its level is read from: the workspace admin's (`limits.write:workspace`, `:project`,
+   * `:member`) in `/.system/limits`; a project owner's (project roles granting
+   * `limits.write:project`, `:session`) in `<project>/.system/limits`. Each manager reads and
+   * replaces only their own entries: an owner never lifts the admin's limit on their project.
+   */
+  async manageLimits(userCapability: string, call: LimitsCall): Promise<LimitsView> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    const level = call?.level;
+    const target = String(call?.target ?? "");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(target))
+      throw codedError("EINVAL", "target must be a name");
+    const writes = (grants: readonly RoleGrant[], what: string) =>
+      decide(grants, { area: "limits", action: "write", target: what });
+    const refuse = () =>
+      codedError("EACCES", `${user} may not manage ${level} limits of ${target}`);
+    const workspaceFile = `/${DEFAULT_SYSTEM_FOLDER}/${LIMITS_FILE}`;
+    const projectFile = `/${target}/${DEFAULT_SYSTEM_FOLDER}/${LIMITS_FILE}`;
+    const projectGrants = async () => {
+      const access = await this.#access(target, user);
+      return access.member
+        ? access.grants.filter((g) => !Object.hasOwn(WORKSPACE_ROLES, g.role))
+        : [];
+    };
+    let path: string;
+    let mine: (e: Record<string, unknown>) => boolean;
+    let stored = (l: Limit): Limit => l;
+    const ws = await this.#workspaceGrants(user);
+    switch (level) {
+      case "workspace":
+        if (!writes(ws, "workspace")) throw refuse();
+        if (target !== this.#name) throw codedError("ENOENT", `no workspace ${target} here`);
+        path = workspaceFile;
+        mine = (e) => e.level === "workspace";
+        break;
+      case "member":
+        if (!writes(ws, "member")) throw refuse();
+        path = workspaceFile;
+        mine = (e) => e.level === "member" && e.target === target;
+        break;
+      case "project":
+        if (writes(ws, "project")) {
+          path = workspaceFile;
+          mine = (e) => e.level === "project" && e.target === target;
+        } else if (writes(await projectGrants(), "project")) {
+          path = projectFile;
+          mine = (e) => e.level === "project";
+        } else throw refuse();
+        break;
+      case "session":
+        // A project's defaults for its new sessions (a session's own are its agent session's).
+        if (!writes(await projectGrants(), "session")) throw refuse();
+        path = projectFile;
+        mine = (e) => e.level === "session" && e.target === undefined;
+        stored = ({ target: _t, ...l }) => l;
+        break;
+      default:
+        throw codedError("EINVAL", `no ${String(level)} limits are managed here`);
+    }
+    const store = await this.#store;
+    const limits = await this.#limitsLock.run(path, () =>
+      editLimitsFile(
+        store,
+        path,
+        mine,
+        call.op === "set"
+          ? (call.limits ?? []).map((l) => stored({ ...l, level, target }))
+          : call.op === "delete"
+            ? []
+            : undefined,
+      ),
+    );
+    return { level, target, limits };
+  }
+
+  /**
+   * A page of the workspace's usage records for its admin (a workspace role granting
+   * `usage.read:workspace`, statewalker/statewalker-root#181). Usage under users' own keys is
+   * kept in their User DOs, never here.
+   */
+  async usageExport(userCapability: string, query: UsageRecordsQuery): Promise<UsageRecordsPage> {
+    const user = await this.#authority.userOfUserCapability(userCapability);
+    if (
+      !decide(await this.#workspaceGrants(user), {
+        area: "usage",
+        action: "read",
+        target: "workspace",
+      })
+    )
+      throw codedError("EACCES", `${user} may not export this workspace's usage`);
+    return this.operatorUsageExport(query);
+  }
+
+  /**
+   * A page of the workspace's usage records for the deployment's operator: the Worker answers it
+   * only to the operator token (OPERATOR_KEY).
+   */
+  operatorUsageExport(query: UsageRecordsQuery): UsageRecordsPage {
+    const limit = Math.min(Math.max(1, Number(query?.limit) || 1000), 1000);
+    const records = this.#limits.ledger.recordsFrom({
+      from: Number(query?.since) || 0,
+      after: Number(query?.after) || 0,
+      limit,
+    });
+    const last = records.at(-1);
+    return { records, ...(records.length === limit && last ? { next: last.seq } : {}) };
   }
 
   // --- tools (statewalker/statewalker-root#90, #129) -------------------------------------------
@@ -1979,6 +2696,9 @@ export class Workspace extends DurableObject<Env> {
   async revoke(userCapability: string, capability: string): Promise<void> {
     const id = await this.#authority.revocationOf(userCapability, capability);
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO revocations VALUES (?, ?)", id, Date.now());
+    // The remote tasks of every session narrowed from it stop too (#144): UHP cancel, sent here,
+    // where the server's token is, since their capability no longer reaches the gate.
+    await this.#cancelRemote(id);
   }
 
   /**

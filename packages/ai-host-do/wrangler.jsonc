@@ -79,13 +79,28 @@
     // context budget, the tail never compacted (by messages or by tokens), messages per depth-1
     // summary, same-depth summaries before promotion. "{}" keeps the defaults (100000 tokens, the
     // last 8 messages, 6, 4).
-    "COMPACTION": "{}"
+    "COMPACTION": "{}",
+    // UHP servers for remote agent sessions (statewalker/statewalker-root#144), JSON [{id, baseUrl,
+    // secret, harnesses}]: `secret` names the secret holding the server's bearer token (bound to
+    // plugin "uhp" and the server's host), `harnesses` the ones it may serve here,
+    // {"<name>": "<UHP harness id>"}, each the remote agent `remote:<id>/<name>` (used with
+    // `agents.use:remote:<id>/<name>`, which no built-in role holds). Workspaces add theirs in
+    // `/.system/uhp-servers`; a harness no one listed is off.
+    "UHP_SERVERS": "[]",
+    // How often a remote session's DO polls its task (ms), and the bytes of files copied in at
+    // start and of a write-back.
+    "UHP_POLL_MS": "2000",
+    "UHP_INPUT_MAX_BYTES": "4194304",
+    "UHP_WRITEBACK_MAX_BYTES": "16777216"
     // The S3 workspace backend's keys, set as runtime secrets, never vars:
     //   WORKSPACE_S3_ACCESS_KEY_ID, WORKSPACE_S3_SECRET_ACCESS_KEY
     // Secrets (statewalker/statewalker-root#133), set as runtime secrets, never vars:
     //   SECRETS_KEY          seals workspace, project and user secrets in each Workspace DO's SQLite
     //   DEPLOYMENT_SECRETS   {"NAME": {"plugins": [...], "hosts": [...]}}: the runtime secrets that are
     //                        deployment-level secrets, and their bindings (the values are the NAME secrets)
+    // The operator token (statewalker/statewalker-root#181), a runtime secret: GET /v1/usage/records?since&workspace
+    // with "Authorization: Bearer <key>" exports every workspace's usage records as NDJSON. Unset: no such export.
+    //   OPERATOR_KEY
     // Test-only, never set in a real deployment:
     //   SSE_KEEPALIVE_MS     the event streams' keep-alive interval (30000 otherwise)
     //   USER_PROVIDER_HOSTS  hosts a user's own provider may use over http or at a private address

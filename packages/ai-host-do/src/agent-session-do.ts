@@ -10,13 +10,15 @@
 // COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
-import { approvalId, codeOf, settleAsk } from "@statewalker/ai-access";
+import { approvalId, codedError, codeOf, settleAsk } from "@statewalker/ai-access";
 import { TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
 import {
   approvalAware,
   approvalOf,
   errorMessage,
   filesOverRpc,
+  isSessionMeter,
+  type Limit,
   limitOfMessage,
   type ModelCall,
   type ModelResponse,
@@ -52,6 +54,7 @@ import {
   type SessionHistory,
   type TurnRun,
 } from "@statewalker/ai-sessions";
+import { RemoteCore, type RemotePort, type UhpCall } from "@statewalker/ai-uhp-client";
 import {
   type DatabaseHost,
   DB_TOOLS,
@@ -142,6 +145,10 @@ export class AgentSession extends DurableObject<Env> {
   /** The session level's limits and counters (statewalker/statewalker-root#179). */
   readonly #limits: SessionLimits;
   #flue?: FlueSession;
+  /** A remote agent session's core (statewalker/statewalker-root#144): its UHP tasks. */
+  readonly #remote: RemoteCore;
+  /** Remote polls waiting for the DO's next alarm. */
+  readonly #ticks = new Set<() => void>();
 
   /** The session's Flue session on this DO (the Flue instance id is the session's id). */
   #flueOf(session: string): FlueSession {
@@ -288,7 +295,11 @@ export class AgentSession extends DurableObject<Env> {
   async mcp(message: McpMessage) {
     const config = this.#core.config();
     if (!config) throw new Error("ENOENT: no such agent session");
-    const set = () => this.#tools(config, () => {});
+    // A remote session is offered none of our tools (#144).
+    const set = async () =>
+      config.run?.remote
+        ? { definitions: [] as ToolDefinition[], hostTools: [] as HostTool[] }
+        : this.#tools(config, () => {});
     return answerMcp(message, {
       tools: async () => (await set()).definitions,
       call: async (d, args) => {
@@ -310,6 +321,11 @@ export class AgentSession extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.#limits = new SessionLimits(ctx.storage.sql, env);
+    this.#remote = new RemoteCore(ctx.storage.sql, {
+      pollMs: Number(env.UHP_POLL_MS) || 2000,
+      inputMaxBytes: Number(env.UHP_INPUT_MAX_BYTES) || 4 * 1024 * 1024,
+      writeBackMaxBytes: Number(env.UHP_WRITEBACK_MAX_BYTES) || 16 * 1024 * 1024,
+    });
     // Every model request goes through the workspace's model gateway, with the session's
     // capability: it picks the model within the user's rights, holds the provider's key, falls
     // back and meters (statewalker/statewalker-root#134).
@@ -347,6 +363,10 @@ export class AgentSession extends DurableObject<Env> {
     for (const problem of compaction.problems) console.warn(`COMPACTION: ${problem}`);
     this.#core = new AgentSessionCore({
       sql: ctx.storage.sql,
+      // A remote session's task runs on through a restart: its turn picks it up again.
+      resumable: (turn) => this.#remote.resumable(turn),
+      // A remote session's items never go to our model, a summarizer's either.
+      compacts: (config) => !config.run?.remote,
       compaction: {
         // The summarizer runs on the session's model, through the gateway like every request.
         summarizer: createModelSummarizer({
@@ -362,6 +382,15 @@ export class AgentSession extends DurableObject<Env> {
         { config, turn, content, continues, model, context, signal, onSteer, onApproval, waiting },
         emit,
       ) => {
+        // A remote agent session: the turn is one task of its UHP server (#144).
+        if (config.run?.remote) {
+          const run = { config, turn, content, context, signal, onSteer, onApproval, waiting };
+          return this.#remote.run(
+            this.#remotePort(config, turn, emit),
+            continues ? { ...run, continues: true } : run,
+            emit,
+          );
+        }
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
         const set = await this.#tools(config, onApproval, turn, emit);
@@ -412,6 +441,20 @@ export class AgentSession extends DurableObject<Env> {
       },
       runAction: async (config, call) => {
         if (call.method === "limit") return this.#raise(config, call);
+        // A remote session's answers went to its server with the answer; its task is started by
+        // the turn that continues. A write-back runs once, with the user's grant.
+        if (call.method === "remote" || call.method === "input") return {};
+        if (call.method === "changeset")
+          try {
+            return await this.#remote.applyWriteBack(
+              this.#remotePort(config),
+              String(call.target ?? ""),
+            );
+          } catch (e) {
+            const request = approvalOf(e);
+            if (request) return { $approval: request };
+            throw e;
+          }
         if (call.method === "memory") return runStoredMemoryCall(memoryHost(env, config), call);
         if (call.method === "db")
           return runStoredDatabaseCall(databaseHost(env, config, config.capability), call);
@@ -623,13 +666,17 @@ export class AgentSession extends DurableObject<Env> {
     } finally {
       const all = { model_tokens: 0, model_spend: 0 };
       const mine = { model_tokens: 0, model_spend: 0 };
+      // The own-key model, so the user's usage report groups it (#181).
+      let ownModel: string | undefined;
       for (const { usage } of response?.attempts ?? [])
         for (const into of usage.charged ? [all] : [all, mine]) {
+          if (!usage.charged) ownModel = usage.model;
           into.model_tokens += usage.input_tokens + usage.output_tokens;
           into.model_spend += usage.cost ?? 0;
         }
       if (reserved) warn(this.#limits.ledger.settle(reserved, all, meta).map(warningView));
-      if (own) warn(await user.settleOwnKey(own, mine, meta));
+      if (own)
+        warn(await user.settleOwnKey(own, mine, meta, ownModel ? { model: ownModel } : undefined));
     }
     warn(response.warnings);
     return response;
@@ -740,8 +787,13 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.eraseBranch(turnId);
   }
 
-  exportPath(atTurn: string) {
-    return this.#core.exportPath(atTurn);
+  /** A turn's path for a fork, with the session's limits: its defaults and its own (#181). */
+  async exportPath(atTurn: string) {
+    const history = await this.#core.exportPath(atTurn);
+    const config = this.#core.config();
+    const limits = config ? (this.#limits.scopes(config)[0]?.limits ?? []) : [];
+    const { limits: _l, ...rest } = history;
+    return { ...rest, ...(limits.length ? { limits } : {}) };
   }
 
   /** A fork's copied history: nothing is charged for it (statewalker/statewalker-root#190). */
@@ -774,12 +826,44 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.status();
   }
 
-  archive() {
-    return this.#core.archive();
+  usage() {
+    return this.#core.usage();
+  }
+
+  /**
+   * The session's own limits, which its user set (statewalker/statewalker-root#181): a list
+   * replaces them (the session level counts only its own meters: EINVAL for another).
+   */
+  ownLimits(limits?: Limit[]) {
+    const config = this.#core.config();
+    if (!config) throw codedError("ENOENT", "no such agent session");
+    if (limits !== undefined) {
+      const bad = limits.find((l) => !isSessionMeter(l.meter));
+      if (bad) throw codedError("EINVAL", `the session level does not count ${bad.meter}`);
+      this.#limits.setOwn(
+        limits.map((l) => ({ ...l, level: "session" as const, target: config.id })),
+      );
+    }
+    return this.#limits.own(config);
+  }
+
+  /** The session level's limits now (statewalker/statewalker-root#181). */
+  limits() {
+    const config = this.#core.config();
+    if (!config) throw codedError("ENOENT", "no such agent session");
+    return this.#limits.ledger.states(this.#limits.scopes(config));
+  }
+
+  async archive() {
+    await this.#core.archive();
+    // A remote session's task stops, and its pending write-back is dropped (#144).
+    const config = this.#core.config();
+    if (config?.run?.remote) await this.#remote.stop(this.#remotePort(config));
   }
 
   async purge() {
     await this.#core.purge();
+    this.#remote.purge();
     this.ctx.storage.sql.exec("DROP TABLE IF EXISTS memory_primes");
     // Flue's tables go too, whether or not this instance built its Flue session.
     purgeFlue(this.ctx.storage.sql);
@@ -814,6 +898,12 @@ export class AgentSession extends DurableObject<Env> {
     const config = this.#core.config();
     if (!config) return;
     const next = this.#core.expire();
+    // A remote session's polls run on the alarm (#144).
+    for (const wake of [...this.#ticks]) wake();
+    if (config.run?.remote) {
+      if (next !== undefined) await this.#arm(next);
+      return;
+    }
     try {
       await this.#flueOf(config.id).alarm();
     } finally {
@@ -849,8 +939,97 @@ export class AgentSession extends DurableObject<Env> {
     return this.#core.classifierItems();
   }
 
-  answer(approval: string, answer: ApprovalAnswer) {
+  async answer(approval: string, answer: ApprovalAnswer) {
+    const config = this.#core.config();
+    if (config?.run?.remote) {
+      // A remote harness's question is answered at its server now, and a secret's value goes
+      // nowhere else: the session keeps the decision only (#144).
+      const { items } = await this.#core.items({
+        types: ["approval", "question"],
+        order: "desc",
+        limit: 1000,
+      });
+      const item = items.find((i) => i.approval === approval && i.stored && i.request);
+      if (item?.stored && item.request) {
+        try {
+          await this.#remote.answer(
+            this.#remotePort(config),
+            approval,
+            item.stored,
+            item.request,
+            answer,
+          );
+        } catch (e) {
+          // The User DO has the answer already: the turn it continues fails with the refusal.
+          console.warn(`answer to ${approval}: ${String((e as Error)?.message ?? e)}`);
+        }
+        if (item.request.input?.kind === "secret") {
+          const { message: _secret, ...kept } = answer;
+          return this.#core.answer(approval, kept);
+        }
+      }
+    }
     return this.#core.answer(approval, answer);
+  }
+
+  /**
+   * What a remote session's core reaches (#144): its UHP server through the Workspace DO (with the
+   * session's capability, held to the session's own limits on outbound requests), its own gated
+   * file view, the write-back as one change set, and the DO's alarm.
+   */
+  #remotePort(
+    config: AgentSessionConfig,
+    turn?: string,
+    emit?: (item: ItemInput) => void,
+  ): RemotePort {
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    return {
+      call: async (call: UhpCall) => {
+        const scopes = this.#limits.scopes(config);
+        // A cancel is never refused by a limit: it is counted after (#144).
+        if (call.op !== "cancel")
+          try {
+            this.#limits.ledger.check(scopes, { outbound_requests: 1 });
+          } catch (e) {
+            throw refusal(e);
+          }
+        const answer = await workspace.uhp(config.capability, {
+          ...call,
+          ...(turn ? { turn } : {}),
+        });
+        for (const warning of this.#limits.ledger.add(
+          scopes,
+          { outbound_requests: 1 },
+          this.#limits.meta(config, turn),
+        ))
+          emit?.({ kind: "limit_warning", warning: warningView(warning) });
+        return answer;
+      },
+      files: filesOverRpc((method, args) => workspace.files(config.capability, method, args), {
+        blockSize: blockSizeOf(this.env),
+      }),
+      applyChangeSet: (files) => workspace.applyChangeSet(config.capability, { files }),
+      tick: (ms, signal) =>
+        new Promise<void>((resolve, reject) => {
+          signal?.throwIfAborted();
+          const done = () => {
+            clearTimeout(timer);
+            this.#ticks.delete(done);
+            signal?.removeEventListener("abort", aborted);
+            resolve();
+          };
+          const aborted = () => {
+            clearTimeout(timer);
+            this.#ticks.delete(done);
+            reject(signal?.reason ?? new Error("EINTR: the turn was cancelled"));
+          };
+          // The alarm wakes the poll; a timer stands in if another alarm took its place.
+          const timer = setTimeout(done, ms * 4 + 1000);
+          this.#ticks.add(done);
+          signal?.addEventListener("abort", aborted, { once: true });
+          void this.#arm(Date.now() + ms);
+        }),
+    };
   }
 
   /**

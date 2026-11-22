@@ -307,6 +307,67 @@ describe("the turn tree", () => {
     ]);
   });
 
+  it("chains a message on an earlier turn (after_turn): the head moves there, then the message runs, recorded by an item", async () => {
+    const h = await harness();
+    const a = await h.say("one");
+    const b = await h.say("two");
+    const accepted = await h.core.send({
+      content: "three",
+      delivery: "next",
+      ignored: [],
+      after_turn: a.id,
+    });
+    const c = await h.core.waitTurn(accepted.turn_id);
+    expect(c.parent_turn).toBe(a.id);
+    expect(texts(h.runs.at(-1)?.context ?? [])).toEqual(["user:one", "assistant:re: one"]);
+    expect(c.items[0]).toMatchObject({
+      kind: "rewind",
+      rewind: { previous: b.id, head: a.id, turns: [b.id], reason: "chained" },
+    });
+    expect(c.items[0]?.text).toMatch(/^head moved: chained on an earlier response/);
+    const tree = await h.core.branches();
+    expect(tree.turns.find((t) => t.id === b.id)?.active).toBe(false);
+    const events = (await h.core.events({ since: 0 })).events.map((e) => e.type);
+    expect(events).toContain("session.rewound");
+  });
+
+  it("chaining on the head, the running turn or the last queued one is a plain send: no head move", async () => {
+    const h = await harness();
+    const a = await h.say("one");
+    const plain = await h.core.waitTurn(
+      (await h.core.send({ content: "two", delivery: "next", ignored: [], after_turn: a.id }))
+        .turn_id,
+    );
+    expect(plain.parent_turn).toBe(a.id);
+    expect(plain.items.map((i) => i.kind)).toEqual(["message", "message"]);
+    const running = await h.core.send({ content: "HOLD", delivery: "next", ignored: [] });
+    while ((await h.core.turn(running.turn_id)).status !== "running")
+      await new Promise((r) => setTimeout(r, 1));
+    const queued = await h.core.send({
+      content: "next",
+      delivery: "next",
+      ignored: [],
+      after_turn: running.turn_id,
+    });
+    const last = await h.core.send({
+      content: "last",
+      delivery: "next",
+      ignored: [],
+      after_turn: queued.turn_id,
+    });
+    // An earlier turn while one runs: refused (409), as a rewind is.
+    await expect(
+      h.core.send({ content: "x", delivery: "next", ignored: [], after_turn: a.id }),
+    ).rejects.toThrow(/EBUSY/);
+    h.release();
+    const done = await h.core.waitTurn(last.turn_id);
+    expect(done.parent_turn).toBe(queued.turn_id);
+    expect(done.items.map((i) => i.kind)).toEqual(["message", "message"]);
+    await expect(
+      h.core.send({ content: "x", delivery: "next", ignored: [], after_turn: "s1.tu-nope" }),
+    ).rejects.toThrow(/ENOENT/);
+  });
+
   it("edit and regenerate are a rewind plus a turn: sibling turns", async () => {
     const h = await harness();
     const a = await h.say("one");

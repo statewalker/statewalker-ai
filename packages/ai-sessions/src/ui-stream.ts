@@ -234,7 +234,10 @@ async function scan(api: UiStreamApi, session: string): Promise<TurnMark[]> {
         marks.set(event.turn, { id: event.turn, queued: event.seq, head });
       } else if (event.type === "item.created") {
         const item = event.data as Item;
-        if ((item.kind === "approval" || item.kind === "mode_decision") && item.approval)
+        if (
+          (item.kind === "approval" || item.kind === "question" || item.kind === "mode_decision") &&
+          item.approval
+        )
           asked.set(item.approval, event.turn);
       } else if (TERMINAL.has(event.type)) {
         const mark = marks.get(event.turn);
@@ -356,6 +359,8 @@ export async function* uiMessageFrames(
         else yield { type: "data-tool-result", id: item.id, data: item };
         return;
       }
+      // A remote harness's free-text question is answered as an approval is (#144).
+      case "question":
       case "approval": {
         const approval = String(item.approval ?? "");
         const list = held.get(item.turn) ?? [];

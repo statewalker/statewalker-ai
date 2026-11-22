@@ -15,6 +15,23 @@ const can = (grants: Parameters<typeof decide>[0], area: string, action: string,
   decide(grants, { area, action, target } as AccessRequest);
 
 describe("built-in roles", () => {
+  it("let owners read a project's usage and set its limits, and the admin the workspace's (#181)", () => {
+    const { grants: owner } = resolveRoles(["owner"], {});
+    const { grants: admin } = resolveRoles(["admin"], {});
+    expect(can(owner, "usage", "read", "project")).toBe(true);
+    expect(can(owner, "limits", "write", "project")).toBe(true);
+    expect(can(owner, "limits", "write", "session")).toBe(true);
+    for (const role of ["editor", "reader"]) {
+      const { grants } = resolveRoles([role], {});
+      expect(can(grants, "usage", "read", "project")).toBe(false);
+      expect(can(grants, "limits", "write", "project")).toBe(false);
+    }
+    expect(can(admin, "usage", "read", "workspace")).toBe(true);
+    for (const level of ["workspace", "project", "member"])
+      expect(can(admin, "limits", "write", level)).toBe(true);
+    expect(can(admin, "limits", "write", "session")).toBe(false);
+  });
+
   it("grant owner everything in the project, editor the working set and reader reading", () => {
     const { grants: owner } = resolveRoles(["owner"], {});
     const { grants: editor } = resolveRoles(["editor"], {});

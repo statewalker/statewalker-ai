@@ -33,6 +33,8 @@
     "wrangler": "catalog:",
     "@statewalker/ai-host-do": "workspace:^",
     "ai": "catalog:",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "openai": "catalog:",
+    "@statewalker/ai-openai-compat": "workspace:^"
   }
 }

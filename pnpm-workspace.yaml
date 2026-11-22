@@ -34,6 +34,8 @@ catalog:
   # The AI SDK: its own UI-message-stream parser checks the harness's projection (ai-conformance only).
   ai: 7.0.165
   zod: ^4.6.7
+  # The OpenAI SDK: existing OpenAI clients drive the OpenAI projection (ai-conformance only).
+  openai: 7.19.0
   # YAML front matter of agents and skills, and OpenAPI files written in YAML (ai-definitions).
   yaml: ^2.9.1
   # SigV4 for the S3 workspace backend's fetch-based client (ai-host-do).

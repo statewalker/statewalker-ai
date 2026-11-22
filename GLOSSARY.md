@@ -127,7 +127,7 @@ An agent session's durable, numbered record of what happened in it (turns queued
 _Avoid_: event stream (a stream is one read of the log)
 
 **Projection**:
-Another API's view of the session API, read from the same event log and methods: the OpenAI projection, the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it).
+Another API's view of the session API, read from the same event log and methods: the OpenAI projection (a Conversation is an agent session, a Response a turn, served at an agent's base URL), the AI SDK UI message stream (one assistant message per stream: a turn of the user's message and the answer turns that continue it).
 
 **Summary**:
 A compacted stand-in for a range of a session's items or lower summaries; the items themselves are kept.
@@ -222,6 +222,15 @@ The worst case of a model request (its input plus `max_tokens`), held against ev
 
 **Increment**:
 What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.
+
+**Effective limits**:
+Every limit that applies in a caller's context (their workspace, a project, one of their sessions, their own keys), each with what is used, reserved and left of it and when its window resets.
+
+**Own-key usage**:
+Usage under a user's own model key: counted and recorded in their User DO, shown with its amounts to that user alone and to anyone else only as "own key".
+
+**Operator token**:
+The deployment's own bearer key (`OPERATOR_KEY`) that exports the usage records of every workspace; not an access token, and it opens no session.
 
 ### Policy
 
