@@ -28,6 +28,12 @@ export interface GatedFilesOptions {
   visible(project: string): Promise<boolean>;
   /** Throws (EACCES) unless the holder may take this action on this normalised path now. */
   authorize(action: FileAction, path: string): Promise<void>;
+  /**
+   * Throws (EACCES) unless the holder may take every one of these actions now: what a folder's
+   * removal, copy or move decides for every entry under it, in one call so the holder reads its
+   * rights once (statewalker-ai#49). Default: `authorize` on each.
+   */
+  authorizeAll?(checks: readonly [FileAction, string][]): Promise<void>;
   /** A project's ignore rules for this holder; none (the user's own session) hides nothing. */
   ignoreRules?(project: string): Promise<IgnoreMatcher | undefined>;
   /** Bytes per block of a read; every block is authorized again (default 1 MiB). */
@@ -129,6 +135,11 @@ function scopeOf(options: GatedFilesOptions) {
 export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesApi {
   const blockSize = options.blockSize ?? DEFAULT_BLOCK_SIZE;
   const { authorize } = options;
+  const authorizeAll =
+    options.authorizeAll?.bind(options) ??
+    (async (checks: readonly [FileAction, string][]) => {
+      for (const [action, path] of checks) await authorize(action, path);
+    });
   const scope = () => scopeOf(options);
 
   return {
@@ -208,10 +219,10 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
       const path = normalise(raw);
       const s = scope();
       if (await s.hidden(path)) return false;
-      await authorize("delete", path);
+      await authorizeAll([["delete", path]]);
       const plan = await planOf(path, s);
       if (!plan) return false;
-      for (const e of plan.visible) await authorize("delete", e.path);
+      await authorizeAll(plan.visible.map((e): [FileAction, string] => ["delete", e.path]));
       await removeVisible(path, plan);
       return true;
     },
@@ -277,25 +288,30 @@ export function gatedFiles(store: FilesApi, options: GatedFilesOptions): FilesAp
     // Replacing a folder above the source would remove the source with it.
     if (isUnder(f(from), f(to)))
       throw codedError("EINVAL", `cannot ${move ? "move" : "copy"} '${source}' onto '${target}'`);
-    await authorize("read", from);
-    if (move) await authorize("delete", from);
-    await authorize("write", to);
+    const first: [FileAction, string][] = [["read", from]];
+    if (move) first.push(["delete", from]);
+    first.push(["write", to]);
+    await authorizeAll(first);
     const plan = await planOf(from, s);
     if (!plan) return false;
     const targetOf = (path: string) => `${to}${path.slice(from.length)}`;
+    const checks: [FileAction, string][] = [];
     for (const e of plan.visible) {
       const t = targetOf(e.path);
       // Nothing may land in a hidden place, such as a folder that becomes a system folder there.
       if (await s.hidden(t)) throw enoent(t);
-      await authorize("read", e.path);
-      if (move) await authorize("delete", e.path);
-      await authorize("write", t);
+      checks.push(["read", e.path]);
+      if (move) checks.push(["delete", e.path]);
+      checks.push(["write", t]);
     }
+    await authorizeAll(checks);
     // The target is replaced: what the holder sees of it goes, anything hidden in it stays.
     const old = await planOf(to, s);
     if (old) {
-      await authorize("delete", to);
-      for (const e of old.visible) await authorize("delete", e.path);
+      await authorizeAll([
+        ["delete", to],
+        ...old.visible.map((e): [FileAction, string] => ["delete", e.path]),
+      ]);
       await removeVisible(to, old);
     }
     const whole = plan.keep.size === 0 && !(await store.exists(to));
