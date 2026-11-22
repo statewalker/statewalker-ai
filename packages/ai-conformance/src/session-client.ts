@@ -41,6 +41,7 @@ export interface Item {
     | "model_fallback"
     | "mode_decision"
     | "limit_warning"
+    | "rewind"
     | "memory_primed";
   role?: "user" | "assistant";
   text?: string;
@@ -173,7 +174,7 @@ export interface Approval {
   permission: string;
   /** Why the mode or a rule asks. */
   reason: string;
-  status: "pending" | "allowed" | "denied" | "expired" | "blocked";
+  status: "pending" | "allowed" | "denied" | "expired" | "blocked" | "cancelled";
   created: number;
   expires: number;
 }
@@ -238,6 +239,36 @@ export interface AgentSession {
   parent?: string;
   /** The root of its tree: the session the user started. */
   root?: string;
+  /** A fork's source: the session and turn its history was copied from. */
+  forked_from?: { session: string; turn: string };
+}
+
+/** A rewind's or a branch switch's result. */
+export interface RewindResult {
+  head: string | null;
+  previous: string | null;
+  rewound: string[];
+  cancelled_turns: string[];
+  cancelled_approvals: string[];
+  stopped_children: string[];
+  memory_writes: { turn: string; item: string; name: string; args?: unknown }[];
+  database_changes: { turn: string; item: string; name: string; args?: unknown }[];
+  irreversible_effects: { turn: string; item: string; name: string; args?: unknown }[];
+}
+
+/** The session's tree of turns. */
+export interface Branches {
+  head: string | null;
+  turns: {
+    id: string;
+    parent_turn: string | null;
+    origin: string;
+    status: string;
+    created: number;
+    active: boolean;
+    text?: string;
+  }[];
+  leaves: string[];
 }
 
 /** A workspace's service account, as the session API lists it (never its key). */
@@ -316,6 +347,10 @@ export interface Turn {
   ignored?: string[];
   /** The approval this turn continues the session with (an answer turn). */
   answers?: string;
+  /** The turn it follows in the session's tree (null: a first turn). */
+  parent_turn: string | null;
+  origin: "run" | "imported" | "copied";
+  copied_from?: { session: string; turn: string };
   items: Item[];
 }
 
@@ -443,6 +478,32 @@ export interface SessionClient {
    * responses): its answer, or null for a notification.
    */
   mcp(sessionId: string, message: McpMessage): Promise<McpResponse | null>;
+  /** The turn tree: `POST /v1/sessions/{id}/rewind`. */
+  rewind(
+    sessionId: string,
+    req: { to_turn?: string | null; before_turn?: string; cancel_running?: boolean },
+  ): Promise<RewindResult>;
+  /** `PUT /v1/sessions/{id}/head`. */
+  setHead(sessionId: string, req: { turn: string | null }): Promise<RewindResult>;
+  /** `POST /v1/turns/{id}/edit` (REST `202`). */
+  editTurn(
+    turnId: string,
+    req: { content: string; model?: string },
+  ): Promise<MessageAccepted & { rewind: RewindResult }>;
+  /** `POST /v1/turns/{id}/regenerate` (REST `202`). */
+  regenerateTurn(
+    turnId: string,
+    req?: { model?: string },
+  ): Promise<MessageAccepted & { rewind: RewindResult }>;
+  /** `GET /v1/sessions/{id}/branches`. */
+  listBranches(sessionId: string): Promise<Branches>;
+  /** `DELETE /v1/sessions/{id}/branches/{turn}`. */
+  eraseBranch(sessionId: string, turnId: string): Promise<{ erased: string[] }>;
+  /** `POST /v1/sessions/{id}/fork` (REST `201`). */
+  forkSession(
+    sessionId: string,
+    req: { at_turn: string; message?: string; model?: string },
+  ): Promise<{ session: AgentSession; accepted?: MessageAccepted }>;
   /** One kind of memory (`/v1/me/preferences`, `/v1/projects/{p}/memory/{kind}`). */
   listMemory(target: MemoryTarget): Promise<MemoryKindView>;
   memoryEntry(target: MemoryTarget, id: string): Promise<MemoryEntry & { history: MemoryEntry[] }>;
@@ -568,6 +629,8 @@ const itemsSearch = (q: ItemsQuery = {}) => {
   for (const k of ["after", "before", "limit", "order"] as const)
     if (q[k] !== undefined) p.set(k, String(q[k]));
   for (const t of q.types ?? []) p.append("types[]", t);
+  if (q.branch) p.set("branch", q.branch);
+  if (q.all) p.set("all", "true");
   const s = p.toString();
   return s ? `?${s}` : "";
 };
@@ -696,6 +759,14 @@ export function restClient(deployment: Deployment, token: string): SessionClient
       ),
     getModelConfig: () => call("GET", "/v1/me/models"),
     setModelConfig: (config) => call("PUT", "/v1/me/models", config),
+    rewind: (id, req) => call("POST", `${s(id)}/rewind`, req),
+    setHead: (id, req) => call("PUT", `${s(id)}/head`, req),
+    editTurn: (id, req) => call("POST", `/v1/turns/${encodeURIComponent(id)}/edit`, req),
+    regenerateTurn: (id, req) =>
+      call("POST", `/v1/turns/${encodeURIComponent(id)}/regenerate`, req ?? {}),
+    listBranches: (id) => call("GET", `${s(id)}/branches`),
+    eraseBranch: (id, turn) => call("DELETE", `${s(id)}/branches/${encodeURIComponent(turn)}`),
+    forkSession: (id, req) => call("POST", `${s(id)}/fork`, req),
     listMemory: (target) => call("GET", memoryCollection(target)),
     memoryEntry: (target, id) =>
       call("GET", `${memoryPath(target)}/entries/${encodeURIComponent(id)}`),

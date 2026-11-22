@@ -64,6 +64,7 @@ import type {
   SetSecretRequest,
   StartSessionRequest,
   SubAgentRequest,
+  TurnRef,
   UserPort,
   UserSessionView,
 } from "./api.js";
@@ -84,6 +85,15 @@ export interface WorkspaceGrants {
   pinDefinitions(
     userCapability: string,
     req: { session: string; project: string; agent?: string; model?: string },
+  ): Promise<PinnedDefinitions>;
+  /**
+   * Pins a fork's definitions (statewalker/statewalker-root#190): the source session's agent and
+   * plugin bundles as they were pinned, its models (or `model`, if the user may use it); counts
+   * the fork as an active session. The source must be the user's (ENOENT otherwise).
+   */
+  forkDefinitions(
+    userCapability: string,
+    req: { from: string; session: string; model?: string },
   ): Promise<PinnedDefinitions>;
   /** A project's models as the user sees them; `discover` asks each provider's `/models`. */
   listModels(userCapability: string, query: ModelsQuery): Promise<ModelView[]>;
@@ -241,6 +251,8 @@ interface AgentRow {
   /** A sub-agent's parent and root sessions (statewalker/statewalker-root#126). */
   parent: string | null;
   root: string | null;
+  /** A fork's source, `{session, turn}` as JSON (statewalker/statewalker-root#190). */
+  forked_from?: string | null;
 }
 
 interface AgentMetaRow {
@@ -259,6 +271,7 @@ const view = (row: AgentRow & Partial<AgentMetaRow>): AgentSessionView => ({
   metadata: row.metadata ? (JSON.parse(row.metadata) as Metadata) : {},
   ...(row.archived ? { archived: Number(row.archived) } : {}),
   ...(row.parent ? { parent: row.parent, root: String(row.root) } : {}),
+  ...(row.forked_from ? { forked_from: JSON.parse(row.forked_from) as TurnRef } : {}),
 });
 
 /** The session index with each session's metadata and archive time (a table of its own). */
@@ -297,6 +310,8 @@ export class UserSessions implements UserPort {
       // statewalker/statewalker-root#126: the tree of sub-agents.
       ["parent", "TEXT"],
       ["root", "TEXT"],
+      // statewalker/statewalker-root#190: a fork's source.
+      ["forked_from", "TEXT"],
     ] as const)
       if (!columns.has(name))
         this.#o.sql.exec(`ALTER TABLE agent_sessions ADD COLUMN ${name} ${type}`);
@@ -502,6 +517,21 @@ export class UserSessions implements UserPort {
     );
   }
 
+  /**
+   * Cancels the pending approvals of turns one of this user's agent sessions rewound
+   * (statewalker/statewalker-root#190): answering them is refused. Told by that session's DO.
+   */
+  async cancelApprovals(session: string, ids: string[]): Promise<void> {
+    if (!this.#one("SELECT 1 FROM agent_sessions WHERE id = ?", String(session)))
+      throw codedError("ENOENT", "no such agent session");
+    for (const id of ids)
+      this.#o.sql.exec(
+        "UPDATE approvals SET status = 'cancelled' WHERE session = ? AND id = ? AND status IN ('pending', 'blocked')",
+        String(session),
+        String(id),
+      );
+  }
+
   async listApprovals(token: string): Promise<{ approvals: ApprovalView[] }> {
     const { workspace } = await this.claims(token);
     return { approvals: this.#approvals(workspace) };
@@ -544,6 +574,8 @@ export class UserSessions implements UserPort {
     if (!row) throw codedError("ENOENT", "no such approval");
     const current = this.#approvalView(row);
     if (current.status === "expired") throw codedError("EINVAL", "the approval expired");
+    if (current.status === "cancelled")
+      throw codedError("EINVAL", "the approval was cancelled: its turn was rewound");
     // A block of auto mode's classifier is answered like a pending approval: allow retries it.
     if (current.status !== "pending" && current.status !== "blocked")
       throw codedError("EINVAL", "the approval was answered");
@@ -631,6 +663,94 @@ export class UserSessions implements UserPort {
         ...limitsOf(pinned.limits, req.limits),
         ...(pinned.ownKeys ? { ownKeys: true } : {}),
         ...(req.unattended ? { unattended: true } : {}),
+      },
+    };
+  }
+
+  /**
+   * Starts a fork of one of the caller's top-level agent sessions (statewalker/statewalker-root#190):
+   * the same project and agent, the definitions the source pinned (its model, or another the user
+   * may use), a capability attenuated now from the user session's (so from the user's current roles
+   * and mode, with no session-scope approval of the source), and the source's limits, counted
+   * afresh in the fork's own DO.
+   */
+  async forkAgentSession(
+    token: string,
+    from: string,
+    req: { at_turn: string; model?: string; limits?: Limit[] },
+  ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }> {
+    const us = await this.#userSession(token);
+    const source = await this.ownAgentSession(token, from);
+    if (source.parent) throw codedError("EINVAL", "only a top-level session can be forked");
+    const id = `as-${crypto.randomUUID()}`;
+    const pinned = await this.#o.workspace(us.workspace).forkDefinitions(us.capability, {
+      from: source.id,
+      session: id,
+      ...(req.model ? { model: req.model } : {}),
+    });
+    const capability = attenuateForAgentSession(us.capability, {
+      session: id,
+      project: source.project,
+      agent: pinned.agent,
+      unattended: source.unattended,
+    });
+    const forkedFrom: TurnRef = { session: source.id, turn: String(req.at_turn) };
+    const row: AgentRow = {
+      id,
+      workspace: us.workspace,
+      project: source.project,
+      agent: pinned.agent,
+      created: Date.now(),
+      capability,
+      unattended: source.unattended ? 1 : 0,
+      revoked: 0,
+      parent: null,
+      root: null,
+      forked_from: JSON.stringify(forkedFrom),
+    };
+    try {
+      await this.#pushUserSession(us);
+    } catch (e) {
+      // The fork was counted as an active session: it no longer is.
+      await this.#o
+        .workspace(us.workspace)
+        .sessionsEnded(us.capability, [id])
+        .catch(() => {});
+      throw e;
+    }
+    this.#o.sql.exec(
+      `INSERT INTO agent_sessions (id, workspace, project, agent, created, capability, unattended,
+        revoked, forked_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      row.id,
+      row.workspace,
+      row.project,
+      row.agent,
+      row.created,
+      row.capability,
+      row.unattended,
+      row.revoked,
+      row.forked_from,
+    );
+    this.#o.sql.exec("INSERT INTO agent_session_meta VALUES (?, '{}', NULL)", row.id);
+    // The source's limits (its start request's and the defaults it pinned), and today's defaults.
+    const same = (a: Limit, b: Limit) => JSON.stringify(a) === JSON.stringify(b);
+    const own = (req.limits ?? []).filter((l) => !(pinned.limits ?? []).some((p) => same(p, l)));
+    return {
+      session: view({ ...row, metadata: "{}", archived: null }),
+      config: {
+        id: row.id,
+        user: this.#o.user,
+        workspace: row.workspace,
+        project: row.project,
+        agent: row.agent,
+        capability,
+        ...(pinned.run ? { run: pinned.run } : {}),
+        ...(pinned.model ? { model: pinned.model } : {}),
+        ...(pinned.plugins ? { plugins: pinned.plugins } : {}),
+        forked_from: forkedFrom,
+        ...limitsOf(pinned.limits, own),
+        ...(pinned.ownKeys ? { ownKeys: true } : {}),
+        ...(row.unattended ? { unattended: true } : {}),
       },
     };
   }

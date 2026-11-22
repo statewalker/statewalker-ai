@@ -42,7 +42,8 @@ export interface ApprovalView extends ApprovalRequest {
   workspace: string;
   /** An unanswered approval past its time counts as denied: "expired". */
   /** "blocked": auto mode's risk classifier denied it; approving it retries exactly that action. */
-  status: "pending" | "allowed" | "denied" | "expired" | "blocked";
+  /** "cancelled": the turn that asked it was rewound (statewalker/statewalker-root#190). */
+  status: "pending" | "allowed" | "denied" | "expired" | "blocked" | "cancelled";
   created: number;
   expires: number;
 }
@@ -91,6 +92,14 @@ export interface AgentSessionView {
   parent?: string;
   /** A sub-agent's root: the session the user started, whose events stream gets its approvals. */
   root?: string;
+  /** A fork: the session and turn its history was copied from (statewalker/statewalker-root#190). */
+  forked_from?: TurnRef;
+}
+
+/** A turn of a session, by both ids. */
+export interface TurnRef {
+  session: string;
+  turn: string;
 }
 
 /** A project's database, as the session API lists it to a member who may use it. */
@@ -191,6 +200,7 @@ export interface ItemInput {
     | "model_fallback"
     | "mode_decision"
     | "limit_warning"
+    | "rewind"
     | "memory_primed";
   role?: "user" | "assistant";
   text?: string;
@@ -246,6 +256,11 @@ export interface ItemInput {
    * turn's usage crossed, `{meter, level, target, limit_level, period, used, value, warn_at}`.
    */
   warning?: LimitWarningView;
+  /**
+   * A `rewind` item (statewalker/statewalker-root#190), the first of the turn after a rewind or a
+   * branch switch: where the head was and went, and the turns set aside. Its `text` tells the model.
+   */
+  rewind?: { previous: string | null; head: string | null; turns: string[] };
   /**
    * A `memory_primed` item (statewalker/statewalker-root#157): the memory the session was primed
    * with at its start or after a compaction, each entry's kind, id, version and tokens.
@@ -343,6 +358,12 @@ export interface StopReason {
   limit?: StopLimit;
 }
 
+/**
+ * Where a turn comes from (statewalker/statewalker-root#190): run in this session, imported from
+ * elsewhere, or copied by a fork.
+ */
+export type TurnOrigin = "run" | "imported" | "copied";
+
 /** A model the turn ran on other than the one asked for (statewalker/statewalker-root#108). */
 export interface ModelSubstitution {
   requested: string;
@@ -366,6 +387,14 @@ export interface TurnView {
   ignored?: string[];
   /** The approval this turn continues the session with: a turn queued by answering it. */
   answers?: string;
+  /**
+   * The turn it follows in the session's tree (statewalker/statewalker-root#190): null for a first
+   * turn, and for a turn not started yet (it follows the head when it starts).
+   */
+  parent_turn: string | null;
+  origin: TurnOrigin;
+  /** A copied turn: the turn it is a copy of. */
+  copied_from?: TurnRef;
   created: number;
   started?: number;
   ended?: number;
@@ -410,6 +439,147 @@ export interface ItemsQuery {
   limit?: number;
   order?: "asc" | "desc";
   types?: ItemInput["kind"][];
+  /**
+   * The items of the path from the first turn to this turn, instead of the active path (from the
+   * first turn to the head; statewalker/statewalker-root#190).
+   */
+  branch?: string;
+  /** Every item of the session, on every branch. */
+  all?: boolean;
+}
+
+/**
+ * A rewind (statewalker/statewalker-root#190): the head moves to the end of `to_turn` (null: before
+ * the first turn), or before `before_turn` (to its parent).
+ */
+export interface RewindRequest {
+  to_turn?: string | null;
+  before_turn?: string;
+  /** Cancels the running turn and the queued ones first; without it they refuse the rewind (409). */
+  cancel_running?: boolean;
+  /** Reverting files comes with statewalker/statewalker-root#191: refused until then. */
+  revert_files?: boolean;
+}
+
+/** One effect of a rewound turn that a rewind does not revert: the tool call that made it. */
+export interface TurnEffect {
+  turn: string;
+  /** The `tool_call` item. */
+  item: string;
+  name: string;
+  args?: unknown;
+}
+
+/** What a rewind or a branch switch did. */
+export interface RewindResult {
+  head: string | null;
+  previous: string | null;
+  /** The turns no longer on the active path, oldest first. */
+  rewound: string[];
+  /** The running and queued turns `cancel_running` cancelled. */
+  cancelled_turns: string[];
+  /** The pending approvals of the rewound turns, now cancelled. */
+  cancelled_approvals: string[];
+  /** The sub-agent sessions the rewound turns started: stopped and archived. */
+  stopped_children: string[];
+  /** Listed, not reverted: the memory history allows a manual revert. */
+  memory_writes: TurnEffect[];
+  database_changes: TurnEffect[];
+  /** Effects outside the harness (outbound requests of tools). */
+  irreversible_effects: TurnEffect[];
+}
+
+/** One turn of the session's tree. */
+export interface BranchTurn {
+  id: string;
+  parent_turn: string | null;
+  origin: TurnOrigin;
+  status: TurnStatus;
+  created: number;
+  /** On the active path (from the first turn to the head). */
+  active: boolean;
+  /** The turn's user message, shortened. */
+  text?: string;
+}
+
+/** The session's tree of turns: every turn that ran, oldest first. */
+export interface BranchesView {
+  head: string | null;
+  turns: BranchTurn[];
+  /** The turns no other turn follows: where each branch ends. */
+  leaves: string[];
+}
+
+export interface EditRequest {
+  content: string;
+  model?: string;
+  revert_files?: boolean;
+}
+
+export interface RegenerateRequest {
+  model?: string;
+  revert_files?: boolean;
+}
+
+/** An edit or a regenerate: the rewind it recorded, and the message its new turn runs. */
+export interface EditAccepted extends MessageAccepted {
+  rewind: RewindResult;
+}
+
+/** A fork (statewalker/statewalker-root#190): from `at_turn`, with a first message if given. */
+export interface ForkRequest {
+  at_turn: string;
+  message?: string;
+  /** Another model the caller may use, for the fork. */
+  model?: string;
+}
+
+export interface ForkResult {
+  session: AgentSessionView;
+  /** The first message, when the request carried one. */
+  accepted?: MessageAccepted;
+}
+
+/** A turn as a fork copies it. */
+export interface HistoryTurn {
+  id: string;
+  parent_turn: string | null;
+  status: TurnStatus;
+  delivery: Delivery;
+  content: string;
+  model_requested: string | null;
+  stop_reason: string | null;
+  error: string | null;
+  model: string | null;
+  ignored: string;
+  created: number;
+  started: number | null;
+  ended: number | null;
+  /** The approval an answer turn continues the session with. */
+  answers?: { approval: string; decision: string; message: string | null };
+  substitution?: ModelSubstitution;
+}
+
+/** A turn and its ancestors with their items and summaries: what a fork copies. */
+export interface SessionHistory {
+  session: string;
+  at_turn: string;
+  turns: HistoryTurn[];
+  items: { seq: number; id: string; turn: string; kind: string; body: string }[];
+  summaries: {
+    id: string;
+    depth: number;
+    from_seq: number;
+    to_seq: number;
+    parent_id: string | null;
+    content: string;
+    sections: string | null;
+    tokens: number;
+    through_turn: string;
+    created: number;
+  }[];
+  /** The source session's limits, which the fork keeps (counted afresh). */
+  limits?: Limit[];
 }
 
 export interface ItemsPage {
@@ -619,6 +789,30 @@ export interface SessionApi {
   /** A cursor read of the session's event log. */
   readEvents(sessionId: string, query?: EventsQuery): Promise<EventsPage>;
   /**
+   * Moves the session's head (statewalker/statewalker-root#190): to the end of `to_turn` (null:
+   * before the first turn) or before `before_turn`. The rewound turns stay as an inactive branch;
+   * their pending approvals are cancelled and the sub-agents they started are stopped and archived.
+   * A running turn refuses it (409) unless `cancel_running`. Owner only.
+   */
+  rewind(sessionId: string, req: RewindRequest): Promise<RewindResult>;
+  /** Switches branch: the head moves to `turn` (null: before the first turn); 409 while a turn runs. */
+  setHead(sessionId: string, req: { turn: string | null }): Promise<RewindResult>;
+  /** Edits a turn's message: a rewind before it, then the edited message, a sibling turn. */
+  editTurn(turnId: string, req: EditRequest): Promise<EditAccepted>;
+  /** Runs a turn's message again, on another allowed model if given: a rewind plus a sibling turn. */
+  regenerateTurn(turnId: string, req?: RegenerateRequest): Promise<EditAccepted>;
+  /** The session's tree of turns. */
+  listBranches(sessionId: string): Promise<BranchesView>;
+  /** Erases an inactive branch: the turn and every turn after it (never the active path). */
+  eraseBranch(sessionId: string, turnId: string): Promise<{ erased: string[] }>;
+  /**
+   * Forks one of the caller's top-level sessions at a turn of any branch: a new session with a
+   * copy of that turn and its ancestors, the same agent, project and pinned definitions, and a
+   * capability derived afresh. With `message`, fork and send are one step: a refused message
+   * leaves no session.
+   */
+  forkSession(sessionId: string, req: ForkRequest): Promise<ForkResult>;
+  /**
    * One JSON-RPC message to the session's own MCP endpoint (statewalker/statewalker-root#129): it
    * lists and calls exactly the tools the session's model is offered. Null for a notification.
    */
@@ -722,6 +916,8 @@ export interface AgentSessionConfig {
   parent?: string;
   /** A sub-agent's root session (statewalker/statewalker-root#126). */
   root?: string;
+  /** A fork's source: the session and turn its history was copied from. */
+  forked_from?: TurnRef;
   /**
    * The names of the tools the session may be offered (none: every tool). A sub-agent's are
    * always among its parent's.
@@ -765,6 +961,16 @@ export interface UserPort {
   archiveAgentSession(token: string, id: string): Promise<AgentSessionView>;
   /** A session of the caller and its descendants, the session first. */
   subtree(token: string, id: string): Promise<string[]>;
+  /**
+   * Starts a fork of one of the caller's top-level sessions (statewalker/statewalker-root#190): the
+   * same agent, project and pinned definitions (and model, or another the caller may use), a
+   * capability derived now, and the source's limits, counted afresh.
+   */
+  forkAgentSession(
+    token: string,
+    from: string,
+    req: { at_turn: string; model?: string; limits?: Limit[] },
+  ): Promise<{ session: AgentSessionView; config: AgentSessionConfig }>;
   /** Removes one of the caller's agent sessions from the index. */
   deleteAgentSession(token: string, id: string): Promise<void>;
   profile(token: string): Promise<ProfileView>;
@@ -868,6 +1074,23 @@ export interface AgentPort {
   answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
   /** The session's MCP endpoint: one JSON-RPC message, its answer (null for a notification). */
   mcp(message: McpMessage): Promise<McpResponse | null>;
+  /** The turn tree (statewalker/statewalker-root#190). */
+  rewind(req: RewindRequest): Promise<RewindResult>;
+  setHead(turn: string | null): Promise<RewindResult>;
+  edit(
+    turnId: string,
+    req: EditRequest,
+  ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }>;
+  regenerate(
+    turnId: string,
+    req?: RegenerateRequest,
+  ): Promise<Omit<MessageAccepted, "stream_url"> & { rewind: RewindResult }>;
+  branches(): Promise<BranchesView>;
+  eraseBranch(turnId: string): Promise<{ erased: string[] }>;
+  /** A turn and its ancestors with their items: what a fork copies. 409 while the turn runs. */
+  exportPath(atTurn: string): Promise<SessionHistory>;
+  /** Copies a history into this new session: its turns `copied`, the copy of `at_turn` the head. */
+  importHistory(history: SessionHistory): Promise<{ head: string | null }>;
 }
 
 export interface SessionApiPorts {
@@ -985,6 +1208,73 @@ function messageOf(req: unknown): AgentMessage {
 
 const STATUSES: readonly string[] = ["idle", "running", "waiting", "error", "archived"];
 
+const optionalBoolean = (value: unknown, name: string): boolean | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "boolean") throw codedError("EINVAL", `${name} must be true or false`);
+  return value;
+};
+
+const optionalModel = (value: unknown): string | undefined => {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || !value)
+    throw codedError("EINVAL", "model must be a model's name");
+  return value;
+};
+
+/** `{to_turn | before_turn, cancel_running?, revert_files?}`. */
+function rewindRequest(req: unknown): RewindRequest {
+  const { to_turn, before_turn, cancel_running, revert_files } = (req ?? {}) as Record<
+    string,
+    unknown
+  >;
+  if (to_turn !== undefined && to_turn !== null && (typeof to_turn !== "string" || !to_turn))
+    throw codedError("EINVAL", "to_turn must be a turn's id, or null");
+  if (before_turn !== undefined && (typeof before_turn !== "string" || !before_turn))
+    throw codedError("EINVAL", "before_turn must be a turn's id");
+  const cancel = optionalBoolean(cancel_running, "cancel_running");
+  const revert = optionalBoolean(revert_files, "revert_files");
+  return {
+    ...(to_turn !== undefined ? { to_turn: to_turn as string | null } : {}),
+    ...(before_turn !== undefined ? { before_turn: before_turn as string } : {}),
+    ...(cancel !== undefined ? { cancel_running: cancel } : {}),
+    ...(revert !== undefined ? { revert_files: revert } : {}),
+  };
+}
+
+function editRequest(req: unknown): EditRequest {
+  const { content, model, revert_files } = (req ?? {}) as Record<string, unknown>;
+  if (typeof content !== "string" || !content)
+    throw codedError("EINVAL", "content must be a non-empty string");
+  const m = optionalModel(model);
+  const revert = optionalBoolean(revert_files, "revert_files");
+  return {
+    content,
+    ...(m ? { model: m } : {}),
+    ...(revert !== undefined ? { revert_files: revert } : {}),
+  };
+}
+
+function regenerateRequest(req: unknown): RegenerateRequest {
+  const { model, revert_files } = (req ?? {}) as Record<string, unknown>;
+  const m = optionalModel(model);
+  const revert = optionalBoolean(revert_files, "revert_files");
+  return { ...(m ? { model: m } : {}), ...(revert !== undefined ? { revert_files: revert } : {}) };
+}
+
+function forkRequest(req: unknown): ForkRequest {
+  const { at_turn, message, model } = (req ?? {}) as Record<string, unknown>;
+  if (typeof at_turn !== "string" || !at_turn)
+    throw codedError("EINVAL", "at_turn must be a turn's id");
+  if (message !== undefined && (typeof message !== "string" || !message))
+    throw codedError("EINVAL", "message must be a non-empty string");
+  const m = optionalModel(model);
+  return {
+    at_turn,
+    ...(message !== undefined ? { message: message as string } : {}),
+    ...(m ? { model: m } : {}),
+  };
+}
+
 const LEVELS: readonly string[] = ["deployment", "workspace", "project", "user"];
 
 function secretScope(req: unknown): SecretScope {
@@ -1028,6 +1318,30 @@ const streamUrl = (session: string, turn: string, offset: number) =>
 
 export function createSessionApi(token: string, ports: SessionApiPorts): SessionApi {
   const own = (id: unknown) => ports.user.ownAgentSession(token, String(id));
+  /** Archives a session and its sub-agents: revoked first, so no new sub-agent joins the tree. */
+  const archiveTree = async (id: string): Promise<AgentSessionView> => {
+    const archived = await ports.user.archiveAgentSession(token, id);
+    const [, ...descendants] = await ports.user.subtree(token, id);
+    await ports.agent(id).archive();
+    for (const sid of descendants)
+      await ports
+        .agent(sid)
+        .archive()
+        // A sub-agent whose DO never started has nothing to stop.
+        .catch(() => {});
+    return archived;
+  };
+  /** The sub-agents rewound turns started are stopped and archived (statewalker/statewalker-root#190). */
+  const stopChildren = async <T extends { stopped_children: string[] }>(result: T): Promise<T> => {
+    for (const child of result.stopped_children) await archiveTree(child).catch(() => {});
+    return result;
+  };
+  /** A session that may take a message: archived 409 (before revoked), revoked 403. */
+  const open = (session: AgentSessionView) => {
+    if (session.archived) throw codedError("EBUSY", "the agent session is archived");
+    if (session.revoked) throw codedError("EACCES", "the agent session is revoked");
+    return session;
+  };
   const withStatus = async (session: AgentSessionView): Promise<AgentSessionView> => ({
     ...session,
     status: await ports.agent(session.id).status(),
@@ -1048,16 +1362,7 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async archiveSession(id) {
       const session = await own(id);
       // Revoked first, so no new sub-agent joins the tree; then every session of it stops.
-      const archived = await ports.user.archiveAgentSession(token, session.id);
-      const [, ...descendants] = await ports.user.subtree(token, session.id);
-      await ports.agent(session.id).archive();
-      for (const sid of descendants)
-        await ports
-          .agent(sid)
-          .archive()
-          // A sub-agent whose DO never started has nothing to stop.
-          .catch(() => {});
-      return withStatus(archived);
+      return withStatus(await archiveTree(session.id));
     },
     async deleteSession(id) {
       const session = await own(id);
@@ -1129,6 +1434,71 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     },
     holdStream: () => ports.user.holdStream(token),
     releaseStream: async (id) => ports.user.releaseStream(token, String(id)),
+    async rewind(sessionId, req) {
+      const r = rewindRequest(req);
+      const session = await own(sessionId);
+      return stopChildren(await ports.agent(session.id).rewind(r));
+    },
+    async setHead(sessionId, req) {
+      const turn = (req as { turn?: unknown } | undefined)?.turn;
+      if (turn !== null && (typeof turn !== "string" || !turn))
+        throw codedError("EINVAL", "turn must be a turn's id, or null");
+      const session = await own(sessionId);
+      return stopChildren(await ports.agent(session.id).setHead(turn));
+    },
+    async editTurn(turnId, req) {
+      const r = editRequest(req);
+      const session = open(await own(sessionOfTurn(String(turnId))));
+      const accepted = await ports.agent(session.id).edit(String(turnId), r);
+      await stopChildren(accepted.rewind);
+      return { ...accepted, stream_url: streamUrl(session.id, accepted.turn_id, accepted.offset) };
+    },
+    async regenerateTurn(turnId, req) {
+      const r = regenerateRequest(req);
+      const session = open(await own(sessionOfTurn(String(turnId))));
+      const accepted = await ports.agent(session.id).regenerate(String(turnId), r);
+      await stopChildren(accepted.rewind);
+      return { ...accepted, stream_url: streamUrl(session.id, accepted.turn_id, accepted.offset) };
+    },
+    async listBranches(sessionId) {
+      const session = await own(sessionId);
+      return ports.agent(session.id).branches();
+    },
+    async eraseBranch(sessionId, turnId) {
+      const session = await own(sessionId);
+      return ports.agent(session.id).eraseBranch(String(turnId));
+    },
+    async forkSession(sessionId, req) {
+      const r = forkRequest(req);
+      const message = r.message === undefined ? undefined : messageOf({ content: r.message });
+      const source = await own(sessionId);
+      if (source.parent) throw codedError("EINVAL", "only a top-level session can be forked");
+      const history = await ports.agent(source.id).exportPath(r.at_turn);
+      const { session, config } = await ports.user.forkAgentSession(token, source.id, {
+        at_turn: history.at_turn,
+        ...(r.model ? { model: r.model } : {}),
+        ...(history.limits?.length ? { limits: history.limits } : {}),
+      });
+      const agent = ports.agent(session.id);
+      try {
+        await agent.start(config);
+        await agent.importHistory(history);
+        if (!message) return { session };
+        const accepted = await agent.send(message);
+        return {
+          session,
+          accepted: {
+            ...accepted,
+            stream_url: streamUrl(session.id, accepted.turn_id, accepted.offset),
+          },
+        };
+      } catch (e) {
+        // Fork and send are one step: a refused message leaves no session behind.
+        await agent.purge().catch(() => {});
+        await ports.user.deleteAgentSession(token, session.id).catch(() => {});
+        throw e;
+      }
+    },
     async mcp(sessionId, message) {
       const checked = mcpMessage(message);
       const session = await own(sessionId);
