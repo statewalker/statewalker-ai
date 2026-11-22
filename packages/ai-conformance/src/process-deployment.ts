@@ -182,8 +182,9 @@ function startWorkerd(folder: string, port: number): Started {
       "--persist-to",
       join(folder, "state"),
       "--show-interactive-dev-session=false",
+      // "info" for wrangler's "Ready on <url>" (waitReady).
       "--log-level",
-      "warn",
+      "info",
     ],
     // Wrangler's own log files go with the folder. A process group of its own: wrangler starts
     // workerd, and both stop together.
@@ -196,21 +197,40 @@ function startWorkerd(folder: string, port: number): Started {
   return { child };
 }
 
-async function waitReady(origin: string, child: ChildProcess, logs: string[]): Promise<void> {
-  // Starting is bounded by the first answer, not by a clock: a loaded machine is only slower.
-  // Each failed attempt waits a little; the process exiting ends the wait.
+/**
+ * The URL the runtime says it serves on, once it says so: wrangler's "Ready on <url>", celld's
+ * "ready  <url>". Each prints it only after binding the port, so an answer there is the runtime's.
+ */
+function readyUrl(output: string, port: number): string | undefined {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the runtimes color their output.
+  const plain = output.replace(/\x1b\[[0-9;]*m/g, "");
+  for (const m of plain.matchAll(/\bready(?: on)?\s+(http:\/\/127\.0\.0\.1:(\d+))/gi))
+    if (port === 0 || Number(m[2]) === port) return m[1];
+  return undefined;
+}
+
+/**
+ * Waits until the runtime itself reports it serves, then until it answers there. An answer on the
+ * port alone proves nothing: the port the runner asked for may be held by another process (another
+ * runtime's inspector answered CI's first request "501 Unsupported Operation",
+ * statewalker/statewalker-ai#100); the runtime then fails to bind and exits, and the start is
+ * tried again. Bounded by the runtime's report, not by a clock: a loaded machine is only slower.
+ */
+async function waitReady(port: number, child: ChildProcess, output: () => string): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     if (child.exitCode !== null || child.signalCode !== null)
       throw new Error(
-        `the deployment exited (${child.exitCode ?? child.signalCode}):\n${logs.join("").slice(-6000)}`,
+        `the deployment exited (${child.exitCode ?? child.signalCode}):\n${output().slice(-6000)}`,
       );
-    try {
-      const res = await fetch(origin, { signal: AbortSignal.timeout(5000) });
-      await res.body?.cancel();
-      return;
-    } catch {}
-    if (attempt > 2000)
-      throw new Error(`the deployment never answered:\n${logs.join("").slice(-6000)}`);
+    const origin = readyUrl(output(), port);
+    if (origin) {
+      try {
+        const res = await fetch(origin, { signal: AbortSignal.timeout(5000) });
+        await res.body?.cancel();
+        return origin;
+      } catch {}
+    }
+    if (attempt > 2000) throw new Error(`the deployment never served:\n${output().slice(-6000)}`);
     await new Promise((r) => setTimeout(r, 250));
   }
 }
@@ -237,11 +257,26 @@ function deploymentFolder(bundled: string, vars: Record<string, string>): string
   return folder;
 }
 
+/**
+ * The port a runtime is asked for: workerd binds one the system gives it (port 0) and reports it;
+ * celld takes no port 0, so it gets one free now, which can be taken before celld binds it.
+ */
+const defaultPort =
+  (runtime: "celld" | "workerd") =>
+  (free: () => Promise<number>): Promise<number> =>
+    runtime === "workerd" ? Promise.resolve(0) : free();
+
+export interface ProcessDeploymentOptions {
+  /** The port each start attempt asks the runtime for (tests); `free` picks one free now. */
+  port?: (free: () => Promise<number>) => Promise<number>;
+}
+
 /** Starts the Worker project on CellD or workerd, each deployment a process of its own. */
 export async function startProcessDeployment(
   runtime: "celld" | "workerd",
   projectDir: URL,
   vars: Record<string, string> = {},
+  options: ProcessDeploymentOptions = {},
 ): Promise<Deployment> {
   const bundled = await bundle(fileURLToPath(projectDir));
   // A port picked free can be taken before the runtime binds it (other runs share the machine):
@@ -249,7 +284,7 @@ export async function startProcessDeployment(
   for (let attempt = 1; ; attempt++) {
     const folder = deploymentFolder(bundled, vars);
     try {
-      return await startIn(runtime, folder);
+      return await startIn(runtime, folder, options);
     } catch (e) {
       rmSync(folder, { recursive: true, force: true });
       if (attempt >= 5 || !/address already in use|EADDRINUSE/i.test(String(e))) throw e;
@@ -257,8 +292,12 @@ export async function startProcessDeployment(
   }
 }
 
-async function startIn(runtime: "celld" | "workerd", folder: string): Promise<Deployment> {
-  const port = await freePort();
+async function startIn(
+  runtime: "celld" | "workerd",
+  folder: string,
+  options: ProcessDeploymentOptions,
+): Promise<Deployment> {
+  const port = await (options.port ?? defaultPort(runtime))(freePort);
   const started = runtime === "celld" ? startCelld(folder, port) : startWorkerd(folder, port);
   const { child } = started;
   const logs: string[] = [];
@@ -282,7 +321,6 @@ async function startIn(runtime: "celld" | "workerd", folder: string): Promise<De
     signal("SIGKILL");
   };
   children.add(kill);
-  const origin = `http://127.0.0.1:${port}`;
   const stop = async () => {
     children.delete(kill);
     await started.stop?.();
@@ -296,8 +334,9 @@ async function startIn(runtime: "celld" | "workerd", folder: string): Promise<De
     // Whatever the runtime left of its group.
     signal("SIGKILL");
   };
+  let origin: string;
   try {
-    await waitReady(origin, child, logs);
+    origin = await waitReady(port, child, () => logs.join(""));
   } catch (e) {
     await stop();
     throw e;

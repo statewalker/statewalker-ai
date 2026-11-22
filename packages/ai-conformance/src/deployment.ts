@@ -57,6 +57,11 @@ export const CAN = {
    * POSIX programs answer ENOSYS.
    */
   python: false,
+  /**
+   * Deployments run by a runtime process of its own on a local port (CellD, workerd), started by
+   * the runner's process-deployment.ts.
+   */
+  processDeployments: RUNTIME === "celld" || RUNTIME === "workerd",
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
