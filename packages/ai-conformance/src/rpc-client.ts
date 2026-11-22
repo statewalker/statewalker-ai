@@ -1,5 +1,7 @@
 // The session API over RPC: webrun-rpc methods over msgpack frames on a WebSocket the
 // deployment's Worker accepts at /v1/rpc. The access token goes in the first call.
+
+import { openAiFetch } from "@statewalker/ai-openai-compat";
 import {
   resumePlan,
   sessionChatTransport,
@@ -8,7 +10,13 @@ import {
   uiMessageChunks,
 } from "@statewalker/ai-sessions";
 import type { Deployment } from "./deployment.js";
-import { ApiError, type SessionClient, TERMINAL_EVENTS, type Turn } from "./session-client.js";
+import {
+  ApiError,
+  openAiBaseUrl,
+  type SessionClient,
+  TERMINAL_EVENTS,
+  type Turn,
+} from "./session-client.js";
 
 interface ClientSocket {
   accept(): void;
@@ -31,6 +39,12 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     throw new ApiError(statusOf(e), String((e as Error)?.message ?? e));
   };
   const client: RpcSessionClient = {
+    // The projection runs here, over the session API's RPC methods.
+    openai: (project, agent) => ({
+      baseURL: openAiBaseUrl(project, agent),
+      apiKey: token,
+      fetch: openAiFetch(api) as typeof fetch,
+    }),
     chat: (id) => sessionChatTransport(api, id),
     async replayChat(id, from = {}) {
       const plan = await resumePlan(api, id, from).catch(refusal);

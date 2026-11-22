@@ -342,14 +342,19 @@ export function approvalAware(
   onApproval: (request: ApprovalRequest, call: StoredCall) => void,
 ): FilesApi {
   let waitingOn: ApprovalRequest | undefined;
+  /** The approval each change asked waits on: a change tried again names its own. */
+  const asked = new Map<string, ApprovalRequest>();
+  const keyOf = (call: StoredCall) => `${call.method} ${call.path} ${call.target ?? ""}`;
   const change = async <T>(call: StoredCall, run: () => Promise<T>): Promise<T> => {
-    if (waitingOn) throw new ApprovalPending(waitingOn);
+    if (waitingOn) throw new ApprovalPending(asked.get(keyOf(call)) ?? waitingOn);
     try {
       return await run();
     } catch (e) {
       const request = approvalOf(e);
       if (!request) throw e;
-      waitingOn = request;
+      // Concurrent changes (a batch of tool calls) may each wait on their own approval.
+      waitingOn ??= request;
+      asked.set(keyOf(call), request);
       onApproval(request, call);
       throw new ApprovalPending(request);
     }

@@ -55,6 +55,8 @@ export {
   type ModelView,
   makeUserUnreachable,
   modelUsage,
+  type OpenAiClientOptions,
+  openAiBaseUrl,
   openUserSessionAt,
   type Profile,
   renewToken,

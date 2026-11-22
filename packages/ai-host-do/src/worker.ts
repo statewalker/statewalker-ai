@@ -1,10 +1,12 @@
 // The harness's Worker: the session API over REST, and over RPC on a WebSocket at /v1/rpc
 // (msgpack frames through webrun-wire, webrun-rpc methods; the access token in the first call); the user's own file view over REST
 // (/v1/files/<path>) and over files-RPC on a WebSocket at /v1/files; a project's databases over REST
-// (/v1/projects/<p>/databases) and over db-rpc on a WebSocket at /v1/databases; and the test-only routes a conformance
+// (/v1/projects/<p>/databases) and over db-rpc on a WebSocket at /v1/databases; the OpenAI projection at
+// each agent's base URL (/v1/projects/<p>/agents/<a>/); and the test-only routes a conformance
 // run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
 // user the caller's access token names, which checks the token each time.
 import { codedError } from "@statewalker/ai-access";
+import { handleOpenAiRest } from "@statewalker/ai-openai-compat";
 import {
   bearerOf,
   bodyOf,
@@ -274,6 +276,11 @@ export default {
       if (token) return token;
       const dev = await devRoutes(request, env, path);
       if (dev) return dev;
+      // The OpenAI projection, at each agent's base URL (statewalker/statewalker-root#138).
+      const openai = await handleOpenAiRest(request, (token) => sessionApi(env, token), {
+        keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
+      });
+      if (openai) return openai;
       const rest = await handleSessionRest(request, (token) => sessionApi(env, token), {
         keepAliveMs: Number(env.SSE_KEEPALIVE_MS) || undefined,
       });
