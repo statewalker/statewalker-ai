@@ -62,7 +62,13 @@ const texts = (context: ContextEntry[]) =>
  * `TOOL <name>` calls a tool first (`FAILTOOL`: it fails), `ASK <id>` waits on an approval.
  */
 async function harness(
-  options: { summarizer?: Summarizer; sql?: ReturnType<typeof sqlite>; id?: string } = {},
+  options: {
+    summarizer?: Summarizer;
+    sql?: ReturnType<typeof sqlite>;
+    id?: string;
+    /** Starts the session even on a given store. */
+    fresh?: boolean;
+  } = {},
 ) {
   const runs: TurnRun[] = [];
   const cancelled: string[][] = [];
@@ -122,7 +128,7 @@ async function harness(
       : {}),
   });
   // A store from an earlier version already holds its session.
-  if (!options.sql) await core.start(config(options.id));
+  if (!options.sql || options.fresh) await core.start(config(options.id));
   const say = async (content: string, model?: string) => {
     const accepted = await core.send({
       content,
@@ -348,6 +354,24 @@ describe("the turn tree", () => {
     expect(await h.core.status()).toBe("idle");
   });
 
+  it("switching back to a branch whose head waited leaves it waiting on nothing: idle, its cancelled approvals refused", async () => {
+    const h = await harness();
+    const a = await h.say("one");
+    const w = await h.say("ASK ap-4");
+    await h.core.rewind({ to_turn: a.id });
+    await h.core.setHead(w.id);
+    expect(await h.core.status()).toBe("idle");
+    await expect(h.core.answer("ap-4", { decision: "allow", scope: "once" })).rejects.toThrow(
+      /EINVAL/,
+    );
+    // The same action asked again by a new turn is a pending approval of its own.
+    const again = await h.say("ASK ap-4");
+    expect(again.status).toBe("waiting");
+    expect(await h.core.status()).toBe("waiting");
+    const answered = await h.core.answer("ap-4", { decision: "deny", scope: "once" });
+    expect((await h.core.waitTurn(answered.turn_id)).status).toBe("completed");
+  });
+
   it("uses a summary only when the turn it runs through is on the active path", async () => {
     const summarizer: Summarizer = {
       summarize: async (input) => ({
@@ -474,5 +498,22 @@ describe("storage migration", () => {
     expect(sql.exec("SELECT through_turn FROM summaries").toArray()).toEqual([
       { through_turn: "s1.tu-3" },
     ]);
+  });
+
+  it("chains turns run by an earlier version after a rollback onto the head, when deployed again", async () => {
+    const sql = sqlite();
+    const first = await harness({ sql: sqlite(sql.db), fresh: true });
+    const a = await first.say("one");
+    // An earlier version (rolled back to) runs a turn: it sets neither parent, origin nor head.
+    sql.exec(
+      `INSERT INTO agent_turns (id, status, delivery, content, pos, ignored, created, started, ended)
+        VALUES ('s1.tu-old', 'completed', 'next', 'x', 1, '[]', ?, ?, ?)`,
+      Date.now() + 1,
+      Date.now() + 1,
+      Date.now() + 1,
+    );
+    const again = await harness({ sql: sqlite(sql.db) });
+    expect(await again.core.turn("s1.tu-old")).toMatchObject({ parent_turn: a.id, origin: "run" });
+    expect((await again.core.branches()).head).toBe("s1.tu-old");
   });
 });

@@ -272,8 +272,7 @@ const MAX_PAGE = 1000;
 const HEAD = "head";
 /** The note the next turn starts with after a rewind, in `agent_config`. */
 const REWIND_NOTE = "rewind_note";
-/** Set once a store's turns are in a tree (turns stored before #190 are migrated). */
-const TREE = "tree";
+
 /** Why an approval no one answered in its time counts as denied. */
 const EXPIRED = "expired";
 const MAX_WAIT_MS = 60_000;
@@ -346,7 +345,9 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       CREATE TABLE IF NOT EXISTS turn_substitutions (turn TEXT PRIMARY KEY, requested TEXT NOT NULL,
         used TEXT NOT NULL, reason TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS turn_children (turn TEXT NOT NULL, session TEXT NOT NULL,
-        PRIMARY KEY (turn, session));`);
+        PRIMARY KEY (turn, session));
+      CREATE TABLE IF NOT EXISTS cancelled_approvals (turn TEXT NOT NULL, approval TEXT NOT NULL,
+        PRIMARY KEY (turn, approval));`);
     this.#shaper = new ContextShaper({ sql: this.#sql, options: options.compaction?.options });
     this.#summarizer = options.compaction?.summarizer;
     this.#migrate();
@@ -354,9 +355,11 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
   }
 
   /**
-   * The turn tree's columns (statewalker/statewalker-root#190), added to a store made before it:
-   * its turns that ran each follow the previous one, `origin: run`, the last is the head; its
-   * summaries run through their last item's turn. Rolling back ignores the extra columns.
+   * The turn tree's columns (statewalker/statewalker-root#190), added to a store made before it.
+   * Every turn that ran with no origin (stored before the tree, or run by an earlier version after
+   * a rollback) follows the head, in the order they came, `origin: run`, and the last becomes the
+   * head; summaries with no `through_turn` run through their last item's turn. Rolling back
+   * ignores the extra columns; deploying again chains what ran meanwhile.
    */
   #migrate(): void {
     const columns = new Set(
@@ -366,25 +369,24 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     );
     for (const name of ["parent_turn", "origin", "copied_from"])
       if (!columns.has(name)) this.#sql.exec(`ALTER TABLE agent_turns ADD COLUMN ${name} TEXT`);
-    if (this.#one("SELECT 1 FROM agent_config WHERE key = ?", TREE)) return;
-    let previous: string | null = null;
+    let previous = this.#head();
+    let moved = false;
     for (const row of this.#rows<{ id: string }>(
-      "SELECT id FROM agent_turns WHERE started IS NOT NULL ORDER BY created, rowid",
+      "SELECT id FROM agent_turns WHERE started IS NOT NULL AND origin IS NULL ORDER BY created, rowid",
     )) {
       this.#sql.exec(
-        "UPDATE agent_turns SET parent_turn = ?, origin = COALESCE(origin, 'run') WHERE id = ?",
+        "UPDATE agent_turns SET parent_turn = ?, origin = 'run' WHERE id = ?",
         previous,
         row.id,
       );
       previous = String(row.id);
+      moved = true;
     }
-    this.#sql.exec("UPDATE agent_turns SET origin = 'run' WHERE origin IS NULL");
+    if (moved) this.#setHead(previous);
     this.#sql.exec(
       `UPDATE summaries SET through_turn = COALESCE((SELECT turn FROM items
         WHERE items.seq = summaries.to_seq), '') WHERE through_turn = '' OR through_turn IS NULL`,
     );
-    this.#sql.exec("INSERT OR REPLACE INTO agent_config VALUES (?, ?)", HEAD, previous ?? "");
-    this.#sql.exec("INSERT OR REPLACE INTO agent_config VALUES (?, '1')", TREE);
   }
 
   // --- storage --------------------------------------------------------------------------------
@@ -472,6 +474,28 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       SELECT id FROM p ORDER BY d DESC`,
       turn,
     ).map((r) => String(r.id));
+  }
+
+  /**
+   * Whether an approval waits on the active path: its latest asking on the path (`path`) was not
+   * cancelled by a rewind (the same action asked again later is an approval of its own).
+   */
+  #pendingOnPath(approval: string, path: string[]): boolean {
+    const asked = this.#one<{ turn: string }>(
+      `SELECT turn FROM items WHERE kind IN ('approval', 'mode_decision')
+        AND json_extract(body, '$.approval') = ? AND turn IN (SELECT value FROM json_each(?))
+        ORDER BY seq DESC LIMIT 1`,
+      approval,
+      JSON.stringify(path),
+    );
+    return (
+      !!asked &&
+      !this.#one(
+        "SELECT 1 FROM cancelled_approvals WHERE turn = ? AND approval = ?",
+        asked.turn,
+        approval,
+      )
+    );
   }
 
   /** A turn of the session's tree (one that ran or is running); ENOENT for any other. */
@@ -1024,7 +1048,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     if (
       !of ||
       (of.origin ?? "run") !== "run" ||
-      !this.#pathTo(this.#head()).includes(String(of.turn))
+      !this.#pendingOnPath(approval, this.#pathTo(this.#head()))
     )
       throw codedError("EINVAL", "the approval was cancelled: its turn is not on the active path");
     // Expired by the alarm while the User DO's answer was on its way: that expiry already
@@ -1269,13 +1293,18 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     // approvals (an answer continues it). A copied head is history: nothing to answer or fix here.
     const head = this.#head();
     const last = head
-      ? this.#one<{ status: string; origin: string | null }>(
-          "SELECT status, origin FROM agent_turns WHERE id = ?",
+      ? this.#one<{ status: string; origin: string | null; stop_reason: string | null }>(
+          "SELECT status, origin, stop_reason FROM agent_turns WHERE id = ?",
           head,
         )
       : undefined;
     if (!last || (last.origin ?? "run") !== "run") return "idle";
-    if (last.status === "waiting") return "waiting";
+    if (last.status === "waiting") {
+      // Unless a rewind cancelled what it waits on, and a branch switch came back to it.
+      const ids = (JSON.parse(last.stop_reason ?? "{}") as StopReason).approval_ids ?? [];
+      const path = this.#pathTo(head);
+      return !ids.length || ids.some((id) => this.#pendingOnPath(id, path)) ? "waiting" : "idle";
+    }
     return last.status === "failed" ? "error" : "idle";
   }
 
@@ -1448,7 +1477,13 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
         String(item.approval),
         since,
       );
-      if (!answered && item.approval && !ids.includes(item.approval)) ids.push(item.approval);
+      if (answered || !item.approval) continue;
+      this.#sql.exec(
+        "INSERT OR IGNORE INTO cancelled_approvals VALUES (?, ?)",
+        item.turn,
+        item.approval,
+      );
+      if (!ids.includes(item.approval)) ids.push(item.approval);
     }
     this.#sql.exec(
       "DELETE FROM approval_expiry WHERE turn IN (SELECT value FROM json_each(?))",
@@ -1613,6 +1648,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
       "turn_substitutions",
       "turn_children",
       "agent_origin_turns",
+      "cancelled_approvals",
     ])
       this.#sql.exec(`DELETE FROM ${table} WHERE turn ${IN}`, set);
     this.#sql.exec(`DELETE FROM agent_turns WHERE id ${IN}`, set);
@@ -1826,7 +1862,7 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp"> {
     if (this.#running || (await this.status()) === "running")
       throw codedError("EBUSY", "the agent session is running");
     this.#sql.exec(
-      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries; DELETE FROM turn_children; DELETE FROM agent_origin_turns;",
+      "DELETE FROM agent_config; DELETE FROM agent_turns; DELETE FROM items; DELETE FROM events; DELETE FROM approval_answers; DELETE FROM approval_expiry; DELETE FROM turn_substitutions; DELETE FROM summaries; DELETE FROM turn_children; DELETE FROM agent_origin_turns; DELETE FROM cancelled_approvals;",
     );
     for (const wake of [...this.#waiters]) wake();
   }

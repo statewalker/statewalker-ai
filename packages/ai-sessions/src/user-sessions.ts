@@ -636,7 +636,16 @@ export class UserSessions implements UserPort {
       root: null,
       forked_from: JSON.stringify(forkedFrom),
     };
-    await this.#pushUserSession(us);
+    try {
+      await this.#pushUserSession(us);
+    } catch (e) {
+      // The fork was counted as an active session: it no longer is.
+      await this.#o
+        .workspace(us.workspace)
+        .sessionsEnded(us.capability, [id])
+        .catch(() => {});
+      throw e;
+    }
     this.#o.sql.exec(
       `INSERT INTO agent_sessions (id, workspace, project, agent, created, capability, unattended,
         revoked, forked_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
