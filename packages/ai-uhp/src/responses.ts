@@ -616,7 +616,7 @@ async function answerTask(
       detail: { options: options ?? ["yes", "no"] },
     });
   const gate = !asked.approval.input;
-  let accepted: { turn_id: string; offset: number };
+  let accepted: { turn_id: string; offset: number } | undefined;
   try {
     ({ accepted } = await api.answerApproval(asked.approval.id, {
       decision: gate ? (answer.answer === "allow" ? "allow" : "deny") : "allow",
@@ -630,6 +630,8 @@ async function answerTask(
       throw uhpError(409, "input_not_pending", messageOf(e), { param });
     throw toUhpError(e);
   }
+  // A rewind's revert of files (statewalker/statewalker-root#191) is never an input request.
+  if (!accepted) throw uhpError(409, "input_not_pending", "the approval runs no turn", { param });
   return { session, turn: accepted.turn_id, since: accepted.offset, context };
 }
 

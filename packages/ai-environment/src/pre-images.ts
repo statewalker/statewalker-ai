@@ -395,9 +395,10 @@ export class PreImageLog {
     const firsts = new Map<string, RecordRow>();
     const candidates = this.#rows<RecordRow>(
       `SELECT * FROM pre_image_records WHERE (session = ? AND turn IN (SELECT value FROM json_each(?)))
-        OR instr(lineage, ?) > 0 ORDER BY seq`,
+        OR (session != ? AND instr(lineage, ?) > 0) ORDER BY seq`,
       scope.session,
       JSON.stringify([...turns]),
+      scope.session,
       own,
     );
     for (const r of candidates) {

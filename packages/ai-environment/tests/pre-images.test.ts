@@ -93,7 +93,11 @@ describe("pre-images", () => {
       { project: "p", bytes: 2 },
       { project: "p", bytes: 2 },
     ]);
-    const plan = await log.plan(store, { session: "s1", turns: ["s1.tu-1", "s1.tu-2"], children: [] });
+    const plan = await log.plan(store, {
+      session: "s1",
+      turns: ["s1.tu-1", "s1.tu-2"],
+      children: [],
+    });
     expect(plan).toMatchObject({ reverted: ["/p/b.md"], unavailable: ["/p/a.md"], conflicts: [] });
     expect(await log.apply(store, plan)).toEqual({
       reverted: ["/p/b.md"],
