@@ -1,0 +1,170 @@
+{
+  "$comment": "The nightly mutation run on the gate and ai-access (statewalker/statewalker-root#145): known defects, each a literal excerpt and its replacement, and the suites that must catch it, cheapest first. Run from the repository root: node packages/ai-conformance/src/nightly/mutate.ts packages/ai-conformance/mutations.json",
+  "suites": {
+    "access": "pnpm --filter @statewalker/ai-access exec vitest run",
+    "environment": "pnpm --filter @statewalker/ai-environment exec vitest run",
+    "gate-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/file-view.test.ts tests/modes.test.ts tests/tenancy.test.ts tests/roles.test.ts"
+  },
+  "mutations": [
+    {
+      "id": "permits-any-area",
+      "why": "a permission of one area grants every area",
+      "file": "packages/ai-access/src/permissions.ts",
+      "find": "      p.area === req.area &&\n",
+      "replace": "",
+      "suites": ["access"]
+    },
+    {
+      "id": "permits-ignores-target",
+      "why": "a permission with a target grants every target",
+      "file": "packages/ai-access/src/permissions.ts",
+      "find": "(p.target === undefined || targetMatches(",
+      "replace": "(true || targetMatches(",
+      "suites": ["access"]
+    },
+    {
+      "id": "path-pattern-covers-siblings",
+      "why": "a path pattern also grants its last segment's siblings",
+      "file": "packages/ai-access/src/permissions.ts",
+      "find": "    if (i === pat.length) return true;",
+      "replace": "    if (i >= pat.length - 1) return true;",
+      "suites": ["access"]
+    },
+    {
+      "id": "host-wildcard-suffix",
+      "why": "*.example.com also grants evilexample.com",
+      "file": "packages/ai-access/src/permissions.ts",
+      "find": "th.endsWith(ph.slice(1))",
+      "replace": "th.endsWith(ph.slice(2))",
+      "suites": ["access"]
+    },
+    {
+      "id": "datalog-path-prefix",
+      "why": "the Datalog translation grants any path sharing the pattern's prefix",
+      "file": "packages/ai-access/src/permissions.ts",
+      "find": "      return `^${body}(?:/${ANY})?$`;",
+      "replace": "      return `^${body}${ANY}$`;",
+      "suites": ["access"]
+    },
+    {
+      "id": "ask-beats-deny",
+      "why": "an ask rule wins over a deny rule",
+      "file": "packages/ai-access/src/modes.ts",
+      "find": "const VERDICTS: readonly Verdict[] = [\"deny\", \"ask\", \"allow\"];",
+      "replace": "const VERDICTS: readonly Verdict[] = [\"ask\", \"deny\", \"allow\"];",
+      "suites": ["access", "gate-conformance"]
+    },
+    {
+      "id": "bypass-overrides-deny",
+      "why": "a mode that never asks also lifts deny rules",
+      "file": "packages/ai-access/src/modes.ts",
+      "find": "if (decision.verdict === \"ask\" && mode.asks)",
+      "replace": "if (mode.asks)",
+      "suites": ["access", "gate-conformance"]
+    },
+    {
+      "id": "token-never-expires",
+      "why": "an expired access token is accepted",
+      "file": "packages/ai-access/src/tokens.ts",
+      "find": "if (Number(expires) <= (expected.now ?? Date.now()))",
+      "replace": "if (Number(expires) < 0)",
+      "suites": ["access", "gate-conformance"]
+    },
+    {
+      "id": "token-any-workspace",
+      "why": "a token for another workspace is accepted",
+      "file": "packages/ai-access/src/tokens.ts",
+      "find": "if (!served.includes(String(workspace)))",
+      "replace": "if (false)",
+      "suites": ["access", "gate-conformance"]
+    },
+    {
+      "id": "agent-capability-any-project",
+      "why": "an agent session's capability is minted for a project that is not one name",
+      "file": "packages/ai-access/src/capabilities.ts",
+      "find": "if (!NAME.test(grant.project)) throw codedError(\"EINVAL\", \"project must be a project's name\");",
+      "replace": "",
+      "suites": ["access", "gate-conformance"]
+    },
+    {
+      "id": "grants-outlive-expiry",
+      "why": "a granted approval is used a day after it expired",
+      "file": "packages/ai-access/src/approvals.ts",
+      "find": "this.#sql.exec(\"DELETE FROM gate_grants WHERE expires <= ?\", now);",
+      "replace": "this.#sql.exec(\"DELETE FROM gate_grants WHERE expires <= ?\", now - 86_400_000);",
+      "suites": ["access", "gate-conformance"]
+    },
+    {
+      "id": "system-folder-case",
+      "why": "the system folder is reached under another case or Unicode form",
+      "file": "packages/ai-environment/src/gated-files.ts",
+      "find": "const folded = (segment: string) => segment.normalize(\"NFC\").toLowerCase();",
+      "replace": "const folded = (segment: string) => segment;",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "project-system-folder-visible",
+      "why": "a project's system folder (the second segment) is visible",
+      "file": "packages/ai-environment/src/gated-files.ts",
+      "find": "(second !== undefined && folded(second) === name)",
+      "replace": "false",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "non-member-project-visible",
+      "why": "a project the holder is no member of is visible",
+      "file": "packages/ai-environment/src/gated-files.ts",
+      "find": "      if (!(await memo(visible, project, () => options.visible(project)))) return true;\n",
+      "replace": "",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "ignore-rules-ignored",
+      "why": "files the ignore rules name are visible to agents",
+      "file": "packages/ai-environment/src/gated-files.ts",
+      "find": "return rules_?.ignores(segments.slice(1)) ?? false;",
+      "replace": "return false;",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "blocks-not-reauthorized",
+      "why": "a stream's later blocks are not authorized again",
+      "file": "packages/ai-environment/src/gated-files.ts",
+      "find": "      await options.authorize(action, path);\n    },\n  };\n}",
+      "replace": "    },\n  };\n}",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "dot-dot-kept",
+      "why": "`..` segments survive normalisation",
+      "file": "packages/ai-environment/src/paths.ts",
+      "find": "if (seg === \"..\") out.pop();",
+      "replace": "if (seg === \"..\") out.push(seg);",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "strictest-first-only",
+      "why": "a folder's removal is decided by the folder alone, not every entry inside",
+      "file": "packages/ai-environment/src/mode-gate.ts",
+      "find": "if (!worst || RANK[v.verdict] > RANK[worst.verdict])",
+      "replace": "if (!worst)",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "project-folder-changeable",
+      "why": "an agent may remove or replace its project's folder",
+      "file": "packages/ai-environment/src/mode-gate.ts",
+      "find": "if (path === \"/\" || path === `/${gate.project}`)",
+      "replace": "if (path === \"/\")",
+      "suites": ["environment", "gate-conformance"]
+    },
+    {
+      "id": "asking-read-allowed",
+      "why": "a read the mode asks about runs without an approval",
+      "file": "packages/ai-environment/src/mode-gate.ts",
+      "find": "if (v?.verdict !== \"allow\")",
+      "replace": "if (v?.verdict === \"deny\")",
+      "suites": ["environment", "gate-conformance"]
+    }
+  ]
+}

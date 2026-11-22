@@ -14,6 +14,7 @@ export {
   ApiError,
   type Approval,
   type ApprovalAnswer,
+  advanceUserClock,
   type EventsPage,
   type EventsQuery,
   eventOf,

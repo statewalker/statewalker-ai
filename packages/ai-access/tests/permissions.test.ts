@@ -113,6 +113,17 @@ describe("deciding with roles", () => {
     expect(ok("write", "/drafts/a.md")).toBe(false);
   });
 
+  it("never lets a host wildcard grant a name that only ends like its domain", () => {
+    // Found by the nightly mutation run (statewalker/statewalker-root#145).
+    const perms = parsePermissions(["net.read:*.example.com"]).permissions;
+    const req = (target: string): AccessRequest => ({ area: "net", action: "read", target });
+    for (const target of ["evilexample.com", "evilexample.com/v1", "xexample.com"]) {
+      expect(permits(perms, req(target))).toBe(false);
+      expect(decide([role(["net.read:*.example.com"])], req(target))).toBe(false);
+    }
+    expect(permits(perms, req("api.example.com"))).toBe(true);
+  });
+
   it("matches task subjects with * for one token and > for the rest, and hosts with subdomain wildcards", () => {
     const r = role(["tasks.publish:agents.*.reviewer.>", "net.read:*.example.com/v1"]);
     expect(

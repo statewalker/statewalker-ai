@@ -51,6 +51,13 @@ What replaces each package:
 Before pushing, run what CI runs: `pnpm lint:check`, `pnpm format:check`, `pnpm build`,
 `pnpm typecheck`, `pnpm test`.
 
+The slow and costly checks run every night, never on pull requests
+([`.github/workflows/nightly.yml`](.github/workflows/nightly.yml)); each failing job files an issue
+here. Locally: `pnpm test:nightly` runs `ai-conformance`'s `tests/nightly` (keep it small with
+`NIGHTLY_FILE_BYTES`, `NIGHTLY_STREAMS`, `NIGHTLY_STREAM_BYTES`; the real-model tests run only with
+`NIGHTLY_LLM_API_KEY`), and `node packages/ai-conformance/src/nightly/mutate.ts
+packages/ai-conformance/mutations.json` runs the mutation run on the gate and `ai-access`.
+
 ## Why it is the way it is
 
 - **Layer L3.** The harness depends only on `webrun-biscuit`, `webrun-wire`, `webrun-files`,

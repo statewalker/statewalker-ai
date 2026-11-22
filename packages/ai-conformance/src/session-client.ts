@@ -565,6 +565,25 @@ export async function makeUserUnreachable(
 }
 
 /**
+ * Moves a user's clock `ms` forward: the clock their User DO decides approval expiry by (test-only,
+ * behind `ADMIN_KEY`). Answers the total offset.
+ */
+export async function advanceUserClock(
+  deployment: Deployment,
+  adminKey: string,
+  user: string,
+  ms: number,
+): Promise<number> {
+  const { offset } = await admin<{ offset: number }>(
+    deployment,
+    adminKey,
+    `/admin/users/${encodeURIComponent(user)}/clock`,
+    { advance_ms: ms },
+  );
+  return offset;
+}
+
+/**
  * Sends a message straight to an agent session's DO, past the user's User DO (test-only, behind
  * `ADMIN_KEY`): the turn's file calls still go to the Workspace DO's gate.
  */

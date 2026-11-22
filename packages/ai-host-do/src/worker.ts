@@ -140,6 +140,10 @@ async function devRoutes(request: Request, env: Env, path: string) {
     await userOf(env, id).makeUnreachable();
     return json({ unreachable: id });
   }
+  if (collection === "users" && id && sub === "clock") {
+    // Moves the user's clock forward (approvals expire by it), so a scenario sees a day pass.
+    return json({ offset: await userOf(env, id).advanceClock(Number(body.advance_ms)) });
+  }
   if (collection === "users" && id && sub === "revoke") {
     // The operator revokes a user everywhere, at the issuer.
     await issuerOf(env).revokeUser(id);
