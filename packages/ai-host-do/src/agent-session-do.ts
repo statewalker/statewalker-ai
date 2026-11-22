@@ -216,7 +216,9 @@ export class AgentSession extends DurableObject<Env> {
       executor_cpu_ms?: number;
     }>,
   ) {
-    const outbound = definition[TOOL_EXTENSION].route.kind === "rest";
+    // A REST tool, or a remote MCP server's (#135), sends one request per call.
+    const kind = definition[TOOL_EXTENSION].route.kind;
+    const outbound = kind === "rest" || kind === "mcp";
     // A native tool's isolate time counts against the session's limits too (#130): refused before
     // it runs once the session's limit is spent, counted here after.
     const native = definition[TOOL_EXTENSION].route.kind === "native";
