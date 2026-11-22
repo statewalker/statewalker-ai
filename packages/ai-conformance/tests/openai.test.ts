@@ -555,8 +555,11 @@ describe.each(transports)("the OpenAI projection over %s", (name, connect) => {
       model: "scripted/default",
       choices: [{ index: 0, message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
     });
-    const shown = model.requests.filter((r) => !r.summary && !r.classifier).at(-1)?.lastUserText;
-    expect(shown).toMatch(/earlier answer/);
+    // What the model was shown (other scenarios' requests may land meanwhile).
+    const shown = model.requests
+      .filter((r) => !r.summary && !r.classifier && r.lastUserText.includes("earlier answer"))
+      .at(-1)?.lastUserText;
+    expect(shown).toMatch(/user: first/);
     expect(shown).toMatch(/second$/);
     // Stateless: the session is archived once answered.
     const after = (
