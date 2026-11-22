@@ -275,7 +275,10 @@ A tool the harness itself provides, such as managing a project's members; the on
 _Avoid_: built-in tool, internal tool
 
 **MCP server**:
-A server speaking the Model Context Protocol that supplies tools.
+A server speaking the Model Context Protocol that supplies tools. A plugin names its remote ones in `mcp.json`; only Streamable HTTP servers run.
+
+**MCP gateway**:
+The host side (the Workspace DO) of every remote MCP server: it lists a server's tools and sends each call through the secrets gateway, after re-checking the call against the session's tool set.
 
 ### Plugins
 
