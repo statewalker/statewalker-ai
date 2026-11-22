@@ -120,6 +120,12 @@ export interface Env {
    */
   MEMORY_CAPS?: string;
   /**
+   * The task queue's settings (statewalker/statewalker-root#206), JSON `{max_payload_bytes?,
+   * expiry_days?, max_expiry_days?, dead_letter_days?, max_waiting?}`: 65536 bytes, 7 days, 30
+   * days, 14 days and 10,000 waiting tasks per project.
+   */
+  TASKS?: string;
+  /**
    * The deployment's UHP servers (statewalker/statewalker-root#144), JSON `[{id, baseUrl, secret,
    * harnesses}]`: `secret` names the secret holding its bearer token (bound to plugin `uhp` and the
    * server's host), `harnesses` the ones it may serve here (`{"<name>": "<UHP harness id>"}`), each

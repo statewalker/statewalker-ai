@@ -175,6 +175,21 @@ _Avoid_: job, message (and note that in UHP a "task" is a turn)
 A named consumer of a project's tasks, chosen by a filter on subject, destination and sender; every matching subscription receives each task, and within one subscription a task is taken once.
 _Avoid_: listener, consumer group
 
+**Lease**:
+A claimed task held by one consumer for a while: acked when done, released to be tried again, renewed while the work goes on; when it runs out the task waits again, and after its subscription's attempts it goes to the dead letters.
+_Avoid_: lock, checkout
+
+**Dead letter**:
+A task that used up its attempts in one subscription, kept there (14 days) for someone to look at instead of being tried for ever.
+
+**Inbox**:
+A subscription made for replies (`_inbox.<id>`): only its creator reads it, no wildcard filter matches it, and only a consumer that took or claimed a task replies into the inbox the task names.
+_Avoid_: reply queue, mailbox
+
+**Executor**:
+Work done for the tasks of a subscription (`run(lease, {signal, progress})`), served by a runner that keeps the lease, records progress in the lease's job log and replies with a reference to it.
+_Avoid_: worker, handler
+
 ### Memory
 
 **Project memory**:

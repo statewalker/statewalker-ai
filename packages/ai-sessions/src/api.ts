@@ -29,6 +29,7 @@ import type {
   MemoryUsage,
   PrimedEntry,
 } from "@statewalker/ai-memory";
+import type { TasksApi } from "@statewalker/ai-tasks";
 import type { Topic } from "./context/topics.js";
 import { sessionOfTurn } from "./turns.js";
 
@@ -347,6 +348,8 @@ export interface StoredAction {
     | "tool"
     | "limit"
     | "memory"
+    /** Publishing a task or a reply (`tasks`: the path is the subject, the content the call as JSON). */
+    | "tasks"
     /** Starting a remote agent session's task (the path is `<server>/<harness>`, #144). */
     | "remote"
     /** Answering a remote harness's question (the path is the `input_request` id). */
@@ -876,8 +879,41 @@ export interface DeleteSecretRequest extends SecretScope {
   name: string;
 }
 
-/** The session API, as one caller (one access token) sees it. */
-export interface SessionApi {
+/**
+ * One call of the task API (statewalker/statewalker-root#206) as the caller's User DO passes it to
+ * the workspace: the method and its arguments, checked there.
+ */
+export interface TasksCall {
+  op: keyof TasksApi;
+  args: unknown[];
+}
+
+/** The task API's methods, each a `TasksCall` op. */
+export const TASKS_METHODS = [
+  "publish",
+  "listTasks",
+  "subscribe",
+  "listSubscriptions",
+  "getSubscription",
+  "unsubscribe",
+  "peek",
+  "take",
+  "claim",
+  "deadLetters",
+  "changes",
+  "createInbox",
+  "reply",
+  "ack",
+  "release",
+  "renew",
+  "job",
+] as const satisfies readonly (keyof TasksApi)[];
+
+/**
+ * The session API, as one caller (one access token) sees it; the task API (statewalker/statewalker-root#206)
+ * is part of it, for the token's workspace's projects.
+ */
+export interface SessionApi extends TasksApi {
   /**
    * Holds one concurrent stream of the caller (an SSE stream, a long poll) against the limits on
    * streams: its id, or ELIMIT (429) over one (statewalker/statewalker-root#179). Not served over
@@ -1194,7 +1230,7 @@ export interface SubAgentRequest {
  * What a session API request is, for the session API's rate limits (statewalker/statewalker-root#180):
  * a message (sent, an edit, a regeneration), a stream opened (SSE), a session started (or forked).
  */
-export type ApiRequestKind = "message" | "stream" | "session";
+export type ApiRequestKind = "message" | "stream" | "session" | "task";
 
 /** The caller's User DO's side of the API: everything that needs the token checked. */
 export interface UserPort {
@@ -1256,6 +1292,8 @@ export interface UserPort {
   releaseStream(token: string, id: string): Promise<void>;
   /** One memory call of the caller, on the kind it names (statewalker/statewalker-root#157). */
   memory(token: string, call: MemoryCall): Promise<unknown>;
+  /** One task API call of the caller, in the token's workspace (statewalker/statewalker-root#206). */
+  tasks(token: string, call: TasksCall): Promise<unknown>;
   exportProfile(token: string): Promise<Uint8Array>;
   eraseProfile(token: string): Promise<{ erased: true }>;
   /** The limits on the caller's usage in the token's workspace (and a project), and their own. */
@@ -1698,7 +1736,19 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     ...session,
     status: await ports.agent(session.id).status(),
   });
+  const tasks = (op: TasksCall["op"], ...args: unknown[]) => ports.user.tasks(token, { op, args });
+  const taskApi = Object.fromEntries(
+    TASKS_METHODS.map((op) => [
+      op,
+      async (...args: unknown[]) => {
+        // Publishing (a task or a reply) counts against the session API's rate limits (#160).
+        if (op === "publish" || op === "reply") await ports.user.admitRequest(token, "task");
+        return tasks(op, ...args);
+      },
+    ]),
+  ) as unknown as TasksApi;
   return {
+    ...taskApi,
     me: () => ports.user.openUserSession(token),
     async startSession(req) {
       const request = startRequest(req);

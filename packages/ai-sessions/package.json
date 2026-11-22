@@ -45,7 +45,8 @@
     "@statewalker/webrun-streams-ws": "catalog:",
     "@statewalker/db-rpc": "catalog:",
     "@statewalker/db-api": "catalog:",
-    "@statewalker/ai-memory": "workspace:^"
+    "@statewalker/ai-memory": "workspace:^",
+    "@statewalker/ai-tasks": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "catalog:",

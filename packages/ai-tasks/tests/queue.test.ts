@@ -221,4 +221,27 @@ describe("task queue", () => {
     });
     expect(() => queue.job(P, String(lease?.id), "user:eve")).toThrow(/^ENOENT/);
   });
+
+  it("answers a host's lookups: a lease's project, an owner's inbox, a reply's target", () => {
+    const { queue } = setup();
+    queue.subscribe(P, { name: "calls", filter: { subject: "calls.*" } }, "user:bob");
+    const inbox = queue.createInbox(P, "session:s1");
+    expect(queue.inboxOf(P, "session:s1")?.name).toBe(inbox.name);
+    expect(queue.inboxOf(P, "session:s2")).toBeUndefined();
+    const call = queue.publish(P, { subject: "calls.x", reply_to: inbox.name }, "session:s1");
+    expect(() => queue.replyTo(P, call.id, "user:bob")).toThrow(/^EACCES/);
+    const [lease] = queue.claim(P, "calls", bob);
+    expect(queue.leaseProject(String(lease?.id))).toBe(P);
+    expect(queue.replyTo(P, call.id, "user:bob")).toBe(inbox.name);
+  });
+
+  it("drops a project's queue whole", () => {
+    const { queue } = setup();
+    queue.subscribe(P, { name: "s", filter: { subject: ">" } }, "user:ann");
+    queue.publish(P, { subject: "a.b" }, "user:ann");
+    queue.dropProject(P);
+    expect(queue.listTasks(P)).toEqual([]);
+    expect(queue.listSubscriptions(P)).toEqual([]);
+    expect(queue.bytes(P)).toBe(0);
+  });
 });

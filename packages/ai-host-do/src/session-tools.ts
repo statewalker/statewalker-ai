@@ -25,6 +25,10 @@ const HARNESS_ACTIONS: Readonly<Record<string, ToolAction>> = {
   db_drop: "admin",
   agent_start: "write",
   session_search: "read",
+  tasks_publish: "write",
+  tasks_peek: "read",
+  tasks_take: "write",
+  tasks_reply: "write",
 };
 
 /** The permission each harness tool's effects are decided by, at its own gate. */
@@ -35,6 +39,10 @@ const HARNESS_PERMISSIONS: Readonly<Record<string, string>> = {
   db_create: "db.admin",
   db_drop: "db.admin",
   agent_start: "agents.use",
+  tasks_publish: "tasks.publish",
+  tasks_peek: "tasks.subscribe",
+  tasks_take: "tasks.subscribe",
+  tasks_reply: "tasks.publish",
 };
 
 /** A harness tool as its document: plugin `harness`, named as the model knows it. */

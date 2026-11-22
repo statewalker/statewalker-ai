@@ -863,6 +863,58 @@ export class TaskQueue {
     };
   }
 
+  // --- lookups for a host ---------------------------------------------------------------------
+
+  /** The project of a lease (live or not yet swept); undefined for an unknown one. */
+  leaseProject(id: string): string | undefined {
+    return this.#rows<{ project: string }>(
+      "SELECT project FROM task_deliveries WHERE lease = ?",
+      String(id),
+    )[0]?.project;
+  }
+
+  /** An inbox of `owner`'s in the project, if it has one (the oldest). */
+  inboxOf(project: string, owner: string): Subscription | undefined {
+    const row = this.#rows<SubRow>(
+      "SELECT * FROM task_subscriptions WHERE project = ? AND owner = ? AND inbox = 1 ORDER BY created LIMIT 1",
+      project,
+      owner,
+    )[0];
+    return row ? subscriptionOf(row) : undefined;
+  }
+
+  /** Where `holder`'s reply to a task would go; EACCES unless it took or claimed the task. */
+  replyTo(project: string, taskId: string, holder: string): string {
+    this.sweep(project);
+    const row = this.#rows<{ reply_to: string }>(
+      "SELECT reply_to FROM task_takers WHERE project = ? AND task = ? AND holder = ?",
+      project,
+      String(taskId),
+      holder,
+    )[0];
+    if (!row)
+      throw taskError("EACCES", "only a consumer that took or claimed a task replies to it");
+    return row.reply_to;
+  }
+
+  /** Forgets a project's queue: its tasks, subscriptions, dead letters and job logs. */
+  dropProject(project: string): void {
+    for (const table of [
+      "task_items",
+      "task_subscriptions",
+      "task_deliveries",
+      "task_dead",
+      "task_takers",
+      "task_changes",
+    ])
+      this.#sql.exec(`DELETE FROM ${table} WHERE project = ?`, project);
+    this.#sql.exec(
+      "DELETE FROM task_job_entries WHERE job IN (SELECT id FROM task_jobs WHERE project = ?)",
+      project,
+    );
+    this.#sql.exec("DELETE FROM task_jobs WHERE project = ?", project);
+  }
+
   // --- upkeep ---------------------------------------------------------------------------------
 
   /** Removes tasks that had a matching subscription and that none waits for any more. */

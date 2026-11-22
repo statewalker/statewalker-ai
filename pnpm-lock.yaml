@@ -244,6 +244,9 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
+      '@statewalker/ai-tasks':
+        specifier: workspace:^
+        version: link:../ai-tasks
       '@statewalker/ai-uhp':
         specifier: workspace:^
         version: link:../ai-uhp
@@ -439,6 +442,9 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
+      '@statewalker/ai-tasks':
+        specifier: workspace:^
+        version: link:../ai-tasks
       '@statewalker/ai-uhp':
         specifier: workspace:^
         version: link:../ai-uhp
@@ -565,6 +571,9 @@ importers:
       '@statewalker/ai-memory':
         specifier: workspace:^
         version: link:../ai-memory
+      '@statewalker/ai-tasks':
+        specifier: workspace:^
+        version: link:../ai-tasks
       '@statewalker/db-api':
         specifier: 'catalog:'
         version: 0.1.7
@@ -586,6 +595,21 @@ importers:
       '@statewalker/webrun-streams-ws':
         specifier: 'catalog:'
         version: 0.5.3
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.4
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.23.7(tsx@4.23.15)(typescript@7.0.2)
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+      vitest:
+        specifier: 'catalog:'
+        version: 5.0.3(@types/node@26.6.4)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
+
+  packages/ai-tasks:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
