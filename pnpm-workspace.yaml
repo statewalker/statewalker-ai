@@ -43,6 +43,9 @@ catalog:
   # The conformance suite on CellB in Chromium: the browser it drives, and the bundler of its host page.
   playwright: ^1.63.0
   vite: ^8.3.2
+  # The workbench's terminal (apps/workbench).
+  "@xterm/addon-fit": ^0.11.0
+  "@xterm/xterm": ^6.0.0
   esbuild: ^0.28.2
   # Property-based tests (the spec names it for ai-access).
   fast-check: 4.10.2

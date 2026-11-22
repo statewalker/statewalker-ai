@@ -49,6 +49,12 @@ jobs:
       - name: Conformance on CellB in Chromium
         run: pnpm --filter @statewalker/ai-conformance run test:browser
 
+      # The workbench page (apps/workbench), built, with the harness running in it on CellB.
+      - name: Workbench page in Chromium
+        run: |
+          pnpm --filter @statewalker/ai-workbench run build
+          pnpm --filter @statewalker/ai-workbench run test:page
+
   # The lockfile-only pull request that .github/workflows/statewalker-update.yml opens: merged
   # once every other check on it passes, after checking it changes pnpm-lock.yaml alone
   # (statewalker/statewalker-ci's merge-lockfile.yml; statewalker-root docs/process/merging.md).
