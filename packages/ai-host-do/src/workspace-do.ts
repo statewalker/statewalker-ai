@@ -541,7 +541,8 @@ export class Workspace extends DurableObject<Env> {
         ...(typeof call.maxTokens === "number" ? { maxTokens: call.maxTokens } : {}),
       });
       const amounts = { model_tokens: e.input_tokens + e.max_tokens, model_spend: e.cost ?? 0 };
-      for (const into of e.own_key ? [worst, (own ??= { model_tokens: 0 })] : [worst])
+      if (e.own_key) own ??= { model_tokens: 0 };
+      for (const into of e.own_key && own ? [worst, own] : [worst])
         for (const [k, v] of Object.entries(amounts)) into[k] = Math.max(into[k] ?? 0, v);
     }
     return { worst, ...(own ? { own } : {}) };

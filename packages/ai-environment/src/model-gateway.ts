@@ -144,7 +144,7 @@ export interface ModelMeter {
     usage: ModelUsage,
     meta: ModelRequestMeta,
     admitted?: unknown,
-  ): Promise<unknown[] | undefined | void> | unknown[] | undefined | void;
+  ): Promise<unknown[] | undefined> | unknown[] | undefined;
 }
 
 type StreamFn = (
