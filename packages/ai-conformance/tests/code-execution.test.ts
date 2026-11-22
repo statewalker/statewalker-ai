@@ -16,6 +16,7 @@ import {
   type FakeModel,
   fakeModel,
   login,
+  RUNTIME,
   restClient,
   rpcClient,
   type SessionClient,
@@ -69,21 +70,60 @@ const SCRIPTS = {
   "fail.mjs": `console.error("about to fail"); process.exitCode = 2;`,
   "net.mjs": `const r = await fetch("https://example.com/"); console.log(r.status);`,
   "spin.mjs": `for (;;) await new Promise((r) => setTimeout(r, 20));`,
+  "unapproved.mjs": `console.log("not approved anywhere");`,
 };
+
+const vars = (extra: Record<string, string> = {}) => ({
+  MODELS: model.deploymentModels(),
+  DEV_LOGIN: "true",
+  ADMIN_KEY,
+  OPERATOR_KEY,
+  CATALOG: JSON.stringify(CATALOG),
+  DEFAULT_AGENT: "code/default",
+  EXEC_TIMEOUT_MS: "3000",
+  // WASIX programs the `bash` tool routes to the posix executor.
+  EXECUTORS: JSON.stringify({ programs: ["rg", "tee"] }),
+  ...extra,
+});
+
+/** The scripts the operator approves on CellB Node, by the hashes their refusals name. */
+const APPROVED = ["hello.mjs", "files.mjs", "peek.mjs", "fail.mjs", "spin.mjs"];
+
+/**
+ * On CellB Node isolates run approved bundles only (#94): a `node` script's refusal names the
+ * sha-256 of its bundle, which the operator approves (APPROVED_BUNDLES), as a run of this suite's
+ * deployment does here for its scripts.
+ */
+async function approvedHashes(): Promise<string> {
+  const probe = await startDeployment(HOST, vars());
+  try {
+    const files: Record<string, string> = {
+      "/probe/.system/access": JSON.stringify({ "ann-probe": "owner" }),
+    };
+    for (const name of APPROVED) files[`/probe/${name}`] = SCRIPTS[name as keyof typeof SCRIPTS];
+    await seed(probe, ADMIN_KEY, files);
+    const ann = await restClient(probe, await login(probe, "ann-probe"));
+    await ann.setMode({ mode: "bypassPermissions" });
+    const s = await ann.startSession({ project: "probe" });
+    const hashes: string[] = [];
+    for (const name of APPROVED) {
+      const out = outputOf(await ann.sendMessage(s.id, { content: bash(`node ${name}`) }));
+      const hash = /sha256 ([0-9a-f]{64}), which is not approved/.exec(out)?.[1];
+      if (!hash) throw new Error(`no refusal naming a hash for ${name}: ${out}`);
+      hashes.push(hash);
+    }
+    return hashes.join(",");
+  } finally {
+    await probe.close();
+  }
+}
 
 beforeAll(async () => {
   model = await fakeModel();
-  deployment = await startDeployment(HOST, {
-    MODELS: model.deploymentModels(),
-    DEV_LOGIN: "true",
-    ADMIN_KEY,
-    OPERATOR_KEY,
-    CATALOG: JSON.stringify(CATALOG),
-    DEFAULT_AGENT: "code/default",
-    EXEC_TIMEOUT_MS: "3000",
-    // WASIX programs the `bash` tool routes to the posix executor.
-    EXECUTORS: JSON.stringify({ programs: ["rg", "tee"] }),
-  });
+  deployment = await startDeployment(
+    HOST,
+    vars(RUNTIME === "node" ? { APPROVED_BUNDLES: await approvedHashes() } : {}),
+  );
   const files: Record<string, string> = {};
   for (const t of ["rest", "rpc"]) {
     for (const p of [`code-${t}`, `meter-${t}`]) {
@@ -143,6 +183,17 @@ describe.each(transports)("code execution over %s", (name, connect) => {
     const s = await ann.startSession({ project });
     const turn = await ann.sendMessage(s.id, { content: bash("node hello.mjs big world") });
     expect(outputOf(turn)).toContain("hello big world");
+  });
+
+  it("runs a script only once its bundle is approved where isolates run approved bundles only (CellB Node)", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const turn = await ann.sendMessage(s.id, { content: bash("node unapproved.mjs") });
+    if (RUNTIME === "node")
+      expect(outputOf(turn)).toMatch(
+        /node: ENOSYS: on this runtime \(CellB Node\) isolates run approved bundles only: .*unapproved\.mjs bundles to sha256 [0-9a-f]{64}/,
+      );
+    else expect(outputOf(turn)).toContain("not approved anywhere");
   });
 
   it("reaches the session's files through its capability, and only those", async () => {
@@ -276,6 +327,20 @@ describe.each(transports)("code execution over %s", (name, connect) => {
     // The approval ran that run once: the next asks again.
     const again = await bea.sendMessage(s.id, { content: bash("node hello.mjs once more") });
     expect(again.status).toBe("waiting");
+  });
+
+  it("runs nothing more of the command line while a run waits on the user's approval", async () => {
+    const bea = await as("bea", "acceptEdits");
+    const s = await bea.startSession({ project });
+    const after = `/${project}/after-${t}.txt`;
+    const turn = await bea.sendMessage(s.id, {
+      content: bash(
+        `node hello.mjs x; echo after > ${after}; node hello.mjs y || echo failed > ${after}`,
+      ),
+    });
+    expect(turn.status).toBe("waiting");
+    const read = await bea.sendMessage(s.id, { content: call("read", { path: after }) });
+    expect(results(read).at(-1)).toMatchObject({ isError: true });
   });
 
   it("charges a run's time as executor_cpu_ms:isolate, and kills it when a limit refuses more", async () => {

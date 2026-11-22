@@ -263,6 +263,9 @@ export async function bundleNodeScript(
       conditions: ["node", "worker", "browser"],
       target: "es2022",
       sourcemap: false,
+      // No comments naming where the files live: the same script bundles to the same code (and
+      // hash, which an operator approves on CellB Node) wherever it is.
+      esbuildOptions: { minifyWhitespace: true, legalComments: "none" },
     }));
   } catch (e) {
     const msg = String((e as Error)?.message ?? e).split("\n")[0];
@@ -283,7 +286,7 @@ export async function bundleNodeScript(
  * a module's global scope). A script's own exports are dropped: nothing imports it.
  */
 function asFunction(code: string): string {
-  const body = code.replace(/\nexport\s*\{[^}]*\};?\s*$/, "\n");
+  const body = code.replace(/export\s*\{[^}]*\};?\s*$/, "\n");
   return `export default async function main() {\n${body}\n}\n`;
 }
 

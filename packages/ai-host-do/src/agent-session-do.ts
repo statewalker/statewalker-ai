@@ -11,7 +11,7 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { approvalId, codedError, codeOf, settleAsk } from "@statewalker/ai-access";
-import { TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
+import { sha256, TOOL_EXTENSION, type ToolDefinition } from "@statewalker/ai-definitions";
 import {
   ApprovalPending,
   approvalAware,
@@ -210,6 +210,16 @@ async function modelSpan(
     },
     turn ? { parent: turnTrace(turn) } : {},
   );
+}
+
+/**
+ * Whether this runtime's Worker Loader runs approved bundles only (#94): CellB on Node, where a
+ * loaded isolate is a thread of the host's own process. Its user agent is Node's; workerd's,
+ * Deno's (CellD) and browsers' are their own.
+ */
+function isolatesApprovedOnly(): boolean {
+  const ua = (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent ?? "";
+  return /^Node\.js\//.test(ua);
 }
 
 /** How long an engine instance waits for its session's next run before it is closed. */
@@ -543,6 +553,8 @@ export class AgentSession extends DurableObject<Env> {
           return running;
         }
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
+        // `node`, `python` and the deployment's programs in the `bash` tool (#142).
+        const code = this.#codePort(config, turn, onApproval, emit);
         // The session's tool set now: exactly what its MCP endpoint lists (#129).
         const set = await this.#tools(config, onApproval, turn, emit);
         // Memory, primed at the session's start and after each compaction (#157).
@@ -564,6 +576,8 @@ export class AgentSession extends DurableObject<Env> {
                 { blockSize: blockSizeOf(env) },
               ),
               onApproval,
+              // A run of code waiting on the user stops the rest of its command line (#142).
+              () => code.held,
             ),
             models: gateway(config, turn, emit, onApproval),
             ...(config.model ? { model: config.model } : {}),
@@ -576,8 +590,7 @@ export class AgentSession extends DurableObject<Env> {
             onSteer,
             tools: set.hostTools,
             allowTools: set.offered,
-            // `node`, `python` and the deployment's programs in the `bash` tool (#142).
-            exec: this.#codePort(config, turn, onApproval, emit),
+            exec: code.port,
             // Every tool call counts against the limits on tool calls (#179): a refused call is
             // not run, and the agent carries on with the refusal.
             telemetry: telemetryOf(env, "agent"),
@@ -896,15 +909,21 @@ export class AgentSession extends DurableObject<Env> {
     turn: string,
     onApproval: (request: ApprovalRequest, call: StoredCall) => void,
     emit: (item: ItemInput) => void,
-  ): CodePort {
-    return {
+  ): { port: CodePort; readonly held: ApprovalRequest | undefined } {
+    // The approval a run of this turn waits on: from then on nothing more of the command line
+    // runs code or changes a file (the shell goes on, but only to print), so the user answers
+    // before anything after it happens.
+    let held: ApprovalRequest | undefined;
+    const port: CodePort = {
       commands: routedCommands(this.#executors()),
       run: async (run) => {
+        if (held) throw new ApprovalPending(held);
         try {
           return await this.#runCode(config, turn, run, emit);
         } catch (e) {
           const request = approvalOf(e);
           if (!request) throw e;
+          held = request;
           onApproval(request, {
             method: "run",
             path: request.action.path,
@@ -912,6 +931,12 @@ export class AgentSession extends DurableObject<Env> {
           });
           throw new ApprovalPending(request);
         }
+      },
+    };
+    return {
+      port,
+      get held() {
+        return held;
       },
     };
   }
@@ -946,11 +971,6 @@ export class AgentSession extends DurableObject<Env> {
     };
     const env = this.env;
     const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
-    await workspace.decideRun(config.capability, {
-      kind,
-      line: [command, ...args].join(" "),
-      content: JSON.stringify(exact),
-    });
     // The run's own file changes are decided by the mode as it goes: one the mode asks about is
     // refused (a running program cannot wait for an approval).
     const files = filesOverRpc(
@@ -968,6 +988,15 @@ export class AgentSession extends DurableObject<Env> {
       },
       { blockSize: blockSizeOf(env) },
     );
+    // A `node` script is bundled first: what runs is that bundle, held to the acceptance check, and
+    // on CellB Node only once its hash is approved (#94), so nothing is asked of the user for a
+    // script that cannot run.
+    const bundled = executor.kind === "isolate" ? await this.#nodeBundle(exact, files) : undefined;
+    await workspace.decideRun(config.capability, {
+      kind,
+      line: [command, ...args].join(" "),
+      content: JSON.stringify(exact),
+    });
     const meter = `executor_cpu_ms:${executor.kind}`;
     const detail = { command };
     const charge = async (ms: number) => {
@@ -1002,6 +1031,7 @@ export class AgentSession extends DurableObject<Env> {
       async (span) => {
         const result = await this.#onExecutor(config, kind, executor, exact, {
           files,
+          ...(bundled ? { bundled } : {}),
           timeout,
           maxOutput,
           charge,
@@ -1014,6 +1044,31 @@ export class AgentSession extends DurableObject<Env> {
     );
   }
 
+  /**
+   * A `node` run's script, bundled (./node-runner.ts). Where isolates run approved bundles only
+   * (CellB Node, whose isolates are threads of the host's own process, #94), the bundle runs only
+   * once its sha-256 is in APPROVED_BUNDLES: ENOSYS otherwise, naming the hash to approve.
+   */
+  async #nodeBundle(run: CodeRun, files: ReturnType<typeof filesOverRpc>) {
+    const script = run.args[0];
+    if (!script || script.startsWith("-"))
+      throw codedError("EINVAL", "node runs a script file here: node <script> [arguments]");
+    const path = normalise(script.startsWith("/") ? script : `${run.cwd}/${script}`);
+    const code = await bundleNodeScript(files, path, await toolEsbuild());
+    if (isolatesApprovedOnly()) {
+      const hash = await sha256(code);
+      const approved = String(this.env.APPROVED_BUNDLES ?? "")
+        .split(/[\s,]+/)
+        .map((h) => h.trim().toLowerCase());
+      if (!approved.includes(hash))
+        throw codedError(
+          "ENOSYS",
+          `on this runtime (CellB Node) isolates run approved bundles only: ${path} bundles to sha256 ${hash}, which is not approved (APPROVED_BUNDLES)`,
+        );
+    }
+    return { code, path };
+  }
+
   async #onExecutor(
     config: AgentSessionConfig,
     kind: CodeKind,
@@ -1021,6 +1076,7 @@ export class AgentSession extends DurableObject<Env> {
     run: CodeRun,
     o: {
       files: ReturnType<typeof filesOverRpc>;
+      bundled?: { code: string; path: string };
       timeout: number;
       maxOutput: number;
       charge(ms: number): Promise<void>;
@@ -1030,11 +1086,7 @@ export class AgentSession extends DurableObject<Env> {
     if (executor.kind === "isolate") {
       const loader = this.env.LOADER;
       if (!loader) throw noExecutor(this.#executors(), kind);
-      const script = run.args[0];
-      if (!script || script.startsWith("-"))
-        throw codedError("EINVAL", "node runs a script file here: node <script> [arguments]");
-      const path = normalise(script.startsWith("/") ? script : `${run.cwd}/${script}`);
-      const code = await bundleNodeScript(o.files, path, await toolEsbuild());
+      const { code, path } = o.bundled ?? (await this.#nodeBundle(run, o.files));
       const r = await runNodeScript(loader, {
         code,
         script: path,
