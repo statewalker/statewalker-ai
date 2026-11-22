@@ -425,3 +425,64 @@ export class ContextShaper {
     return out;
   }
 }
+
+const POSITIVE: Record<string, keyof CompactionOptions> = {
+  budget_tokens: "budgetTokens",
+  group_size: "groupSize",
+  promote_threshold: "promoteThreshold",
+  max_passes: "maxPasses",
+};
+
+/**
+ * The deployment's compaction settings (its `COMPACTION` var): JSON `{budget_tokens?,
+ * tail_messages? | tail_tokens?, group_size?, promote_threshold?, max_passes?, pin_tools?,
+ * trim_min_chars?}`. What cannot be read is left out (its default stays) and reported.
+ */
+export function parseCompaction(text: string | undefined): {
+  options: Partial<CompactionOptions>;
+  problems: string[];
+} {
+  const options: Partial<CompactionOptions> = {};
+  const problems: string[] = [];
+  if (text === undefined || text.trim() === "") return { options, problems };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    raw = undefined;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    return { options, problems: ["COMPACTION is not a JSON object"] };
+  const obj = raw as Record<string, unknown>;
+  const positive = (key: string): number | undefined => {
+    const v = obj[key];
+    if (Number.isInteger(v) && (v as number) > 0) return v as number;
+    problems.push(`${key} must be a positive integer`);
+    return undefined;
+  };
+  if ("tail_messages" in obj && "tail_tokens" in obj)
+    problems.push("set the tail by tail_messages or tail_tokens, not both");
+  else if ("tail_messages" in obj) {
+    const n = positive("tail_messages");
+    if (n) options.tail = { messages: n };
+  } else if ("tail_tokens" in obj) {
+    const n = positive("tail_tokens");
+    if (n) options.tail = { tokens: n };
+  }
+  for (const key of Object.keys(obj)) {
+    if (key === "tail_messages" || key === "tail_tokens") continue;
+    const name = POSITIVE[key];
+    if (name) {
+      const n = positive(key);
+      if (n) (options as Record<string, unknown>)[name] = n;
+    } else if (key === "pin_tools") {
+      const v = obj[key];
+      if (Array.isArray(v) && v.every((x) => typeof x === "string")) options.pinTools = v;
+      else problems.push("pin_tools must be a list of tool names");
+    } else if (key === "trim_min_chars") {
+      const n = positive(key);
+      if (n) options.trim = createTrimPolicy({ minChars: n });
+    } else problems.push(`unknown setting ${key}`);
+  }
+  return { options, problems };
+}

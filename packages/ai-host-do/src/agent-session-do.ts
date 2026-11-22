@@ -2,18 +2,22 @@
 // attenuated for it; never the access token) and runs its turns on Flue, whose file view is the
 // Workspace DO's gate reached with that capability: a webrun-files-rpc client whose calls travel on
 // the Workspace DO's stub. A file call the gate stops for an approval ends the turn waiting on it;
-// the user's answer continues the session.
+// the user's answer continues the session. Long sessions are compacted into hierarchical summaries
+// (statewalker/statewalker-root#131) by a summarizer on the same model, tuned by the deployment's
+// COMPACTION var; each turn starts from the shaped context.
 
 import { DurableObject } from "cloudflare:workers";
 import { approvalAware, filesOverRpc, runStoredCall } from "@statewalker/ai-environment";
-import { runFlueTurn } from "@statewalker/ai-flue";
+import { completeWith, type ModelConfig, runFlueTurn } from "@statewalker/ai-flue";
 import {
   type AgentMessage,
   type AgentSessionConfig,
   AgentSessionCore,
   type ApprovalAnswer,
+  createModelSummarizer,
   type EventsQuery,
   type ItemsQuery,
+  parseCompaction,
 } from "@statewalker/ai-sessions";
 import { blockSizeOf, type Env, userOf } from "./env.js";
 import { restTools } from "./rest-tools.js";
@@ -23,9 +27,19 @@ export class AgentSession extends DurableObject<Env> {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const model: ModelConfig = {
+      baseUrl: String(env.LLM_BASE_URL),
+      model: env.LLM_MODEL || "default",
+    };
+    const compaction = parseCompaction(env.COMPACTION);
+    for (const problem of compaction.problems) console.warn(`COMPACTION: ${problem}`);
     this.#core = new AgentSessionCore({
       sql: ctx.storage.sql,
-      runTurn: ({ config, content, signal, onSteer, onApproval, waiting }, emit) => {
+      compaction: {
+        summarizer: createModelSummarizer({ complete: completeWith(model) }),
+        options: compaction.options,
+      },
+      runTurn: ({ config, content, context, signal, onSteer, onApproval, waiting }, emit) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
         return runFlueTurn(
           {
@@ -38,8 +52,9 @@ export class AgentSession extends DurableObject<Env> {
               }),
               onApproval,
             ),
-            model: { baseUrl: String(env.LLM_BASE_URL), model: env.LLM_MODEL || "default" },
+            model,
             content,
+            context,
             waiting,
             signal,
             onSteer,

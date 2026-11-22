@@ -66,6 +66,7 @@ export {
   ContextShaper,
   compactionOptions,
   DEFAULT_COMPACTION,
+  parseCompaction,
   type TailSize,
 } from "./context/shaper.js";
 export {

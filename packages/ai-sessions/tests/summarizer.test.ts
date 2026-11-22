@@ -8,6 +8,7 @@ import {
   createTokenEstimator,
   createTrimPolicy,
   type Item,
+  parseCompaction,
   SUMMARIZER_PROMPT_START,
   type Summary,
   trimToolResult,
@@ -119,5 +120,45 @@ describe("token estimator", () => {
     expect(four.item(item(9, { kind: "approval" }))).toBe(0);
     const words = createTokenEstimator({ tokenize: (t) => t.split(/\s+/).filter(Boolean).length });
     expect(words.item(ITEMS[3] as Item)).toBe(3);
+  });
+});
+
+describe("the deployment's compaction settings", () => {
+  it("read the tail by messages or by tokens, the group size and the promotion threshold", () => {
+    expect(
+      parseCompaction(
+        '{"budget_tokens": 5000, "tail_messages": 4, "group_size": 3, "promote_threshold": 2, "max_passes": 5, "pin_tools": ["skills"], "trim_min_chars": 500}',
+      ),
+    ).toMatchObject({
+      options: {
+        budgetTokens: 5000,
+        tail: { messages: 4 },
+        groupSize: 3,
+        promoteThreshold: 2,
+        maxPasses: 5,
+        pinTools: ["skills"],
+        trim: { minChars: 500 },
+      },
+      problems: [],
+    });
+    expect(parseCompaction('{"tail_tokens": 2000}')).toEqual({
+      options: { tail: { tokens: 2000 } },
+      problems: [],
+    });
+    expect(parseCompaction(undefined)).toEqual({ options: {}, problems: [] });
+  });
+
+  it("ignore what they cannot read, and say why, keeping the defaults", () => {
+    const { options, problems } = parseCompaction(
+      '{"tail_messages": 2, "tail_tokens": 10, "group_size": 0, "budget_tokens": "lots", "colour": 1}',
+    );
+    expect(options).toEqual({});
+    expect(problems).toEqual([
+      "set the tail by tail_messages or tail_tokens, not both",
+      "group_size must be a positive integer",
+      "budget_tokens must be a positive integer",
+      "unknown setting colour",
+    ]);
+    expect(parseCompaction("{not json").problems).toEqual(["COMPACTION is not a JSON object"]);
   });
 });

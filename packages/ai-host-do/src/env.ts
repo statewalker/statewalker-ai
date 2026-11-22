@@ -73,6 +73,13 @@ export interface Env {
    * to every agent, `[{plugin, name, method?, url, headers?, query?}]`, called through the gateway.
    */
   REST_TOOLS?: string;
+  /**
+   * Compaction of long sessions (statewalker/statewalker-root#131), JSON `{budget_tokens?,
+   * tail_messages? | tail_tokens?, group_size?, promote_threshold?, max_passes?, pin_tools?,
+   * trim_min_chars?}`; unset settings keep their defaults (100 000 tokens, the last 8 messages, 6
+   * messages per summary, 4 summaries before promotion).
+   */
+  COMPACTION?: string;
   /** Test-only: the SSE keep-alive interval in ms (30 s otherwise). */
   SSE_KEEPALIVE_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */

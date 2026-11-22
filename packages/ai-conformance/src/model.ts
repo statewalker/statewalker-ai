@@ -4,11 +4,18 @@
 //   FAIL                      the model refuses the request (HTTP 400): the turn fails
 //   HOLD <name>               "OK", once the scenario releases <name> (a turn that stays running)
 //   anything else             "OK"
+// A summarizer request (its system prompt starts "You are summarising") is answered with the JSON
+// summary the harness asks for: content "SUMMARY[<each input line without its id> / ...]", and one
+// section whose refs are the first id of the input.
 import { createServer, type IncomingMessage } from "node:http";
 import type { AddressInfo } from "node:net";
 
 export interface ModelRequest {
   tools: string[];
+  /** The request's messages, each as its role and text (a tool call as `CALL <name>`). */
+  messages: { role: string; text: string }[];
+  /** Whether it was a summarizer request. */
+  summary: boolean;
   lastUserText: string;
   /** The model the request named. */
   model?: string;
@@ -26,7 +33,11 @@ export interface FakeModel {
 }
 
 type Part = { text?: string };
-type ChatMessage = { role: string; content?: string | Part[] | null };
+type ChatMessage = {
+  role: string;
+  content?: string | Part[] | null;
+  tool_calls?: { function?: { name?: string } }[];
+};
 const text = (c: ChatMessage["content"]) =>
   typeof c === "string" ? c : (c ?? []).map((p) => p.text ?? "").join("");
 
@@ -72,8 +83,17 @@ export async function fakeModel(): Promise<FakeModel> {
     const lastUserText = text(
       [...messages].reverse().find((m) => m.role === "user")?.content,
     ).trim();
+    const system = text(messages.find((m) => m.role === "system")?.content);
+    const summary = system.startsWith("You are summarising");
     requests.push({
       tools: (json.tools ?? []).map((t) => String(t.function?.name)),
+      messages: messages.map((m) => ({
+        role: m.role,
+        text:
+          text(m.content) ||
+          (m.tool_calls ?? []).map((c) => `CALL ${c.function?.name ?? ""}`).join(" "),
+      })),
+      summary,
       lastUserText,
       model: json.model,
     });
@@ -95,7 +115,22 @@ export async function fakeModel(): Promise<FakeModel> {
     const call = /^CALL\s+(\S+)\s*([\s\S]*)$/.exec(lastUserText);
     let message: Record<string, unknown>;
     let finish: string;
-    if (messages.at(-1)?.role === "tool") {
+    if (summary) {
+      const lines = lastUserText.split("\n");
+      const first = /^\[([^\]]+)\]/.exec(lines[0] ?? "")?.[1];
+      const content = `SUMMARY[${lines
+        .filter((l) => l.startsWith("["))
+        .map((l) => l.replace(/^\[[^\]]+\]\s*/, ""))
+        .join(" / ")}]`;
+      message = {
+        role: "assistant",
+        content: JSON.stringify({
+          content,
+          sections: first ? [{ title: "Part", body: content, refs: [first] }] : null,
+        }),
+      };
+      finish = "stop";
+    } else if (messages.at(-1)?.role === "tool") {
       const results: string[] = [];
       for (let i = messages.length - 1; i >= 0 && messages[i]?.role === "tool"; i--)
         results.unshift(text(messages[i]?.content));
