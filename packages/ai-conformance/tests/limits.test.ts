@@ -130,6 +130,8 @@ async function usageRecords(workspace: string): Promise<Record<string, unknown>[
 
 let model: FakeModel;
 let rest: FakeRest;
+/** A deployment whose LIMITS hold each workspace to one turn a day. */
+let ceilinged: Deployment;
 let deployment: Deployment;
 
 beforeAll(async () => {
@@ -150,6 +152,21 @@ beforeAll(async () => {
     }),
   });
   await seed(deployment, ADMIN_KEY, FILES);
+  ceilinged = await startDeployment(HOST, {
+    DEV_LOGIN: "true",
+    ADMIN_KEY,
+    WORKSPACES: TRANSPORTS.flatMap((t) => [`${t}1`, `${t}2`]).join(","),
+    MODELS: model.deploymentModels(),
+    LIMITS: limits({ meter: "turns", level: "deployment", value: 1, period: "day" }),
+  });
+  for (const t of TRANSPORTS)
+    for (const workspace of [`${t}1`, `${t}2`])
+      await seed(
+        ceilinged,
+        ADMIN_KEY,
+        { [`/ceiling-${t}/.system/access`]: JSON.stringify({ [`ann-${t}`]: "owner" }) },
+        workspace,
+      );
   // Each user's own limits are in their profile: they cap spend on their own keys.
   await seedProfiles(
     deployment,
@@ -165,6 +182,7 @@ beforeAll(async () => {
 afterAll(async () => {
   for (const s of sockets) s.close();
   await deployment?.close();
+  await ceilinged?.close();
   await model?.close();
   await rest?.close();
 });
@@ -457,5 +475,25 @@ describe.each(transports)("limits over %s", (name, connect) => {
     expect(outcomes.filter((o) => o.status === "fulfilled")).toHaveLength(1);
     // That stream ended, so another may open.
     expect(await sam.waitTurn(queued)).toMatchObject({ status: "completed" });
+  });
+
+  it("holds each workspace to the deployment's limits in its own DO, with no global counter", async () => {
+    const at = async (workspace: string) =>
+      connect(ceilinged, await login(ceilinged, u("ann"), { workspace }));
+    const inDefault = await at(`${t}1`);
+    const s = await inDefault.startSession({ project: `ceiling-${t}` });
+    expect(await inDefault.sendMessage(s.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+    await expect(inDefault.postMessage(s.id, { content: "hello" })).rejects.toMatchObject({
+      status: 429,
+      message: expect.stringContaining("deployment limit"),
+    });
+    // The other workspace is held to its own ceiling, not to what the first one used.
+    const inOther = await at(`${t}2`);
+    const o = await inOther.startSession({ project: `ceiling-${t}` });
+    expect(await inOther.sendMessage(o.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
   });
 });

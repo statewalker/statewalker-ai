@@ -59,3 +59,11 @@ Before pushing, run what CI runs: `pnpm lint:check`, `pnpm format:check`, `pnpm 
 - **Tests first, at one seam.** Behaviour is proven by the conformance suite against a live
   deployment through the session API, on every runtime; package tests only where that seam is too
   coarse.
+- **Limits live where their counters do** (statewalker-root#158, #179). A limit
+  `{meter, level, target?, value, period, on_exceed, warn_at?, increment?}` is set in the
+  deployment's `LIMITS` var (a `deployment` limit is a ceiling each workspace and each user is held
+  to), the workspace's `.system/limits` (workspace, project, member and default session limits), a
+  project's `.system/limits` (its project and session limits), a user's profile `/limits` (their
+  own keys) or a session's start request (`limits`). Each level is counted in the DO that owns it,
+  with no global counter; `TIME_ZONE` sets calendar periods and `USAGE_RETENTION_MONTHS` (13) how
+  long usage records are kept.

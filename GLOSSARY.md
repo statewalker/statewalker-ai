@@ -214,6 +214,12 @@ One metered event, naming the workspace, project, user, session and turn it belo
 A cap on one meter at one level (deployment, workspace, project, user in a workspace, user across the deployment, or agent session), optionally per period. A narrower level can only lower it; the tightest limit applies.
 _Avoid_: quota (as a separate concept), budget (except for model spend)
 
+**Reservation**:
+The worst case of a model request (its input plus `max_tokens`), held against every limit on its path before the model is asked and settled to the real cost after, so spend never overshoots a limit.
+
+**Increment**:
+What one approval of a limit that asks adds to it, for the rest of its period: the limit's value unless it names another.
+
 ### Policy
 
 **Mode**:
