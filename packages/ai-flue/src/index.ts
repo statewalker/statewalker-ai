@@ -7,6 +7,8 @@ export {
 } from "./context.js";
 export { FilesFs } from "./files-fs.js";
 export {
+  type CodePort,
+  type CodeRun,
   completeWith,
   type FlueHostState,
   FlueSession,

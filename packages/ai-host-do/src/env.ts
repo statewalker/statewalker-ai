@@ -165,6 +165,19 @@ export interface Env {
   /** How long one native tool call may run, in ms (30000). */
   TOOL_TIMEOUT_MS?: string;
   /**
+   * The executors of this deployment (statewalker/statewalker-root#142): JSON
+   * `{"node"?, "python"?, "posix"?, "programs"?}`, each kind `isolate` (node), `pyodide` or `wasmer`
+   * (an engine its host installed), `pool` (not built yet) or `off`; `programs` the WASIX programs
+   * the `bash` tool routes to the `posix` executor. Left out, a kind takes what the runtime offers.
+   */
+  EXECUTORS?: string;
+  /** How long one run of code from the `bash` tool may take, in ms (60000). */
+  EXEC_TIMEOUT_MS?: string;
+  /** The most output a run keeps, per stream, in characters (1 MiB). */
+  EXEC_MAX_OUTPUT?: string;
+  /** An engine's memory cap, in MiB, where the runtime can hold it to one (1024). */
+  ENGINE_MEMORY_MB?: string;
+  /**
    * The deployment's limits (statewalker/statewalker-root#179): JSON
    * `[{meter, level, target?, value, period, on_exceed, warn_at?, increment?}]`. A `deployment`
    * limit is a ceiling each workspace (and each user, for their own keys) is held to; limits of

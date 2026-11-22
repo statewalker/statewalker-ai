@@ -110,7 +110,7 @@ export class ToolHost extends RpcTarget {
 }
 
 /** Removes the host's reach from the isolate's realm, before the bundle is evaluated. */
-const HARDEN = `
+export const HARDEN = `
 for (const name of ["process", "require", "module", "exports", "Buffer", "global", "fetch",
   "connect", "caches", "WebAssembly", "eval", "importScripts", "Worker", "SharedWorker",
   "XMLHttpRequest", "WebSocket", "EventSource", "Deno", "Bun"]) {
@@ -122,19 +122,11 @@ for (const f of [function () {}, async function () {}, function* () {}, async fu
   Object.defineProperty(Object.getPrototypeOf(f), "constructor", { value: undefined });
 `;
 
-/** The isolate's main module: the entrypoint the host calls. */
-const MAIN = `
-import { WorkerEntrypoint } from "cloudflare:workers";
-import "./harden.js";
-import * as tool from "./tool.js";
-
-const controller = new AbortController();
-const MAX_LOGS = 100;
-const logs = [];
-const text = (v) => { try { return typeof v === "string" ? v : JSON.stringify(v); } catch { return String(v); } };
-const log = (...args) => { if (logs.length < MAX_LOGS) logs.push(args.map(text).join(" ").slice(0, 2000)); };
-for (const level of ["debug", "info", "warn", "error"]) log[level] = log;
-
+/**
+ * How a run's script reaches the host by plain values (CellD): `host` queues its calls, `next()`
+ * answers the run's end or the calls queued; `outcome`, `notify` and `waiting` are the entrypoint's.
+ */
+export const PLUMBING = `
 // The host's calls: queued here as plain values, handed to the host by the answer of start() or
 // resume(), and settled by the next resume().
 let nextCall = 0;
@@ -162,7 +154,22 @@ async function next() {
     await new Promise((r) => { wake = r; });
   }
 }
+`;
 
+/** The isolate's main module: the entrypoint the host calls. */
+const MAIN = `
+import { WorkerEntrypoint } from "cloudflare:workers";
+import "./harden.js";
+import * as tool from "./tool.js";
+
+const controller = new AbortController();
+const MAX_LOGS = 100;
+const logs = [];
+const text = (v) => { try { return typeof v === "string" ? v : JSON.stringify(v); } catch { return String(v); } };
+const log = (...args) => { if (logs.length < MAX_LOGS) logs.push(args.map(text).join(" ").slice(0, 2000)); };
+for (const level of ["debug", "info", "warn", "error"]) log[level] = log;
+
+${PLUMBING}
 const filesOf = (host) => ({
   async *read(path, options) {
     const data = await host.read(path, options?.start, options?.length);
@@ -377,11 +384,15 @@ async function driveByValues(
 const COMPATIBILITY_DATE = "2026-10-01";
 
 /** Loads a bundle into an isolate of its own; `dispose` releases it once the call ended. */
-function load(loader: WorkerLoaderLike, code: string): { entry: ToolEntrypoint; dispose(): void } {
+function load(
+  loader: WorkerLoaderLike,
+  code: string,
+  main: string = MAIN,
+): { entry: ToolEntrypoint; dispose(): void } {
   const worker = loader.load({
     compatibilityDate: COMPATIBILITY_DATE,
     mainModule: "main.js",
-    modules: { "main.js": MAIN, "harden.js": HARDEN, "tool.js": code },
+    modules: { "main.js": main, "harden.js": HARDEN, "tool.js": code },
     env: {},
     globalOutbound: null,
   });
@@ -432,6 +443,12 @@ export interface ToolRun {
   charge(ms: number): Promise<void>;
   /** Records the time left once the run ended (never refused). */
   record(ms: number): Promise<void>;
+  /**
+   * The isolate's main module, when not a tool's (a `node` script's runtime, ./node-runner.ts): it
+   * imports `./harden.js` first and `./tool.js` (the code) when it runs, and answers the same
+   * entrypoint (`ready`, `abort`, `run`, `start`, `resume`).
+   */
+  main?: string;
 }
 
 /** How often a running call's time is charged. */
@@ -452,7 +469,7 @@ async function runIn(
   loader: WorkerLoaderLike,
   run: ToolRun,
 ): Promise<{ output: string; isError: boolean }> {
-  const { entry, dispose } = load(loader, run.code);
+  const { entry, dispose } = load(loader, run.code, run.main);
   try {
     // Loading is not the script's time: the isolate is up before the clock starts.
     await within(entry.ready(), 30_000, "ETIMEDOUT: the tool's isolate did not start");

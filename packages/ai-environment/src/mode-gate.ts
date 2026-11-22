@@ -103,7 +103,10 @@ export type ApprovalMethod =
   | "changeset"
   // A sub-agent's approval a turn waits on through `agent.start` (statewalker/statewalker-ai#88):
   // the path is the sub-agent session, the target the approval.
-  | "agent";
+  | "agent"
+  // A run of code from the `bash` tool (statewalker/statewalker-root#142): the path is its command
+  // line, the content the exact run as JSON.
+  | "run";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -350,13 +353,20 @@ export function modeGated(view: FilesApi, gate: ModeGate): FilesApi {
 export function approvalAware(
   files: FilesApi,
   onApproval: (request: ApprovalRequest, call: StoredCall) => void,
+  /**
+   * An approval the turn waits on that another of its actions asked (a run of code from the
+   * `bash` tool, statewalker/statewalker-root#142): changes stop the same way, so the rest of a
+   * command line changes nothing before the user answers.
+   */
+  held?: () => ApprovalRequest | undefined,
 ): FilesApi {
   let waitingOn: ApprovalRequest | undefined;
   /** The approval each change asked waits on: a change tried again names its own. */
   const asked = new Map<string, ApprovalRequest>();
   const keyOf = (call: StoredCall) => `${call.method} ${call.path} ${call.target ?? ""}`;
   const change = async <T>(call: StoredCall, run: () => Promise<T>): Promise<T> => {
-    if (waitingOn) throw new ApprovalPending(asked.get(keyOf(call)) ?? waitingOn);
+    const pending = waitingOn ?? held?.();
+    if (pending) throw new ApprovalPending(asked.get(keyOf(call)) ?? pending);
     try {
       return await run();
     } catch (e) {
@@ -422,6 +432,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         throw codedError("EINVAL", "a limit is raised by the DO that counts it");
       case "memory":
         throw codedError("EINVAL", "a memory batch runs through the memory service");
+      case "run":
+        throw codedError("EINVAL", "a run of code runs on the session's executors");
       case "tasks":
         throw codedError("EINVAL", "a task is published through the task queue");
       default:

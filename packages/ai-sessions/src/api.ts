@@ -388,7 +388,12 @@ export interface StoredAction {
      * session, the target the approval): its answer continues the sub-agent, whose outcome is the
      * call's result (statewalker/statewalker-ai#88).
      */
-    | "agent";
+    | "agent"
+    /**
+     * A run of code from the `bash` tool (statewalker/statewalker-root#142): the path is its command
+     * line, the content the exact run as JSON (command, arguments, working directory, input).
+     */
+    | "run";
   path: string;
   /** A copy's or move's target. */
   target?: string;

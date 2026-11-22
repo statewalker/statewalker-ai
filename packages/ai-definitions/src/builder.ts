@@ -356,9 +356,14 @@ function walkProblems(root: Node): string[] {
 /**
  * The acceptance check of a workspace or project tool bundle (#82): it must parse, be
  * self-contained (no imports, no `import()`, no `import.meta`), and name no global outside the
- * language's own and the Worker's harmless ones (`ALLOWED_GLOBALS`). Answers the problems found.
+ * language's own and the Worker's harmless ones (`ALLOWED_GLOBALS`), and the host's own names it is
+ * given (`globals`: a `node` script's `process`, which its isolate defines). Answers the problems
+ * found.
  */
-export function acceptBundle(code: string): string[] {
+export function acceptBundle(
+  code: string,
+  options: { globals?: readonly string[] } = {},
+): string[] {
   let ast: Node;
   try {
     ast = parseJs(code, {
@@ -375,7 +380,7 @@ export function acceptBundle(code: string): string[] {
   const names = new Set<string>();
   for (const ref of global?.through ?? []) {
     const name = ref.identifier.name;
-    if (!ALLOWED_GLOBALS.has(name)) names.add(name);
+    if (!ALLOWED_GLOBALS.has(name) && !options.globals?.includes(name)) names.add(name);
   }
   for (const name of [...names].sort()) problems.push(`names the global '${name}'`);
   return problems;

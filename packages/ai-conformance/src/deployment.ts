@@ -51,6 +51,12 @@ export const CAN = {
    * (its secrets are sealed by a key of its own; `@statewalker/ai-host-do/browser`).
    */
   deploymentSecrets: RUNTIME !== "browser",
+  /**
+   * A Python engine (Pyodide) and a POSIX one (Wasmer) installed by the runtime's host
+   * (statewalker/statewalker-root#142): CellB in a browser and on Node. Elsewhere `python` and
+   * POSIX programs answer ENOSYS.
+   */
+  python: false,
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */

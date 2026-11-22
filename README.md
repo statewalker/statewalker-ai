@@ -99,6 +99,16 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   `/.system/uhp-servers`): it gets copies of the files its capability can read, and its artifacts
   return through the capability as one change set under the mode. Only the server's own token (a
   secret bound to its host) crosses; its items are `external`, never shown to the risk classifier.
+- **Code runs on executors, never in the agent's realm** (statewalker/statewalker-root#94, #142).
+  The agent's one `bash` tool routes `node`, `python` and the WASIX programs the deployment lists
+  (`EXECUTORS`) to the executor the deployment picked: `node` scripts are bundled from the session's
+  files, held to the acceptance check and run in a Worker Loader isolate with no network; `python`
+  and POSIX programs run on a code engine (Pyodide, Wasmer) the runtime's host installs
+  (`installCodeEngines` from `@statewalker/ai-environment/code-engines`, CellB only), and answer
+  ENOSYS elsewhere. Each run is the `code.run:<kind>` action under the roles and the mode, charged as
+  `executor_cpu_ms:<kind>` and killed when a limit refuses more or `EXEC_TIMEOUT_MS` passes. An
+  agent's `requires` is checked when its session starts. The external executor pool is an
+  interface only (`ExecutorPool`).
 - **Limits live where their counters do** (statewalker-root#158, #179). A limit
   `{meter, level, target?, value, period, on_exceed, warn_at?, increment?}` is set in the
   deployment's `LIMITS` var (a `deployment` limit is a ceiling each workspace and each user is held

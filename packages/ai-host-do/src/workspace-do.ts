@@ -85,9 +85,11 @@ import {
   type ClassifiedVerdict,
   checkModelsConfig,
   checkUserProvider,
+  codeEngines,
   DEFAULT_PRE_IMAGE_RETENTION,
   deploymentSecrets,
   discoverModels,
+  type ExecutorPlan,
   estimateRequest,
   type FilesRevert,
   FilesRpcHost,
@@ -123,6 +125,7 @@ import {
   type Period,
   PreImageLog,
   type PreImageRetention,
+  parseExecutors,
   parseModelsConfig,
   parsePreImageRetention,
   pickSessionModel,
@@ -137,6 +140,7 @@ import {
   sessionSecrets,
   turnTrace,
   USAGE_GROUPS,
+  unmetRequirement,
   windowOf,
   withDelay,
 } from "@statewalker/ai-environment";
@@ -300,6 +304,7 @@ export class Workspace extends DurableObject<Env> {
   readonly #harnesses = new Map<string, { at: number; ids: Map<string, string> }>();
   /** Plugin builds by level and source hash (statewalker/statewalker-root#130). */
   readonly #builds = new Map<string, Promise<{ plugin?: Plugin; problems: string[] }>>();
+  #plan?: ExecutorPlan;
   /**
    * The tools remote MCP servers listed, by session and server, while their answer's time to live
    * lasts (statewalker/statewalker-root#135): listing is a request through the gateway.
@@ -533,6 +538,15 @@ export class Workspace extends DurableObject<Env> {
     return built;
   }
 
+  /** The deployment's executors on this runtime (statewalker/statewalker-root#142), read once. */
+  #executors(): ExecutorPlan {
+    this.#plan ??= parseExecutors(this.env.EXECUTORS, {
+      isolate: !!this.env.LOADER,
+      engines: codeEngines(),
+    });
+    return this.#plan;
+  }
+
   /**
    * Pins the definitions of a new agent session (statewalker/statewalker-root#82, #128): the
    * plugins of the three levels, kept by content hash, and the agent, picked and narrowed now. The
@@ -600,6 +614,13 @@ export class Workspace extends DurableObject<Env> {
     const run: NarrowedAgent | undefined = agent
       ? await narrowAgent(catalog, agent, allow, remotes)
       : undefined;
+    // What the agent requires of the environment (statewalker/statewalker-root#142): a session
+    // whose agent needs an executor this deployment lacks does not start. A remote agent's
+    // requirements are its own harness's.
+    if (agent && !agent.remote) {
+      const unmet = unmetRequirement(agent.id, agent.requires, this.#executors());
+      if (unmet) throw codedError("ENOSYS", unmet);
+    }
     // The session's model, pinned with its fallbacks and the catalog it was picked from
     // (statewalker/statewalker-root#105): nothing fits, nothing is pinned and no session starts.
     const models = await pickSessionModel(await this.#modelCatalog(project, user), {
@@ -2169,7 +2190,17 @@ export class Workspace extends DurableObject<Env> {
    */
   async chargeUsage(
     capability: string,
-    call: { meter: string; amount: number; turn?: string; detail?: Record<string, unknown> },
+    call: {
+      meter: string;
+      amount: number;
+      turn?: string;
+      detail?: Record<string, unknown>;
+      /**
+       * Executor time already spent (the rest of a run once it ended, statewalker/statewalker-root#142):
+       * added without a check, so the next run is refused at once.
+       */
+      record?: boolean;
+    },
   ): Promise<WarningView[]> {
     const facts = await this.#authority.agentSessionOf(capability);
     const amount = Number(call.amount);
@@ -2177,6 +2208,19 @@ export class Workspace extends DurableObject<Env> {
       throw codedError("EINVAL", `an agent session does not charge ${call.meter}`);
     if (!(amount > 0)) return [];
     const turn = this.#turnOf(facts.session, call.turn);
+    if (call.record) {
+      if (!/^executor_cpu_ms(:|$)/.test(call.meter))
+        throw codedError("EINVAL", `only executor time is recorded after the fact`);
+      const scopes = await this.#limits.scopes(facts.project, facts.user);
+      return this.#limits.ledger
+        .add(
+          scopes,
+          { [call.meter]: amount },
+          this.#limits.meta(facts.project, facts.user, facts.session, turn),
+          call.detail,
+        )
+        .map(warningView);
+    }
     const warnings = await this.#limits.charge(
       facts.project,
       facts.user,
@@ -2185,6 +2229,71 @@ export class Workspace extends DurableObject<Env> {
       call.detail,
     );
     return warnings.map(warningView);
+  }
+
+  /**
+   * Decides one run of code from an agent session's `bash` tool (statewalker/statewalker-root#142):
+   * the `code.run:<kind>` action, which the user's roles must grant (the owner's) and the mode
+   * decides (`default` asks, `auto` classifies, unattended asks are denies). Each run is its own
+   * action: an approval names the exact command (its line, arguments, working directory and
+   * input) and runs only that once. Throws the approval it waits on, or the refusal.
+   */
+  async decideRun(
+    agentCapability: string,
+    call: { kind: string; line: string; content: string },
+  ): Promise<void> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    const kind = String(call.kind);
+    if (!["node", "python", "posix"].includes(kind))
+      throw codedError("EINVAL", `no kind of code '${kind}'`);
+    const line = String(call.line).slice(0, 500);
+    const access = await this.#access(facts.project, facts.user);
+    const req = { area: "code", action: "run", target: kind };
+    if (!access.member || !decide(access.grants, req))
+      throw codedError("EACCES", `may not run ${kind} code here (code.run:${kind})`);
+    const store = await this.#store;
+    const verdict = this.#settled((await this.#decider(facts, store))("code", "run", kind), facts);
+    if (verdict.verdict === "allow") return;
+    const content = new TextEncoder().encode(String(call.content));
+    const id = await approvalId(facts.session, "run", line, content);
+    const request: ApprovalRequest = {
+      id,
+      session: facts.session,
+      project: facts.project,
+      action: { method: "run", path: line, size: content.length },
+      permission: `code.run:${kind}`,
+      reason: verdict.reason,
+    };
+    const record = async (d: Omit<GateDecision, "action">) => {
+      if (verdict.step) await this.#record(facts, { action: request.action, ...d });
+    };
+    if (verdict.verdict === "deny")
+      throw codedError("EACCES", `may not run ${line}: ${verdict.reason}`);
+    if (await this.#registry.consume(id, facts.session, facts.user)) {
+      await record({ step: "approval", verdict: "allow", reason: "the user approved this action" });
+      return;
+    }
+    if (verdict.verdict === "classify") {
+      const c = await this.#classify(facts, store, request);
+      await record({
+        step: "classifier",
+        verdict: c.verdict,
+        reason: c.reason,
+        ...(c.model ? { model: c.model } : {}),
+        latency_ms: c.latency_ms,
+        ...(c.fallback ? { fallback: c.fallback } : {}),
+        ...(c.stop ? { stop: c.stop } : {}),
+      });
+      if (c.verdict === "allow") return;
+      if (c.verdict === "deny")
+        throw codedError(
+          "EACCES",
+          `may not run ${line}: the risk classifier denied it: ${c.reason}`,
+        );
+      throw approvalError({ ...request, reason: c.reason });
+    }
+    await record({ step: verdict.step ?? "mode", verdict: "ask", reason: verdict.reason });
+    throw approvalError(request);
   }
 
   /** A turn id of the session's own, or none. */
