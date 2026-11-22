@@ -80,9 +80,10 @@ export interface ModeGate {
 
 /**
  * The methods an approval can stand for, as the holder stores and runs them again: file changes,
- * and a database action (`db`: the path is the database, the content its encoded action).
+ * a database action (`db`: the path is the database, the content its encoded action), and a tool
+ * call (`tool`: the path is the tool's name, the content its arguments as JSON).
  */
-export type ApprovalMethod = "write" | "mkdir" | "remove" | "copy" | "move" | "db";
+export type ApprovalMethod = "write" | "mkdir" | "remove" | "copy" | "move" | "db" | "tool";
 
 const PREFIX = "EAPPROVAL: ";
 
@@ -390,6 +391,8 @@ export async function runStoredCall(files: FilesApi, call: StoredCall): Promise<
         return files.move(call.path, String(call.target));
       case "db":
         throw codedError("EINVAL", "a database action runs through the database gate");
+      case "tool":
+        throw codedError("EINVAL", "a tool call runs through the workspace's tools");
     }
   } catch (e) {
     const request = approvalOf(e);

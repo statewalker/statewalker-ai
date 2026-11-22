@@ -88,11 +88,6 @@ export interface Env {
    */
   DEPLOYMENT_SECRETS?: string;
   /**
-   * Test-only, until tool definitions (statewalker/statewalker-root#129): JSON REST tools offered
-   * to every agent, `[{plugin, name, method?, url, headers?, query?}]`, called through the gateway.
-   */
-  REST_TOOLS?: string;
-  /**
    * Compaction of long sessions (statewalker/statewalker-root#131), JSON `{budget_tokens?,
    * tail_messages? | tail_tokens?, group_size?, promote_threshold?, max_passes?, pin_tools?,
    * trim_min_chars?}`; unset settings keep their defaults (100 000 tokens, the last 8 messages, 6

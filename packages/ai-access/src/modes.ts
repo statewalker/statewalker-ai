@@ -82,7 +82,8 @@ export function parseRules(value: unknown): PermissionRules {
   return out;
 }
 
-const READS = ["files.read", "files.list", "comments.read", "db.read"];
+// `tools.read`: a tool whose action is read (statewalker/statewalker-root#129).
+const READS = ["files.read", "files.list", "comments.read", "db.read", "tools.read"];
 
 /** The built-in modes, with Claude Code's identifiers (#79). */
 export const BUILT_IN_MODES: Readonly<Record<string, ModeDefinition>> = {
@@ -286,6 +287,23 @@ export function modeOf(
 /** An action a mode decides: a permission request, and the tool asking, if a tool asks. */
 export interface ModeRequest extends AccessRequest {
   tool?: string;
+}
+
+/**
+ * A tool call as a mode decides it (statewalker/statewalker-root#90, #129): a read tool is a read
+ * (`tools.read`), any other a change (`tools.use`); `tool:<name>` rules match its projected name.
+ */
+export function toolRequest(tool: {
+  id: string;
+  name: string;
+  action: "read" | "write" | "admin";
+}): ModeRequest {
+  return {
+    area: "tools",
+    action: tool.action === "read" ? "read" : "use",
+    target: tool.id,
+    tool: tool.name,
+  };
 }
 
 export interface ModeDecision {

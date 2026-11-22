@@ -100,6 +100,7 @@ function safeClass(req: ModeRequest, protectedPaths: readonly string[]): string 
       ? undefined
       : "a write inside the project, outside protected paths";
   if (req.area === "db" && req.action === "read") return "a read inside the capability";
+  if (req.area === "tools" && req.action === "read") return "a tool whose action is read";
   return undefined;
 }
 

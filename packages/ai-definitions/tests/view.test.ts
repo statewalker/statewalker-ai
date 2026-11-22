@@ -91,7 +91,10 @@ describe("the definitions view", () => {
     ]);
     expect(await readText(view, "/skills/notes/summarize/SKILL.md")).toBe(SKILL("summarize"));
     const tool = JSON.parse(await readText(view, "/tools/notes__word_count.openapi.json"));
-    expect(tool.paths["/tools/notes/word_count"].post.operationId).toBe("word_count");
+    // One document in the restricted profile.
+    expect(Object.keys(tool.paths)).toEqual(["/tools/notes/word_count"]);
+    expect(tool.paths["/tools/notes/word_count"].post.operationId).toBe("notes__word_count");
+    expect(tool["x-dev.cellb.harness"]).toMatchObject({ id: "notes/word_count", source: "native" });
     // Hidden ones are absent, under any path.
     expect(await view.exists("/skills/review/checklist/SKILL.md")).toBe(false);
     expect(await view.exists("/tools/notes__delete_all.openapi.json")).toBe(false);
