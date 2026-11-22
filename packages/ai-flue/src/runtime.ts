@@ -377,7 +377,9 @@ function gatewayModel(session: string) {
     input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     reasoning: false,
-    contextWindow: 128_000,
+    // Unknown here (the gateway picks the model), and 0 keeps Flue's overflow recovery from
+    // compacting on an answer's token count: the harness compacts, Flue never does.
+    contextWindow: 0,
     maxTokens: 4096,
   };
 }
@@ -824,16 +826,21 @@ export class FlueSession {
       BY_SUBMISSION.delete(submission);
     }
   }
+}
 
-  /** Drops Flue's state of the session (its conversation, submissions and attachments). */
-  purge(sql: { exec(query: string, ...args: unknown[]): { toArray(): unknown[] } }): void {
-    const tables = sql
-      .exec(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'flue\\_%' ESCAPE '\\'",
-      )
-      .toArray() as { name: string }[];
-    for (const { name } of tables) if (name !== "flue_meta") sql.exec(`DELETE FROM "${name}"`);
-  }
+/**
+ * Drops Flue's state of an agent session from its DO's SQLite (its conversation, submissions and
+ * attachments), whether or not the DO built its Flue session in this incarnation.
+ */
+export function purgeFlue(sql: {
+  exec(query: string, ...args: unknown[]): { toArray(): unknown[] };
+}) {
+  const tables = sql
+    .exec(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'flue\\_%' ESCAPE '\\'",
+    )
+    .toArray() as { name: string }[];
+  for (const { name } of tables) if (name !== "flue_meta") sql.exec(`DELETE FROM "${name}"`);
 }
 
 /**

@@ -17,6 +17,7 @@ export {
   type EventsPage,
   type EventsQuery,
   eventOf,
+  flueStorage,
   type Item,
   type ItemsPage,
   type ItemsQuery,

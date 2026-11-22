@@ -7,6 +7,7 @@ import {
   type Deployment,
   type FakeModel,
   fakeModel,
+  flueStorage,
   login,
   restClient,
   rpcClient,
@@ -106,6 +107,40 @@ describe.each(transports)("Flue's runtime over %s", (name, connect) => {
     const request = model.requests.find((r) => r.lastUserText === text);
     expect(request?.tools).toEqual(expect.arrayContaining(["read", "write", "bash"]));
     expect(request?.tools).not.toContain("task");
+  });
+
+  it("never compacts in Flue: an answer near a large context window makes no extra model request", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: "fl-alpha" });
+    // Earlier turns Flue could fold away, were its compaction on.
+    const long = "lorem ipsum dolor sit amet ".repeat(2000);
+    for (const i of [1, 2, 3, 4])
+      await ann.sendMessage(s.id, { content: `earlier ${i} ${name} ${long}` });
+    const text = `BIG ${name}`;
+    const before = model.requests.length;
+    const turn = await ann.sendMessage(s.id, { content: text });
+    expect(turn.status).toBe("completed");
+    const made = model.requests.slice(before);
+    expect(made.filter((r) => r.summary)).toEqual([]);
+    expect(made.filter((r) => r.lastUserText === text)).toHaveLength(1);
+    expect(turn.items.filter((i) => i.kind === "message" && i.role === "assistant")).toHaveLength(
+      1,
+    );
+  });
+
+  it("deletes Flue's state with the session, even from a DO that never built its Flue session", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: "fl-alpha" });
+    await ann.sendMessage(s.id, { content: `remember ${name}` });
+    const rows = (tables: Record<string, number>) =>
+      Object.entries(tables)
+        .filter(([t]) => t !== "flue_meta")
+        .reduce((n, [, c]) => n + c, 0);
+    expect(rows(await flueStorage(deployment, ADMIN_KEY, s.id))).toBeGreaterThan(0);
+    // A fresh DO instance holds no Flue session in memory until a turn or an alarm builds it.
+    await flueStorage(deployment, ADMIN_KEY, s.id, { forget: true });
+    expect(await ann.deleteSession(s.id)).toEqual({ deleted: true });
+    expect(rows(await flueStorage(deployment, ADMIN_KEY, s.id))).toBe(0);
   });
 
   it("keeps the harness's turns: the second turn's model context is the first turn's items", async () => {

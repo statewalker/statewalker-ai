@@ -13,5 +13,6 @@ export {
   type FlueTurn,
   type HostTool,
   type ModelPort,
+  purgeFlue,
   TRACER_TOOLS,
 } from "./runtime.js";

@@ -11,7 +11,13 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { approvalAware, filesOverRpc, runStoredCall } from "@statewalker/ai-environment";
-import { completeWith, FlueSession, type ModelPort, TRACER_TOOLS } from "@statewalker/ai-flue";
+import {
+  completeWith,
+  FlueSession,
+  type ModelPort,
+  purgeFlue,
+  TRACER_TOOLS,
+} from "@statewalker/ai-flue";
 import {
   type AgentMessage,
   type AgentSessionConfig,
@@ -216,7 +222,28 @@ export class AgentSession extends DurableObject<Env> {
 
   async purge() {
     await this.#core.purge();
-    this.#flue?.purge(this.ctx.storage.sql);
+    // Flue's tables go too, whether or not this instance built its Flue session.
+    purgeFlue(this.ctx.storage.sql);
+  }
+
+  /**
+   * The rows of Flue's tables in this DO, by table (test-only admin route). With `forget`, the DO
+   * first drops its in-memory Flue session, as a fresh instance has none.
+   */
+  flueStorage(forget: boolean): Record<string, number> {
+    if (forget) this.#flue = undefined;
+    const sql = this.ctx.storage.sql;
+    const tables = sql
+      .exec<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'flue\\_%' ESCAPE '\\'",
+      )
+      .toArray();
+    return Object.fromEntries(
+      tables.map(({ name }) => [
+        name,
+        Number(sql.exec<{ n: number }>(`SELECT count(*) AS n FROM "${name}"`).one().n),
+      ]),
+    );
   }
 
   /** Flue's heartbeat over the session's unsettled submissions. */

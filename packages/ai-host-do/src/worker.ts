@@ -159,6 +159,11 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     return json({ usage: await workspaceOf(env, id).modelUsage() });
   }
+  if (collection === "sessions" && id && sub === "flue-storage") {
+    // The rows of Flue's tables in the session's DO; `forget` first drops its in-memory Flue
+    // session, as a fresh DO instance has none.
+    return json({ tables: await agentOf(env, id).flueStorage(body.forget === true) });
+  }
   if (collection === "sessions" && id && sub === "messages") {
     // Past the User DO, straight to the agent session: its turn's file calls go to the gate.
     if (typeof body.content !== "string") throw codedError("EINVAL", "content is required");
