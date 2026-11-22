@@ -6,6 +6,7 @@ export { codeOf, statusOf } from "@statewalker/ai-access";
 export {
   type ActionCall,
   AgentSessionCore,
+  type AnswerDecision,
   type CancelApprovals,
   type EffectOf,
   type OnTopics,
@@ -14,6 +15,9 @@ export {
   type RunAction,
   type RunTurn,
   type Steer,
+  type SubAgentAnswered,
+  type SubAgentDecision,
+  type SubAgentOutcome,
   type TurnOutcome,
   type TurnRun,
 } from "./agent-session.js";
@@ -26,8 +30,10 @@ export {
   type AgentSessionView,
   type AgentsQuery,
   type AgentView,
+  type AnswerAccepted,
   type ApiRequestKind,
   type ApprovalAnswer,
+  type ApprovalAnswered,
   type ApprovalRequest,
   type ApprovalView,
   type BranchesView,
@@ -213,6 +219,7 @@ export {
   uiMessageChunks,
   uiMessageFrames,
   uiMessageStreamResponse,
+  waitsOnSubAgent,
 } from "./ui-stream.js";
 export {
   DEFAULT_MODE,

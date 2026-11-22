@@ -52,12 +52,31 @@ export type {
 /** An approval as the session API lists it: the gate's request, and where it stands. */
 export interface ApprovalView extends ApprovalRequest {
   workspace: string;
+  /**
+   * The root of the asking session's tree, for a sub-agent's approval: the turns up to that root
+   * that started the sub-agent wait on it, and its answer continues each (statewalker/statewalker-ai#88).
+   */
+  root?: string;
   /** An unanswered approval past its time counts as denied: "expired". */
   /** "blocked": auto mode's risk classifier denied it; approving it retries exactly that action. */
   /** "cancelled": the turn that asked it was rewound (statewalker/statewalker-root#190). */
   status: "pending" | "allowed" | "denied" | "expired" | "blocked" | "cancelled";
   created: number;
   expires: number;
+}
+
+/**
+ * An answered approval: the turn that continues the session that asked it (`accepted`) and, for a
+ * sub-agent's approval, the turns that continue the sessions up its tree that waited on it, parent
+ * first, the root last (statewalker/statewalker-ai#88).
+ */
+export interface ApprovalAnswered {
+  approval: ApprovalView;
+  /** None for a rewind's revert of files (statewalker/statewalker-root#191): no turn runs. */
+  accepted?: MessageAccepted;
+  continued?: MessageAccepted[];
+  /** What the revert did, for a revert's approval. */
+  files?: FilesRevertResult;
 }
 
 /** The user's answer to an approval (statewalker/statewalker-root#79). */
@@ -360,7 +379,13 @@ export interface StoredAction {
     /** Answering a remote harness's question (the path is the `input_request` id). */
     | "input"
     /** A remote session's write-back, one change set (the target names it; content its digest). */
-    | "changeset";
+    | "changeset"
+    /**
+     * A sub-agent's approval the turn waits on through `agent.start` (the path is the sub-agent
+     * session, the target the approval): its answer continues the sub-agent, whose outcome is the
+     * call's result (statewalker/statewalker-ai#88).
+     */
+    | "agent";
   path: string;
   /** A copy's or move's target. */
   target?: string;
@@ -524,6 +549,14 @@ export interface MessageAccepted {
   /** The approvals `void_approvals` passed over. */
   voided_approvals?: string[];
 }
+
+/**
+ * An answer accepted by the session that asked it, with the turns of the sessions up its tree that
+ * waited on it through `agent.start` and that the answer continues too, parent first.
+ */
+export type AnswerAccepted = Omit<MessageAccepted, "stream_url"> & {
+  continued?: Omit<MessageAccepted, "stream_url">[];
+};
 
 /** Items, paged: `after` / `before` are item ids. */
 export interface ItemsQuery {
@@ -1004,10 +1037,7 @@ export interface SessionApi {
    * rewind's revert of files (statewalker/statewalker-root#191) runs no turn: allowing reverts the
    * files then, and `files` says what it did.
    */
-  answerApproval(
-    id: string,
-    answer: ApprovalAnswer,
-  ): Promise<{ approval: ApprovalView; accepted?: MessageAccepted; files?: FilesRevertResult }>;
+  answerApproval(id: string, answer: ApprovalAnswer): Promise<ApprovalAnswered>;
   /** One call of the files-RPC protocol on the caller's own file view of the token's workspace. */
   files(method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
   /** A project's databases the caller may use (`db.read` or `db.write`), with their sizes. */
@@ -1381,7 +1411,7 @@ export interface AgentPort {
    * Continues the session with the user's answer to an approval it waits on: a turn that runs the
    * stored action again (re-checked at the gate), or tells the model the denial.
    */
-  answer(approval: string, answer: ApprovalAnswer): Promise<Omit<MessageAccepted, "stream_url">>;
+  answer(approval: string, answer: ApprovalAnswer): Promise<AnswerAccepted>;
   /**
    * The answer to a rewind's revert of files (statewalker/statewalker-root#191): no turn runs; an
    * allow reverts the files now.
@@ -1941,17 +1971,22 @@ export function createSessionApi(token: string, ports: SessionApiPorts): Session
     async answerApproval(id, answer) {
       const checked = approvalAnswer(answer);
       const approval = await ports.user.answerApproval(token, String(id), checked);
+      // A rewind's revert of files runs no turn (statewalker/statewalker-root#191).
       if (approval.action.method === "revert") {
         const { files } = await ports.agent(approval.session).answerRevert(approval.id, checked);
         return { approval, files };
       }
-      const accepted = await ports.agent(approval.session).answer(approval.id, checked);
+      const { continued, ...accepted } = await ports
+        .agent(approval.session)
+        .answer(approval.id, checked);
+      const withUrl = (a: Omit<MessageAccepted, "stream_url">): MessageAccepted => ({
+        ...a,
+        stream_url: streamUrl(a.session_id, a.turn_id, a.offset),
+      });
       return {
         approval,
-        accepted: {
-          ...accepted,
-          stream_url: streamUrl(approval.session, accepted.turn_id, accepted.offset),
-        },
+        accepted: withUrl(accepted),
+        ...(continued?.length ? { continued: continued.map(withUrl) } : {}),
       };
     },
     files: (method, args) => ports.user.files(token, method, args),

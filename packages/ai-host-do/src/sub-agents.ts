@@ -4,9 +4,15 @@
 // capability the workspace narrows from the parent's (so it can do nothing its parent can't and
 // stops when any ancestor is revoked), tools within the parent's, and a mode that may only be
 // stricter. The model calls it `agent_start` (tool names hold no dots).
-import { codedError } from "@statewalker/ai-access";
+import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
+import type { StoredCall } from "@statewalker/ai-environment";
 import type { HostTool } from "@statewalker/ai-flue";
-import type { AgentSessionConfig, SubAgentRequest, TurnView } from "@statewalker/ai-sessions";
+import type {
+  AgentSessionConfig,
+  SubAgentOutcome,
+  SubAgentRequest,
+  TurnView,
+} from "@statewalker/ai-sessions";
 
 export const AGENT_START = "agent_start";
 
@@ -21,6 +27,45 @@ export interface SubAgentHost {
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._/:-]{0,127}$/;
+
+/**
+ * The approvals a child's turn waits on that it asked itself, as their requests: the ones the
+ * parent's turn then waits on too (statewalker/statewalker-ai#88).
+ */
+export function askedBy(turn: TurnView): ApprovalRequest[] {
+  if (turn.status !== "waiting") return [];
+  const ids = turn.stop_reason?.approval_ids ?? [];
+  const out: ApprovalRequest[] = [];
+  for (const item of turn.items)
+    if (
+      (item.kind === "approval" || item.kind === "question") &&
+      item.approval &&
+      item.request &&
+      ids.includes(item.approval) &&
+      !out.some((r) => r.id === item.approval)
+    )
+      out.push(item.request as ApprovalRequest);
+  return out;
+}
+
+/**
+ * What a child's turn that continued it with an answer hands back to the parent waiting on that
+ * answer: its outcome, or the approvals it waits on now.
+ */
+export function outcomeOf(session: string, turn: TurnView): SubAgentOutcome {
+  const waiting = askedBy(turn);
+  const answer = answerOf(session, turn);
+  // What the answered action did (run, or denied), so the parent learns it whatever the child says.
+  const done = turn.items
+    .filter((i) => i.kind === "tool_result" && i.approval && i.output)
+    .map((i) => String(i.output));
+  const [head, ...rest] = answer.output.split("\n");
+  return {
+    ...answer,
+    output: [head, ...done, ...rest].join("\n"),
+    ...(turn.status === "waiting" ? { waiting } : {}),
+  };
+}
 
 /** What the child's turn hands back to the parent's model. */
 function answerOf(session: string, turn: TurnView): { output: string; isError: boolean } {
@@ -41,9 +86,16 @@ function answerOf(session: string, turn: TurnView): { output: string; isError: b
 
 /**
  * The `agent.start` tool of one session: `offered` are the names of the tools that session is
- * offered, so the child's are always among them.
+ * offered, so the child's are always among them. A child whose turn waits on approvals it asked
+ * makes the caller's turn wait on them too (`onApproval`, as a stored `agent` action): the user's
+ * answer continues the child, then the caller with the child's outcome
+ * (statewalker/statewalker-ai#88).
  */
-export function agentStartTool(offered: readonly string[], host: SubAgentHost): HostTool {
+export function agentStartTool(
+  offered: readonly string[],
+  host: SubAgentHost,
+  onApproval?: (request: ApprovalRequest, call: StoredCall) => void,
+): HostTool {
   return {
     name: AGENT_START,
     description:
@@ -85,7 +137,13 @@ export function agentStartTool(offered: readonly string[], host: SubAgentHost): 
           ...(mode ? { mode } : {}),
           tools: allowed,
         });
-        return answerOf(session.id, await host.run(config, message, signal));
+        const turn = await host.run(config, message, signal);
+        const asked = onApproval ? askedBy(turn) : [];
+        for (const request of asked)
+          onApproval?.(request, { method: "agent", path: session.id, target: request.id });
+        const answer = answerOf(session.id, turn);
+        // Like any call waiting on an approval: an error result naming it (the answer is its result).
+        return asked.length ? { ...answer, isError: true } : answer;
       } catch (e) {
         return { output: String((e as Error)?.message ?? e), isError: true };
       }
