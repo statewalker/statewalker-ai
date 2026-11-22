@@ -26,6 +26,8 @@ import type {
   ApprovalAnswer,
   ApprovalView,
   CreatedServiceAccount,
+  DatabaseCall,
+  DatabaseView,
   DeleteSecretRequest,
   Metadata,
   ModelsQuery,
@@ -74,6 +76,10 @@ export interface WorkspaceGrants {
   grantApproval(userCapability: string, grant: ApprovalGrant): Promise<void>;
   /** One files-RPC call on the file view a capability holds, at the workspace's gate. */
   files(capability: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown>;
+  /** A project's databases the user may use there. */
+  listDatabases(userCapability: string, project: string): Promise<DatabaseView[]>;
+  /** One db-rpc call on a project's database, at the workspace's gate. */
+  databaseCall(userCapability: string, call: DatabaseCall): Promise<unknown>;
   /** The secrets of one level the user manages there; EACCES without `secrets.write:<level>`. */
   listSecrets(userCapability: string, scope: SecretScope): Promise<SecretView[]>;
   setSecret(userCapability: string, req: SetSecretRequest): Promise<SecretView>;
@@ -730,6 +736,20 @@ export class UserSessions implements UserPort {
   async files(token: string, method: FilesRpcMethod, args: unknown[]): Promise<unknown> {
     const us = await this.#userSession(token);
     return this.#o.workspace(us.workspace).files(us.capability, method, args);
+  }
+
+  /** A project's databases the user may use, as the workspace's gate answers them. */
+  async listDatabases(token: string, project: string): Promise<{ databases: DatabaseView[] }> {
+    const us = await this.#userSession(token);
+    return {
+      databases: await this.#o.workspace(us.workspace).listDatabases(us.capability, project),
+    };
+  }
+
+  /** One db-rpc call on a project's database, with the user capability of their user session. */
+  async databaseCall(token: string, call: DatabaseCall): Promise<unknown> {
+    const us = await this.#userSession(token);
+    return this.#o.workspace(us.workspace).databaseCall(us.capability, call);
   }
 
   async listSecrets(token: string, scope: SecretScope): Promise<{ secrets: SecretView[] }> {

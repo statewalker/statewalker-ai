@@ -7,6 +7,7 @@ export type ErrorCode =
   | "ENOENT" // no such thing, or not visible to the caller (404)
   | "EINVAL" // a malformed request (400)
   | "EBUSY" // refused in the thing's current state: running, archived, already ended (409)
+  | "EEXIST" // it exists already (409)
   | "ENOSYS" // not implemented (501)
   | "EIO"; // anything else (500)
 
@@ -20,7 +21,16 @@ export function codedError(code: ErrorCode, message: string): CodedError {
   return err;
 }
 
-const CODES = new Set<string>(["EAUTH", "EACCES", "ENOENT", "EINVAL", "EBUSY", "ENOSYS", "EIO"]);
+const CODES = new Set<string>([
+  "EAUTH",
+  "EACCES",
+  "ENOENT",
+  "EINVAL",
+  "EBUSY",
+  "EEXIST",
+  "ENOSYS",
+  "EIO",
+]);
 
 /** The code of an error, from `code` or the message's prefix; "EIO" when it carries none. */
 export function codeOf(e: unknown): ErrorCode {
@@ -36,6 +46,7 @@ const STATUS: Record<ErrorCode, number> = {
   ENOENT: 404,
   EINVAL: 400,
   EBUSY: 409,
+  EEXIST: 409,
   ENOSYS: 501,
   EIO: 500,
 };
