@@ -57,6 +57,97 @@ describe("files-RPC to the gate", () => {
     await expect(server.call("readChunk", [streamId, 1])).rejects.toThrow(/EACCES/);
   });
 
+  it("answers every chunk of a read cut by a revocation with the refusal, also one still waiting when another chunk was refused", async () => {
+    // The store produces the first blocks, then waits: chunk 5 passes its check before the
+    // revocation and waits for its block; chunk 1 is refused after it and closes the stream.
+    const store = new MemFilesApi();
+    await store.write("/alpha/big.bin", [new Uint8Array(8 * 1024).fill(3)]);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const slow = Object.create(store) as MemFilesApi;
+    slow.read = async function* (path, options) {
+      let n = 0;
+      for await (const piece of store.read(path, options))
+        for (let at = 0; at < piece.length; at += 1024) {
+          if (n++ > 2) await held;
+          yield piece.subarray(at, at + 1024);
+        }
+    };
+    let revoked = false;
+    const server = gatedFilesRpc(slow, {
+      systemFolder: ".system",
+      blockSize: 1024,
+      visible: async () => true,
+      authorize: async (action, path) => {
+        if (revoked) throw codedError("EACCES", `may not ${action} ${path}`);
+      },
+    });
+    const { streamId } = (await server.call("openRead", ["/alpha/big.bin"])) as {
+      streamId: string;
+    };
+    await server.call("readChunk", [streamId, 0]);
+    const waiting = server.call("readChunk", [streamId, 5]);
+    waiting.catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+    revoked = true;
+    const refused = server.call("readChunk", [streamId, 1]);
+    refused.catch(() => {});
+    await expect(waiting).rejects.toThrow(/EACCES/);
+    release();
+    await expect(refused).rejects.toThrow(/EACCES/);
+    await expect(server.call("readChunk", [streamId, 2])).rejects.toThrow(/EACCES/);
+  });
+
+  it("refuses a chunk whose check passed only after another chunk of its stream was refused", async () => {
+    // Chunk 1's check read the access before the revocation but answers after chunk 2's refusal.
+    const store = new MemFilesApi();
+    await store.write("/alpha/big.bin", [new Uint8Array(8 * 1024).fill(3)]);
+    let revoked = false;
+    let hold: Promise<void> | undefined;
+    const server = gatedFilesRpc(store, {
+      systemFolder: ".system",
+      blockSize: 1024,
+      visible: async () => true,
+      authorize: async (action, path) => {
+        const allowed = !revoked;
+        if (hold) await hold;
+        if (!allowed) throw codedError("EACCES", `may not ${action} ${path}`);
+      },
+    });
+    const { streamId } = (await server.call("openRead", ["/alpha/big.bin"])) as {
+      streamId: string;
+    };
+    await server.call("readChunk", [streamId, 0]);
+    await new Promise((r) => setTimeout(r, 10)); // the server has read ahead
+    let release!: () => void;
+    hold = new Promise<void>((r) => (release = r));
+    const late = server.call("readChunk", [streamId, 1]);
+    late.catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+    hold = undefined;
+    revoked = true;
+    await expect(server.call("readChunk", [streamId, 2])).rejects.toThrow(/EACCES/);
+    release();
+    await expect(late).rejects.toThrow(/EACCES/);
+  });
+
+  it("refuses chunks of a write after one of its chunks was refused", async () => {
+    const { server, revoke, store } = await fixture();
+    const { streamId } = (await server.call("openWrite", ["/alpha/w2.bin"])) as {
+      streamId: string;
+    };
+    await server.call("writeChunk", [streamId, 0, new Uint8Array([1, 2])]);
+    revoke();
+    await expect(server.call("writeChunk", [streamId, 1, new Uint8Array([3])])).rejects.toThrow(
+      /EACCES/,
+    );
+    await expect(server.call("writeChunk", [streamId, 2, new Uint8Array([4])])).rejects.toThrow(
+      /EACCES/,
+    );
+    await expect(server.call("closeWrite", [streamId, 3])).rejects.toThrow(/EACCES/);
+    expect(await store.exists("/alpha/w2.bin")).toBe(false);
+  });
+
   it("stops a read at the next chunk once the holder is removed from the project", async () => {
     const store = new MemFilesApi();
     await store.write("/alpha/big.bin", [new Uint8Array(64 * 1024).fill(3)]);
