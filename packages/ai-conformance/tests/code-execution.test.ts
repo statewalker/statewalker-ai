@@ -81,6 +81,8 @@ beforeAll(async () => {
     CATALOG: JSON.stringify(CATALOG),
     DEFAULT_AGENT: "code/default",
     EXEC_TIMEOUT_MS: "3000",
+    // WASIX programs the `bash` tool routes to the posix executor.
+    EXECUTORS: JSON.stringify({ programs: ["rg", "tee"] }),
   });
   const files: Record<string, string> = {};
   for (const t of ["rest", "rpc"]) {
@@ -92,6 +94,7 @@ beforeAll(async () => {
       });
       files[`/${p}/doc.txt`] = "one two three four";
       for (const [name, text] of Object.entries(SCRIPTS)) files[`/${p}/${name}`] = text;
+      files[`/${p}/todo.txt`] = "one TODO\ntwo\nthree TODO\n";
       files[`/${p}/hello.py`] = "import sys\nprint('hello from python', *sys.argv[1:])\n";
       files[`/${p}/count.py`] = [
         "import os",
@@ -218,6 +221,27 @@ describe.each(transports)("code execution over %s", (name, connect) => {
       content: call("read", { path: `/${project}/denied.txt` }),
     });
     expect(results(read).at(-1)).toMatchObject({ isError: true });
+  });
+
+  it("runs WASIX programs on a Wasmer engine, live over the session's files, and answers ENOSYS where there is none", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project });
+    const turn = await ann.sendMessage(s.id, { content: bash("rg -c TODO todo.txt") });
+    if (!CAN.posix) {
+      expect(outputOf(turn)).toMatch(/rg: ENOSYS/);
+      return;
+    }
+    expect(outputOf(turn)).toMatch(/^2\b/);
+    const wrote = await ann.sendMessage(s.id, { content: bash("echo from wasmer | tee teed.txt") });
+    expect(outputOf(wrote)).toContain("from wasmer");
+    const read = await ann.sendMessage(s.id, {
+      content: call("read", { path: `/${project}/teed.txt` }),
+    });
+    expect(outputOf(read)).toContain("from wasmer");
+    const other = await ann.sendMessage(s.id, {
+      content: bash(`rg -c yours /other-${t}/secret.txt`),
+    });
+    expect(outputOf(other)).not.toMatch(/^1\b/);
   });
 
   it("checks an agent's requires when its session starts", async () => {

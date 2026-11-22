@@ -109,7 +109,12 @@ packages/ai-conformance/mutations.json` runs the mutation run on the gate and `a
   `pyodideEngine(pyodideNodeHost({indexDir}))` on Node (a child process under Node's permission
   model) or `pyodideEngine(pyodideWorkerHost({engineUrl, indexURL}))` in a page (a module Worker,
   its script `engines/pyodide-engine.mjs` served with a CSP); the session's project is copied in
-  before a run and each change written back through the gate. Each run is the `code.run:<kind>` action under the roles and the mode, charged as
+  before a run and each change written back through the gate. `@statewalker/ai-environment/wasmer`
+  is the Wasmer engine on Node (`wasmerEngine({sdkDist, packages?, cache?})`, a child process per
+  agent session under Node's permission model): the WASIX programs the deployment lists in
+  `EXECUTORS.programs` run in a sandbox whose `/workspace` is the session's file view, each file
+  operation forwarded live to the gate. Wasmer in a page needs a cross-origin isolated page and is
+  not wired yet. Each run is the `code.run:<kind>` action under the roles and the mode, charged as
   `executor_cpu_ms:<kind>` and killed when a limit refuses more or `EXEC_TIMEOUT_MS` passes. An
   agent's `requires` is checked when its session starts. The external executor pool is an
   interface only (`ExecutorPool`).

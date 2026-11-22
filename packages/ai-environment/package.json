@@ -19,7 +19,11 @@
     "./webllm": "./src/webllm.ts",
     "./code-engines": "./src/code-engines.ts",
     "./pyodide": "./src/pyodide.ts",
-    "./engines/pyodide-engine.mjs": "./engines/pyodide-engine.mjs"
+    "./engines/pyodide-engine.mjs": "./engines/pyodide-engine.mjs",
+    "./wasmer": "./src/wasmer.ts",
+    "./engines/wasmer-engine.mjs": "./engines/wasmer-engine.mjs",
+    "./engines/wasmer-fs-thread.mjs": "./engines/wasmer-fs-thread.mjs",
+    "./engines/wasmer-preload.mjs": "./engines/wasmer-preload.mjs"
   },
   "files": [
     "dist",
@@ -54,7 +58,15 @@
         "import": "./dist/pyodide.js",
         "default": "./dist/pyodide.js"
       },
-      "./engines/pyodide-engine.mjs": "./engines/pyodide-engine.mjs"
+      "./engines/pyodide-engine.mjs": "./engines/pyodide-engine.mjs",
+      "./wasmer": {
+        "types": "./dist/wasmer.d.ts",
+        "import": "./dist/wasmer.js",
+        "default": "./dist/wasmer.js"
+      },
+      "./engines/wasmer-engine.mjs": "./engines/wasmer-engine.mjs",
+      "./engines/wasmer-fs-thread.mjs": "./engines/wasmer-fs-thread.mjs",
+      "./engines/wasmer-preload.mjs": "./engines/wasmer-preload.mjs"
     }
   },
   "scripts": {

@@ -38,6 +38,7 @@
     "openai": "catalog:",
     "@statewalker/ai-openai-compat": "workspace:^",
     "@statewalker/ai-uhp": "workspace:^",
-    "pyodide": "catalog:"
+    "pyodide": "catalog:",
+    "@wasmer/sdk": "catalog:"
   }
 }
