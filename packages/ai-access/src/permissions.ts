@@ -45,8 +45,9 @@ export const AREAS: Readonly<Record<string, AreaSpec>> = {
   files: { actions: ["read", "list", "write", "delete"], target: "path" },
   comments: { actions: ["read", "write"], target: "path" },
   // `tools.use:<plugin>/<tool>` shows a tool in the definitions mount and offers it (#80, #90);
+  // `tools.read:<plugin>/<tool>` does so only for a read tool (readers, #129);
   // `skills.use:<plugin>/<skill>` a skill (#80).
-  tools: { actions: ["call", "use"], target: "name" },
+  tools: { actions: ["call", "use", "read"], target: "name" },
   skills: { actions: ["use"], target: "name" },
   db: { actions: ["read", "write", "admin"], target: "name" },
   models: { actions: ["use"], target: "name" },

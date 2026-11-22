@@ -89,6 +89,11 @@ export async function handleSessionRest(
           },
         });
       }
+      if (request.method === "POST" && sub === "mcp") {
+        // MCP over Streamable HTTP, answered with JSON: a notification is accepted (202).
+        const answered = await api().mcp(id, (await bodyOf(request)) as never);
+        return answered === null ? new Response(null, { status: 202 }) : json(answered);
+      }
       if (request.method === "POST" && sub === "revoke") return api().revokeSession(id);
       if (request.method === "POST" && sub === "archive") return api().archiveSession(id);
       if (request.method === "GET" && sub === "items") return api().listItems(id, itemsQuery(url));

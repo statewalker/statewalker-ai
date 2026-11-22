@@ -13,6 +13,7 @@ import {
   type ApprovalRequest,
   type AutoSettings,
   accessOf,
+  approvalId,
   chainRoleSources,
   classifierPrompt,
   classifierTranscript,
@@ -28,6 +29,7 @@ import {
   isMode,
   type ModeDecision,
   type ModeDefinition,
+  matchRules,
   modeOf,
   PERMISSION_RULES_FILE,
   type PermissionRules,
@@ -38,16 +40,19 @@ import {
   type RoleEntries,
   type RoleGrant,
   type RoleSource,
+  type RuleLayer,
   resolveRoles,
   SqlRoleSource,
   type StoredRootKey,
   settleAsk,
   type ToolGrant,
+  toolRequest,
   WORKSPACE_ROLES,
   WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
   type Allow,
+  catalogToolDefinitions,
   catalogTools,
   definitionsView,
   findAgent,
@@ -55,8 +60,12 @@ import {
   narrowAgent,
   type Plugin,
   readPlugins,
+  restRequest,
+  TOOL_EXTENSION,
+  type ToolDefinition,
 } from "@statewalker/ai-definitions";
 import {
+  approvalError,
   type CatalogModel,
   type ClassifiedVerdict,
   checkModelsConfig,
@@ -65,6 +74,7 @@ import {
   discoverModels,
   FilesRpcHost,
   type FilesRpcMethod,
+  type GateDecision,
   type GatedFilesOptions,
   type GatewayResult,
   gatedFilesRpc,
@@ -270,7 +280,10 @@ export class Workspace extends DurableObject<Env> {
 
   /** The user's `<area>.use` permissions in a project, as the definitions ask for them. */
   #allow(grants: readonly RoleGrant[]): Allow {
-    return (area, target) => decide(grants, { area, action: "use", target });
+    // A read tool may also be used with `tools.read` (readers, statewalker/statewalker-root#129).
+    return (area, target, action) =>
+      decide(grants, { area, action: "use", target }) ||
+      (area === "tools" && action === "read" && decide(grants, { area, action: "read", target }));
   }
 
   #readDeploymentPlugins() {
@@ -587,7 +600,7 @@ export class Workspace extends DurableObject<Env> {
       return cached.grants;
     };
     const view = await definitionsView(found.catalog, {
-      allow: async (area, target) => this.#allow(await grants())(area, target),
+      allow: async (area, target, action) => this.#allow(await grants())(area, target, action),
       ...(found.run ? { agent: found.run } : {}),
     });
     return new CompositeFilesApi(store).mount(mount, view);
@@ -688,6 +701,39 @@ export class Workspace extends DurableObject<Env> {
   }
 
   /**
+   * What decides one agent session's actions now: the user session's mode (a classifier mode the
+   * session fell back from is `default`), a sub-agent's own modes, and the rules of the deployment,
+   * the project, the user and the session; `recorded` while decisions become items (a classifier
+   * mode, or one fallen back from).
+   */
+  async #modeState(facts: AgentSessionFacts, store: FilesApi) {
+    const root = `/${facts.project}`;
+    const state = this.#registry.userSession(facts.user);
+    const fallen = this.#denials.fallenBack(facts.session);
+    const effective = (m: ResolvedMode) =>
+      m.classifier && fallen ? modeOf(DEFAULT_MODE, this.#modes) : m;
+    const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
+    const mode = effective(modeOf(name, this.#modes));
+    const projectRules = parseRules(
+      await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
+    );
+    const layers: RuleLayer[] = [
+      { source: "deployment", rules: this.#deploymentRules },
+      { source: "project", rules: projectRules },
+      { source: "user", rules: state?.rules ?? {} },
+      this.#registry.sessionLayer(facts.session, facts.user),
+    ];
+    // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user session's,
+    // and the strictest verdict wins: a child is never looser than its parent. A mode the
+    // deployment no longer knows denies.
+    const extra = (facts.modes ?? []).map((m) =>
+      isMode(m, this.#modes) ? effective(modeOf(m, this.#modes)) : undefined,
+    );
+    const recorded = !!mode.classifier || (fallen && name !== DEFAULT_MODE);
+    return { mode, extra, layers, recorded };
+  }
+
+  /**
    * The mode and the rules of one agent session, as the gate decides them at every call. In a
    * classifier mode (`auto`, statewalker/statewalker-root#137) the rules come first (broad allow
    * rules set aside), then the safe classes; what they leave goes to the risk classifier, and every
@@ -702,31 +748,7 @@ export class Workspace extends DurableObject<Env> {
       decide: async (checks) => {
         const root = `/${facts.project}`;
         // Read once per operation: the user session's mode and rules, and the project's rules.
-        const state = this.#registry.userSession(facts.user);
-        const fallen = this.#denials.fallenBack(facts.session);
-        // A classifier mode the session fell back from is `default`.
-        const effective = (m: ResolvedMode) =>
-          m.classifier && fallen ? modeOf(DEFAULT_MODE, this.#modes) : m;
-        const name = state && isMode(state.mode, this.#modes) ? state.mode : DEFAULT_MODE;
-        const mode = effective(modeOf(name, this.#modes));
-        const projectRules = parseRules(
-          await tryReadText(store, `${root}/${DEFAULT_SYSTEM_FOLDER}/${PERMISSION_RULES_FILE}`),
-        );
-        const layers = [
-          { source: "deployment", rules: this.#deploymentRules },
-          { source: "project", rules: projectRules },
-          { source: "user", rules: state?.rules ?? {} },
-          this.#registry.sessionLayer(facts.session, facts.user),
-        ];
-        // A sub-agent's own modes (statewalker/statewalker-root#126) decide beside the user
-        // session's, and the strictest verdict wins: a child is never looser than its parent. A
-        // mode the deployment no longer knows denies.
-        const extra = (facts.modes ?? []).map((m) =>
-          isMode(m, this.#modes) ? effective(modeOf(m, this.#modes)) : undefined,
-        );
-        // Decisions carry their step (and so become items) while the session runs a classifier
-        // mode, or fell back from one.
-        const recorded = !!mode.classifier || (fallen && name !== DEFAULT_MODE);
+        const { mode, extra, layers, recorded } = await this.#modeState(facts, store);
         const decideIn = (m: ResolvedMode, action: FileAction, target: string): ModeVerdict => {
           const req = { area: "files", action, target };
           if (m.classifier) {
@@ -941,6 +963,197 @@ export class Workspace extends DurableObject<Env> {
     if (!(await this.#mayCallTool(facts, tool)))
       throw codedError("EACCES", `may not call ${String(tool?.plugin)}/${String(tool?.tool)}`);
     return this.#authority.forTool(agentCapability, tool);
+  }
+
+  // --- tools (statewalker/statewalker-root#90, #129) -------------------------------------------
+
+  /**
+   * Every tool of an agent session now, with the verdict a call would get: the plugin tools its
+   * pinned agent requested that the user's role grants now (`tools.use`, or `tools.read` for a read
+   * tool), then the mode (a read tool is a read, any other a change); and the harness's own tools
+   * the session names, decided only by `tool:` rules (their effects are decided at their own
+   * gates). Tools the mode denies are left out; asking ones stay, and ask per call.
+   */
+  async #toolSet(
+    facts: AgentSessionFacts,
+    harness: readonly string[],
+  ): Promise<{ name: string; verdict: ModeVerdict; definition?: ToolDefinition }[]> {
+    const access = await this.#access(facts.project, facts.user);
+    if (!access.member)
+      throw codedError("EACCES", `${facts.user} is not a member of ${facts.project}`);
+    const store = await this.#store;
+    const { mode, extra, layers, recorded } = await this.#modeState(facts, store);
+    const strictest = (verdicts: ModeVerdict[]) =>
+      verdicts.reduce((a, b) => (STRICTNESS[b.verdict] > STRICTNESS[a.verdict] ? b : a));
+    const out: { name: string; verdict: ModeVerdict; definition?: ToolDefinition }[] = [];
+    // The harness's tools: only `tool:` rules decide whether they are offered.
+    const toolRules = (l: RuleLayer): RuleLayer => {
+      const only = (list?: readonly string[]) => list?.filter((e) => e.startsWith("tool:"));
+      return {
+        ...l,
+        rules: { allow: only(l.rules.allow), ask: only(l.rules.ask), deny: only(l.rules.deny) },
+      };
+    };
+    const byTool = (m: ResolvedMode): ResolvedMode => ({
+      ...m,
+      allow: m.allow.filter((r) => "tool" in r),
+      ask: m.ask.filter((r) => "tool" in r),
+      deny: m.deny.filter((r) => "tool" in r),
+    });
+    for (const name of new Set(harness)) {
+      const req = toolRequest({ id: `harness/${name}`, name, action: "write" });
+      const denied = [mode, ...extra].some(
+        (m) =>
+          !m ||
+          matchRules(req, { mode: byTool(m), layers: layers.map(toolRules) })?.verdict === "deny",
+      );
+      if (!denied) out.push({ name, verdict: { verdict: "allow", reason: "a harness tool" } });
+    }
+    // The plugin tools of the session's pinned agent.
+    const found = await this.#definitions.session(facts.session);
+    if (!found || found.user !== facts.user || found.project !== facts.project) return out;
+    const requested = new Set(found.run?.tools ?? []);
+    const allow = this.#allow(access.grants);
+    for (const definition of await catalogToolDefinitions(found.catalog)) {
+      const x = definition[TOOL_EXTENSION];
+      if (!requested.has(x.id) || !(await allow("tools", x.id, x.action))) continue;
+      const req = toolRequest(x);
+      const decideIn = (m: ResolvedMode | undefined): ModeVerdict => {
+        if (!m) return { verdict: "deny", reason: "an unknown sub-agent mode", step: "mode" };
+        if (m.classifier) {
+          const d = decideAuto(req, { mode: m, layers, protectedPaths: this.#auto.protectedPaths });
+          return d.step === "classifier"
+            ? { verdict: "classify", reason: d.reason, step: "classifier" }
+            : { verdict: d.verdict, reason: d.reason, step: d.step };
+        }
+        const d = decideMode(req, { mode: m, layers });
+        return {
+          verdict: d.verdict,
+          reason: d.reason,
+          step: d.source === "mode" ? "mode" : "rule",
+        };
+      };
+      let verdict = strictest([decideIn(mode), ...extra.map(decideIn)]);
+      if (verdict.verdict !== "classify")
+        verdict = settleAsk(verdict as ModeVerdict & { verdict: "allow" | "ask" | "deny" }, facts);
+      if (!recorded) delete verdict.step;
+      if (verdict.verdict !== "deny") out.push({ name: x.name, verdict, definition });
+    }
+    return out;
+  }
+
+  /**
+   * The tools an agent session is offered now (see #toolSet): the plugin tools as their
+   * documents, the harness's by name. The agent session offers exactly these to its model and
+   * lists them on its MCP endpoint.
+   */
+  async sessionTools(
+    agentCapability: string,
+    harness: readonly string[],
+  ): Promise<{ harness: string[]; tools: ToolDefinition[] }> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    const set = await this.#toolSet(facts, harness.map(String));
+    return {
+      harness: set.filter((t) => !t.definition).map((t) => t.name),
+      tools: set.flatMap((t) => (t.definition ? [t.definition] : [])),
+    };
+  }
+
+  /**
+   * Calls one plugin tool of an agent session, re-checked now against the session's current set:
+   * a tool it is not offered is refused (EACCES), a call the mode asks about waits on an approval
+   * of exactly that call (unless the user granted it), and in `auto` the risk classifier judges
+   * what no rule or safe class settles. A REST tool's request is rebuilt from its route and sent
+   * through the gateway, which adds the key from the secrets; the answer never holds it.
+   */
+  async callTool(
+    agentCapability: string,
+    call: { name: string; args?: unknown },
+  ): Promise<{ output: string; isError: boolean; secrets?: string[] }> {
+    const facts = await this.#authority.agentSessionOf(agentCapability);
+    const name = String(call?.name);
+    const args = (call?.args ?? {}) as Record<string, unknown>;
+    if (!args || typeof args !== "object" || Array.isArray(args))
+      throw codedError("EINVAL", "a tool's arguments are an object");
+    const found = (await this.#toolSet(facts, [])).find((t) => t.name === name && t.definition);
+    if (!found?.definition)
+      throw codedError("EACCES", `the tool '${name}' is not offered to this session`);
+    const x = found.definition[TOOL_EXTENSION];
+    const { verdict } = found;
+    if (verdict.verdict !== "allow") {
+      const content = new TextEncoder().encode(JSON.stringify(args));
+      const id = await approvalId(facts.session, "tool", name, content);
+      const request: ApprovalRequest = {
+        id,
+        session: facts.session,
+        project: facts.project,
+        action: { method: "tool", path: name, size: content.length },
+        permission: x.permission,
+        reason: verdict.reason,
+      };
+      const record = async (d: Omit<GateDecision, "action">) => {
+        if (!verdict.step) return;
+        try {
+          await agentOf(this.env, facts.session).gateDecision({ action: request.action, ...d });
+        } catch (e) {
+          console.warn(`decision item of ${facts.session}: ${String((e as Error)?.message ?? e)}`);
+        }
+      };
+      if (await this.#registry.consume(id, facts.session, facts.user)) {
+        await record({
+          step: "approval",
+          verdict: "allow",
+          reason: "the user approved this action",
+        });
+      } else if (verdict.verdict === "classify") {
+        const c = await this.#classify(facts, await this.#store, request);
+        await record({
+          step: "classifier",
+          verdict: c.verdict,
+          reason: c.reason,
+          ...(c.model ? { model: c.model } : {}),
+          latency_ms: c.latency_ms,
+          ...(c.fallback ? { fallback: c.fallback } : {}),
+          ...(c.stop ? { stop: c.stop } : {}),
+          ...(c.verdict === "deny"
+            ? {
+                approval: id,
+                request: { ...request, reason: c.reason },
+                stored: { method: "tool", path: name, content },
+              }
+            : {}),
+        });
+        if (c.verdict === "deny")
+          throw codedError(
+            "EACCES",
+            `may not call ${name}: the risk classifier denied it: ${c.reason} (blocked: the user may approve a retry, ${id})`,
+          );
+        if (c.verdict === "ask") throw approvalError({ ...request, reason: c.reason });
+      } else {
+        await record({ step: verdict.step ?? "mode", verdict: "ask", reason: verdict.reason });
+        throw approvalError(request);
+      }
+    }
+    const route = x.route;
+    if (route.kind === "rest") {
+      let request: OutgoingRequest;
+      try {
+        request = restRequest(found.definition, args);
+      } catch (e) {
+        return { output: String((e as Error)?.message ?? e), isError: true };
+      }
+      const lookup = sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts);
+      const result = await gatewayFetch(request, x.plugin, lookup);
+      const secrets = result.secrets.length ? { secrets: result.secrets } : {};
+      if (result.error) return { output: result.error, isError: true, ...secrets };
+      return { output: `${result.status} ${result.body ?? ""}`, isError: !result.ok, ...secrets };
+    }
+    // Native tool scripts run in isolates with statewalker/statewalker-root#130; remote MCP
+    // servers' tools with #135.
+    return {
+      output: `ENOSYS: ${route.kind} tools do not run in this deployment yet`,
+      isError: true,
+    };
   }
 
   /** Test-only, and the storage meter's input (#179): every database and the bytes it takes. */

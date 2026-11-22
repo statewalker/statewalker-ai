@@ -6,7 +6,14 @@
 
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { ApprovalRegistry, BUILT_IN_MODES, decideMode, modeOf, parseModes } from "../src/index.js";
+import {
+  ApprovalRegistry,
+  BUILT_IN_MODES,
+  decideMode,
+  modeOf,
+  parseModes,
+  toolRequest,
+} from "../src/index.js";
 
 const files = (action: string, target: string) => ({ area: "files", action, target });
 const verdict = (mode: string, req: ReturnType<typeof files>, layers = []) =>
@@ -83,6 +90,22 @@ describe("modes", () => {
     expect(at(allow, ask, deny)).toMatchObject({ verdict: "deny", source: "user" });
     // A session allow rule settles what the mode would ask about.
     expect(decideMode(req, { mode: modeOf("default"), layers: [allow] }).verdict).toBe("allow");
+  });
+
+  it("decides a tool by its action: read tools where reads are allowed, the rest as changes", () => {
+    const read = toolRequest({ id: "w/forecast", name: "w__forecast", action: "read" });
+    const write = toolRequest({ id: "w/report", name: "w__report", action: "write" });
+    const admin = toolRequest({ id: "w/purge", name: "w__purge", action: "admin" });
+    for (const mode of ["default", "acceptEdits", "plan", "dontAsk", "bypassPermissions"])
+      expect(verdict(mode, read as never)).toBe("allow");
+    expect(verdict("default", write as never)).toBe("ask");
+    expect(verdict("acceptEdits", admin as never)).toBe("ask");
+    expect(verdict("plan", write as never)).toBe("ask");
+    expect(verdict("dontAsk", write as never)).toBe("deny");
+    expect(verdict("bypassPermissions", admin as never)).toBe("allow");
+    // A tool rule names the tool as the model sees it.
+    const deny = { source: "user", rules: { deny: ["tool:w__forecast"] } };
+    expect(verdict("default", read as never, [deny] as never)).toBe("deny");
   });
 
   it("matches tool rules by tool name", () => {

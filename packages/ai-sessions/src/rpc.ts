@@ -22,6 +22,7 @@ const METHODS = [
   "listItems",
   "getItem",
   "readEvents",
+  "mcp",
   "listSessions",
   "profile",
   "eraseUser",
