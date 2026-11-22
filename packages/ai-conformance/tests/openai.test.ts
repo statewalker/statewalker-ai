@@ -295,6 +295,23 @@ describe.each(transports)("the OpenAI projection over %s", (name, connect) => {
       (a) => a.session === r1.conversation?.id,
     );
     expect(asked?.id).toBe(approval?.id);
+    // The same request answered twice in one input: refused, nothing answered.
+    const twice = {
+      type: "mcp_approval_response" as const,
+      approval_request_id: String(asked?.id),
+    };
+    expect(
+      await statusOf(
+        openai.responses.create({
+          model: "default",
+          previous_response_id: r1.id,
+          input: [
+            { ...twice, approve: true },
+            { ...twice, approve: false },
+          ],
+        }),
+      ),
+    ).toBe(400);
     const r2 = await openai.responses.create({
       model: "default",
       previous_response_id: r1.id,
@@ -375,7 +392,11 @@ describe.each(transports)("the OpenAI projection over %s", (name, connect) => {
     const { openai, read } = await as("lou");
     const two = `${write("notes/l1.md", "1\n")}\n${write("notes/l2.md", "2\n")}`;
     const r1 = await openai.responses.create({ model: "default", input: two });
-    const asked = r1.output.filter((o) => o.type === "mcp_approval_request");
+    // The calls run concurrently: their approvals are asked in either order.
+    const pathOf = (o: { arguments?: unknown }) => String(JSON.parse(String(o.arguments)).path);
+    const asked = r1.output
+      .filter((o) => o.type === "mcp_approval_request")
+      .sort((a, b) => pathOf(a).localeCompare(pathOf(b)));
     expect(asked.map((a) => JSON.parse(String(a.arguments)).path)).toEqual([
       "notes/l1.md",
       "notes/l2.md",
@@ -435,6 +456,7 @@ describe.each(transports)("the OpenAI projection over %s", (name, connect) => {
     expect(items.data.map((i) => i.type)).toEqual(["message", "message"]);
     expect(items.data[0]).toMatchObject({ role: "assistant" });
     const first = String(items.data[1]?.id);
+    expect(await statusOf(openai.conversations.items.list(c.id, { after: "it-nope" }))).toBe(400);
     expect(
       await openai.conversations.items.retrieve(first, { conversation_id: c.id }),
     ).toMatchObject({ id: first, role: "user" });

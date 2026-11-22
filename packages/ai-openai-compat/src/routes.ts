@@ -81,7 +81,7 @@ const neverDeleted = (what: string) =>
 /** An SSE response of a stream of events (`data:` JSON, `event:` its type unless `plain`). */
 function sse(
   frames: AsyncGenerator<Record<string, unknown> | { idle: true }>,
-  options: { done?: boolean; named?: boolean } = {},
+  options: { done?: boolean; named?: boolean; onCancel?: () => Promise<unknown> } = {},
 ): Response {
   const encoder = new TextEncoder();
   let finished = false;
@@ -122,6 +122,8 @@ function sse(
     async cancel() {
       finished = true;
       await frames.return(undefined);
+      // A generator never started runs no `finally`: the caller's clean-up runs here.
+      await options.onCancel?.().catch(() => {});
     },
   });
   return new Response(body, {
@@ -201,7 +203,8 @@ export async function handleOpenAiRest(
               (body.stream_options as { include_usage?: unknown } | undefined)?.include_usage ===
               true,
           }),
-          { done: true },
+          // Archiving twice is harmless; a stream cancelled before its first read needs it here.
+          { done: true, onCancel: () => api().archiveSession(started.session) },
         );
       return json(await chatCompletion(api(), started));
     }

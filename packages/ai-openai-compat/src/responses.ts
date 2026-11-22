@@ -321,6 +321,8 @@ export async function createResponse(
     const { approvals } = await api.listApprovals();
     const turns: string[] = [];
     let since = Number.POSITIVE_INFINITY;
+    if (new Set(answers.map((a) => a.id)).size !== answers.length)
+      throw codedError("EINVAL", "an approval request is answered once per input");
     for (const answer of answers) {
       const approval = approvals.find((a) => a.id === answer.id);
       if (!approval) throw codedError("EINVAL", `no approval request ${answer.id}`);
@@ -439,7 +441,9 @@ export function listPage(
   query: { after?: string | null; limit?: string | null; order?: string | null },
 ) {
   const ordered = query.order === "asc" ? items : [...items].reverse();
-  const start = query.after ? ordered.findIndex((i) => i.id === query.after) + 1 : 0;
+  const at = query.after ? ordered.findIndex((i) => i.id === query.after) : -1;
+  if (query.after && at < 0) throw codedError("EINVAL", `no item ${query.after} in the list`);
+  const start = at + 1;
   const limit = Math.min(Math.max(Number(query.limit) || 20, 1), 100);
   const data = ordered.slice(start, start + limit);
   return {
