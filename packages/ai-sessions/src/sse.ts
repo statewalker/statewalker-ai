@@ -33,6 +33,14 @@ export async function eventStream(
   let since = Number.isFinite(options.since) ? Number(options.since) : 0;
   if (turn) await api.getTurn(turn);
   const first = await api.readEvents(sessionId, { since, limit: PAGE });
+  // The stream counts against the caller's limits on streams while it is open (#179).
+  const held = await api.holdStream();
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    void api.releaseStream(held).catch(() => {});
+  };
   const encoder = new TextEncoder();
   let stopped = false;
   const body = new ReadableStream<Uint8Array>({
@@ -41,6 +49,7 @@ export async function eventStream(
         if (!stopped) controller.enqueue(encoder.encode(text));
       };
       const end = () => {
+        release();
         if (stopped) return;
         stopped = true;
         controller.close();
@@ -87,7 +96,7 @@ export async function eventStream(
           }
           if (stopped) return;
           // Each read goes through the caller's User DO, which checks the token again.
-          page = await api.readEvents(sessionId, {
+          page = await api.readHeldEvents(sessionId, {
             since,
             limit: PAGE,
             wait: page.up_to_date ? keepAliveMs : 0,
@@ -107,6 +116,7 @@ export async function eventStream(
     },
     cancel() {
       stopped = true;
+      release();
     },
   });
   return new Response(body, {

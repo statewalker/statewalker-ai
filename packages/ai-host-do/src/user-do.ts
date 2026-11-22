@@ -6,7 +6,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { codedError } from "@statewalker/ai-access";
 import type { FilesRpcMethod } from "@statewalker/ai-environment";
-import { filesOverRpc } from "@statewalker/ai-environment";
+import { filesOverRpc, type UsageMeta } from "@statewalker/ai-environment";
 import {
   type ApprovalAnswer,
   type ApprovalRequest,
@@ -20,6 +20,7 @@ import {
   type SubAgentRequest,
   UserSessions,
 } from "@statewalker/ai-sessions";
+import { tryReadText } from "@statewalker/webrun-files";
 import {
   approvalTtlMs,
   blockSizeOf,
@@ -30,13 +31,22 @@ import {
   verifyToken,
   workspaceOf,
 } from "./env.js";
+import { LIMITS_FILE, refusal, UserLimits, warningView } from "./limits-host.js";
 
 export class User extends DurableObject<Env> {
   readonly #sessions: UserSessions;
+  /** The user level's limits and counters: spend on the user's own keys (#179). */
+  readonly #limits: UserLimits;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     const user = nameOf(ctx);
+    const profile = filesOverRpc((method, args) => profilesOf(env).files(user, method, args), {
+      blockSize: blockSizeOf(env),
+    });
+    this.#limits = new UserLimits(ctx.storage.sql, env, user, () =>
+      tryReadText(profile, `/${LIMITS_FILE}`),
+    );
     this.#sessions = new UserSessions({
       sql: ctx.storage.sql,
       user,
@@ -55,6 +65,9 @@ export class User extends DurableObject<Env> {
           pinDefinitions: (capability, req) => ws.pinDefinitions(capability, req),
           setUserSession: (capability, state) => ws.setUserSession(capability, state),
           grantApproval: (capability, grant) => ws.grantApproval(capability, grant),
+          sessionsEnded: (capability, sessions) => ws.sessionsEnded(capability, sessions),
+          holdStream: (capability, id) => ws.holdStream(capability, id),
+          releaseStream: (capability, id) => ws.releaseStream(capability, id),
           files: (capability, method, args) => ws.files(capability, method, args),
           listDatabases: (capability, project) => ws.listDatabases(capability, project),
           databaseCall: (capability, call) => ws.databaseCall(capability, call),
@@ -76,6 +89,71 @@ export class User extends DurableObject<Env> {
       approvalTtlMs: approvalTtlMs(env),
       now: () => Date.now() + this.#clockOffset(),
     });
+  }
+
+  async holdStream(token: string) {
+    await this.#reachable();
+    return this.#sessions.holdStream(token);
+  }
+
+  async releaseStream(token: string, id: string) {
+    await this.#reachable();
+    return this.#sessions.releaseStream(token, id);
+  }
+
+  /**
+   * Reserves the worst case of a model request on the user's own key against the user's limits,
+   * told by one of this user's agent sessions' DOs (statewalker/statewalker-root#179): ELIMIT
+   * naming the limit when it would cross one.
+   */
+  async reserveOwnKey(meta: UsageMeta, amounts: Record<string, number>): Promise<string> {
+    await this.#reachable();
+    if (meta.user !== nameOf(this.ctx)) throw codedError("EACCES", "not this user's session");
+    try {
+      return this.#limits.ledger.reserve(await this.#limits.scopes(), amounts, meta).id;
+    } catch (e) {
+      throw refusal(e);
+    }
+  }
+
+  /** Settles a reservation to what the own-key requests really used; answers warnings. */
+  async settleOwnKey(
+    id: string,
+    used: Record<string, number>,
+    meta: UsageMeta,
+    detail?: Record<string, unknown>,
+  ) {
+    return this.#limits.ledger.settle(String(id), used, meta, detail).map(warningView);
+  }
+
+  /**
+   * Raises a user limit that asked by one increment, once the user allowed that approval here
+   * (statewalker/statewalker-root#179); told by the asking session's DO.
+   */
+  async raiseLimit(session: string, raise: { approval: string; key: string; increment: number }) {
+    let ref: unknown[];
+    try {
+      ref = JSON.parse(String(raise.key)) as unknown[];
+    } catch {
+      throw codedError("EINVAL", "no such limit");
+    }
+    if (ref[0] !== "user" || ref[1] !== nameOf(this.ctx))
+      throw codedError("EACCES", "not this user's limit");
+    if (
+      !this.#sessions.approvalAllowed(String(session), String(raise.approval)) ||
+      !this.#limits.useApproval(String(raise.approval))
+    )
+      throw codedError("EACCES", "the user did not approve raising this limit");
+    const limit = (await this.#limits.scopes())[0]?.limits.find(
+      (l) => l.meter === ref[2] && l.period === ref[3],
+    );
+    if (!limit) throw codedError("ENOENT", "no such limit");
+    this.#limits.ledger.raise(String(raise.key), limit.increment ?? (limit.value || 1));
+  }
+
+  /** Test-only: the user's own-key usage records after a seq. */
+  async usageRecords(since = 0) {
+    return this.#limits.ledger.records(Number(since) || 0);
   }
 
   /** How far a test moved this User DO's clock forward (`advanceClock`); 0 otherwise. */

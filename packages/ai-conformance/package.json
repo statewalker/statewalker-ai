@@ -28,6 +28,8 @@
     "@statewalker/webrun-files-rpc": "catalog:",
     "playwright": "catalog:",
     "vite": "catalog:",
-    "@statewalker/ai-host-do": "workspace:^"
+    "@statewalker/ai-host-do": "workspace:^",
+    "ai": "catalog:",
+    "zod": "catalog:"
   }
 }

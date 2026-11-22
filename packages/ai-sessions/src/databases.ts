@@ -8,14 +8,15 @@
 // - REST: GET /v1/projects/<p>/databases lists them; POST .../<db>/query {sql, params?} answers
 //   `{rows}`, written out page by page as the gate serves them; POST .../<db>/exec {sql} answers
 //   `{done: true}`. Parameters over REST are JSON values (no BLOBs).
-import { codedError, statusOf } from "@statewalker/ai-access";
+
+import { codedError } from "@statewalker/ai-access";
 import type { Db } from "@statewalker/db-api";
 import { type DbRpc, newDbRpcClient } from "@statewalker/db-rpc";
 import { msgpackCodec } from "@statewalker/webrun-msgpack";
 import { methodsClient, overPipe, serveMethods } from "@statewalker/webrun-rpc";
 import { messageTargetOverWebSocket, type WebSocketLike } from "@statewalker/webrun-streams-ws";
 import type { DatabaseCall, DatabaseView, SessionApi } from "./api.js";
-import { bearerOf, bodyOf } from "./rest.js";
+import { bearerOf, bodyOf, errorResponse } from "./rest.js";
 
 const CHANNEL = "statewalker-ai/databases/v1";
 const DB_METHODS = ["query", "readPage", "closeQuery", "exec", "flush"] as const;
@@ -218,6 +219,6 @@ export async function handleDatabasesRest(
     });
     return new Response(stream, { headers: { "content-type": "application/json" } });
   } catch (e) {
-    return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
+    return errorResponse(e);
   }
 }

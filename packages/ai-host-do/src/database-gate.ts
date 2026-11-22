@@ -8,31 +8,35 @@
 // - A statement taken for a read runs on the database's read-only server; so does any call of a
 //   holder with only `db.read`, whose writes run inside the call and are rolled back. A write with
 //   `db.write` runs on the read-write server; for an agent the mode decides it first (`default` and
-//   `plan` ask, `acceptEdits` allows), and an "ask" waits on an approval of that exact action.
+//   `plan` ask, `acceptEdits` allows, `auto` asks its risk classifier), and an "ask" waits on an
+//   approval of that exact action.
 // - Tool-private databases (`<plugin>:<name>`) are reached only with a capability the workspace
 //   narrowed for one of that plugin's tools; to anyone else they are absent.
 // - Stream and request ids are the holder's own: each is mixed with the holder's capability
 //   before it reaches the backend, so no holder reads another's result or retried answer.
 import {
   type AgentSessionFacts,
+  type ApprovalRequest,
   approvalId,
   codedError,
   type DatabaseAction as DbPermission,
-  type ModeDecision,
   type RoleGrant,
   type ToolGrant,
   type WorkspaceAuthority,
 } from "@statewalker/ai-access";
 import {
   approvalError,
+  type ClassifiedVerdict,
   DATABASES_FILE,
   type DatabaseAction,
   DB_RPC_METHODS,
   type DbRpcMethod,
   encodeDatabaseAction,
   formatDatabases,
+  type GateDecision,
   isDatabaseName,
   isReadStatement,
+  type ModeVerdict,
   parseDatabases,
   privateDatabaseOf,
   type SqlLike,
@@ -66,15 +70,25 @@ export interface DatabaseGateOptions {
   backend(name: string): DurableObjectStub<Database>;
   /** The member's roles in a project now. */
   access(project: string, user: string): Promise<{ member: boolean; grants: RoleGrant[] }>;
-  /** The mode's verdict on one action of an agent session now (unattended asks settled). */
+  /**
+   * The mode's verdict on one action of an agent session now (unattended asks settled): in `auto`,
+   * "classify" for what the rules and safe classes leave to the risk classifier, and a step on a
+   * verdict to keep as a decision item.
+   */
   decide(
     facts: AgentSessionFacts,
     req: { area: "db"; action: DbPermission; target: string },
-  ): Promise<ModeDecision>;
+  ): Promise<ModeVerdict>;
   /** Uses up the user's grant of an approval to the session; whether there was one. */
   consume(facts: AgentSessionFacts, id: string): Promise<boolean>;
+  /** `auto` mode's risk classifier on one change (unattended asks settled). */
+  classify(facts: AgentSessionFacts, request: ApprovalRequest): Promise<ClassifiedVerdict>;
+  /** Keeps one decision of `auto` on a change as an item of the agent session. */
+  record(facts: AgentSessionFacts, decision: GateDecision): Promise<void>;
   /** Whether the session may call the plugin's tool now (pinned, and `tools.call` by the roles). */
   mayCallTool(facts: AgentSessionFacts, tool: ToolGrant): Promise<boolean>;
+  /** Refuses (ENOSPC) a write to a project over a storage limit (statewalker/statewalker-root#179). */
+  admitWrite?(project: string): Promise<void>;
 }
 
 /** Who holds a capability, and where it acts. */
@@ -162,7 +176,10 @@ export class DatabaseGate {
 
   /**
    * The mode on one change of an agent session: allowed, refused (EACCES), or waiting on the
-   * approval of exactly this action (unless the user granted it).
+   * approval of exactly this action (unless the user granted it). In `auto`, what the rules and
+   * safe classes leave goes to the risk classifier, which sees the action by its permission and
+   * size only; every decision is kept as an item, and a classifier's block keeps the exact call,
+   * so the user can approve a retry (statewalker/statewalker-root#137, statewalker-ai#59).
    */
   async #settle(
     holder: Holder,
@@ -177,23 +194,66 @@ export class DatabaseGate {
       action: permission,
       target: database,
     });
-    if (decision.verdict === "allow") return;
-    if (decision.verdict === "deny")
-      throw codedError(
-        "EACCES",
-        `may not ${permission} database '${database}': ${decision.reason}`,
-      );
     const content = encodeDatabaseAction(action);
+    const done: GateDecision["action"] = { method: "db", path: database, size: content.length };
+    const record = (d: Omit<GateDecision, "action">) =>
+      this.#o.record(facts, { action: done, ...d });
+    const refused = (reason: string) =>
+      codedError("EACCES", `may not ${permission} database '${database}': ${reason}`);
+    if (decision.verdict === "allow") {
+      if (decision.step)
+        await record({ step: decision.step, verdict: "allow", reason: decision.reason });
+      return;
+    }
+    if (decision.verdict === "deny") {
+      if (decision.step)
+        await record({ step: decision.step, verdict: "deny", reason: decision.reason });
+      throw refused(decision.reason);
+    }
     const id = await approvalId(facts.session, "db", database, content);
-    if (await this.#o.consume(facts, id)) return;
-    throw approvalError({
+    const request: ApprovalRequest = {
       id,
       session: facts.session,
       project: holder.project,
-      action: { method: "db", path: database, size: content.length },
+      action: done,
       permission: `db.${permission}:${database}`,
       reason: decision.reason,
-    });
+    };
+    // A granted approval is used up before the classifier is asked: that is how a block's retry passes.
+    if (await this.#o.consume(facts, id)) {
+      if (decision.step)
+        await record({
+          step: "approval",
+          verdict: "allow",
+          reason: "the user approved this action",
+        });
+      return;
+    }
+    if (decision.verdict === "classify") {
+      const c = await this.#o.classify(facts, request);
+      const decided = { ...request, reason: c.reason };
+      await record({
+        step: "classifier",
+        verdict: c.verdict,
+        reason: c.reason,
+        ...(c.model ? { model: c.model } : {}),
+        latency_ms: c.latency_ms,
+        ...(c.fallback ? { fallback: c.fallback } : {}),
+        ...(c.stop ? { stop: c.stop } : {}),
+        ...(c.verdict === "deny"
+          ? { approval: id, request: decided, stored: { method: "db", path: database, content } }
+          : {}),
+      });
+      if (c.verdict === "allow") return;
+      if (c.verdict === "deny")
+        throw refused(
+          `the risk classifier denied it: ${c.reason} (blocked: the user may approve a retry, ${id})`,
+        );
+      throw approvalError(decided);
+    }
+    if (decision.step)
+      await record({ step: decision.step, verdict: "ask", reason: decision.reason });
+    throw approvalError(request);
   }
 
   /** Which database a name is for this holder, and what it may do there; ENOENT when absent. */
@@ -236,13 +296,17 @@ export class DatabaseGate {
       params?: unknown[],
     ): Promise<DbServerKind> => {
       if (typeof sql !== "string") throw codedError("EINVAL", "sql must be a string");
-      if (db.private) return "write";
+      if (db.private) {
+        if (!isReadStatement(sql) && !freesRoom(sql)) await this.#o.admitWrite?.(holder.project);
+        return "write";
+      }
       // Reads never wait on an approval: one the mode does not allow is refused.
       const readOnly = async (): Promise<DbServerKind> => {
         await this.#readable(holder, db.name);
         return "read";
       };
       if (isReadStatement(sql) || !db.write) return readOnly();
+      if (!freesRoom(sql)) await this.#o.admitWrite?.(holder.project);
       await this.#settle(holder, "write", db.name, {
         op,
         sql,
@@ -382,6 +446,17 @@ export class DatabaseGate {
       out.push({ project, database, bytes: await this.#backend(project, database).size() });
     return out;
   }
+}
+
+/**
+ * Whether a statement only makes room (DELETE, DROP): it runs over a storage limit, as
+ * deleting a file does (statewalker/statewalker-root#179). Comments and whitespace lead nothing.
+ */
+export function freesRoom(sql: string): boolean {
+  const lead = sql.replace(/^(\s+|--[^\n]*\n?|\/\*[\s\S]*?\*\/)+/, "");
+  if (!/^(delete|drop)\b/i.test(lead)) return false;
+  // One statement only: a batch could slip a write in after the delete.
+  return !/;\s*\S/.test(lead.replace(/;\s*$/, ""));
 }
 
 /** A backend's error with a code: SQL errors and db-rpc's are the caller's (EINVAL, ENOENT). */

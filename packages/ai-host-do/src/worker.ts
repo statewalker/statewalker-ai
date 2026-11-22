@@ -4,11 +4,12 @@
 // (/v1/projects/<p>/databases) and over db-rpc on a WebSocket at /v1/databases; and the test-only routes a conformance
 // run enables through vars (see wrangler.jsonc). Every session call goes to the User DO of the
 // user the caller's access token names, which checks the token each time.
-import { codedError, statusOf } from "@statewalker/ai-access";
+import { codedError } from "@statewalker/ai-access";
 import {
   bearerOf,
   bodyOf,
   createSessionApi,
+  errorResponse,
   handleDatabasesRest,
   handleFilesRest,
   handleSessionRest,
@@ -74,6 +75,8 @@ function sessionApi(env: Env, token: string) {
       listModels: async (t, query) => (await user()).listModels(t, query),
       getModelConfig: async (t) => (await user()).getModelConfig(t),
       setModelConfig: async (t, config) => (await user()).setModelConfig(t, config),
+      holdStream: async (t) => (await user()).holdStream(t),
+      releaseStream: async (t, id) => (await user()).releaseStream(t, id),
     },
     agent: (id) => {
       const agent = agentOf(env, id);
@@ -170,6 +173,16 @@ async function devRoutes(request: Request, env: Env, path: string) {
       throw codedError("EINVAL", `this deployment does not serve '${id}'`);
     return json({ usage: await workspaceOf(env, id).modelUsage() });
   }
+  if (collection === "workspaces" && id && sub === "usage-records") {
+    // The workspace's usage records (their reports and export are statewalker-root#181's).
+    if (!workspacesOf(env).includes(id))
+      throw codedError("EINVAL", `this deployment does not serve '${id}'`);
+    return json({ records: await workspaceOf(env, id).usageRecords(Number(body.since) || 0) });
+  }
+  if (collection === "users" && id && sub === "usage-records") {
+    // A user's own-key usage records, in their User DO.
+    return json({ records: await userOf(env, id).usageRecords(Number(body.since) || 0) });
+  }
   if (collection === "sessions" && id && sub === "flue-storage") {
     // The rows of Flue's tables in the session's DO; `forget` first drops its in-memory Flue
     // session, as a fresh DO instance has none.
@@ -249,7 +262,7 @@ export default {
       if (rest) return rest;
       return json({ error: "ENOENT: no such route" }, 404);
     } catch (e) {
-      return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
+      return errorResponse(e);
     }
   },
 };

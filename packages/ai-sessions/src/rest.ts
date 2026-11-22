@@ -1,14 +1,31 @@
 // REST onto the session API's methods: a thin router. Errors keep their code; the status is
 // derived from it (EAUTH 401, EACCES 403, ENOENT 404, EINVAL 400).
-import { codedError, statusOf } from "@statewalker/ai-access";
+import { codedError, retryAfterOf, statusOf } from "@statewalker/ai-access";
 import type { SessionApi, SessionsQuery } from "./api.js";
 import { eventStream } from "./sse.js";
+import { chatPlan, resumePlan, uiMessageStreamResponse } from "./ui-stream.js";
 
 const json = (value: unknown, status = 200) =>
   new Response(JSON.stringify(value), {
     status,
     headers: { "content-type": "application/json" },
   });
+
+/**
+ * An error as REST answers it: its message, the status its code maps to and, for a limit that
+ * resets (429), `Retry-After` in seconds (statewalker/statewalker-root#179).
+ */
+export function errorResponse(e: unknown): Response {
+  const status = statusOf(e);
+  const retry = status === 429 ? retryAfterOf(e) : undefined;
+  return new Response(JSON.stringify({ error: String((e as Error)?.message ?? e) }), {
+    status,
+    headers: {
+      "content-type": "application/json",
+      ...(retry !== undefined ? { "retry-after": String(retry) } : {}),
+    },
+  });
+}
 
 const NOT_A_ROUTE = Symbol("not a route");
 
@@ -107,6 +124,28 @@ export async function handleSessionRest(
         });
       }
     }
+    // The AI SDK UI message stream: `useChat` posts to /chat and resumes at /chat/<chat id>/stream
+    // (the session in the path is the one followed; the chat id is the UI's).
+    if (collection === "sessions" && id && sub === "chat") {
+      if (request.method === "POST" && parts.length === 4) {
+        const plan = await chatPlan(api(), id, (await bodyOf(request)) as never);
+        return uiMessageStreamResponse(api(), id, plan, { keepAliveMs: options.keepAliveMs });
+      }
+      if (
+        request.method === "GET" &&
+        parts.at(-1) === "stream" &&
+        (parts.length === 5 || parts.length === 6)
+      ) {
+        const cursor = request.headers.get("last-event-id") ?? url.searchParams.get("since");
+        const turn = url.searchParams.get("turn");
+        const plan = await resumePlan(api(), id, {
+          ...(turn ? { turn } : {}),
+          ...(cursor !== null && cursor !== "" ? { since: Number(cursor) } : {}),
+        });
+        if (!plan) return new Response(null, { status: 204 });
+        return uiMessageStreamResponse(api(), id, plan, { keepAliveMs: options.keepAliveMs });
+      }
+    }
     if (collection === "sessions" && id && sub === "items" && parts.length === 5)
       if (request.method === "GET") return api().getItem(id, String(parts[4]));
     if (collection === "turns" && id) {
@@ -122,7 +161,7 @@ export async function handleSessionRest(
     if (result instanceof Response) return result;
     return json(result);
   } catch (e) {
-    return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
+    return errorResponse(e);
   }
 }
 

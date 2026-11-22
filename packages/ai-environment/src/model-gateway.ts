@@ -105,6 +105,8 @@ export interface ModelResponse {
   attempts: ModelAttempt[];
   /** Set when the message asked for a model the request could not run on. */
   substitution?: ModelSubstitution;
+  /** Limits the request's usage crossed the warning share of (#179). */
+  warnings?: unknown[];
 }
 
 /** Who a request is for, recorded with its usage. */
@@ -115,13 +117,34 @@ export interface ModelRequestMeta {
   project: string;
 }
 
+/** The worst case of one attempt, reserved before it (statewalker/statewalker-root#179). */
+export interface ModelEstimate {
+  /** The input's tokens, estimated from the context's size. */
+  input_tokens: number;
+  /** The most the answer may take: the request is capped at it. */
+  max_tokens: number;
+  /** Input plus `max_tokens` at the model's prices, when it has prices. */
+  cost?: number;
+  /** Whether the user's own key serves it (charged to the user, not the workspace). */
+  own_key: boolean;
+}
+
 /**
- * Where usage goes. `admit` runs before every attempt: the seam where limits reserve spend and
- * refuse (statewalker/statewalker-root#179); `record` settles it.
+ * Where usage goes. `admit` runs before every attempt with its worst case: the seam where limits
+ * reserve spend and refuse by throwing (statewalker/statewalker-root#179); what it answers is
+ * handed back to `record`, which settles to the real cost and may answer warnings.
  */
 export interface ModelMeter {
-  admit?(model: CatalogModel, meta: ModelRequestMeta): Promise<void> | void;
-  record(usage: ModelUsage, meta: ModelRequestMeta): Promise<void> | void;
+  admit?(
+    model: CatalogModel,
+    meta: ModelRequestMeta,
+    estimate: ModelEstimate,
+  ): Promise<unknown> | unknown;
+  record(
+    usage: ModelUsage,
+    meta: ModelRequestMeta,
+    admitted?: unknown,
+  ): Promise<unknown[] | undefined> | unknown[] | undefined;
 }
 
 type StreamFn = (
@@ -180,6 +203,26 @@ function costOf(model: CatalogModel, u: ModelMessage["usage"]): number | undefin
       u.cacheWrite * (c.cacheWrite ?? 0)) /
     1_000_000
   );
+}
+
+/** The worst case of a request to a model: its input (from the context's size) and `max_tokens`. */
+export function estimateRequest(
+  model: CatalogModel,
+  provider: CatalogProvider,
+  call: ModelCall,
+): ModelEstimate {
+  // A byte-level BPE token covers at least one byte, so the context's UTF-8 size bounds its
+  // input tokens from above, whatever the script (#179: a reservation never undercounts).
+  const input = new TextEncoder().encode(JSON.stringify(call.context ?? {})).length;
+  const cap = model.maxTokens ?? 4096;
+  const max = Math.min(call.maxTokens && call.maxTokens > 0 ? call.maxTokens : cap, cap);
+  const c = model.cost;
+  return {
+    input_tokens: input,
+    max_tokens: max,
+    ...(c ? { cost: (input * c.input + max * c.output) / 1_000_000 } : {}),
+    own_key: provider.level === "user",
+  };
 }
 
 export interface ModelGatewayOptions {
@@ -303,11 +346,18 @@ export class ModelGateway {
         ...(substitution ? { substitution } : {}),
       };
     const attempts: ModelAttempt[] = [];
+    const warnings: unknown[] = [];
     let message: ModelMessage = errorMessage(first, "no attempt");
     for (const [i, model] of chain.entries()) {
       let attempt: { message: ModelMessage; attempt: ModelAttempt };
       try {
-        attempt = await this.#attempt(catalog.providers[model.provider], model, call, meta);
+        attempt = await this.#attempt(
+          catalog.providers[model.provider],
+          model,
+          call,
+          meta,
+          warnings,
+        );
       } catch (e) {
         // Refused before the model was asked (a key, a limit): nothing was sent or metered. The
         // first model's refusal is the request's; a fallback's is recorded with the attempts made.
@@ -333,7 +383,13 @@ export class ModelGateway {
       message = attempt.message;
       if (!(FALLBACK.includes(attempt.attempt.usage.outcome) && i < chain.length - 1)) break;
     }
-    return { message, model: first.id, attempts, ...(substitution ? { substitution } : {}) };
+    return {
+      message,
+      model: first.id,
+      attempts,
+      ...(substitution ? { substitution } : {}),
+      ...(warnings.length ? { warnings } : {}),
+    };
   }
 
   async #attempt(
@@ -341,6 +397,7 @@ export class ModelGateway {
     model: CatalogModel,
     call: ModelCall,
     meta: ModelRequestMeta,
+    warnings: unknown[],
   ): Promise<{ message: ModelMessage; attempt: ModelAttempt }> {
     if (!provider) throw codedError("EIO", `model ${model.id} has no provider`);
     if (provider.api === "local")
@@ -349,7 +406,10 @@ export class ModelGateway {
     if (!stream) throw codedError("ENOSYS", `the gateway does not speak ${provider.api}`);
     // Refusals before the model is asked (a key not bound to the gateway, a limit) fail the turn.
     const access = await providerAccess(provider, this.#o.secrets);
-    await this.#o.meter.admit?.(model, meta);
+    // The worst case is reserved against every limit before the model is asked, and the request
+    // is capped at the `max_tokens` reserved, so spend never overshoots.
+    const estimate = estimateRequest(model, provider, call);
+    const admitted = await this.#o.meter.admit?.(model, meta, estimate);
     const piModel = {
       id: model.name,
       name: model.name,
@@ -377,7 +437,7 @@ export class ModelGateway {
         {
           apiKey: access.apiKey ?? "none",
           maxRetries: 0,
-          ...(call.maxTokens ? { maxTokens: call.maxTokens } : {}),
+          maxTokens: estimate.max_tokens,
         } as never,
       ).result();
     } catch (e) {
@@ -405,7 +465,8 @@ export class ModelGateway {
       outcome,
       charged: provider.level !== "user",
     };
-    await this.#o.meter.record(usage, meta);
+    const crossed = await this.#o.meter.record(usage, meta, admitted);
+    if (Array.isArray(crossed)) warnings.push(...crossed);
     return {
       message,
       attempt: {

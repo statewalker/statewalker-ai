@@ -107,6 +107,17 @@ export interface Env {
   CATALOG?: string;
   /** The deployment's default agent, `<plugin>/<agent>`, when a project names none. */
   DEFAULT_AGENT?: string;
+  /**
+   * The deployment's limits (statewalker/statewalker-root#179): JSON
+   * `[{meter, level, target?, value, period, on_exceed, warn_at?, increment?}]`. A `deployment`
+   * limit is a ceiling each workspace (and each user, for their own keys) is held to; limits of
+   * other levels without a target are defaults for every target of that level.
+   */
+  LIMITS?: string;
+  /** The deployment's time zone, for calendar days and months of limits (UTC). */
+  TIME_ZONE?: string;
+  /** How many months usage records are kept (13). */
+  USAGE_RETENTION_MONTHS?: string;
   /** Test-only: the SSE keep-alive interval in ms (30 s otherwise). */
   SSE_KEEPALIVE_MS?: string;
   /** Test-only: enables POST /v1/login, which stands in for an identity provider. */
@@ -185,4 +196,13 @@ export const DAY_MS = 24 * 60 * 60 * 1000;
 export function approvalTtlMs(env: Env): number {
   const ms = Number(env.APPROVAL_TTL_MS);
   return Number.isFinite(ms) && ms > 0 ? ms : DAY_MS;
+}
+
+/** The ledger options every owning DO keeps its limits with. */
+export function ledgerOptions(env: Env): { timeZone: string; retentionMonths: number } {
+  const months = Number(env.USAGE_RETENTION_MONTHS);
+  return {
+    timeZone: env.TIME_ZONE || "UTC",
+    retentionMonths: Number.isFinite(months) && months > 0 ? months : 13,
+  };
 }

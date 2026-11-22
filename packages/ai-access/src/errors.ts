@@ -8,6 +8,8 @@ export type ErrorCode =
   | "EINVAL" // a malformed request (400)
   | "EBUSY" // refused in the thing's current state: running, archived, already ended (409)
   | "EEXIST" // it exists already (409)
+  | "ELIMIT" // a limit refused it (statewalker/statewalker-root#179): too many, for now (429)
+  | "ENOSPC" // a storage limit refused a write; reads and deletes still work (507)
   | "ENOSYS" // not implemented (501)
   | "EIO"; // anything else (500)
 
@@ -28,6 +30,8 @@ const CODES = new Set<string>([
   "EINVAL",
   "EBUSY",
   "EEXIST",
+  "ELIMIT",
+  "ENOSPC",
   "ENOSYS",
   "EIO",
 ]);
@@ -47,9 +51,17 @@ const STATUS: Record<ErrorCode, number> = {
   EINVAL: 400,
   EBUSY: 409,
   EEXIST: 409,
+  ELIMIT: 429,
+  ENOSPC: 507,
   ENOSYS: 501,
   EIO: 500,
 };
 
 /** The HTTP status REST answers an error with. */
 export const statusOf = (e: unknown): number => STATUS[codeOf(e)];
+
+/** Seconds until a refused call may succeed, from a message's `retry after <n> s`. */
+export function retryAfterOf(e: unknown): number | undefined {
+  const m = /retry after (\d+) s\b/.exec(String((e as Error)?.message ?? e));
+  return m ? Number(m[1]) : undefined;
+}

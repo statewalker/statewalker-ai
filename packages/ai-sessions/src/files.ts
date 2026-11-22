@@ -7,7 +7,8 @@
 //   `?list`, `?recursive`), `?stats` answers its stats, PUT writes the body, DELETE removes, and
 //   POST {op: "mkdir" | "copy" | "move", target?} does the rest. Each segment of the path is
 //   percent-decoded once; the gate normalises what results.
-import { codedError, statusOf } from "@statewalker/ai-access";
+
+import { codedError } from "@statewalker/ai-access";
 import { FILES_RPC_METHODS, type FilesRpcMethod, filesOverRpc } from "@statewalker/ai-environment";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type { FilesRpc } from "@statewalker/webrun-files-rpc";
@@ -15,7 +16,7 @@ import { msgpackCodec } from "@statewalker/webrun-msgpack";
 import { methodsClient, overPipe, serveMethods } from "@statewalker/webrun-rpc";
 import { messageTargetOverWebSocket, type WebSocketLike } from "@statewalker/webrun-streams-ws";
 import type { SessionApi } from "./api.js";
-import { bearerOf, bodyOf } from "./rest.js";
+import { bearerOf, bodyOf, errorResponse } from "./rest.js";
 
 const CHANNEL = "statewalker-ai/files/v1";
 const METHODS = ["authenticate", ...FILES_RPC_METHODS] as const;
@@ -187,6 +188,6 @@ export async function handleFilesRest(
         throw codedError("EINVAL", `no ${request.method} on /v1/files`);
     }
   } catch (e) {
-    return json({ error: String((e as Error)?.message ?? e) }, statusOf(e));
+    return errorResponse(e);
   }
 }
