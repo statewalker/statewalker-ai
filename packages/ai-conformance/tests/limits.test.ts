@@ -37,6 +37,15 @@ function projectFiles(t: string): Record<string, string> {
       period: "day",
     }),
     [`/sessions-${t}/.system/access`]: owner("ann", "bob"),
+    [`/tools-${t}/.system/access`]: owner("ann"),
+    [`/tools-${t}/readme.md`]: "README",
+    [`/spend-${t}/.system/access`]: owner("ann"),
+    [`/spend-${t}/.system/limits`]: limits({
+      meter: "model_spend",
+      level: "project",
+      value: 12,
+      period: "month",
+    }),
   };
 }
 
@@ -70,7 +79,13 @@ beforeAll(async () => {
   deployment = await startDeployment(HOST, {
     DEV_LOGIN: "true",
     ADMIN_KEY,
-    MODELS: model.deploymentModels(),
+    MODELS: model.deploymentModels({
+      models: [
+        { id: "scripted/default", alias: "default" },
+        // One currency unit per output token, at most 10 of them: a request's worst case is 10.
+        { id: "scripted/priced", maxTokens: 10, cost: { input: 0, output: 1_000_000 } },
+      ],
+    }),
   });
   await seed(deployment, ADMIN_KEY, FILES);
 }, 120_000);
@@ -112,5 +127,46 @@ describe.each(transports)("limits over %s", (name, connect) => {
     const second = await bob.startSession({ project: `sessions-${t}` });
     await bob.deleteSession(second.id);
     await bob.startSession({ project: `sessions-${t}` });
+  });
+
+  it("refuses a tool call over the session's limit on tool calls, and the agent carries on", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({
+      project: `tools-${t}`,
+      limits: [{ meter: "tool_calls", value: 1, period: "total" }],
+    });
+    const read = `CALL read ${JSON.stringify({ path: "readme.md" })}`;
+    const first = await ann.sendMessage(s.id, { content: read });
+    expect(first.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });
+    const second = await ann.sendMessage(s.id, { content: read });
+    expect(second.status).toBe("completed");
+    const refused = second.items.find((i) => i.kind === "tool_result");
+    expect(refused).toMatchObject({ isError: true, output: expect.stringContaining("tool_calls") });
+    // The model was told, and answered.
+    expect(second.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
+    // A session limit is the session's own: a new session calls tools again.
+    const other = await ann.startSession({ project: `tools-${t}` });
+    const again = await ann.sendMessage(other.id, { content: read });
+    expect(again.items.find((i) => i.kind === "tool_result")).toMatchObject({ isError: false });
+  });
+
+  it("ends a turn incomplete with stop_reason budget, naming the limit, when model spend would cross it", async () => {
+    const ann = await as("ann");
+    const s = await ann.startSession({ project: `spend-${t}`, model: "scripted/priced" });
+    // The worst case (10) fits; the request really costs 3.
+    expect(await ann.sendMessage(s.id, { content: "hello" })).toMatchObject({
+      status: "completed",
+    });
+    const asked = model.requests.length;
+    // 3 used and a worst case of 10 would cross 12: refused before the model is asked.
+    const turn = await ann.sendMessage(s.id, { content: "hello" });
+    expect(turn).toMatchObject({
+      status: "incomplete",
+      stop_reason: {
+        type: "budget",
+        limit: { meter: "model_spend", level: "project", target: `spend-${t}`, value: 12 },
+      },
+    });
+    expect(model.requests.length).toBe(asked);
   });
 });

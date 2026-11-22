@@ -78,6 +78,8 @@ import {
   type ModelCatalog,
   ModelGateway,
   type ModelLevel,
+  type ModelMeter,
+  type ModelRequestMeta,
   type ModelResponse,
   type ModelRight,
   type ModelsConfig,
@@ -92,6 +94,7 @@ import {
   SecretStore,
   type StoredLevel,
   sessionSecrets,
+  withDelay,
 } from "@statewalker/ai-environment";
 import type {
   AgentRun,
@@ -120,7 +123,7 @@ import {
   nameOf,
   verifyToken,
 } from "./env.js";
-import { type WarningView, WorkspaceLimits, warningView } from "./limits-host.js";
+import { refusal, type WarningView, WorkspaceLimits, warningView } from "./limits-host.js";
 import { ModelStore, type ModelUsageRecord } from "./model-store.js";
 import { mountWorkspace } from "./workspace-store.js";
 
@@ -477,8 +480,9 @@ export class Workspace extends DurableObject<Env> {
         : undefined;
     const gateway = new ModelGateway({
       secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
-      // The budget records every request; limits reserve and refuse in `admit` (#179).
-      meter: { record: (usage, meta) => this.#models.record(usage, meta) },
+      // The budget records every request; limits reserve its worst case in `admit` and settle it
+      // in `record` (#179).
+      meter: this.#modelMeter(facts.project, facts.user),
     });
     return gateway.request(
       found.pinned,
@@ -495,6 +499,58 @@ export class Workspace extends DurableObject<Env> {
         project: facts.project,
       },
     );
+  }
+
+  /**
+   * The workspace's side of model spend (statewalker/statewalker-root#179): the worst case of each
+   * request is reserved against the workspace (and the deployment's ceilings), the project and the
+   * member before the model is asked, and settled to the real cost after. The user's own key is
+   * charged to the user (their User DO), not here.
+   */
+  #modelMeter(project: string, user: string): ModelMeter {
+    return {
+      admit: async (_model, meta, estimate) => {
+        if (estimate.own_key) return undefined;
+        const scopes = await this.#limits.scopes(project, user);
+        const amounts = {
+          model_tokens: estimate.input_tokens + estimate.max_tokens,
+          ...(estimate.cost ? { model_spend: estimate.cost } : {}),
+        };
+        try {
+          return await withDelay(() =>
+            this.#limits.ledger.reserve(scopes, amounts, this.#modelUsageMeta(meta)),
+          );
+        } catch (e) {
+          throw refusal(e);
+        }
+      },
+      record: (usage, meta, admitted) => {
+        this.#models.record(usage, meta);
+        const id = (admitted as { id?: string } | undefined)?.id;
+        if (!id) return [];
+        return this.#limits.ledger
+          .settle(
+            id,
+            {
+              model_tokens: usage.input_tokens + usage.output_tokens,
+              ...(usage.cost ? { model_spend: usage.cost } : {}),
+            },
+            this.#modelUsageMeta(meta),
+            {
+              model: usage.model,
+              input_tokens: usage.input_tokens,
+              output_tokens: usage.output_tokens,
+              cached_tokens: usage.cached_tokens,
+              outcome: usage.outcome,
+            },
+          )
+          .map(warningView);
+      },
+    };
+  }
+
+  #modelUsageMeta(meta: ModelRequestMeta) {
+    return this.#limits.meta(meta.project, meta.user, meta.session, meta.turn);
   }
 
   /**
@@ -847,7 +903,8 @@ export class Workspace extends DurableObject<Env> {
         });
         const gateway = new ModelGateway({
           secrets: sessionSecrets(this.#secrets, this.#deploymentSecrets(), facts),
-          meter: { record: (usage, meta) => this.#models.record(usage, meta) },
+          // The classifier spends the workspace's budget like any request (#179).
+          meter: this.#modelMeter(facts.project, facts.user),
         });
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<"timeout">((ok) => {

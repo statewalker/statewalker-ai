@@ -162,7 +162,7 @@ describe("limits", () => {
     const scopes: LimitScope[] = [
       { level: "session", target: "s", limits: parseLimits('[{"meter":"turns","level":"session","value":10,"period":"total","warn_at":0.5}]').limits },
     ];
-    const warnings = [1, 2, 3, 4, 5, 6].map((n) => ledger.charge(scopes, { turns: 1 }, META).length);
+    const warnings = [1, 2, 3, 4, 5, 6].map(() => ledger.charge(scopes, { turns: 1 }, META).length);
     expect(warnings).toEqual([0, 0, 0, 0, 1, 0]);
   });
 

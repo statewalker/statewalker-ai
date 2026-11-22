@@ -13,6 +13,7 @@
 //   continues the session as a turn that runs the stored call again (re-checked at the gate) or
 //   tells the model the denial.
 import { type ApprovalRequest, codedError } from "@statewalker/ai-access";
+import { limitOfMessage } from "@statewalker/ai-environment";
 import type {
   AgentMessage,
   AgentPort,
@@ -30,6 +31,7 @@ import type {
   ModelSubstitution,
   SessionEvent,
   SessionStatus,
+  StopLimit,
   StopReason,
   StoredAction,
   TurnStatus,
@@ -130,6 +132,21 @@ const rowsText = (rows: unknown): string =>
         : value,
   );
 
+/** The model spend limit an error names (`ELIMIT: … [limit {"meter":"model_spend", …}]`). */
+function budgetOf(error: string): StopLimit | undefined {
+  if (!error.includes("ELIMIT")) return undefined;
+  const limit = limitOfMessage(error);
+  if (!limit || !/^model_(spend|tokens)$/.test(String(limit.meter))) return undefined;
+  return {
+    meter: String(limit.meter),
+    level: String(limit.level),
+    target: String(limit.target),
+    value: Number(limit.value),
+    period: String(limit.period),
+    used: Number(limit.used),
+  };
+}
+
 type Pending = Map<string, { request: ApprovalRequest; stored: StoredAction }>;
 
 /** What the core reports when a turn ends. */
@@ -191,7 +208,14 @@ const eventOf = (row: EventRow): SessionEvent => ({
   created: Number(row.created),
 });
 
-const TERMINAL: readonly string[] = ["waiting", "completed", "failed", "cancelled", "interrupted"];
+const TERMINAL: readonly string[] = [
+  "waiting",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+  "incomplete",
+];
 const KINDS: readonly string[] = [
   "message",
   "tool_call",
@@ -528,6 +552,18 @@ export class AgentSessionCore implements AgentPort {
         row.id,
         running.endAs,
         { type: running.endAs, ...(running.endReason ? { message: running.endReason } : {}) },
+        model ? { model } : {},
+      );
+    else if (error && budgetOf(error))
+      // A limit on model spend refused a request: the turn ends incomplete, naming the limit.
+      this.#finish(
+        row.id,
+        "incomplete",
+        {
+          type: "budget",
+          message: error.slice(error.indexOf("ELIMIT")),
+          limit: budgetOf(error) as StopLimit,
+        },
         model ? { model } : {},
       );
     else if (error)

@@ -88,6 +88,12 @@ export interface FlueTurn {
   /** Tools the host runs (beside Flue's own over the sandbox). */
   tools?: HostTool[];
   /**
+   * Asked before every tool call (statewalker/statewalker-root#179): a refusal's text when a limit
+   * on tool calls refuses it (the call is not run, the agent carries on with the refusal as its
+   * result), nothing to run it.
+   */
+  admitTool?(name: string): Promise<string | undefined>;
+  /**
    * The names of the tools the model may be offered, Flue's and the host's (none: all of them). A
    * sub-agent's are within its parent's (statewalker/statewalker-root#126).
    */
@@ -310,6 +316,12 @@ export async function runFlueTurn(
     // A call waiting on an approval ends the turn: the model is not asked again until the user
     // answers, and the answer continues the session.
     afterToolCall: async () => (turn.waiting?.() ? { terminate: true, isError: true } : undefined),
+    // A limit on tool calls refuses before the tool runs; one that asks also ends the turn.
+    beforeToolCall: async ({ toolCall }: { toolCall: { name: string } }) => {
+      const refused = await turn.admitTool?.(toolCall.name);
+      if (refused === undefined) return undefined;
+      return { block: true, reason: refused, ...(turn.waiting?.() ? { terminate: true } : {}) };
+    },
     // Everything steered since the last step joins at the next one.
     steeringMode: "all",
   } as never);

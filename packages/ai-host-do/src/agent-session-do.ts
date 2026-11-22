@@ -165,6 +165,16 @@ export class AgentSession extends DurableObject<Env> {
             onSteer,
             tools: [...databases, ...rest, agentStart],
             allowTools: offered,
+            // Every tool call counts against the limits on tool calls (#179): a refused call is
+            // not run, and the agent carries on with the refusal.
+            admitTool: async (name) => {
+              try {
+                await this.#charge(config, "tool_calls", 1, turn, { tool: name });
+                return undefined;
+              } catch (e) {
+                return String((e as Error)?.message ?? e);
+              }
+            },
           },
           emit,
         );
@@ -194,22 +204,40 @@ export class AgentSession extends DurableObject<Env> {
   }
 
   /**
+   * Charges a flow meter of a turn to the session (counted here) and to its member, project and
+   * workspace (counted in the Workspace DO), refusing at the first limit: the session's is
+   * checked first, then the workspace charges, then the session.
+   */
+  async #charge(
+    config: AgentSessionConfig,
+    meter: string,
+    amount: number,
+    turn?: string,
+    detail?: Record<string, unknown>,
+  ): Promise<void> {
+    const scopes = this.#limits.scopes(config);
+    try {
+      this.#limits.ledger.check(scopes, { [meter]: amount });
+    } catch (e) {
+      throw refusal(e);
+    }
+    const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
+    await workspace.chargeUsage(config.capability, {
+      meter,
+      amount,
+      ...(turn ? { turn } : {}),
+      ...(detail ? { detail } : {}),
+    });
+    this.#limits.ledger.charge(scopes, { [meter]: amount }, this.#limits.meta(config, turn), detail);
+  }
+
+  /**
    * A message: a new turn (a steer joins the running one) counts against the limits on turns of
    * the session, its member, project and workspace, at once; ELIMIT (429) over one.
    */
   async send(message: AgentMessage) {
     const config = this.#core.config();
-    if (config && message.delivery !== "steer") {
-      const scopes = this.#limits.scopes(config);
-      try {
-        this.#limits.ledger.check(scopes, { turns: 1 });
-      } catch (e) {
-        throw refusal(e);
-      }
-      const workspace = this.env.WORKSPACE.get(this.env.WORKSPACE.idFromName(config.workspace));
-      await workspace.chargeUsage(config.capability, { meter: "turns", amount: 1 });
-      this.#limits.ledger.charge(scopes, { turns: 1 }, this.#limits.meta(config));
-    }
+    if (config && message.delivery !== "steer") await this.#charge(config, "turns", 1);
     return this.#core.send(message);
   }
 

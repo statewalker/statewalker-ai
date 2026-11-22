@@ -58,6 +58,7 @@ export {
   type SessionsQuery,
   type SetSecretRequest,
   type StartSessionRequest,
+  type StopLimit,
   type StopReason,
   type StoredAction,
   type SubAgentRequest,

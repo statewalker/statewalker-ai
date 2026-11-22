@@ -255,6 +255,7 @@ export const TERMINAL_EVENTS = [
   "turn.failed",
   "turn.cancelled",
   "turn.interrupted",
+  "turn.incomplete",
 ];
 
 export interface SessionClient {
@@ -266,6 +267,8 @@ export interface SessionClient {
     unattended?: boolean;
     /** A model (an id or an alias) the session runs on instead of the agent's, within rights. */
     model?: string;
+    /** The session's own limits (session level). */
+    limits?: Record<string, unknown>[];
   }): Promise<AgentSession>;
   getSession(id: string): Promise<AgentSession>;
   updateSession(id: string, req: { metadata: Metadata }): Promise<AgentSession>;

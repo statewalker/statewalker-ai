@@ -226,18 +226,32 @@ export type TurnStatus =
   | "completed"
   | "failed"
   | "cancelled"
-  | "interrupted";
+  | "interrupted"
+  /** Ended before its answer was complete, by a limit (statewalker/statewalker-root#179). */
+  | "incomplete";
+
+/** The limit a turn stopped at (statewalker/statewalker-root#179). */
+export interface StopLimit {
+  meter: string;
+  level: string;
+  target: string;
+  value: number;
+  period: string;
+  used: number;
+}
 
 /**
  * Why a turn stopped. A turn that ended without completing (`cancelled`, `interrupted`,
- * `failed`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
+ * `failed`, `incomplete`) always carries one: its incomplete reason (statewalker/statewalker-root#108).
  */
 export interface StopReason {
-  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval";
-  /** What went wrong, for `error`. */
+  type: "end_turn" | "cancelled" | "interrupted" | "error" | "restart" | "approval" | "budget";
+  /** What went wrong, for `error`; which limit, for `budget`. */
   message?: string;
   /** The approvals a `waiting` turn waits on. */
   approval_ids?: string[];
+  /** The model spend limit a `budget` stop names. */
+  limit?: StopLimit;
 }
 
 /** A model the turn ran on other than the one asked for (statewalker/statewalker-root#108). */
@@ -275,6 +289,7 @@ export const TERMINAL_TURN_STATUSES: readonly TurnStatus[] = [
   "failed",
   "cancelled",
   "interrupted",
+  "incomplete",
 ];
 
 export interface SendMessageRequest {

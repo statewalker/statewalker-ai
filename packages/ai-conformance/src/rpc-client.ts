@@ -26,7 +26,7 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
   };
   const client: RpcSessionClient = {
     me: () => api.me().catch(refusal),
-    startSession: (req) => api.startSession(req).catch(refusal),
+    startSession: (req) => api.startSession(req as never).catch(refusal),
     getSession: (id) => api.getSession(id).catch(refusal),
     updateSession: (id, req) => api.updateSession(id, req).catch(refusal),
     archiveSession: (id) => api.archiveSession(id).catch(refusal),
