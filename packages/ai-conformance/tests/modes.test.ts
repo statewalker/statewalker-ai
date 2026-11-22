@@ -12,6 +12,7 @@ import {
   type Deployment,
   type FakeModel,
   fakeModel,
+  type Item,
   login,
   restClient,
   rpcClient,
@@ -136,6 +137,20 @@ const approvalOf = async (client: SessionClient, turn: Turn): Promise<Approval> 
   expect(found).toBeDefined();
   return found as Approval;
 };
+/** What the model was last shown (tests of a file run one at a time): its last request's texts. */
+const lastAsked = (): string =>
+  (model.requests.filter((r) => !r.classifier && !r.summary).at(-1)?.messages ?? [])
+    .map((m) => m.text)
+    .join("\n");
+/** Polls a turn until it has ended. */
+const waitEnded = async (client: SessionClient, id: string): Promise<Turn> => {
+  for (let i = 0; i < 100; i++) {
+    const turn = await client.getTurn(id);
+    if (!["queued", "running"].includes(turn.status)) return turn;
+    await new Promise((ok) => setTimeout(ok, 100));
+  }
+  throw new Error(`turn ${id} did not end`);
+};
 /** Answers an approval and follows the turn that continues the session to its end. */
 const answer = async (client: SessionClient, id: string, a: ApprovalAnswer) => {
   const { approval, accepted } = await client.answerApproval(id, a);
@@ -188,6 +203,10 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(answered.approval).toMatchObject({ id: approval.id, status: "allowed" });
     expect(answered.turn.status).toBe("completed");
     expect(toolResult(answered.turn)).toMatchObject({ isError: false, approval: approval.id });
+    // The agent continues the same turn with the result, without a new user message.
+    expect(answered.turn.items.map((i) => i.kind)).toEqual(["tool_result", "message"]);
+    expect(answered.turn.items.at(-1)).toMatchObject({ role: "assistant", text: "OK" });
+    expect(lastAsked()).toContain("[Result of an approved action] write /proj/notes/b.md: done");
     expect(await contentOf(bob, s.id, "notes/b.md")).toBe("stored\n");
     expect((await bob.me()).approvals).toEqual([]);
     // Answered once: a second answer is refused, and the same write asks again.
@@ -217,6 +236,12 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
     expect(answered.approval.status).toBe("denied");
     expect(toolResult(answered.turn)).toMatchObject({ isError: true });
     expect(toolResult(answered.turn)?.output).toMatch(/not there, please/);
+    // The agent continues the turn with the refusal and its reason.
+    expect(answered.turn.status).toBe("completed");
+    expect(answered.turn.items.map((i) => i.kind)).toEqual(["tool_result", "message"]);
+    expect(lastAsked()).toContain(
+      "[Result of a denied action] write /proj/notes/c.md: denied by the user: not there, please",
+    );
     expect(await contentOf(cy, s.id, "notes/c.md")).toMatch(/ENOENT/);
   });
 
@@ -349,7 +374,8 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
       jo,
       await jo.sendMessage(s.id, { content: write("notes/j.md", "1\n") }),
     );
-    await answer(jo, approval.id, { decision: "allow", scope: "session" });
+    const granted = await answer(jo, approval.id, { decision: "allow", scope: "session" });
+    expect(granted.turn.items.at(-1)).toMatchObject({ kind: "message", role: "assistant" });
     expect(await contentOf(jo, s.id, "notes/j.md")).toBe("1\n");
     const later = await jo.sendMessage(s.id, { content: write("notes/j.md", "2\n") });
     expect(later.status).toBe("completed");
@@ -515,5 +541,36 @@ describe.each(transports)("modes and approvals over %s", (name, connect) => {
       ann.answerApproval(approval.id, { decision: "allow", scope: "once" }),
     ).rejects.toMatchObject({ status: 400 });
     expect(await contentOf(ann, s.id, "notes/late.md")).toMatch(/ENOENT/);
+  });
+
+  it("an approval that expires continues its turn as a denial, with reason expired", async () => {
+    const bob = await as("bob", shortLived);
+    const s = await bob.startSession({ project: "proj" });
+    const approval = await approvalOf(
+      bob,
+      await bob.sendMessage(s.id, { content: write("notes/expired.md", "late\n") }),
+    );
+    // No one answers: once it expires, the session continues the turn by itself.
+    let result: Item | undefined;
+    for (let i = 0; i < 100 && !result; i++) {
+      await new Promise((ok) => setTimeout(ok, 100));
+      result = (await bob.listItems(s.id, { types: ["tool_result"] })).items.find(
+        (r) => r.approval === approval.id,
+      );
+    }
+    expect(result).toMatchObject({
+      isError: true,
+      denied: true,
+      output: "write /proj/notes/expired.md: denied: expired",
+    });
+    const turn = await bob.getTurn(String(result?.turn));
+    const ended = turn.status === "completed" ? turn : await waitEnded(bob, turn.id);
+    expect(ended.answers).toBe(approval.id);
+    expect(ended.items.map((i) => i.kind)).toEqual(["tool_result", "message"]);
+    expect(lastAsked()).toContain(
+      "[Result of a denied action] write /proj/notes/expired.md: denied: expired",
+    );
+    expect((await bob.getSession(s.id)).status).toBe("idle");
+    expect(await contentOf(bob, s.id, "notes/expired.md")).toMatch(/ENOENT/);
   });
 });

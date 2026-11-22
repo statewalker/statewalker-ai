@@ -308,7 +308,7 @@ export class AgentSession extends DurableObject<Env> {
         options: compaction.options,
       },
       runTurn: async (
-        { config, turn, content, model, context, signal, onSteer, onApproval, waiting },
+        { config, turn, content, continues, model, context, signal, onSteer, onApproval, waiting },
         emit,
       ) => {
         const workspace = env.WORKSPACE.get(env.WORKSPACE.idFromName(config.workspace));
@@ -331,6 +331,7 @@ export class AgentSession extends DurableObject<Env> {
             ...(config.model ? { model: config.model } : {}),
             ...(model ? { requested: model } : {}),
             content,
+            ...(continues ? { continues: true } : {}),
             context,
             waiting,
             signal,
@@ -379,10 +380,15 @@ export class AgentSession extends DurableObject<Env> {
       },
       // An agent session → user call (a Workspace DO never calls a User DO).
       recordApprovals: async (config, requests) => {
-        await userOf(env, config.user).recordApprovals(config.id, requests);
+        const recorded = await userOf(env, config.user).recordApprovals(config.id, requests);
         // A sub-agent's approvals also go to its root session's events stream.
         if (config.root && config.root !== config.id)
           await agentOf(env, config.root).subAgentApprovals(config.id, requests);
+        return recorded.map((a) => ({ id: a.id, expires: a.expires }));
+      },
+      // An approval no one answers in its time continues its turn from the DO's alarm.
+      wake: (at) => {
+        void this.#arm(at);
       },
     });
   }
@@ -623,10 +629,26 @@ export class AgentSession extends DurableObject<Env> {
     );
   }
 
-  /** Flue's heartbeat over the session's unsettled submissions. */
+  /**
+   * The DO's alarm, shared: approvals that expired continue their turns
+   * (statewalker/statewalker-root#214), then Flue's heartbeat over the session's unsettled
+   * submissions; the next expiry is armed again after.
+   */
   async alarm() {
     const config = this.#core.config();
-    if (config) await this.#flueOf(config.id).alarm();
+    if (!config) return;
+    const next = this.#core.expire();
+    try {
+      await this.#flueOf(config.id).alarm();
+    } finally {
+      if (next !== undefined) await this.#arm(next);
+    }
+  }
+
+  /** Sets the DO's alarm to `at`, unless one is set sooner (Flue's heartbeat shares it). */
+  async #arm(at: number): Promise<void> {
+    const current = await this.ctx.storage.getAlarm();
+    if (current === null || current > at) await this.ctx.storage.setAlarm(at);
   }
 
   /** Told by a sub-agent's DO: the approvals its turn waits on, for this root's events stream. */
