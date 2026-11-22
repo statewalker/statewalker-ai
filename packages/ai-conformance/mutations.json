@@ -3,7 +3,7 @@
   "suites": {
     "access": "pnpm --filter @statewalker/ai-access exec vitest run",
     "environment": "pnpm --filter @statewalker/ai-environment exec vitest run",
-    "gate-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/file-view.test.ts tests/modes.test.ts tests/tenancy.test.ts tests/roles.test.ts"
+    "gate-conformance": "pnpm --filter @statewalker/ai-conformance exec vitest run tests/file-view.test.ts tests/modes.test.ts tests/tenancy.test.ts tests/roles.test.ts tests/user-do.test.ts"
   },
   "mutations": [
     {

@@ -98,4 +98,11 @@ describe("capabilities", () => {
     for (const user of ["", "..", "../bob", "ann/x"])
       expect(() => authority.mintUser(user)).toThrow(/EINVAL/);
   });
+
+  it("narrows no capability to an agent session whose project is not one path segment", () => {
+    // A root such as "/alpha/notes/" or "//" would bind the session to a folder that is no project.
+    const user = authority.mintUser("ann");
+    for (const project of ["", ".", "..", "alpha/notes", "alpha/", "/alpha", "-x", "a b"])
+      expect(() => attenuateForAgentSession(user, { ...grant, project })).toThrow(/EINVAL/);
+  });
 });
