@@ -16,7 +16,9 @@ export type RoleEntries = string | readonly string[];
 
 /** The built-in roles of every project. */
 export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
-  owner: ["*.*", "secrets.write:project"],
+  // Every built-in role may use the plugins' skills and agents (statewalker/statewalker-root#80:
+  // "built-in roles get defaults"); `agents` is granted only by name, so it is named here.
+  owner: ["*.*", "secrets.write:project", "agents.use"],
   editor: [
     "files.read",
     "files.list",
@@ -24,6 +26,9 @@ export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
     "files.delete",
     "comments.*",
     "tools.call",
+    "tools.use",
+    "skills.use",
+    "agents.use",
     "db.*",
     "models.use",
     "memory.write:project",
@@ -34,7 +39,7 @@ export const BUILT_IN_ROLES: Readonly<Record<string, readonly string[]>> = {
     // The server-only task prefixes (#160) are the server's to publish and consume.
     'check if operation($a, $c), target($t), $a != "tasks" || !($t.starts_with("hooks.") || $t.starts_with("schedule."));',
   ],
-  reader: ["files.read", "files.list", "comments.read"],
+  reader: ["files.read", "files.list", "comments.read", "skills.use", "agents.use"],
 };
 
 /** The workspace-level roles: the workspace admin manages projects and members, not files. */

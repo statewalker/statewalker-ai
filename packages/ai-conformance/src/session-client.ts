@@ -173,7 +173,7 @@ export interface SessionClient {
   me(): Promise<UserSession>;
   startSession(req: {
     project: string;
-    agent: string;
+    agent?: string;
     metadata?: Metadata;
     unattended?: boolean;
   }): Promise<AgentSession>;

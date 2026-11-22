@@ -251,13 +251,45 @@ export interface SessionsQuery {
 
 export interface StartSessionRequest {
   project: string;
-  agent: string;
+  /**
+   * `<plugin>/<agent>`, one the caller may use in the project; without it, the project's default
+   * agent (its `.system/settings`), then the deployment's (statewalker/statewalker-root#82).
+   */
+  agent?: string;
   /**
    * No one is present to answer approvals (a scheduled agent, a service account): every "ask" is
    * a deny with a reason, and the agent carries on.
    */
   unattended?: boolean;
   metadata?: Metadata;
+}
+
+/**
+ * The agent an agent session runs, pinned at its start: its definition with every list already
+ * narrowed by the user's permissions (statewalker/statewalker-root#82, #128).
+ */
+export interface AgentRun {
+  /** `<plugin>/<agent>`. */
+  id: string;
+  description?: string;
+  /** The always-on instructions, for the system prompt. */
+  instructions: string;
+  /** The models the user may use, in the agent's order of preference. */
+  models: string[];
+  /** The skills, tools and sub-agents (`<plugin>/<name>`) it asked for that the user may use. */
+  skills: string[];
+  tools: string[];
+  agents: string[];
+  /** A mode it asks for, which may only be stricter than the session's. */
+  mode?: string;
+  requires?: unknown;
+}
+
+/** What starting an agent session pinned: the agent it runs (none: the generic agent). */
+export interface PinnedDefinitions {
+  /** `<plugin>/<agent>`, or "default" for the generic agent when no agent is defined anywhere. */
+  agent: string;
+  run?: AgentRun;
 }
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -378,6 +410,8 @@ export interface AgentSessionConfig {
   project: string;
   agent: string;
   capability: string;
+  /** The agent's definition, pinned at start (none: the generic agent). */
+  run?: AgentRun;
 }
 
 /** The caller's User DO's side of the API: everything that needs the token checked. */
@@ -469,17 +503,20 @@ export function metadataOf(value: unknown): Metadata {
   return Object.fromEntries(entries) as Metadata;
 }
 
+/** `<plugin>/<agent>`: a plugin name, then an agent name (ai-definitions). */
+const AGENT_ID = /^[a-z0-9](?:[a-z0-9.-]{0,62}[a-z0-9])?\/[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+
 function startRequest(req: unknown): StartSessionRequest {
   const { project, agent, metadata, unattended } = (req ?? {}) as Record<string, unknown>;
   if (typeof project !== "string" || !NAME.test(project))
     throw codedError("EINVAL", "project must be a project's name");
-  if (typeof agent !== "string" || !NAME.test(agent))
-    throw codedError("EINVAL", "agent must be an agent's name");
+  if (agent !== undefined && (typeof agent !== "string" || !AGENT_ID.test(agent)))
+    throw codedError("EINVAL", "agent must be '<plugin>/<agent>'");
   if (unattended !== undefined && typeof unattended !== "boolean")
     throw codedError("EINVAL", "unattended is true or false");
   return {
     project,
-    agent,
+    ...(agent !== undefined ? { agent } : {}),
     metadata: metadataOf(metadata),
     ...(unattended ? { unattended: true } : {}),
   };
