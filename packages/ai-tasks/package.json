@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-tasks",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "MIT",
   "description": "The per-project task queue: tasks under subjects, subscriptions with NATS-style filters, peek, take and leased claims with dead letters, reply inboxes, and the executor contract with a runner. The envelope carries no harness types.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-tasks#readme",
