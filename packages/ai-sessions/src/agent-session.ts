@@ -223,6 +223,7 @@ function callOf(stored: StoredAction): ActionCall {
     path: stored.path,
     ...(stored.target !== undefined ? { target: stored.target } : {}),
     ...(stored.method === "write" ||
+    stored.method === "append" ||
     stored.method === "db" ||
     stored.method === "tool" ||
     stored.method === "memory" ||

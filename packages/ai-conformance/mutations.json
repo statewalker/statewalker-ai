@@ -274,6 +274,14 @@
       "find": "if (!full && !(rights.project && onlyDisable))",
       "replace": "if (!full && !rights.project)",
       "suites": ["triggers-conformance"]
+    },
+    {
+      "id": "append-unauthorized",
+      "why": "an append skips the write right",
+      "file": "packages/ai-environment/src/gated-files.ts",
+      "find": "      if (await scope().hidden(path)) throw enoent(raw);\n      await authorize(\"write\", path);\n      const added: Uint8Array[] = [];\n",
+      "replace": "      if (await scope().hidden(path)) throw enoent(raw);\n      const added: Uint8Array[] = [];\n",
+      "suites": ["environment"]
     }
   ]
 }
