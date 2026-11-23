@@ -18,7 +18,13 @@ import { acceptBundle } from "@statewalker/ai-definitions";
 import { bundle, type Esbuild, nodeModulesPackages } from "@statewalker/webrun-bundler";
 import type { FilesApi } from "@statewalker/webrun-files";
 import type { WorkerLoaderLike } from "./env.js";
-import { PLUMBING, runBundle, ToolHost, type ToolHostCalls } from "./tool-executor.js";
+import {
+  GATEWAY_FETCH,
+  PLUMBING,
+  runBundle,
+  ToolHost,
+  type ToolHostCalls,
+} from "./tool-executor.js";
 
 /** The globals a `node` script may name beside the language's: what its isolate defines. */
 const NODE_GLOBALS = ["process", "__harness"];
@@ -160,6 +166,7 @@ import main from "./tool.js";
 
 const controller = new AbortController();
 ${PLUMBING}
+${GATEWAY_FETCH}
 class Exit { constructor(code) { this.code = code; } }
 const define = (name, value) => {
   try { Object.defineProperty(globalThis, name, { value, configurable: true, writable: true }); } catch {}
@@ -219,7 +226,7 @@ export default class extends WorkerEntrypoint {
       signal: controller.signal,
     };
     define("process", proc);
-    define("__harness", { host, console, cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
+    define("__harness", { host, console, fetch: gatewayFetchOf(host), cwd: String(input.cwd), stdin: String(input.stdin ?? "") });
     let exitCode = 0;
     try {
       await main();
@@ -257,7 +264,9 @@ export async function bundleNodeScript(
       modules: (specifier) => NODE_MODULES[specifier],
       // The script's `console` is the isolate's, writing to stdout and stderr: named through
       // `__harness`, since a host may rebind the global `console` of loaded code (CellB does).
-      define: { console: "__harness.console" },
+      // Its `fetch` is the egress gateway's, over the run's host (statewalker/statewalker-root#208):
+      // named through `__harness` too, since a hardened realm may not let `fetch` be redefined.
+      define: { console: "__harness.console", fetch: "__harness.fetch" },
       format: "esm",
       platform: "neutral",
       conditions: ["node", "worker", "browser"],
@@ -294,8 +303,8 @@ function asFunction(code: string): string {
 const MAX_READ = 32 * 1024 * 1024;
 const MAX_LIST = 10_000;
 
-/** The run's host calls over the session's file view (no databases). */
-export function filesHostCalls(files: FilesApi): ToolHostCalls {
+/** The run's host calls over the session's file view (no databases), and its egress, if any. */
+export function filesHostCalls(files: FilesApi, fetch?: ToolHostCalls["fetch"]): ToolHostCalls {
   const noDb = async (): Promise<never> => {
     throw codedError("ENOSYS", "a node script has no databases");
   };
@@ -342,6 +351,7 @@ export function filesHostCalls(files: FilesApi): ToolHostCalls {
     copy: (source, target) => files.copy(source, target),
     dbQuery: noDb,
     dbExec: noDb,
+    ...(fetch ? { fetch } : {}),
   };
 }
 
@@ -355,6 +365,8 @@ export interface NodeRun {
   stdin?: string;
   env?: Record<string, string>;
   files: FilesApi;
+  /** The run's egress (the gateway); absent: no network. */
+  fetch?: ToolHostCalls["fetch"];
   timeoutMs: number;
   maxOutput: number;
   charge(ms: number): Promise<void>;
@@ -366,7 +378,7 @@ export async function runNodeScript(
   loader: WorkerLoaderLike,
   run: NodeRun,
 ): Promise<{ stdout: string; stderr: string; exitCode: number; ms: number }> {
-  const host = new ToolHost(filesHostCalls(run.files));
+  const host = new ToolHost(filesHostCalls(run.files, run.fetch));
   const r = await runBundle(loader, {
     code: run.code,
     main: NODE_MAIN,

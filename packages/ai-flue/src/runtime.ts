@@ -111,6 +111,75 @@ export interface CodePort {
   commands: readonly string[];
   /** Runs one; a refusal (ENOSYS, EACCES, a limit) throws, and the shell reports it. */
   run(run: CodeRun): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+  /**
+   * The egress gateway (statewalker/statewalker-root#208), behind the shell's `curl` and `wget`:
+   * absent, the shell has no network commands at all.
+   */
+  fetch?(request: ShellFetchRequest): Promise<ShellFetchResponse>;
+}
+
+/** A request of the shell's `curl` or `wget`. */
+export interface ShellFetchRequest {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: Uint8Array;
+  /** "manual": a redirect is the answer (curl without -L); otherwise the gateway follows it. */
+  redirect?: "follow" | "manual";
+}
+
+export interface ShellFetchResponse {
+  status: number;
+  url: string;
+  headers: Record<string, string>;
+  body: Uint8Array;
+}
+
+/**
+ * The shell's network: just-bash's own `curl` and `wget` over the running turn's egress gateway.
+ * A refusal is the command's error.
+ */
+function shellFetch(session: string) {
+  return async (
+    url: string,
+    options?: {
+      method?: string;
+      headers?: Headers | Record<string, string>;
+      body?: string | Uint8Array;
+      followRedirects?: boolean;
+    },
+  ) => {
+    const fetch = LIVE.get(session)?.turn.exec?.fetch;
+    if (!fetch) throw new Error("EACCES: this session has no network");
+    const headers: Record<string, string> = {};
+    const given = options?.headers;
+    if (given instanceof Headers)
+      given.forEach((v, k) => {
+        headers[k] = v;
+      });
+    else if (given)
+      for (const [k, v] of Object.entries(given)) headers[k.toLowerCase()] = String(v);
+    const body =
+      options?.body === undefined
+        ? undefined
+        : typeof options.body === "string"
+          ? new TextEncoder().encode(options.body)
+          : options.body;
+    const r = await fetch({
+      url,
+      ...(options?.method ? { method: options.method } : {}),
+      headers,
+      ...(body ? { body } : {}),
+      redirect: options?.followRedirects ? "follow" : "manual",
+    });
+    return {
+      status: r.status,
+      statusText: "",
+      headers: r.headers,
+      body: new Uint8Array(r.body),
+      url: r.url,
+    };
+  };
 }
 
 export interface FlueTurn {
@@ -737,6 +806,10 @@ function HarnessAgent(props: { id: string }) {
               fs: new FilesFs(liveFiles(session)) as never,
               cwd: `/${project}`,
               customCommands: codeCommands(session),
+              // curl and wget, over the egress gateway (no network of the agent's own).
+              ...(LIVE.get(session)?.turn.exec?.fetch
+                ? { fetch: shellFetch(session) as never }
+                : {}),
             }) as never,
         ).createSandbox({ id }),
       tools: (sandbox: unknown) => toolsFor(session, sandbox),

@@ -331,3 +331,33 @@ describe("an imported REST spec", () => {
     });
   });
 });
+
+describe("a native tool's network declaration (statewalker/statewalker-root#208)", () => {
+  it("carries the operation's requires.network into its route, a request and never shown to a model", async () => {
+    const { nativeTools } = await import("../src/index.js");
+    const [tool] = nativeTools("geo", {
+      openapi: "3.1.0",
+      info: { title: "geo", version: "1" },
+      paths: {
+        "/lookup": {
+          post: {
+            operationId: "lookup",
+            summary: "Looks a place up",
+            "x-dev.cellb.harness": {
+              action: "read",
+              requires: { network: [{ host: "api.geo.example", path: "/v1" }] },
+            },
+            requestBody: {
+              content: { "application/json": { schema: { type: "object", properties: {} } } },
+            },
+          },
+        },
+      },
+    });
+    expect(tool?.[TOOL_EXTENSION].route).toMatchObject({
+      kind: "native",
+      requires: { network: [{ host: "api.geo.example", path: "/v1" }] },
+    });
+    expect(JSON.stringify(toMcpTool(tool as ToolDefinition))).not.toContain("api.geo.example");
+  });
+});

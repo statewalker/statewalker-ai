@@ -45,7 +45,8 @@ export interface Item {
     | "limit_warning"
     | "rewind"
     | "memory_primed"
-    | "question";
+    | "question"
+    | "network_request";
   role?: "user" | "assistant";
   text?: string;
   callId?: string;
@@ -108,6 +109,19 @@ export interface Item {
     entries: { kind: string; id: string; version: number; tokens: number }[];
     flagged: { kind: string; id: string; reason: string }[];
     skipped: { kind: string; path: string; reason: string }[];
+  };
+  /** A `network_request` item: one request through the egress gateway, no headers or bodies. */
+  network?: {
+    method: string;
+    host: string;
+    path: string;
+    status?: number;
+    size: number;
+    sent: number;
+    duration_ms: number;
+    redirects?: number;
+    error?: string;
+    executor?: string;
   };
 }
 

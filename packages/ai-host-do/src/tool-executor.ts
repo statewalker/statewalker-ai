@@ -34,6 +34,27 @@ export interface ToolHostCalls {
   copy(source: string, target: string): Promise<boolean>;
   dbQuery(database: string, sql: string, params: unknown[]): Promise<unknown>;
   dbExec(database: string, sql: string): Promise<void>;
+  /**
+   * One request through the egress gateway (statewalker/statewalker-root#208): the isolate's only
+   * network (its `globalOutbound` stays null). Absent: no network at all.
+   */
+  fetch?(request: HostFetchRequest): Promise<HostFetchResponse>;
+}
+
+/** A request an isolate's script hands the gateway: the body as bytes. */
+export interface HostFetchRequest {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: Uint8Array;
+}
+
+/** What the gateway answers an isolate's script. */
+export interface HostFetchResponse {
+  status: number;
+  url: string;
+  headers: Record<string, string>;
+  body: Uint8Array;
 }
 
 const HOST_METHODS = new Set<string>([
@@ -48,6 +69,7 @@ const HOST_METHODS = new Set<string>([
   "copy",
   "dbQuery",
   "dbExec",
+  "fetch",
 ]);
 
 /** The host a run drives: each call checks the run's lease first. */
@@ -107,6 +129,12 @@ export class ToolHost extends RpcTarget {
   dbExec(database: string, sql: string) {
     return this.#live().dbExec(String(database), String(sql));
   }
+  fetch(request: HostFetchRequest) {
+    const calls = this.#live();
+    if (!calls.fetch)
+      return Promise.reject(new Error("EACCES: this run has no network (the egress gateway)"));
+    return calls.fetch(request);
+  }
 }
 
 /** Removes the host's reach from the isolate's realm, before the bundle is evaluated. */
@@ -156,6 +184,68 @@ async function next() {
 }
 `;
 
+/**
+ * The egress gateway as a script sees it (statewalker/statewalker-root#208): a `fetch` over the
+ * run's host, plain values only (on CellB Node the realm's own Request and Response need Buffer,
+ * which the hardened realm no longer has). The isolate's own globalOutbound stays null.
+ */
+export const GATEWAY_FETCH = `
+function gatewayFetchOf(host) {
+  return async (resource, init = {}) => {
+      // Plain values only: on CellB Node the realm's own Request and Response need Buffer, which
+      // the hardened realm no longer has.
+      const url = typeof resource === "string" ? resource : String(resource?.url ?? resource);
+      const method = String(init.method ?? resource?.method ?? "GET").toUpperCase();
+      const headers = {};
+      const given = init.headers ?? resource?.headers;
+      if (given && typeof given.forEach === "function") given.forEach((v, k) => { headers[String(k).toLowerCase()] = String(v); });
+      else if (Array.isArray(given)) for (const [k, v] of given) headers[String(k).toLowerCase()] = String(v);
+      else if (given) for (const [k, v] of Object.entries(given)) headers[k.toLowerCase()] = String(v);
+      let body;
+      const b = init.body;
+      if (b === undefined || b === null) body = undefined;
+      else if (typeof b === "string") body = new TextEncoder().encode(b);
+      else if (b instanceof Uint8Array) body = b;
+      else if (b instanceof ArrayBuffer) body = new Uint8Array(b);
+      else if (ArrayBuffer.isView(b)) body = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+      else if (b instanceof URLSearchParams) { body = new TextEncoder().encode(String(b)); headers["content-type"] ??= "application/x-www-form-urlencoded;charset=UTF-8"; }
+      else body = new TextEncoder().encode(String(b));
+      if (typeof b === "string") headers["content-type"] ??= "text/plain;charset=UTF-8";
+      let r;
+      try {
+        r = await host.fetch({ url, method, headers, ...(body && body.length ? { body } : {}) });
+      } catch (e) {
+        throw new TypeError("fetch failed: " + String(e?.message ?? e));
+      }
+      const bytes = new Uint8Array(r.body ?? []);
+      const resHeaders = new Map(Object.entries(r.headers ?? {}).map(([k, v]) => [k.toLowerCase(), String(v)]));
+      let used = false;
+      const take = () => { if (used) throw new TypeError("the body was already read"); used = true; return bytes; };
+      return {
+        status: r.status,
+        ok: r.status >= 200 && r.status < 300,
+        statusText: "",
+        url: r.url,
+        redirected: false,
+        headers: {
+          get: (k) => resHeaders.get(String(k).toLowerCase()) ?? null,
+          has: (k) => resHeaders.has(String(k).toLowerCase()),
+          forEach: (f) => resHeaders.forEach((v, k) => f(v, k)),
+          entries: () => resHeaders.entries(),
+          keys: () => resHeaders.keys(),
+          values: () => resHeaders.values(),
+          [Symbol.iterator]: () => resHeaders.entries(),
+        },
+        get bodyUsed() { return used; },
+        text: async () => new TextDecoder().decode(take()),
+        json: async () => JSON.parse(new TextDecoder().decode(take())),
+        arrayBuffer: async () => take().slice().buffer,
+        bytes: async () => take().slice(),
+      };
+    };
+}
+`;
+
 /** The isolate's main module: the entrypoint the host calls. */
 const MAIN = `
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -170,6 +260,7 @@ const log = (...args) => { if (logs.length < MAX_LOGS) logs.push(args.map(text).
 for (const level of ["debug", "info", "warn", "error"]) log[level] = log;
 
 ${PLUMBING}
+${GATEWAY_FETCH}
 const filesOf = (host) => ({
   async *read(path, options) {
     const data = await host.read(path, options?.start, options?.length);
@@ -263,7 +354,7 @@ export default class extends WorkerEntrypoint {
     const m = tool.default;
     const execute = typeof m === "function" ? m : typeof m?.execute === "function" ? m.execute.bind(m) : undefined;
     if (!execute) return { ok: false, error: "the script exports no execute function", logs };
-    const ctx = { files: filesOf(host), db: dbOf(host), signal: controller.signal, log };
+    const ctx = { files: filesOf(host), db: dbOf(host), fetch: gatewayFetchOf(host), signal: controller.signal, log };
     try {
       const args = typeof m === "function" ? input : await validated(m.args, input);
       const out = await execute(args, ctx);

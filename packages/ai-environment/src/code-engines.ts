@@ -9,7 +9,8 @@
 // across sessions or capabilities, and closed when idle or when the session ends. It reaches files
 // only through the `files` it is given, the session's gated view, so every operation it makes is
 // one the gate decides (Wasmer: forwarded live; Pyodide: copied in, and each change written back
-// through the view, authorized again). It has no network.
+// through the view, authorized again). It has no network of its own: only the run's `fetch`, the
+// egress gateway, where the engine has an HTTP shim (Pyodide).
 
 /** One program run in an engine, as the agent's `bash` asked for it. */
 export interface EngineRun {
@@ -24,6 +25,27 @@ export interface EngineRun {
   env?: Record<string, string>;
   /** The most output kept, per stream, in characters. */
   maxOutput: number;
+  /**
+   * The run's network: the egress gateway (statewalker/statewalker-root#208), behind the engine's
+   * HTTP shim (Pyodide's `pyfetch`). Absent: the program has no network.
+   */
+  fetch?: (request: EngineFetchRequest) => Promise<EngineFetchResponse>;
+}
+
+/** A request a program hands the gateway. */
+export interface EngineFetchRequest {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  body?: Uint8Array;
+}
+
+/** What the gateway answers it. */
+export interface EngineFetchResponse {
+  status: number;
+  url: string;
+  headers: Record<string, string>;
+  body: Uint8Array;
 }
 
 export interface EngineResult {

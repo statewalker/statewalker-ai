@@ -85,7 +85,11 @@ export async function startDeployment(
   projectDir: URL,
   vars: Record<string, string> = {},
 ): Promise<Deployment> {
-  const v = scenarioRates(vars);
+  // The suite's fake servers (REST, MCP, UHP, model) listen on 127.0.0.1 over http: the egress
+  // gateway's address rule refuses that in production, so scenario deployments list it as a test
+  // deployment's internal host (statewalker/statewalker-root#208). The egress scenarios test the
+  // rule on every other internal address and name.
+  const v = scenarioRates({ EGRESS_INTERNAL_HOSTS: "127.0.0.1", ...vars });
   if (RUNTIME === "browser") {
     const { startBrowserDeployment } = await import("./browser-deployment.js");
     return startBrowserDeployment(projectDir, v);

@@ -90,7 +90,7 @@ const vars = (extra: Record<string, string> = {}) => ({
 });
 
 /** The scripts the operator approves on CellB Node, by the hashes their refusals name. */
-const APPROVED = ["hello.mjs", "files.mjs", "peek.mjs", "fail.mjs", "spin.mjs"];
+const APPROVED = ["hello.mjs", "files.mjs", "peek.mjs", "fail.mjs", "spin.mjs", "net.mjs"];
 
 /**
  * On CellB Node isolates run approved bundles only (#94): a `node` script's refusal names the
@@ -424,10 +424,12 @@ describe.each(transports)("code execution over %s", (name, connect) => {
     expect(outputOf(spin)).toMatch(/node: ETIMEDOUT/);
   });
 
-  it("refuses a script that reaches for the network: the isolate has none", async () => {
+  it("gives a script no network of its own: its fetch is the egress gateway's, which refuses it without an allowlist", async () => {
     const ann = await as("ann");
     const s = await ann.startSession({ project });
     const turn = await ann.sendMessage(s.id, { content: bash("node net.mjs") });
-    expect(outputOf(turn)).toMatch(/EACCES: .*names the global 'fetch'/);
+    expect(outputOf(turn)).toMatch(
+      /fetch failed: EACCES: the deployment allows no network to example\.com/,
+    );
   });
 });

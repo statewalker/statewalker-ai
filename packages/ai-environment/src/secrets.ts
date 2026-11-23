@@ -9,6 +9,12 @@
 // `{{secret:NAME}}` placeholder in an outgoing request resolves only when both match. The gateway
 // puts values into headers and the URL at the last moment and redacts them from what it answers.
 import { codedError } from "@statewalker/ai-access";
+import {
+  checkEgressUrl,
+  type EgressConfig,
+  type EgressTransport,
+  internalAddress,
+} from "./egress.js";
 import type { SqlLike } from "./sql.js";
 
 export type SecretLevel = "deployment" | "workspace" | "project" | "user";
@@ -456,16 +462,40 @@ export async function gatewayFetch(
   plugin: string,
   lookup: SecretLookup,
   fetcher: typeof fetch = fetch,
+  guard?: { config: EgressConfig; transport: EgressTransport },
 ): Promise<GatewayResult> {
   const resolved = await resolveSecrets(request, plugin, lookup);
   if (!resolved.ok) return { ok: false, error: resolved.error, secrets: resolved.names };
   try {
-    const res = await fetcher(resolved.url, {
+    const init = {
       method: request.method ?? "GET",
       headers: resolved.headers,
-      body: request.body,
-      redirect: "manual",
-    });
+      ...(request.body !== undefined ? { body: request.body } : {}),
+    };
+    let res: Response;
+    if (guard) {
+      // The egress gateway's address rule (statewalker/statewalker-root#208): https on the default
+      // port, the name resolved by the gateway and every address admitted before connecting.
+      const url = new URL(resolved.url);
+      checkEgressUrl(url, guard.config);
+      const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+      const listed = guard.config.internalHosts.includes(host);
+      const fixed = guard.config.hosts[host];
+      const admit = (address: string) => {
+        if (!listed && internalAddress(address))
+          throw codedError("EACCES", `${host} resolves to an internal address (${address})`);
+      };
+      if (fixed) for (const a of fixed) admit(a);
+      res = await guard.transport.fetch(
+        url,
+        {
+          method: init.method.toUpperCase(),
+          headers: init.headers,
+          ...(request.body !== undefined ? { body: new TextEncoder().encode(request.body) } : {}),
+        },
+        admit,
+      );
+    } else res = await fetcher(resolved.url, { ...init, redirect: "manual" });
     let body = await res.text();
     if (body.length > MAX_BODY) body = body.slice(0, MAX_BODY);
     return {
@@ -477,6 +507,11 @@ export async function gatewayFetch(
     };
   } catch (e) {
     const message = redactSecrets(String((e as Error)?.message ?? e), resolved.used);
-    return { ok: false, error: `EIO: the request failed: ${message}`, secrets: resolved.names };
+    const coded = /^(EACCES|E2BIG|EINVAL): /.test(message);
+    return {
+      ok: false,
+      error: coded ? message : `EIO: the request failed: ${message}`,
+      secrets: resolved.names,
+    };
   }
 }

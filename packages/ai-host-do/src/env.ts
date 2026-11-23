@@ -91,6 +91,25 @@ export interface Env {
    */
   MODELS?: string;
   /**
+   * The egress gateway's deployment allowlist (statewalker/statewalker-root#208): host patterns
+   * `<host>[/<path-prefix>]` (exact, or `*.<domain>` for its subdomains), comma-separated or a JSON
+   * list. Empty (the default): executed code has no network.
+   */
+  EGRESS_ALLOW?: string;
+  /** The egress gateway's caps, in bytes: response (10 MiB), request body (1 MiB), query (8 KiB). */
+  EGRESS_MAX_RESPONSE_BYTES?: string;
+  EGRESS_MAX_BODY_BYTES?: string;
+  EGRESS_MAX_QUERY_BYTES?: string;
+  /** How long one egress request may take, over every hop, in ms (30000). */
+  EGRESS_TIMEOUT_MS?: string;
+  /**
+   * Test-only: hosts the egress gateway (and REST tools and MCP servers) reach over http, on any
+   * port, at internal addresses: a test deployment's local fake servers. Never set in production.
+   */
+  EGRESS_INTERNAL_HOSTS?: string;
+  /** Test-only: JSON `{name: [address]}`, names the egress gateway resolves to these addresses. */
+  EGRESS_TEST_HOSTS?: string;
+  /**
    * Test-only: hosts a user's own provider may use over http or at a loopback or private address,
    * comma-separated (a local scripted model).
    */

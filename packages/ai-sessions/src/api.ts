@@ -251,7 +251,9 @@ export interface ItemInput {
     | "rewind"
     | "memory_primed"
     /** A remote harness's free-text question, answered through /v1/approvals like an approval. */
-    | "question";
+    | "question"
+    /** One request of executed code through the egress gateway (statewalker/statewalker-root#208). */
+    | "network_request";
   role?: "user" | "assistant";
   /**
    * Produced by a remote agent session's external harness (statewalker/statewalker-root#144):
@@ -327,6 +329,31 @@ export interface ItemInput {
    * with at its start or after a compaction, each entry's kind, id, version and tokens.
    */
   memory?: MemoryPrimedView;
+  /**
+   * A `network_request` item (statewalker/statewalker-root#208): one request of executed code
+   * through the egress gateway, sent or refused, with no headers and no bodies.
+   */
+  network?: NetworkRequestView;
+}
+
+/** What a `network_request` item records: never headers, bodies or the query string. */
+export interface NetworkRequestView {
+  method: string;
+  host: string;
+  path: string;
+  /** The answer's status (absent when nothing was answered). */
+  status?: number;
+  /** The answer's body size, in bytes. */
+  size: number;
+  /** The request body's size, in bytes, over every hop. */
+  sent: number;
+  duration_ms: number;
+  /** Redirects followed. */
+  redirects?: number;
+  /** Why it was refused or failed, with its code. */
+  error?: string;
+  /** Where it ran: the executor kind (`isolate`, `engine`, `shell`, `pool`). */
+  executor?: string;
 }
 
 /** A limit whose warning share usage crossed (statewalker/statewalker-root#179). */

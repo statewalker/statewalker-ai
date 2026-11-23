@@ -375,6 +375,7 @@ const KINDS: readonly string[] = [
   "rewind",
   "memory_primed",
   "question",
+  "network_request",
 ];
 const MAX_PAGE = 1000;
 /** Where the head is kept in `agent_config` ("" before the first turn). */
@@ -1279,6 +1280,11 @@ export class AgentSessionCore implements Omit<AgentPort, "mcp" | "limits" | "own
     }
     try {
       const done = await this.#runAction(config, callOf(item.stored), turn);
+      // What the action added as it ran (an approved run's network requests, limit warnings).
+      const added = (done as { items?: unknown } | undefined)?.items;
+      if (Array.isArray(added))
+        for (const x of added as ItemInput[])
+          if (x?.kind === "network_request" || x?.kind === "limit_warning") this.#append(turn, x);
       if (done && typeof done === "object" && "$approval" in done) {
         const request = (done as { $approval: ApprovalRequest }).$approval;
         pending.set(request.id, { request, stored: item.stored });

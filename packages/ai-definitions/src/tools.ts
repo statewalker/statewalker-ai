@@ -59,6 +59,12 @@ export type ToolRoute =
       bundle?: string;
       /** The bundle's sha-256. */
       hash?: string;
+      /**
+       * What the tool requires of the environment, from its operation's `x-dev.cellb.harness`:
+       * `network: [{host, path?, write?}]` is what the egress gateway may let its isolate reach
+       * (statewalker/statewalker-root#208), a request and not a grant.
+       */
+      requires?: unknown;
     }
   | {
       kind: "mcp";
@@ -429,11 +435,26 @@ export function nativeTools(
         action: c.action,
         input: c.input,
         ...(c.output ? { output: c.output } : {}),
-        route: { kind: "native", entry: id, ...buildRoute(builds[id]) },
+        route: {
+          kind: "native",
+          entry: id,
+          ...buildRoute(builds[id]),
+          ...requiresOf(op),
+        },
       }),
     );
   }
   return out;
+}
+
+/** An operation's `x-dev.cellb.harness.requires`, kept as written. */
+function requiresOf(op: unknown): { requires?: unknown } {
+  const ext = (op as Record<string, unknown>)?.[TOOL_EXTENSION] as
+    | { requires?: unknown }
+    | undefined;
+  return ext && typeof ext === "object" && ext.requires !== undefined
+    ? { requires: ext.requires }
+    : {};
 }
 
 function buildRoute(b: NativeBuild | undefined) {
