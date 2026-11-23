@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-memory",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "MIT",
   "description": "Memory across agent sessions: user preferences, user memory, project memory and agent memory as Markdown entries with front matter, the memory tool and the memory API's one implementation.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-memory#readme",

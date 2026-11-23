@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-environment",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "MIT",
   "description": "The environment contract: files, databases, search, exec, tools, model gateway, store and attenuate; the gated file view, executors, the model gateway and secrets.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-environment#readme",

@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-sessions",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "license": "MIT",
   "description": "Sessions: user and agent sessions, turns, items, summaries, the event log, and the session API as RPC methods.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-sessions#readme",
