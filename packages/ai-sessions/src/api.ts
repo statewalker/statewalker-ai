@@ -368,6 +368,8 @@ export interface StoredAction {
    */
   method:
     | "write"
+    /** Appending to a file: the content is what is appended (statewalker/statewalker-root#146). */
+    | "append"
     | "mkdir"
     | "remove"
     | "copy"

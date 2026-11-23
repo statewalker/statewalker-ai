@@ -23,6 +23,11 @@ export interface Deployment {
    * stand-in whose "weights" answer through the scripted model at `scripted` (its /v1 URL).
    */
   localModels?: { download(model: string, scripted: string): Promise<void> };
+  /**
+   * Stops the deployment and starts it again on the same storage, as an operator's restart or a
+   * host's eviction of every cell would: where the runtime offers it (`CAN.restart`).
+   */
+  restart?(): Promise<void>;
 }
 
 /** The runtimes the conformance suite runs on (statewalker/statewalker-root#85). */
@@ -68,6 +73,8 @@ export const CAN = {
    * the runner's process-deployment.ts.
    */
   processDeployments: RUNTIME === "celld" || RUNTIME === "workerd",
+  /** A restart of a deployment on the storage it had (`Deployment.restart`): CellB Node. */
+  restart: RUNTIME === "node",
 } as const;
 
 /** Whether the run's deployments have a local model engine: a capability of the browser runtime. */
@@ -150,9 +157,10 @@ export async function startNodeDeployment(
   config.main = join(dir, config.main);
   const tmp = mkdtempSync(join(tmpdir(), "ai-conformance-"));
   writeFileSync(join(tmp, "wrangler.json"), JSON.stringify(config));
+  const load = async () => loadProject(tmp, { data: join(tmp, "data") });
   let project: Awaited<ReturnType<typeof loadProject>>;
   try {
-    project = await loadProject(tmp, { data: join(tmp, "data") });
+    project = await load();
   } catch (e) {
     rmSync(tmp, { recursive: true, force: true });
     throw e;
@@ -162,6 +170,10 @@ export async function startNodeDeployment(
     close: async () => {
       await project.close();
       rmSync(tmp, { recursive: true, force: true });
+    },
+    restart: async () => {
+      await project.close();
+      project = await load();
     },
   };
 }

@@ -28,7 +28,7 @@ beforeEach(async () => {
 });
 
 /** Ann's view: a member of alpha only, allowed every action anywhere inside it. */
-function view(overrides: Partial<GatedFilesOptions> = {}): FilesApi {
+function view(overrides: Partial<GatedFilesOptions> = {}): ReturnType<typeof gatedFiles> {
   return gatedFiles(store, {
     systemFolder: ".system",
     visible: async (project) => project === "alpha",
@@ -265,3 +265,40 @@ describe("streams", () => {
     await expect(files.write("/alpha/w.bin", content())).rejects.toThrow(/EACCES/);
   });
 });
+
+describe("appends (statewalker/statewalker-root#146)", () => {
+  /** A view whose holder may take only the given actions. */
+  const only = (allowed: FileAction[]) =>
+    view({
+      authorize: async (action, path) => {
+        if (!allowed.includes(action) || !path.startsWith("/alpha/"))
+          throw codedError("EACCES", `may not ${action} '${path}'`);
+      },
+    });
+
+  it("appends as a write: refused without the write right, absent where the holder sees nothing", async () => {
+    await expect(only(["read", "list"]).append("/alpha/readme.md", [enc("!")])).rejects.toThrow(
+      /EACCES/,
+    );
+    await expect(view().append("/beta/notes.md", [enc("!")])).rejects.toThrow(/ENOENT/);
+    await expect(view().append("/alpha/.system/access", [enc("!")])).rejects.toThrow(/ENOENT/);
+    expect(await readText(store, "/alpha/readme.md")).toBe("alpha readme");
+    // The write right alone appends: O_APPEND needs no read.
+    await only(["write"]).append("/alpha/readme.md", [enc("!")]);
+    expect(await readText(store, "/alpha/readme.md")).toBe("alpha readme!");
+  });
+
+  it("runs appends to one file one at a time, from any view over the store, losing none", async () => {
+    await Promise.all(
+      Array.from({ length: 20 }, (_, i) => view().append("/alpha/log.txt", [enc(`${i}\n`)])),
+    );
+    const lines = (await readText(store, "/alpha/log.txt")).split("\n").filter(Boolean);
+    expect(lines.map(Number).sort((a, b) => a - b)).toEqual(
+      Array.from({ length: 20 }, (_, i) => i),
+    );
+  });
+});
+
+function enc(text: string) {
+  return new TextEncoder().encode(text);
+}
