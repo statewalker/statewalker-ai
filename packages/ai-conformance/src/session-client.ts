@@ -13,7 +13,7 @@ import type {
   UIMessageChunk,
 } from "@statewalker/ai-sessions";
 import { hookSignature, type TriggersApi } from "@statewalker/ai-sessions";
-import type { TasksApi } from "@statewalker/ai-tasks";
+import type { TasksApi } from "@statewalker/shared-tasks";
 import { DefaultChatTransport } from "ai";
 import type { Deployment } from "./deployment.js";
 

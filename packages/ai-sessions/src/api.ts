@@ -29,7 +29,7 @@ import type {
   MemoryUsage,
   PrimedEntry,
 } from "@statewalker/ai-memory";
-import type { TasksApi } from "@statewalker/ai-tasks";
+import type { TasksApi } from "@statewalker/shared-tasks";
 import type { Topic } from "./context/topics.js";
 import { TRIGGERS_METHODS, type TriggersApi, type TriggersCall } from "./triggers.js";
 import { sessionOfTurn } from "./turns.js";

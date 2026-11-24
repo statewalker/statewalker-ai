@@ -194,9 +194,9 @@ A task that used up its attempts in one subscription, kept there (14 days) for s
 A subscription made for replies (`_inbox.<id>`): only its creator reads it, no wildcard filter matches it, and only a consumer that took or claimed a task replies into the inbox the task names.
 _Avoid_: reply queue, mailbox
 
-**Executor**:
-Work done for the tasks of a subscription (`run(lease, {signal, progress})`), served by a runner that keeps the lease, records progress in the lease's job log and replies with a reference to it.
-_Avoid_: worker, handler
+**Processor**:
+The work that serves a subscription's tasks, one lease at a time, with cancellation and progress (`run(lease, {signal, progress})`), served by a runner that keeps the lease, records progress in the lease's job log and replies with a reference to it. The contract is `@statewalker/shared-tasks`'.
+_Avoid_: executor (here, where session code runs), worker, handler
 
 ### Memory
 

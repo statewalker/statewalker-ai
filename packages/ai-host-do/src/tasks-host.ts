@@ -1,5 +1,5 @@
 // The task queue's host side (statewalker/statewalker-root#206, decision #160): the project queues
-// of one workspace, kept by its Workspace DO in its SQLite (ai-tasks' TaskQueue), with the rights
+// of one workspace, kept by its Workspace DO in its SQLite (shared-tasks' TaskQueue), with the rights
 // decided here at every call from the caller's capability and their current roles:
 //
 // - a person (user capability) is `user:<name>` and answers to `user:<name>`; an agent session is
@@ -21,7 +21,7 @@ import {
   type Subscription,
   TaskQueue,
   type TaskQueueOptions,
-} from "@statewalker/ai-tasks";
+} from "@statewalker/shared-tasks";
 
 /** Subjects only the server publishes: webhooks' and schedules' (#207). */
 export const SERVER_PREFIXES = ["hooks.", "schedule."] as const;

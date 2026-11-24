@@ -4,7 +4,7 @@
 // caps, and the agent tools. Run against the harness's own deployment (ai-host-do) on CellB Node
 // in-process, with the scripted model, over REST and RPC. The deployment's clock is a test clock
 // (TEST_CLOCK), moved forward to run leases and expiry out.
-import { serveSubscription } from "@statewalker/ai-tasks";
+import { serveSubscription } from "@statewalker/shared-tasks";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   advanceWorkspaceClock,
@@ -239,7 +239,7 @@ describe.each(transports)("the task queue over %s", (name, connect) => {
     expect(await status(ed.job(p, String(lease?.id)))).toBe(404);
   });
 
-  it("serves a subscription with an executor through the API: progress in a job log the reply names", async () => {
+  it("serves a subscription with a processor through the API: progress in a job log the reply names", async () => {
     const p = `inbox-${t}`;
     const [ann, cy] = [await as("ann"), await as("cy")];
     await cy.subscribe(p, { name: "squares", filter: { subject: "math.square" } });
@@ -251,7 +251,7 @@ describe.each(transports)("the task queue over %s", (name, connect) => {
       subscription: "squares",
       signal: stop.signal,
       waitMs: 1000,
-      executor: {
+      processor: {
         async run(lease, { progress }) {
           await progress({ squaring: lease.task.payload });
           return (lease.task.payload as number) ** 2;

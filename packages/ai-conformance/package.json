@@ -18,7 +18,7 @@
   },
   "devDependencies": {
     "@statewalker/ai-sessions": "workspace:^",
-    "@statewalker/ai-tasks": "workspace:^",
+    "@statewalker/shared-tasks": "catalog:",
     "@statewalker/cellb": "catalog:",
     "@statewalker/webrun-biscuit": "catalog:",
     "@statewalker/webrun-rpc": "catalog:",
