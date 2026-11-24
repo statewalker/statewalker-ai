@@ -386,22 +386,22 @@ _Avoid_: composite file system
 ### Execution and models
 
 **Code executor**:
-A place where an agent session's code runs, of one kind (shell, isolate, engine or container), reaching files only through the session's capability and the network only through the egress gateway.
+A place where an agent session's code runs, of one kind (shell, isolate, light container or container), reaching files only through the session's capability and the network only through the egress gateway.
 _Avoid_: executor (a task-queue term), pool
 
-**Code engine**:
-Pyodide, declared by the runtime's host where it can confine it (CellB in a browser and on Node), running `python` in the harness's own process; an instance belongs to one agent session.
-_Avoid_: sandbox (for the engine itself)
+**Light container**:
+The default code executor for `python` and `node` scripts, on every runtime: one run of a small engine (CPython for WASI, QuickJS, or Pyodide on CellB) in its own isolate, reaching nothing but the capabilities it was given (files, network, named services). It can't run native packages, `npm` or servers.
+_Avoid_: sandbox, engine
 
 **Container**:
-The code executor for `python` and POSIX programs: one per agent session, obtained through the runtime's Durable Object container API and run by whichever engine the runtime offers (Wasmer or Lifo on CellB, Cloudflare Containers on Workers, Docker on CellD). It holds no credential of its own, sleeps when idle, is destroyed with its session, and answers ENOSYS where the runtime can't confine it.
+The code executor for what a light container can't run (native packages, real `node`, `npm`, POSIX programs, servers): one per agent session, obtained through the runtime's Durable Object container API and run by whichever engine the runtime offers (Wasmer or Lifo on CellB, Cloudflare Containers on Workers, Docker on CellD). It reaches nothing but the capabilities it was given, holds no credential of its own, sleeps when idle, is destroyed with its session, and answers ENOSYS where the runtime can't confine it.
 _Avoid_: pool, lease, sandbox
 
 **Trusted run**:
 Code a deployment explicitly lets run in a container engine that isn't a sandbox (Lifo); never code an agent writes unless the deployment opted the workspace in.
 
 **Layer**:
-A read-only set of files produced once by one preparation step (an image, a command and its declared input files, such as `npm install` from a lockfile), named by the hash of those inputs and mounted read-only into containers.
+A read-only set of files produced once by one preparation step (an image, a command and its declared input files, such as `npm install` from a lockfile), named by the hash of those inputs and mounted read-only into containers and light containers. A light container's engine is itself a layer.
 _Avoid_: cache, snapshot
 
 **Base image**:
