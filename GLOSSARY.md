@@ -394,14 +394,14 @@ The default code executor for `python` and `node` scripts, on every runtime: one
 _Avoid_: sandbox, engine
 
 **Container**:
-The code executor for what a light container can't run (native packages, real `node`, `npm`, POSIX programs, servers): one per agent session, obtained through the runtime's Durable Object container API and run by whichever engine the runtime offers (Wasmer or Lifo on CellB, Cloudflare Containers on Workers, Docker on CellD). It reaches nothing but the capabilities it was given, holds no credential of its own, sleeps when idle, is destroyed with its session, and answers ENOSYS where the runtime can't confine it.
+The code executor for what a light container can't run (native packages, real `node`, `npm`, POSIX programs, servers): one per agent session, obtained through the runtime's Durable Object container API and run by whichever engine the runtime offers (Wasmer or Lifo on CellB, Cloudflare Containers on Workers, Docker on CellD). It reaches nothing but the capabilities it was given, holds no credential of its own, sleeps when idle, is destroyed with its session, and answers ENOSYS where the runtime can't give it its capabilities.
 _Avoid_: pool, lease, sandbox
 
 **Trusted run**:
 Code a deployment explicitly lets run in a container engine that isn't a sandbox (Lifo); never code an agent writes unless the deployment opted the workspace in.
 
 **Layer**:
-A read-only set of files produced once by one preparation step (an image, a command and its declared input files, such as `npm install` from a lockfile), named by the hash of those inputs and mounted read-only into containers and light containers. A light container's engine is itself a layer.
+A read-only set of files produced once by one preparation step (an image, a command and its declared input files, such as `npm install` from a lockfile), named by the hash of those inputs and mounted read-only into containers. A light container's engine is itself a layer, provided by the deployment.
 _Avoid_: cache, snapshot
 
 **Base image**:
