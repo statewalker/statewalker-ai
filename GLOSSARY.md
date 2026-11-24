@@ -442,7 +442,7 @@ _Avoid_: runtime, engine
 An agent session's execution core: one instance of Flue's runtime per agent session, hosted on the agent session's Durable Object, which runs each turn as one Flue submission. Its history is Flue's private state in that DO; the model sees only the harness's context.
 
 **Environment**:
-Everything an execution core reaches through capabilities: the file view, databases, executors, tools, the model gateway and the store.
+Everything an execution core reaches through capabilities: the file view, databases, code executors, tools, the model gateway and the store.
 _Avoid_: shell, sandbox
 
 **Definitions**:
