@@ -385,12 +385,27 @@ _Avoid_: composite file system
 
 ### Execution and models
 
-**Executor**:
-A place where an agent session's code runs, of one kind (shell, isolate, engine or pool), reaching files only through the session's capability.
+**Code executor**:
+A place where an agent session's code runs, of one kind (shell, isolate, engine or container), reaching files only through the session's capability and the network only through the egress gateway.
+_Avoid_: executor (a task-queue term), pool
 
 **Code engine**:
-Pyodide or Wasmer, declared by the runtime's host where it can confine them (CellB in a browser and on Node); an instance belongs to one agent session, and `python` and POSIX programs answer ENOSYS where no host declared one.
+Pyodide, declared by the runtime's host where it can confine it (CellB in a browser and on Node), running `python` in the harness's own process; an instance belongs to one agent session.
 _Avoid_: sandbox (for the engine itself)
+
+**Container**:
+The code executor for `python` and POSIX programs: one per agent session, obtained through the runtime's Durable Object container API and run by whichever engine the runtime offers (Wasmer or Lifo on CellB, Cloudflare Containers on Workers, Docker on CellD). It holds no credential of its own, sleeps when idle, is destroyed with its session, and answers ENOSYS where the runtime can't confine it.
+_Avoid_: pool, lease, sandbox
+
+**Trusted run**:
+Code a deployment explicitly lets run in a container engine that isn't a sandbox (Lifo); never code an agent writes unless the deployment opted the workspace in.
+
+**Layer**:
+A read-only set of files produced once by one preparation step (an image, a command and its declared input files, such as `npm install` from a lockfile), named by the hash of those inputs and mounted read-only into containers.
+_Avoid_: cache, snapshot
+
+**Base image**:
+What every container of a deployment starts from on one runtime: the programs agents may `require`, before any layer.
 
 **Requires**:
 What an agent's definition says it needs of the environment (`requires: [python, node]`); its session refuses to start where a requirement isn't met.
@@ -427,7 +442,7 @@ _Avoid_: runtime, engine
 An agent session's execution core: one instance of Flue's runtime per agent session, hosted on the agent session's Durable Object, which runs each turn as one Flue submission. Its history is Flue's private state in that DO; the model sees only the harness's context.
 
 **Environment**:
-Everything an execution core reaches through capabilities: the file view, databases, executors, tools, the model gateway and the store.
+Everything an execution core reaches through capabilities: the file view, databases, code executors, tools, the model gateway and the store.
 _Avoid_: shell, sandbox
 
 **Definitions**:
