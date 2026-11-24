@@ -407,6 +407,20 @@ _Avoid_: cache, snapshot
 **Base image**:
 What every container of a deployment starts from on one runtime: the programs agents may `require`, before any layer.
 
+**Container**:
+The code executor for `python` and POSIX programs: one per agent session, obtained through the runtime's Durable Object container API and run by whichever engine the runtime offers (Wasmer or Lifo on CellB, Cloudflare Containers on Workers, Docker on CellD). It holds no credential of its own, sleeps when idle, is destroyed with its session, and answers ENOSYS where the runtime can't confine it.
+_Avoid_: pool, lease, sandbox
+
+**Trusted run**:
+Code a deployment explicitly lets run in a container engine that isn't a sandbox (Lifo); never code an agent writes unless the deployment opted the workspace in.
+
+**Layer**:
+A read-only set of files produced once by one preparation step (an image, a command and its declared input files, such as `npm install` from a lockfile), named by the hash of those inputs and mounted read-only into containers.
+_Avoid_: cache, snapshot
+
+**Base image**:
+What every container of a deployment starts from on one runtime: the programs agents may `require`, before any layer.
+
 **Requires**:
 What an agent's definition says it needs of the environment (`requires: [python, node]`); its session refuses to start where a requirement isn't met.
 
