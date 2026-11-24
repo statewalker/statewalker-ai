@@ -12,7 +12,7 @@ import type {
   StopReason,
   UIMessageChunk,
 } from "@statewalker/ai-sessions";
-import { hookSignature, type TriggersApi } from "@statewalker/ai-sessions";
+import { codeOf, hookSignature, type TriggersApi } from "@statewalker/ai-sessions";
 import type { TasksApi } from "@statewalker/shared-tasks";
 import { DefaultChatTransport } from "ai";
 import type { Deployment } from "./deployment.js";
@@ -716,14 +716,19 @@ export interface LimitsView {
   limits: (Record<string, unknown> & { meter: string; value: number; level: string })[];
 }
 
-/** A refusal by the session API; `status` is the HTTP status REST answers with. */
+/**
+ * A refusal by the session API; `status` is the HTTP status REST answers with, and `code` the
+ * error code its message starts with (any hop rebuilds it from there; `EIO` when it names none).
+ */
 export class ApiError extends Error {
+  readonly code: string;
   constructor(
     readonly status: number,
     message: string,
   ) {
     super(message);
     this.name = "ApiError";
+    this.code = codeOf(message);
   }
 }
 
@@ -1037,7 +1042,15 @@ export function restClient(deployment: Deployment, token: string): SessionClient
     ack: (lease) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/ack`),
     release: (lease, o = {}) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/release`, o),
     renew: (lease, o = {}) => call("POST", `/v1/leases/${encodeURIComponent(lease)}/renew`, o),
-    job: (project, id) => call("GET", `${pp(project)}/jobs/${encodeURIComponent(id)}`),
+    job: (project, id, o = {}) => {
+      const q = new URLSearchParams();
+      if (o.after !== undefined) q.set("after", String(o.after));
+      if (o.wait_ms !== undefined) q.set("wait_ms", String(o.wait_ms));
+      const query = q.size ? `?${q}` : "";
+      return call("GET", `${pp(project)}/jobs/${encodeURIComponent(id)}${query}`);
+    },
+    cancel: (project, task) =>
+      call("POST", `${pp(project)}/tasks/${encodeURIComponent(task)}/cancel`),
     // The trigger API (statewalker/statewalker-root#207).
     listTriggers: (project) => call("GET", `${pp(project)}/triggers`),
     createTrigger: (project, t) => call("POST", `${pp(project)}/triggers`, t),

@@ -8,7 +8,8 @@
 // statewalker-shared's shared-tasks tests): project `alpha`, subscription `work` on `jobs.*` owned
 // by `user:ann`, task id1 leased as id3 with one progress entry, and task id2 waiting.
 //
-// Rolling back to ai-tasks is not supported once shared-tasks has written to a store.
+// Opening the store upgrades it in place to shared-tasks' schema version 2 (columns added with
+// defaults, no data dropped). Rolling back to ai-tasks is not supported once a store is upgraded.
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -86,14 +87,17 @@ describe("a Workspace DO's queue written by ai-tasks 0.1.0", () => {
     expect(await call("peek", P, "work")).toMatchObject({ tasks: [{ subject: "jobs.c" }] });
   });
 
-  it("keeps the store's table layout as it was", () => {
+  it("is upgraded in place once (schema version 2), and the old lease's job ends `done`", async () => {
     const { sql, db } = aiTasksStore();
-    const schema = () =>
-      db
-        .prepare("SELECT name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name")
-        .all();
-    const before = schema();
+    const version = () => db.prepare("SELECT version FROM task_schema").all();
+    const tasks = host(sql);
+    expect(version()).toEqual([{ version: 2 }]);
     host(sql);
-    expect(schema()).toEqual(before);
+    expect(version()).toEqual([{ version: 2 }]);
+    const call = (op: string, ...args: unknown[]) => tasks.call(ann, { op, args } as never);
+    await call("ack", "id3");
+    expect(await call("job", P, "id3")).toMatchObject({
+      entries: [{ progress: { step: 1 } }, { outcome: "done" }],
+    });
   });
 });

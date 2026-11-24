@@ -48,7 +48,7 @@ function fixtures(): Record<string, string> {
       [u("pl")]: "editor",
       [u("by")]: "editor",
     };
-    for (const p of ["q", "lease", "inbox", "rights", "exp", "cap", "agent"])
+    for (const p of ["q", "lease", "inbox", "rights", "exp", "cap", "agent", "cancel"])
       files[`/${p}-${t}/.system/access`] = JSON.stringify(members);
     files[`/full-${t}/.system/access`] = JSON.stringify(members);
     files[`/full-${t}/.system/limits`] = JSON.stringify([
@@ -233,8 +233,10 @@ describe.each(transports)("the task queue over %s", (name, connect) => {
     expect((await ann.take(p, inbox.name)).tasks.map((x) => x.payload)).toEqual([
       { sum: 3, job: lease?.id },
     ]);
+    // The ack ended the job: its last entry says so (#404).
     expect((await ann.job(p, String(lease?.id))).entries.map((e) => e.progress)).toEqual([
       { step: "adding" },
+      null,
     ]);
     expect(await status(ed.job(p, String(lease?.id)))).toBe(404);
   });
@@ -267,8 +269,95 @@ describe.each(transports)("the task queue over %s", (name, connect) => {
     await served;
     const reply = replies[0]?.payload as { job: string; result: number };
     expect(reply.result).toBe(49);
-    expect((await ann.job(p, reply.job)).entries.map((e) => e.progress)).toEqual([{ squaring: 7 }]);
+    // The lease ended before the reply, so the log already holds its last entry (#404).
+    const job = await ann.job(p, reply.job);
+    expect(job.entries.map((e) => e.progress)).toEqual([{ squaring: 7 }, null]);
+    expect(job.entries.at(-1)?.outcome).toBe("done");
     expect((await cy.getSubscription(p, "squares")).counts).toMatchObject({ waiting: 0 });
+  });
+
+  it("cancels a task for its sender or tasks.admin: a waiting one goes, a leased one ends at its next renew", async () => {
+    const p = `cancel-${t}`;
+    const [ann, ed, bob] = [await as("ann"), await as("ed"), await as("bob")];
+    await ed.subscribe(p, { name: "work", filter: { subject: "jobs.*" } });
+    const waiting = await bob.publish(p, { subject: "jobs.a" });
+    // Neither another member nor a stranger to the task cancels it; its sender does.
+    expect(await status(ed.cancel(p, waiting.id))).toBe(403);
+    expect(await bob.cancel(p, waiting.id)).toEqual({ cancelled: true });
+    expect((await ed.peek(p, "work")).tasks).toEqual([]);
+    expect(await status(bob.cancel(p, waiting.id))).toBe(404);
+    // A leased task: tasks.admin (an owner) cancels it, and its holder learns at the next renew.
+    const leased = await bob.publish(p, { subject: "jobs.b" });
+    const [lease] = (await ed.claim(p, "work")).leases;
+    await ed.renew(String(lease?.id), { progress: { step: 1 } });
+    expect(await ann.cancel(p, leased.id)).toEqual({ cancelled: true });
+    const refused = await ed.renew(String(lease?.id)).catch((e: unknown) => e);
+    expect(refused).toMatchObject({ status: 409, code: "ECANCELED" });
+    const job = await ed.job(p, String(lease?.id));
+    expect(job.entries.at(-1)).toMatchObject({ outcome: "cancelled" });
+    expect((await ed.deadLetters(p, "work")).dead_letters).toEqual([]);
+  });
+
+  it("reads a job log after a stamp, waiting for the next entry", async () => {
+    const p = `cancel-${t}`;
+    const [bob, ed] = [await as("bob"), await as("ed")];
+    await ed.subscribe(p, { name: "slow", filter: { subject: "slow.*" } });
+    await bob.publish(p, { subject: "slow.a" });
+    const [lease] = (await ed.claim(p, "slow")).leases;
+    const id = String(lease?.id);
+    await ed.renew(id, { progress: "a" });
+    const [first] = (await bob.job(p, id)).entries;
+    const waiting = bob.job(p, id, { after: first?.at, wait_ms: 5_000 });
+    await new Promise((r) => setTimeout(r, 50));
+    await ed.renew(id, { progress: "b" });
+    expect((await waiting).entries.map((e) => e.progress)).toEqual(["b"]);
+    await ed.ack(id);
+    const all = (await bob.job(p, id)).entries;
+    expect(all.map((e) => e.outcome ?? e.progress)).toEqual(["a", "b", "done"]);
+    // An ended job answers at once.
+    expect((await bob.job(p, id, { after: all.at(-1)?.at, wait_ms: 5_000 })).entries).toEqual([]);
+  });
+
+  it("aborts a remote processor and replies `cancelled` when its task is cancelled", async () => {
+    const p = `cancel-${t}`;
+    const [bob, cy] = [await as("bob"), await as("cy")];
+    await cy.subscribe(p, { name: "long", filter: { subject: "long.run" } });
+    const inbox = await bob.createInbox(p);
+    const task = await bob.publish(p, { subject: "long.run", reply_to: inbox.name });
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let aborted = false;
+    const stop = new AbortController();
+    const served = serveSubscription(cy, {
+      project: p,
+      subscription: "long",
+      signal: stop.signal,
+      waitMs: 1000,
+      processor: {
+        async run(_lease, { signal, progress }) {
+          started();
+          while (!signal.aborted) {
+            await progress({ tick: true }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 20));
+          }
+          aborted = true;
+          throw signal.reason;
+        },
+      },
+    });
+    await running;
+    await bob.cancel(p, task.id);
+    let replies: { payload: unknown }[] = [];
+    for (let i = 0; i < 100 && !replies.length; i++) {
+      replies = (await bob.take(p, inbox.name)).tasks;
+      if (!replies.length) await new Promise((r) => setTimeout(r, 50));
+    }
+    stop.abort();
+    await served;
+    expect(aborted).toBe(true);
+    expect(replies[0]?.payload).toMatchObject({ cancelled: true });
   });
 
   it("holds publishing and subscribing to the rights: server-only and agent prefixes, readers, destinations, admin", async () => {

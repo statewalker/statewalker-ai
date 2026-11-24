@@ -8,6 +8,7 @@ export type ErrorCode =
   | "EINVAL" // a malformed request (400)
   | "EBUSY" // refused in the thing's current state: running, archived, already ended (409)
   | "EEXIST" // it exists already (409)
+  | "ECANCELED" // its task was cancelled: a lease's renew says so (409, statewalker/statewalker-root#404)
   | "ELIMIT" // a limit refused it (statewalker/statewalker-root#179): too many, for now (429)
   | "ENOSPC" // a storage limit refused a write; reads and deletes still work (507)
   | "E2BIG" // a request's body or payload is over its cap (413, statewalker/statewalker-root#207)
@@ -31,6 +32,7 @@ const CODES = new Set<string>([
   "EINVAL",
   "EBUSY",
   "EEXIST",
+  "ECANCELED",
   "ELIMIT",
   "ENOSPC",
   "E2BIG",
@@ -53,6 +55,7 @@ const STATUS: Record<ErrorCode, number> = {
   EINVAL: 400,
   EBUSY: 409,
   EEXIST: 409,
+  ECANCELED: 409,
   ELIMIT: 429,
   ENOSPC: 507,
   E2BIG: 413,

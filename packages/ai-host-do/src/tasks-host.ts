@@ -10,6 +10,7 @@
 // - reading a subscription takes `tasks.subscribe` on its filter, and each task read
 //   `tasks.subscribe:<its subject>` (a task the reader may not take stays for others); an inbox is
 //   its creator's alone; deleting another's subscription or listing every task takes `tasks.admin`;
+// - cancelling a task is its sender's, or takes `tasks.admin` (statewalker/statewalker-root#404);
 // - the queue's bytes (waiting tasks and dead letters, inboxes' included) are a storage category
 //   (`queue`), admitted before publishing (ENOSPC) and counted after every call.
 import { type AgentSessionFacts, codedError, decide, type RoleGrant } from "@statewalker/ai-access";
@@ -294,8 +295,22 @@ export class TasksHost {
           this.queue.reply(project, task, me, { payload }),
         );
       }
-      case "job":
-        return this.queue.job(project, str(args[1], "job"), me);
+      case "job": {
+        const options = obj(args[2]);
+        const after = options.after === undefined ? undefined : Number(options.after);
+        const wait = Math.min(Math.max(Number(options.wait_ms ?? 0) || 0, 0), MAX_WAIT_MS);
+        return this.queue.waitJob(project, str(args[1], "job"), me, {
+          ...(after !== undefined && Number.isFinite(after) ? { after } : {}),
+          wait_ms: wait,
+        });
+      }
+      case "cancel": {
+        const task = str(args[1], "task");
+        return this.#counted(project, caller.user, () => {
+          this.queue.cancel(project, task, me, { admin: r.admin() });
+          return { cancelled: true };
+        });
+      }
       default:
         throw codedError("EINVAL", `'${String(op)}' is not a task API method`);
     }

@@ -1014,6 +1014,7 @@ export const TASKS_METHODS = [
   "release",
   "renew",
   "job",
+  "cancel",
 ] as const satisfies readonly (keyof TasksApi)[];
 
 /**

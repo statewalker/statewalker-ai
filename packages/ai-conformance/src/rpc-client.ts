@@ -137,7 +137,8 @@ export async function rpcClient(deployment: Deployment, token: string): Promise<
     ack: (l) => api.ack(l).catch(refusal) as never,
     release: (l, o) => api.release(l, o).catch(refusal) as never,
     renew: (l, o) => api.renew(l, o).catch(refusal) as never,
-    job: (p, id) => api.job(p, id).catch(refusal) as never,
+    job: (p, id, o) => api.job(p, id, o).catch(refusal) as never,
+    cancel: (p, t) => api.cancel(p, t).catch(refusal) as never,
     // The trigger API (statewalker/statewalker-root#207).
     listTriggers: (p) => api.listTriggers(p).catch(refusal) as never,
     createTrigger: (p, t) => api.createTrigger(p, t).catch(refusal) as never,

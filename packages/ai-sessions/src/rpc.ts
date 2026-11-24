@@ -84,6 +84,7 @@ const METHODS = [
   "release",
   "renew",
   "job",
+  "cancel",
   "memoryEntry",
   "memoryFile",
   "memoryBatch",
