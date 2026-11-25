@@ -1,5 +1,5 @@
 // The task queue's host side (statewalker/statewalker-root#206, decision #160): the project queues
-// of one workspace, kept by its Workspace DO in its SQLite (ai-tasks' TaskQueue), with the rights
+// of one workspace, kept by its Workspace DO in its SQLite (shared-tasks' TaskQueue), with the rights
 // decided here at every call from the caller's capability and their current roles:
 //
 // - a person (user capability) is `user:<name>` and answers to `user:<name>`; an agent session is
@@ -10,6 +10,7 @@
 // - reading a subscription takes `tasks.subscribe` on its filter, and each task read
 //   `tasks.subscribe:<its subject>` (a task the reader may not take stays for others); an inbox is
 //   its creator's alone; deleting another's subscription or listing every task takes `tasks.admin`;
+// - cancelling a task is its sender's, or takes `tasks.admin` (statewalker/statewalker-root#404);
 // - the queue's bytes (waiting tasks and dead letters, inboxes' included) are a storage category
 //   (`queue`), admitted before publishing (ENOSPC) and counted after every call.
 import { type AgentSessionFacts, codedError, decide, type RoleGrant } from "@statewalker/ai-access";
@@ -21,7 +22,7 @@ import {
   type Subscription,
   TaskQueue,
   type TaskQueueOptions,
-} from "@statewalker/ai-tasks";
+} from "@statewalker/shared-tasks";
 
 /** Subjects only the server publishes: webhooks' and schedules' (#207). */
 export const SERVER_PREFIXES = ["hooks.", "schedule."] as const;
@@ -294,8 +295,22 @@ export class TasksHost {
           this.queue.reply(project, task, me, { payload }),
         );
       }
-      case "job":
-        return this.queue.job(project, str(args[1], "job"), me);
+      case "job": {
+        const options = obj(args[2]);
+        const after = options.after === undefined ? undefined : Number(options.after);
+        const wait = Math.min(Math.max(Number(options.wait_ms ?? 0) || 0, 0), MAX_WAIT_MS);
+        return this.queue.waitJob(project, str(args[1], "job"), me, {
+          ...(after !== undefined && Number.isFinite(after) ? { after } : {}),
+          wait_ms: wait,
+        });
+      }
+      case "cancel": {
+        const task = str(args[1], "task");
+        return this.#counted(project, caller.user, () => {
+          this.queue.cancel(project, task, me, { admin: r.admin() });
+          return { cancelled: true };
+        });
+      }
       default:
         throw codedError("EINVAL", `'${String(op)}' is not a task API method`);
     }

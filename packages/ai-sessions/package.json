@@ -46,7 +46,7 @@
     "@statewalker/db-rpc": "catalog:",
     "@statewalker/db-api": "catalog:",
     "@statewalker/ai-memory": "workspace:^",
-    "@statewalker/ai-tasks": "workspace:^"
+    "@statewalker/shared-tasks": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

@@ -44,7 +44,7 @@ import {
   type TriggerView,
   triggerMessage,
 } from "@statewalker/ai-sessions";
-import type { Lease, QueueReader, SqlLike } from "@statewalker/ai-tasks";
+import type { Lease, QueueReader, SqlLike } from "@statewalker/shared-tasks";
 import type { TasksHost } from "./tasks-host.js";
 
 const MIN = 60_000;

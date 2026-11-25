@@ -352,8 +352,8 @@ async function triggerRoute(
 }
 
 /**
- * The task API's routes (statewalker/statewalker-root#206): `/v1/projects/{p}/tasks[/{id}/reply]`,
- * `/v1/projects/{p}/inboxes`, `/v1/projects/{p}/jobs/{id}`, `/v1/projects/{p}/subscriptions[/{name}
+ * The task API's routes (statewalker/statewalker-root#206): `/v1/projects/{p}/tasks[/{id}/reply|cancel]`,
+ * `/v1/projects/{p}/inboxes`, `/v1/projects/{p}/jobs/{id}[?after=&wait_ms=]`, `/v1/projects/{p}/subscriptions[/{name}
  * [/peek|take|claim|dead-letters|events|changes]]` and `/v1/leases/{id}/ack|release|renew`.
  */
 async function taskRoute(
@@ -383,11 +383,19 @@ async function taskRoute(
       return api().listTasks(project, limit === undefined ? {} : { limit });
     if (parts.length === 6 && id && sub === "reply" && m === "POST")
       return created(await api().reply(project, id, (await bodyOf(request)) as never));
+    if (parts.length === 6 && id && sub === "cancel" && m === "POST")
+      return api().cancel(project, id);
     return NOT_A_ROUTE;
   }
   if (what === "inboxes" && parts.length === 4 && m === "POST")
     return created(await api().createInbox(project));
-  if (what === "jobs" && id && parts.length === 5 && m === "GET") return api().job(project, id);
+  if (what === "jobs" && id && parts.length === 5 && m === "GET")
+    return api().job(project, id, {
+      ...(numberParam(url, "after") !== undefined ? { after: numberParam(url, "after") } : {}),
+      ...(numberParam(url, "wait_ms") !== undefined
+        ? { wait_ms: numberParam(url, "wait_ms") }
+        : {}),
+    });
   if (what !== "subscriptions") return NOT_A_ROUTE;
   if (parts.length === 4) {
     if (m === "POST")

@@ -13,6 +13,8 @@ catalog:
   "@flue/runtime": 2.3.0
   # The in-process CellB host the conformance suite runs deployments on; esbuild is its peer.
   "@statewalker/cellb": 0.8.8
+  # The task queue: tasks, subscriptions, leases, inboxes, the Processor contract (statewalker/statewalker-root#406).
+  "@statewalker/shared-tasks": ^0.1.0
   "@statewalker/webrun-biscuit": ^0.2.3
   "@statewalker/webrun-files": ^0.12.0
   "@statewalker/webrun-files-composite": ^0.12.0

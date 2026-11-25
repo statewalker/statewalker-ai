@@ -8,7 +8,7 @@ import type { ApprovalRequest } from "@statewalker/ai-access";
 import { approvalOf, type StoredCall } from "@statewalker/ai-environment";
 import type { HostTool } from "@statewalker/ai-flue";
 import { type AgentSessionConfig, fencedData, type TasksCall } from "@statewalker/ai-sessions";
-import type { Subscription, Task } from "@statewalker/ai-tasks";
+import type { Subscription, Task } from "@statewalker/shared-tasks";
 import type { Env } from "./env.js";
 
 export const TASKS_PUBLISH = "tasks_publish";
