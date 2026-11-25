@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-host-do",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "The hosting layer: the Durable Object classes, REST and RPC entrypoints, and the bindings for CellB, CellD and Workers.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-host-do#readme",

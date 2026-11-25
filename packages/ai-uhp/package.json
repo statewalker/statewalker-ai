@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-uhp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "The UHP projection of the session API: UHP class Core plus input_requests, pinned to UHP 2026-10-19.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-uhp#readme",

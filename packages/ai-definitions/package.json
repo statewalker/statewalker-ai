@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-definitions",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Definitions: the plugin loader, the catalog, the per-role definitions mount, tool definitions in the restricted OpenAPI profile and their projections.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-definitions#readme",

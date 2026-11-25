@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-openai-compat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "The OpenAI projection of the session API: Responses, Conversations and Chat Completions per agent base URL.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-openai-compat#readme",

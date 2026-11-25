@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-flue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "The execution core adapter: Flue running on the harness's environment.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-flue#readme",

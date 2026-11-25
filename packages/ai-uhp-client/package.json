@@ -1,6 +1,6 @@
 {
   "name": "@statewalker/ai-uhp-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "MIT",
   "description": "Remote agent sessions: agent sessions whose core is an external harness behind a UHP server (Unified Harness Protocol 2026-10-19), working on copies of files whose changes return through the capability.",
   "homepage": "https://github.com/statewalker/statewalker-ai/tree/main/packages/ai-uhp-client#readme",

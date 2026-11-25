@@ -1,5 +1,20 @@
 # @statewalker/ai-openai-compat
 
+## 0.2.0
+
+### Minor Changes
+
+- Release of the changes since the last published version:
+  
+  - @statewalker/ai-access crosses a breaking line
+  - @statewalker/ai-sessions crosses a breaking line
+
+### Patch Changes
+
+- Updated dependencies [b550856]
+  - @statewalker/ai-access@0.2.0
+  - @statewalker/ai-sessions@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
