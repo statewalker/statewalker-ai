@@ -36,6 +36,9 @@ catalogs:
     '@statewalker/db-sqlite-do':
       specifier: ^0.1.4
       version: 0.1.4
+    '@statewalker/shared-tasks':
+      specifier: ^0.1.0
+      version: 0.1.0
     '@statewalker/webrun-biscuit':
       specifier: ^0.2.3
       version: 0.2.3
@@ -262,15 +265,15 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
-      '@statewalker/ai-tasks':
-        specifier: workspace:^
-        version: link:../ai-tasks
       '@statewalker/ai-uhp':
         specifier: workspace:^
         version: link:../ai-uhp
       '@statewalker/cellb':
         specifier: 'catalog:'
         version: 0.8.8(bufferutil@4.2.0)(esbuild@0.28.2)
+      '@statewalker/shared-tasks':
+        specifier: 'catalog:'
+        version: 0.1.0
       '@statewalker/webrun-biscuit':
         specifier: 'catalog:'
         version: 0.2.3
@@ -469,9 +472,6 @@ importers:
       '@statewalker/ai-sessions':
         specifier: workspace:^
         version: link:../ai-sessions
-      '@statewalker/ai-tasks':
-        specifier: workspace:^
-        version: link:../ai-tasks
       '@statewalker/ai-uhp':
         specifier: workspace:^
         version: link:../ai-uhp
@@ -487,6 +487,9 @@ importers:
       '@statewalker/db-sqlite-do':
         specifier: 'catalog:'
         version: 0.1.4
+      '@statewalker/shared-tasks':
+        specifier: 'catalog:'
+        version: 0.1.0
       '@statewalker/webrun-bundler':
         specifier: 'catalog:'
         version: 0.2.0(esbuild-wasm@0.28.2)
@@ -598,13 +601,13 @@ importers:
       '@statewalker/ai-memory':
         specifier: workspace:^
         version: link:../ai-memory
-      '@statewalker/ai-tasks':
-        specifier: workspace:^
-        version: link:../ai-tasks
       '@statewalker/db-api':
         specifier: 'catalog:'
         version: 0.1.7
       '@statewalker/db-rpc':
+        specifier: 'catalog:'
+        version: 0.1.0
+      '@statewalker/shared-tasks':
         specifier: 'catalog:'
         version: 0.1.0
       '@statewalker/webrun-files':
@@ -622,21 +625,6 @@ importers:
       '@statewalker/webrun-streams-ws':
         specifier: 'catalog:'
         version: 0.5.3
-    devDependencies:
-      '@types/node':
-        specifier: 'catalog:'
-        version: 26.6.4
-      tsdown:
-        specifier: 'catalog:'
-        version: 0.23.7(tsx@4.23.15)(typescript@7.0.2)
-      typescript:
-        specifier: 'catalog:'
-        version: 7.0.2
-      vitest:
-        specifier: 'catalog:'
-        version: 5.0.3(@types/node@26.6.4)(vite@8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(tsx@4.23.15)(yaml@2.9.1))
-
-  packages/ai-tasks:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -1745,6 +1733,9 @@ packages:
 
   '@statewalker/db-sqlite@0.1.4':
     resolution: {integrity: sha512-Dao18BELfACyjXwlzHLzBSB7mJPGWwYb8xM2rFfTeYR5aVsn4nqie9zchKNhvSrVWspc3fWo9kbnY+MSt27n+A==}
+
+  '@statewalker/shared-tasks@0.1.0':
+    resolution: {integrity: sha512-4LvefLJXoQHmcMNtY7e5qndxLdFPHcayeWCkVaNvHAWk2Btd3dFL2EfM5xR8nmIowlPVea1dbxpYB6ZgNKEPdw==}
 
   '@statewalker/webrun-biscuit@0.2.3':
     resolution: {integrity: sha512-OgdQqAzzmDI2OQd8Mt1pWlEkAbshIbql0lbRitBqCVAZG0zuGtAS+K2qSoTEczdDGWUrAH+hm/cD9UdoDOXfJA==}
@@ -4462,6 +4453,8 @@ snapshots:
   '@statewalker/db-sqlite@0.1.4':
     dependencies:
       '@statewalker/db-api': 0.1.7
+
+  '@statewalker/shared-tasks@0.1.0': {}
 
   '@statewalker/webrun-biscuit@0.2.3':
     dependencies:
